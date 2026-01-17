@@ -425,6 +425,26 @@
     [
       "a1a9379e-380a-453b-a773-3c2b5a71d396",
       "System Control"
+    ],
+    [
+      "4d58af3c-6e53-412a-aa45-ebff8f550c35",
+      "ClockTree"
+    ],
+    [
+      "42f260a1-43d6-4f51-bd99-df380e29398c",
+      "CPU_AddressDecoding"
+    ],
+    [
+      "ac00d412-82cc-4c0b-919f-15c837faa4e5",
+      "SD_Card"
+    ],
+    [
+      "685e3ad0-b668-4082-bf36-08a728699034",
+      "ConsolePort"
+    ],
+    [
+      "2013015a-969c-4274-b0b3-984421ff4026",
+      "USBPorts"
     ]
   ],
   "text_variables": {}
