@@ -1290,10 +1290,22 @@
 		)
 	)
 	(junction
+		(at 109.22 184.15)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "024edfea-c53c-4313-b240-88f0ad598c0a")
+	)
+	(junction
 		(at 50.8 59.69)
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "738ddec4-4655-49e3-97f1-a06bc944eed2")
+	)
+	(junction
+		(at 88.9 195.58)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "7a5fc529-f8c6-4cd6-ace1-cc13d301988c")
 	)
 	(junction
 		(at 50.8 67.31)
@@ -1308,10 +1320,26 @@
 		(uuid "ad28df53-f5c8-49e5-b236-aec9a4e1afdf")
 	)
 	(junction
+		(at 88.9 165.1)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "ae28a8d9-a2f1-460e-b288-582fd1cff09a")
+	)
+	(junction
 		(at 50.8 49.53)
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "cf57e016-5a38-4ef7-975b-09ebb54051f1")
+	)
+	(junction
+		(at 109.22 170.18)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "e36954cc-6360-457e-8431-6f257f0c3ea6")
+	)
+	(no_connect
+		(at 129.54 170.18)
+		(uuid "0c236fb0-6b97-4988-922f-e76da461f212")
 	)
 	(no_connect
 		(at 78.74 71.12)
@@ -1320,6 +1348,24 @@
 	(no_connect
 		(at 78.74 53.34)
 		(uuid "930ab4bf-5078-4d98-a06f-a8d917867eb4")
+	)
+	(no_connect
+		(at 129.54 198.12)
+		(uuid "d2694edc-8f99-4b74-b1e7-b477c9db1aae")
+	)
+	(no_connect
+		(at 129.54 184.15)
+		(uuid "f4c70d83-eaaa-487f-8601-86fc1ad3e15f")
+	)
+	(wire
+		(pts
+			(xy 109.22 170.18) (xy 114.3 170.18)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "068f4072-3e88-4237-9aba-0cbfa8614180")
 	)
 	(wire
 		(pts
@@ -1363,6 +1409,26 @@
 	)
 	(wire
 		(pts
+			(xy 88.9 165.1) (xy 88.9 167.64)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2c48f263-e9a4-4309-b34a-adc2380e92fa")
+	)
+	(wire
+		(pts
+			(xy 109.22 170.18) (xy 109.22 184.15)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2eda84cf-c2a1-4422-94db-974c6e7c7100")
+	)
+	(wire
+		(pts
 			(xy 66.04 68.58) (xy 78.74 68.58)
 		)
 		(stroke
@@ -1370,6 +1436,16 @@
 			(type default)
 		)
 		(uuid "31da2270-1235-468c-8a28-919f03a1dc2d")
+	)
+	(wire
+		(pts
+			(xy 88.9 157.48) (xy 88.9 165.1)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "3b2f7727-c0c3-46ac-a2d2-141142221cd4")
 	)
 	(wire
 		(pts
@@ -1403,6 +1479,16 @@
 	)
 	(wire
 		(pts
+			(xy 88.9 193.04) (xy 88.9 195.58)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "41d0983c-70e1-44bb-b9f3-a8e0e47544f1")
+	)
+	(wire
+		(pts
 			(xy 66.04 55.88) (xy 78.74 55.88)
 		)
 		(stroke
@@ -1420,6 +1506,16 @@
 			(type default)
 		)
 		(uuid "546c483b-fde6-48af-aa1a-d6887c84c608")
+	)
+	(wire
+		(pts
+			(xy 68.58 165.1) (xy 88.9 165.1)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "592f9b64-571b-4fdc-a7a8-1372546a72c4")
 	)
 	(wire
 		(pts
@@ -1473,6 +1569,26 @@
 	)
 	(wire
 		(pts
+			(xy 68.58 195.58) (xy 88.9 195.58)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7a5dfc95-eaad-4484-ae26-dde6b312365e")
+	)
+	(wire
+		(pts
+			(xy 114.3 198.12) (xy 109.22 198.12)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7cd66bef-cb48-443b-b208-6288e1d8e266")
+	)
+	(wire
+		(pts
 			(xy 50.8 59.69) (xy 50.8 60.96)
 		)
 		(stroke
@@ -1503,6 +1619,26 @@
 	)
 	(wire
 		(pts
+			(xy 68.58 184.15) (xy 68.58 195.58)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "98f8eac4-e556-4411-8af7-c959b5d7929c")
+	)
+	(wire
+		(pts
+			(xy 109.22 184.15) (xy 114.3 184.15)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9b8a31bb-84a7-4727-a695-37d0a2948641")
+	)
+	(wire
+		(pts
 			(xy 107.95 118.11) (xy 115.57 118.11)
 		)
 		(stroke
@@ -1523,6 +1659,16 @@
 	)
 	(wire
 		(pts
+			(xy 109.22 184.15) (xy 109.22 198.12)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b6e6c2a0-e794-4393-abd0-faace385f6cb")
+	)
+	(wire
+		(pts
 			(xy 50.8 49.53) (xy 50.8 59.69)
 		)
 		(stroke
@@ -1540,6 +1686,16 @@
 			(type default)
 		)
 		(uuid "c3f325ac-025a-44ed-a256-6ec0bdece992")
+	)
+	(wire
+		(pts
+			(xy 68.58 176.53) (xy 68.58 165.1)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ca0b0ab3-a628-41bd-ab72-4c806f349c80")
 	)
 	(wire
 		(pts
@@ -1623,6 +1779,16 @@
 	)
 	(wire
 		(pts
+			(xy 88.9 195.58) (xy 88.9 203.2)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f2eb67a3-2f52-413a-ace1-590670c6a1ce")
+	)
+	(wire
+		(pts
 			(xy 53.34 73.66) (xy 53.34 68.58)
 		)
 		(stroke
@@ -1630,6 +1796,16 @@
 			(type default)
 		)
 		(uuid "f4206c83-eeb8-4f11-9408-de1ffb44e00b")
+	)
+	(wire
+		(pts
+			(xy 109.22 157.48) (xy 109.22 170.18)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "fa33ec15-c7bc-451b-b21a-0d3f2bde254c")
 	)
 	(label "CLK"
 		(at 115.57 135.89 180)
@@ -1848,7 +2024,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "25d1ed65-da95-4375-8bf8-85539bc69046")
-		(property "Reference" "#PWR045"
+		(property "Reference" "#PWR049"
 			(at 50.8 97.79 0)
 			(effects
 				(font
@@ -1898,7 +2074,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
-					(reference "#PWR045")
+					(reference "#PWR049")
 					(unit 1)
 				)
 			)
@@ -1914,7 +2090,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "357b313b-a002-4fba-8715-d4d05f8fc9e4")
-		(property "Reference" "U17"
+		(property "Reference" "U12"
 			(at 100.33 127 0)
 			(effects
 				(font
@@ -1922,7 +2098,7 @@
 				)
 			)
 		)
-		(property "Value" "4050"
+		(property "Value" "CD74HC4050M96"
 			(at 100.33 129.54 0)
 			(effects
 				(font
@@ -1930,7 +2106,7 @@
 				)
 			)
 		)
-		(property "Footprint" ""
+		(property "Footprint" "Footprints:SOIC127P600X175-16N"
 			(at 100.33 135.89 0)
 			(effects
 				(font
@@ -2002,8 +2178,112 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
-					(reference "U17")
+					(reference "U12")
 					(unit 6)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "4xxx:4050")
+		(at 121.92 198.12 0)
+		(unit 3)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "4cab9e73-d076-4bdb-8d5b-24a0e9d86c52")
+		(property "Reference" "U12"
+			(at 121.92 189.23 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "CD74HC4050M96"
+			(at 121.92 191.77 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Footprints:SOIC127P600X175-16N"
+			(at 121.92 198.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "http://www.intersil.com/content/dam/intersil/documents/cd40/cd4050bms.pdf"
+			(at 121.92 198.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Hex Buffer"
+			(at 121.92 198.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "5"
+			(uuid "6b4fabc0-3216-4e94-b200-604e8f6669cd")
+		)
+		(pin "6"
+			(uuid "83ae1b5b-349c-4ece-95c5-9a73e3b47ce9")
+		)
+		(pin "4"
+			(uuid "b1294fab-f2ca-4a57-a4ff-7989b1109877")
+		)
+		(pin "3"
+			(uuid "659b5544-a1af-4152-a83c-42cdc2c04c20")
+		)
+		(pin "7"
+			(uuid "d2745e1e-0ced-4596-8568-a21d0c426280")
+		)
+		(pin "14"
+			(uuid "e2dd8700-28e3-4b36-ac32-2722c477976d")
+		)
+		(pin "1"
+			(uuid "8ad2b432-2327-4285-a30c-14e4efa77a1a")
+		)
+		(pin "11"
+			(uuid "4b08475d-2850-4bfa-8822-9c77b1069399")
+		)
+		(pin "9"
+			(uuid "b4f6b9b0-fc29-4234-ad92-9dcd89b4bbab")
+		)
+		(pin "15"
+			(uuid "a8ce45e8-4df9-48da-8097-70c81ca740e9")
+		)
+		(pin "12"
+			(uuid "af9bab61-b510-4390-b089-7a334d88b892")
+		)
+		(pin "2"
+			(uuid "076ea5ad-df72-4c93-a33c-38df77b18f22")
+		)
+		(pin "8"
+			(uuid "60564bd9-a840-4261-9b1e-e7b6a563b53b")
+		)
+		(pin "10"
+			(uuid "dd7a0c63-a446-47b4-a518-10daa13edbf7")
+		)
+		(instances
+			(project ""
+				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
+					(reference "U12")
+					(unit 3)
 				)
 			)
 		)
@@ -2018,7 +2298,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "5526d7eb-6957-4b3f-b8d6-40163d32e4d8")
-		(property "Reference" "U17"
+		(property "Reference" "U12"
 			(at 100.33 92.71 0)
 			(effects
 				(font
@@ -2026,7 +2306,7 @@
 				)
 			)
 		)
-		(property "Value" "4050"
+		(property "Value" "CD74HC4050M96"
 			(at 100.33 95.25 0)
 			(effects
 				(font
@@ -2034,7 +2314,7 @@
 				)
 			)
 		)
-		(property "Footprint" ""
+		(property "Footprint" "Footprints:SOIC127P600X175-16N"
 			(at 100.33 101.6 0)
 			(effects
 				(font
@@ -2106,8 +2386,248 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
-					(reference "U17")
+					(reference "U12")
 					(unit 4)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "4xxx:4050")
+		(at 121.92 170.18 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "7ec4f00b-4961-49a0-9e58-42ed873accea")
+		(property "Reference" "U12"
+			(at 121.92 161.29 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "CD74HC4050M96"
+			(at 121.92 163.83 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Footprints:SOIC127P600X175-16N"
+			(at 121.92 170.18 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "http://www.intersil.com/content/dam/intersil/documents/cd40/cd4050bms.pdf"
+			(at 121.92 170.18 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Hex Buffer"
+			(at 121.92 170.18 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "5"
+			(uuid "6b4fabc0-3216-4e94-b200-604e8f6669cd")
+		)
+		(pin "6"
+			(uuid "83ae1b5b-349c-4ece-95c5-9a73e3b47ce9")
+		)
+		(pin "4"
+			(uuid "b1294fab-f2ca-4a57-a4ff-7989b1109877")
+		)
+		(pin "3"
+			(uuid "659b5544-a1af-4152-a83c-42cdc2c04c20")
+		)
+		(pin "7"
+			(uuid "d2745e1e-0ced-4596-8568-a21d0c426280")
+		)
+		(pin "14"
+			(uuid "e2dd8700-28e3-4b36-ac32-2722c477976d")
+		)
+		(pin "1"
+			(uuid "8ad2b432-2327-4285-a30c-14e4efa77a1a")
+		)
+		(pin "11"
+			(uuid "4b08475d-2850-4bfa-8822-9c77b1069399")
+		)
+		(pin "9"
+			(uuid "b4f6b9b0-fc29-4234-ad92-9dcd89b4bbab")
+		)
+		(pin "15"
+			(uuid "a8ce45e8-4df9-48da-8097-70c81ca740e9")
+		)
+		(pin "12"
+			(uuid "af9bab61-b510-4390-b089-7a334d88b892")
+		)
+		(pin "2"
+			(uuid "076ea5ad-df72-4c93-a33c-38df77b18f22")
+		)
+		(pin "8"
+			(uuid "60564bd9-a840-4261-9b1e-e7b6a563b53b")
+		)
+		(pin "10"
+			(uuid "dd7a0c63-a446-47b4-a518-10daa13edbf7")
+		)
+		(instances
+			(project ""
+				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
+					(reference "U12")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:C")
+		(at 68.58 180.34 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "83cdbed7-0c0f-476e-ad0e-a076f951cb90")
+		(property "Reference" "C21"
+			(at 72.39 179.0699 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "100n"
+			(at 72.39 181.6099 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
+			(at 69.5452 184.15 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 68.58 180.34 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Unpolarized capacitor"
+			(at 68.58 180.34 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "be16a3ad-484d-431d-9078-fb919b9955b6")
+		)
+		(pin "2"
+			(uuid "4f3bc78d-7952-4035-bcc2-af7c599c5304")
+		)
+		(instances
+			(project ""
+				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
+					(reference "C21")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:+3.3V")
+		(at 88.9 157.48 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "8a6930f4-6c50-4598-91f8-e4793fba8bc5")
+		(property "Reference" "#PWR051"
+			(at 88.9 161.29 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Value" "+3.3V"
+			(at 88.9 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 88.9 157.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" ""
+			(at 88.9 157.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+3.3V\""
+			(at 88.9 157.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "f465bbb0-6c49-4bbf-b6de-2c55f0d7a549")
+		)
+		(instances
+			(project "Z80HomeBrew"
+				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
+					(reference "#PWR051")
+					(unit 1)
 				)
 			)
 		)
@@ -2121,7 +2641,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "a1a5c49c-c930-4708-9b51-132fac4fcbc6")
-		(property "Reference" "R10"
+		(property "Reference" "R12"
 			(at 33.02 62.2299 0)
 			(effects
 				(font
@@ -2175,7 +2695,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
-					(reference "R10")
+					(reference "R12")
 					(unit 1)
 				)
 			)
@@ -2191,7 +2711,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a8f02da1-f66c-4483-9416-c159b275ebbc")
-		(property "Reference" "U17"
+		(property "Reference" "U12"
 			(at 100.33 109.22 0)
 			(effects
 				(font
@@ -2199,7 +2719,7 @@
 				)
 			)
 		)
-		(property "Value" "4050"
+		(property "Value" "CD74HC4050M96"
 			(at 100.33 111.76 0)
 			(effects
 				(font
@@ -2207,7 +2727,7 @@
 				)
 			)
 		)
-		(property "Footprint" ""
+		(property "Footprint" "Footprints:SOIC127P600X175-16N"
 			(at 100.33 118.11 0)
 			(effects
 				(font
@@ -2279,7 +2799,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
-					(reference "U17")
+					(reference "U12")
 					(unit 5)
 				)
 			)
@@ -2295,7 +2815,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a9d0ef95-b247-4b20-9b70-6e7a705750bf")
-		(property "Reference" "#PWR040"
+		(property "Reference" "#PWR050"
 			(at 128.27 97.79 0)
 			(effects
 				(font
@@ -2345,7 +2865,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
-					(reference "#PWR040")
+					(reference "#PWR050")
 					(unit 1)
 				)
 			)
@@ -2361,7 +2881,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "b191a9f7-a0e1-4371-b118-8d9b120949d0")
-		(property "Reference" "#PWR043"
+		(property "Reference" "#PWR048"
 			(at 50.8 30.48 0)
 			(effects
 				(font
@@ -2411,7 +2931,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
-					(reference "#PWR043")
+					(reference "#PWR048")
 					(unit 1)
 				)
 			)
@@ -2427,7 +2947,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "bdac8efb-dea3-48f0-b392-b497d794c4a1")
-		(property "Reference" "C13"
+		(property "Reference" "C20"
 			(at 45.72 62.2299 0)
 			(effects
 				(font
@@ -2481,8 +3001,350 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
-					(reference "C13")
+					(reference "C20")
 					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:+3.3V")
+		(at 109.22 157.48 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "c005f830-d218-49f8-b8f6-f8175395ab65")
+		(property "Reference" "#PWR052"
+			(at 109.22 161.29 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Value" "+3.3V"
+			(at 109.22 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 109.22 157.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" ""
+			(at 109.22 157.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+3.3V\""
+			(at 109.22 157.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "6ddbdb9e-b7f5-4567-9122-bb2a61ee3a8b")
+		)
+		(instances
+			(project "Z80HomeBrew"
+				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
+					(reference "#PWR052")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "4xxx:4050")
+		(at 88.9 180.34 0)
+		(unit 7)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "cd40c7f9-8198-4449-b32f-9bb1b587ecec")
+		(property "Reference" "U12"
+			(at 95.25 179.0699 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "CD74HC4050M96"
+			(at 95.25 181.6099 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Footprints:SOIC127P600X175-16N"
+			(at 88.9 180.34 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "http://www.intersil.com/content/dam/intersil/documents/cd40/cd4050bms.pdf"
+			(at 88.9 180.34 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Hex Buffer"
+			(at 88.9 180.34 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "15"
+			(uuid "a9f4674a-4a51-4995-9c8a-b24b7f88e5db")
+		)
+		(pin "2"
+			(uuid "49ce0568-6dd0-424e-883d-c10a2dadfb17")
+		)
+		(pin "12"
+			(uuid "8d708b9c-5e60-4b07-b45a-fc0e3d306b63")
+		)
+		(pin "5"
+			(uuid "09489798-4f37-42f6-80ab-e6d4d91af098")
+		)
+		(pin "6"
+			(uuid "44843eac-d588-4b14-aec0-3434ca02183d")
+		)
+		(pin "8"
+			(uuid "88fe3f82-4b97-48c8-91d2-fc575e3f42da")
+		)
+		(pin "14"
+			(uuid "329e223d-1a09-4546-9801-0161707a0502")
+		)
+		(pin "3"
+			(uuid "f44a93c8-46bf-4f06-8953-e4782a80cd37")
+		)
+		(pin "7"
+			(uuid "22690782-1e86-4353-a2cd-3033f360986b")
+		)
+		(pin "10"
+			(uuid "f3e789e1-b902-4c08-9c2b-dde387eb7a5a")
+		)
+		(pin "9"
+			(uuid "ffeef404-0b23-41e0-989a-5bc20fb603b6")
+		)
+		(pin "11"
+			(uuid "dd2cc8d0-db8b-4c1f-9688-c160702d77e0")
+		)
+		(pin "4"
+			(uuid "5bb18b41-4d41-4bea-aaff-2736e5f0c522")
+		)
+		(pin "1"
+			(uuid "1ba03e01-7838-4f4d-8176-9d288080bb58")
+		)
+		(instances
+			(project ""
+				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
+					(reference "U12")
+					(unit 7)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:GND")
+		(at 88.9 203.2 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "d07afea4-a2f3-427a-9b72-37a6bb3b2f04")
+		(property "Reference" "#PWR053"
+			(at 88.9 209.55 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Value" "GND"
+			(at 88.9 208.28 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 88.9 203.2 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" ""
+			(at 88.9 203.2 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 88.9 203.2 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "7b272cbd-83a4-4ec3-ad9b-3c68639ad63c")
+		)
+		(instances
+			(project "Z80HomeBrew"
+				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
+					(reference "#PWR053")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "4xxx:4050")
+		(at 121.92 184.15 0)
+		(unit 2)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "ecd59561-4012-4328-996e-b058bb72ae55")
+		(property "Reference" "U12"
+			(at 121.92 175.26 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "CD74HC4050M96"
+			(at 121.92 177.8 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Footprints:SOIC127P600X175-16N"
+			(at 121.92 184.15 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "http://www.intersil.com/content/dam/intersil/documents/cd40/cd4050bms.pdf"
+			(at 121.92 184.15 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Hex Buffer"
+			(at 121.92 184.15 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "5"
+			(uuid "6b4fabc0-3216-4e94-b200-604e8f6669cd")
+		)
+		(pin "6"
+			(uuid "83ae1b5b-349c-4ece-95c5-9a73e3b47ce9")
+		)
+		(pin "4"
+			(uuid "b1294fab-f2ca-4a57-a4ff-7989b1109877")
+		)
+		(pin "3"
+			(uuid "659b5544-a1af-4152-a83c-42cdc2c04c20")
+		)
+		(pin "7"
+			(uuid "d2745e1e-0ced-4596-8568-a21d0c426280")
+		)
+		(pin "14"
+			(uuid "e2dd8700-28e3-4b36-ac32-2722c477976d")
+		)
+		(pin "1"
+			(uuid "8ad2b432-2327-4285-a30c-14e4efa77a1a")
+		)
+		(pin "11"
+			(uuid "4b08475d-2850-4bfa-8822-9c77b1069399")
+		)
+		(pin "9"
+			(uuid "b4f6b9b0-fc29-4234-ad92-9dcd89b4bbab")
+		)
+		(pin "15"
+			(uuid "a8ce45e8-4df9-48da-8097-70c81ca740e9")
+		)
+		(pin "12"
+			(uuid "af9bab61-b510-4390-b089-7a334d88b892")
+		)
+		(pin "2"
+			(uuid "076ea5ad-df72-4c93-a33c-38df77b18f22")
+		)
+		(pin "8"
+			(uuid "60564bd9-a840-4261-9b1e-e7b6a563b53b")
+		)
+		(pin "10"
+			(uuid "dd7a0c63-a446-47b4-a518-10daa13edbf7")
+		)
+		(instances
+			(project ""
+				(path "/5593e793-d133-45d0-a91e-72805049e474/ac00d412-82cc-4c0b-919f-15c837faa4e5"
+					(reference "U12")
+					(unit 2)
 				)
 			)
 		)

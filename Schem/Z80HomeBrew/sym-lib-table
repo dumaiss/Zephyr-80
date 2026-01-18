@@ -13,4 +13,6 @@
   (lib (name "MAX3421EETJ_T")(type "KiCad")(uri "${KIPRJMOD}/Symbols/MAX3421EETJ_T.kicad_sym")(options "")(descr ""))
   (lib (name "Z80HomeBreW")(type "KiCad")(uri "${KIPRJMOD}/Symbols/Z80HomeBreW.kicad_sym")(options "")(descr ""))
   (lib (name "2026-01-17_16-43-41")(type "KiCad")(uri "${KIPRJMOD}/Symbols/2026-01-17_16-43-41.kicad_sym")(options "")(descr ""))
+  (lib (name "2026-01-18_05-05-37")(type "KiCad")(uri "${KIPRJMOD}/Symbols/2026-01-18_05-05-37.kicad_sym")(options "")(descr ""))
+  (lib (name "2026-01-18_07-40-02")(type "KiCad")(uri "${KIPRJMOD}/Symbols/2026-01-18_07-40-02.kicad_sym")(options "")(descr ""))
 )

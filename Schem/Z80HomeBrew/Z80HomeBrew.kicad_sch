@@ -89,6 +89,16 @@
 				(justify right)
 			)
 		)
+		(pin "SPI_MISO" output
+			(at 354.33 84.455 270)
+			(uuid "19af9357-fb97-4b43-bd4e-4a1e3669b66d")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474"
@@ -155,6 +165,48 @@
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474"
 					(page "2")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 304.8 179.07)
+		(size 93.98 41.91)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "3bce3585-3d62-4f67-ae60-4f9c9b2c6cbe")
+		(property "Sheetname" "Video"
+			(at 304.8 178.3584 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "Video.kicad_sch"
+			(at 304.8 221.5646 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "Z80HomeBrew"
+				(path "/5593e793-d133-45d0-a91e-72805049e474"
+					(page "10")
 				)
 			)
 		)
@@ -293,16 +345,6 @@
 				(justify left)
 			)
 		)
-		(pin "A[0..15]" output
-			(at 93.98 127 270)
-			(uuid "3eeb2c9b-33ba-4787-95f2-95edc33945c0")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
 		(pin "~{CS_SOUND}" output
 			(at 97.155 109.22 0)
 			(uuid "0d647745-84a5-46dc-b1f2-39c6df6090e0")
@@ -421,6 +463,46 @@
 					(size 1.27 1.27)
 				)
 				(justify right)
+			)
+		)
+		(pin "A[0..18]" output
+			(at 72.39 127 270)
+			(uuid "788ea224-9d5c-4c55-b6d5-a6fea89c4ae1")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "A17" output
+			(at 80.01 127 270)
+			(uuid "465aed07-8b9a-4f08-8edd-0e026c5e10e8")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "A16" output
+			(at 97.155 114.3 0)
+			(uuid "f9661f9d-9e82-4c7c-b251-31cd5115ba6d")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "A18" output
+			(at 55.88 127 270)
+			(uuid "dfb981ac-6221-477f-8026-4c6acec4829e")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
 			)
 		)
 		(instances
@@ -575,16 +657,6 @@
 					(size 1.27 1.27)
 				)
 				(justify left top)
-			)
-		)
-		(pin "~{USB_PRESENT}" output
-			(at 43.815 212.09 180)
-			(uuid "54d583c4-5b95-4069-9da7-57011501ba53")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
 			)
 		)
 		(pin "~{CONSOLE_CTS}" input

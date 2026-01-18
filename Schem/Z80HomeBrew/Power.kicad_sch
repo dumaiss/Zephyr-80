@@ -3802,7 +3802,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "1056bf51-71a3-4780-aaeb-8489af9b17e1")
-		(property "Reference" "R4"
+		(property "Reference" "R5"
 			(at 229.616 76.2 90)
 			(effects
 				(font
@@ -3854,7 +3854,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "R4")
+					(reference "R5")
 					(unit 1)
 				)
 			)
@@ -4174,7 +4174,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "233f726f-5dc3-4084-8bea-09d923937a69")
-		(property "Reference" "#PWR05"
+		(property "Reference" "#PWR04"
 			(at 217.17 71.12 0)
 			(effects
 				(font
@@ -4224,7 +4224,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR05")
+					(reference "#PWR04")
 					(unit 1)
 				)
 			)
@@ -4245,7 +4245,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "26673308-0513-4525-b038-9561fb5820bd")
-		(property "Reference" "R3"
+		(property "Reference" "R4"
 			(at 221.996 76.2 90)
 			(effects
 				(font
@@ -4297,7 +4297,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "R3")
+					(reference "R4")
 					(unit 1)
 				)
 			)
@@ -4318,7 +4318,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "27c1025a-064f-4f23-a4af-4674d7172683")
-		(property "Reference" "Q2"
+		(property "Reference" "Q1"
 			(at 148.59 38.1 90)
 			(effects
 				(font
@@ -4376,7 +4376,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "Q2")
+					(reference "Q1")
 					(unit 1)
 				)
 			)
@@ -4609,7 +4609,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "522b841a-51a8-4b00-992c-8b0cbaa10f9c")
-		(property "Reference" "#PWR03"
+		(property "Reference" "#PWR02"
 			(at 262.89 68.58 0)
 			(effects
 				(font
@@ -4659,7 +4659,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR03")
+					(reference "#PWR02")
 					(unit 1)
 				)
 			)
@@ -4833,7 +4833,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "6ce51ded-3389-40b6-a982-e6c679f87843")
-		(property "Reference" "R9"
+		(property "Reference" "R3"
 			(at 143.764 60.96 90)
 			(effects
 				(font
@@ -4885,7 +4885,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "R9")
+					(reference "R3")
 					(unit 1)
 				)
 			)
@@ -5122,7 +5122,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "7d9c1a9d-6c3d-4370-b9f4-039f55edab29")
-		(property "Reference" "R6"
+		(property "Reference" "R7"
 			(at 87.63 93.9799 0)
 			(effects
 				(font
@@ -5176,7 +5176,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "R6")
+					(reference "R7")
 					(unit 1)
 				)
 			)
@@ -5198,7 +5198,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "86f36e18-961e-4f93-ad29-b73b00ba247e")
-		(property "Reference" "#PWR06"
+		(property "Reference" "#PWR05"
 			(at 224.79 71.12 0)
 			(effects
 				(font
@@ -5248,7 +5248,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR06")
+					(reference "#PWR05")
 					(unit 1)
 				)
 			)
@@ -5681,7 +5681,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "a3085d80-f32f-46ad-81d7-cfe240cbf54c")
-		(property "Reference" "Q1"
+		(property "Reference" "Q2"
 			(at 177.8 38.1 90)
 			(effects
 				(font
@@ -5739,7 +5739,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "Q1")
+					(reference "Q2")
 					(unit 1)
 				)
 			)
@@ -5760,7 +5760,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "aeb23461-d608-4084-8dae-60f26b07fc9b")
-		(property "Reference" "D3"
+		(property "Reference" "D2"
 			(at 87.63 78.7399 90)
 			(effects
 				(font
@@ -5814,7 +5814,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "D3")
+					(reference "D2")
 					(unit 1)
 				)
 			)
@@ -5836,7 +5836,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "b95e28cc-42fe-4040-820f-0d4476b51027")
-		(property "Reference" "R5"
+		(property "Reference" "R6"
 			(at 287.02 90.1699 0)
 			(effects
 				(font
@@ -5890,7 +5890,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "R5")
+					(reference "R6")
 					(unit 1)
 				)
 			)
@@ -5912,7 +5912,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "bf17c57d-44c6-467b-9ab7-2cc69af6c0ca")
-		(property "Reference" "#PWR020"
+		(property "Reference" "#PWR06"
 			(at 148.59 76.2 0)
 			(effects
 				(font
@@ -5962,7 +5962,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR020")
+					(reference "#PWR06")
 					(unit 1)
 				)
 			)
@@ -6198,7 +6198,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "dd25c248-1df6-4bac-8a11-c8ec775b9884")
-		(property "Reference" "#PWR04"
+		(property "Reference" "#PWR03"
 			(at 334.01 68.58 0)
 			(effects
 				(font
@@ -6248,7 +6248,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR04")
+					(reference "#PWR03")
 					(unit 1)
 				)
 			)
@@ -6270,7 +6270,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f8cef149-e4d1-42cb-b1e1-0b6ee14e158d")
-		(property "Reference" "D2"
+		(property "Reference" "D1"
 			(at 288.29 79.0574 90)
 			(effects
 				(font
@@ -6333,7 +6333,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "D2")
+					(reference "D1")
 					(unit 1)
 				)
 			)
@@ -6354,7 +6354,7 @@
 		(on_board yes)
 		(dnp no)
 		(uuid "ff6812fa-b342-4d13-881e-cfb9cfc1ace9")
-		(property "Reference" "D4"
+		(property "Reference" "D3"
 			(at 101.6 85.0899 0)
 			(effects
 				(font
@@ -6411,7 +6411,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "D4")
+					(reference "D3")
 					(unit 1)
 				)
 			)
