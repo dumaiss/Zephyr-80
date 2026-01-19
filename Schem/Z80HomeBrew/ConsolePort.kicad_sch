@@ -1212,6 +1212,118 @@
 			)
 			(embedded_fonts no)
 		)
+		(symbol "power:PWR_FLAG"
+			(power)
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(offset 0)
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "#FLG"
+				(at 0 1.905 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Value" "PWR_FLAG"
+				(at 0 3.81 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Footprint" ""
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" "~"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" "Special symbol for telling ERC where power comes from"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_keywords" "flag power"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "PWR_FLAG_0_0"
+				(pin power_out line
+					(at 0 0 90)
+					(length 0)
+					(name "~"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(symbol "PWR_FLAG_0_1"
+				(polyline
+					(pts
+						(xy 0 0) (xy 0 1.27) (xy -1.016 1.905) (xy 0 2.54) (xy 1.016 1.905) (xy 0 1.27)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
+	)
+	(text "Configure the FT230 so that \nCBUS0 (PWREN#) is asserted \n(low) to signal that a terminal\nis connected (DTR)"
+		(exclude_from_sim no)
+		(at 173.482 75.438 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "f4d03a52-c82d-44b6-9837-1c07536f4a45")
 	)
 	(junction
 		(at 148.59 124.46)
@@ -1260,6 +1372,12 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "be6a6e1b-0d8f-43e0-bdf1-d17df3f348cf")
+	)
+	(junction
+		(at 67.31 60.96)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "fe11f3a4-b380-453f-839f-3d35a01f6fda")
 	)
 	(no_connect
 		(at 171.45 72.39)
@@ -1615,7 +1733,7 @@
 	)
 	(wire
 		(pts
-			(xy 62.23 60.96) (xy 71.12 60.96)
+			(xy 62.23 60.96) (xy 67.31 60.96)
 		)
 		(stroke
 			(width 0)
@@ -1692,6 +1810,16 @@
 			(type default)
 		)
 		(uuid "ba5a8a39-3656-4ca0-b657-7955a5ac0aa6")
+	)
+	(wire
+		(pts
+			(xy 67.31 60.96) (xy 71.12 60.96)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "c1011949-798f-480d-9a10-b65a30eacc11")
 	)
 	(wire
 		(pts
@@ -1863,17 +1991,7 @@
 		)
 		(uuid "5bb3209e-13d4-4969-9848-ea21adcef139")
 	)
-	(label "VBUS_SENSE"
-		(at 185.42 69.85 180)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right bottom)
-		)
-		(uuid "e284b135-a413-4dd5-bfa2-79cc117e3d88")
-	)
-	(hierarchical_label "~{CONSOLE_RTS}"
+	(hierarchical_label "CONSOLE_RTS"
 		(shape output)
 		(at 185.42 62.23 0)
 		(effects
@@ -1883,6 +2001,17 @@
 			(justify left)
 		)
 		(uuid "1b3c6a93-b36f-470c-a551-bbbd5c7d5b25")
+	)
+	(hierarchical_label "CONSOLE_DTR"
+		(shape output)
+		(at 185.42 69.85 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "400f7f2e-6d87-48bf-9113-92a2874bae53")
 	)
 	(hierarchical_label "CONSOLE_RX"
 		(shape input)
@@ -1906,7 +2035,7 @@
 		)
 		(uuid "b586e2e8-391b-4ee5-9d48-6ad75691989f")
 	)
-	(hierarchical_label "~{CONSOLE_CTS}"
+	(hierarchical_label "CONSOLE_CTS"
 		(shape input)
 		(at 185.42 64.77 0)
 		(effects
@@ -1947,7 +2076,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "FT230XS"
+		(property "Value" "FT230XS-U"
 			(at 158.3533 85.09 0)
 			(effects
 				(font
@@ -2736,6 +2865,72 @@
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/685e3ad0-b668-4082-bf36-08a728699034"
 					(reference "C27")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:PWR_FLAG")
+		(at 67.31 60.96 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "aba0a7ad-2d72-4c62-92ee-3ffbe48b5a51")
+		(property "Reference" "#FLG05"
+			(at 67.31 59.055 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Value" "PWR_FLAG"
+			(at 67.31 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 67.31 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 67.31 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Special symbol for telling ERC where power comes from"
+			(at 67.31 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "4fa8ed23-98e5-48a1-a485-429134e32cfd")
+		)
+		(instances
+			(project ""
+				(path "/5593e793-d133-45d0-a91e-72805049e474/685e3ad0-b668-4082-bf36-08a728699034"
+					(reference "#FLG05")
 					(unit 1)
 				)
 			)

@@ -911,6 +911,10 @@
 		(uuid "5cdb67ff-4e39-4932-8bc3-21916061cf20")
 	)
 	(no_connect
+		(at 149.86 53.34)
+		(uuid "096eaf65-1380-4354-ba10-97450be907b9")
+	)
+	(no_connect
 		(at 149.86 71.12)
 		(uuid "32b2460e-8d26-4af3-a590-1126de04838c")
 	)
@@ -925,6 +929,10 @@
 	(no_connect
 		(at 149.86 60.96)
 		(uuid "5bf49334-0710-4095-8928-86f5a1320f02")
+	)
+	(no_connect
+		(at 149.86 50.8)
+		(uuid "918782bf-0d93-4e1c-a157-86ac9be84148")
 	)
 	(no_connect
 		(at 149.86 55.88)
@@ -990,16 +998,6 @@
 	)
 	(wire
 		(pts
-			(xy 149.86 53.34) (xy 161.29 53.34)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "67db4189-80dd-4c1e-ab32-888c0ecf4a98")
-	)
-	(wire
-		(pts
 			(xy 101.6 55.88) (xy 101.6 83.82)
 		)
 		(stroke
@@ -1047,16 +1045,6 @@
 			(type default)
 		)
 		(uuid "9598c332-1bfe-437c-84f2-042b321ce058")
-	)
-	(wire
-		(pts
-			(xy 149.86 50.8) (xy 161.29 50.8)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "96f1eace-a0c9-4434-a025-4bf57090ac02")
 	)
 	(wire
 		(pts
@@ -1172,17 +1160,6 @@
 		)
 		(uuid "bf957081-98a5-46e1-b83a-f6cb899d3a85")
 	)
-	(hierarchical_label "CLK922K05"
-		(shape output)
-		(at 161.29 50.8 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "cb1ce1a6-b7a0-4c19-addf-9eddb59b962a")
-	)
 	(hierarchical_label "RESET_HIGH"
 		(shape input)
 		(at 118.11 50.8 180)
@@ -1193,17 +1170,6 @@
 			(justify right)
 		)
 		(uuid "dcb3c13d-ec69-4e74-a2e2-aec2e9c9b6fa")
-	)
-	(hierarchical_label "CLK461K25"
-		(shape output)
-		(at 161.29 53.34 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "e423b597-ad17-445d-82b2-ee603cc99b5e")
 	)
 	(symbol
 		(lib_id "power:+5V")
@@ -1722,7 +1688,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "74HC4040"
+		(property "Value" "SN74HC4040DR"
 			(at 139.3033 38.1 0)
 			(effects
 				(font
@@ -1731,7 +1697,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Package_SO:SOIC-16W_5.3x10.2mm_P1.27mm"
+		(property "Footprint" "Package_SO:SO-16_3.9x9.9mm_P1.27mm"
 			(at 137.16 55.88 0)
 			(effects
 				(font

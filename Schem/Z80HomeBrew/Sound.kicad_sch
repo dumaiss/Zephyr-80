@@ -2575,26 +2575,6 @@
 			(embedded_fonts no)
 		)
 	)
-	(text_box "Signal Amplification Mixed from\nAudio 1 and Audio 2\nVolume Pot to set max volume"
-		(exclude_from_sim no)
-		(at 128.905 121.285 0)
-		(size 243.84 121.92)
-		(margins 0.9525 0.9525 0.9525 0.9525)
-		(stroke
-			(width 0)
-			(type solid)
-		)
-		(fill
-			(type none)
-		)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left top)
-		)
-		(uuid "6a8ce7de-f09a-4177-98ac-fec9508cf3c5")
-	)
 	(text_box "Selects which Audio IC\nbased on A0.\nIf SOUND + A0 Even == Audio 1\nIf SOUND + A0 Odd  == Audio 2"
 		(exclude_from_sim no)
 		(at 22.86 121.92 0)
@@ -2634,12 +2614,6 @@
 			(justify left top)
 		)
 		(uuid "dd69dd98-aa1e-4cd3-9013-6dfc373df5c3")
-	)
-	(junction
-		(at 181.61 158.75)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "0634cf70-014a-44e5-a8d9-bd1861e928fd")
 	)
 	(junction
 		(at 280.67 167.64)
@@ -3003,7 +2977,7 @@
 	)
 	(wire
 		(pts
-			(xy 168.91 152.4) (xy 181.61 152.4)
+			(xy 177.8 158.75) (xy 193.04 158.75)
 		)
 		(stroke
 			(width 0)
@@ -3083,16 +3057,6 @@
 	)
 	(wire
 		(pts
-			(xy 181.61 158.75) (xy 181.61 152.4)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "3fe78667-14b6-4fe1-a545-f45f96880962")
-	)
-	(wire
-		(pts
 			(xy 257.81 180.34) (xy 257.81 185.42)
 		)
 		(stroke
@@ -3110,6 +3074,16 @@
 			(type default)
 		)
 		(uuid "42a103a1-ff13-44a0-aed6-d57bd0c631d8")
+	)
+	(wire
+		(pts
+			(xy 180.34 66.04) (xy 198.12 66.04)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "43e76edf-56b9-494f-b135-5dcd9c3588fe")
 	)
 	(wire
 		(pts
@@ -3433,16 +3407,6 @@
 	)
 	(wire
 		(pts
-			(xy 168.91 163.83) (xy 181.61 163.83)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "80306c14-29a4-48b1-96b3-610550277189")
-	)
-	(wire
-		(pts
 			(xy 299.72 71.12) (xy 317.5 71.12)
 		)
 		(stroke
@@ -3450,16 +3414,6 @@
 			(type default)
 		)
 		(uuid "819c5ae6-05ee-49f1-9b46-2709f9867799")
-	)
-	(wire
-		(pts
-			(xy 181.61 158.75) (xy 181.61 163.83)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "833100b0-dcd0-4474-9f88-183d25e025e8")
 	)
 	(wire
 		(pts
@@ -3670,16 +3624,6 @@
 			(type default)
 		)
 		(uuid "be1f8271-420a-4f70-afee-d0304456c7b9")
-	)
-	(wire
-		(pts
-			(xy 181.61 158.75) (xy 193.04 158.75)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "be55b03c-1b93-4d64-81ef-4c31332b22cf")
 	)
 	(wire
 		(pts
@@ -3913,16 +3857,6 @@
 	)
 	(wire
 		(pts
-			(xy 180.34 66.04) (xy 198.12 66.04)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "f570e182-a341-4595-9b8d-2e264e36089c")
-	)
-	(wire
-		(pts
 			(xy 215.9 63.5) (xy 215.9 58.42)
 		)
 		(stroke
@@ -4051,7 +3985,7 @@
 		)
 		(uuid "3d8998ba-57f2-44d1-a48b-1ac6d773b802")
 	)
-	(label "AUDIO_OUT_1"
+	(label "AUDIO_OUT"
 		(at 245.11 58.42 180)
 		(effects
 			(font
@@ -4101,16 +4035,6 @@
 		)
 		(uuid "5cd10353-35e2-41c5-99ab-7295e087f92e")
 	)
-	(label "AUDIO_OUT_2"
-		(at 168.91 163.83 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "690999f7-4698-486b-9db8-ed230c2a486a")
-	)
 	(label "D3"
 		(at 262.89 68.58 0)
 		(effects
@@ -4131,8 +4055,8 @@
 		)
 		(uuid "770ef9df-0d79-475f-a9a1-098cfdfab93d")
 	)
-	(label "AUDIO_OUT_1"
-		(at 168.91 152.4 0)
+	(label "AUDIO_OUT"
+		(at 177.8 158.75 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -4161,7 +4085,7 @@
 		)
 		(uuid "9470bd54-48f4-438b-9dd0-4542d8c1c10c")
 	)
-	(label "AUDIO_OUT_2"
+	(label "AUDIO_OUT"
 		(at 364.49 63.5 180)
 		(effects
 			(font
@@ -4274,7 +4198,7 @@
 		(uuid "11c93d6a-54ba-495a-a530-c69f7cfcdc1d")
 	)
 	(hierarchical_label "~{WAIT}"
-		(shape output)
+		(shape tri_state)
 		(at 198.12 66.04 0)
 		(effects
 			(font
@@ -4362,7 +4286,7 @@
 		(uuid "e06b3463-8925-4f14-9fa5-af9c6d46eccd")
 	)
 	(hierarchical_label "~{WAIT}"
-		(shape output)
+		(shape tri_state)
 		(at 317.5 71.12 0)
 		(effects
 			(font
@@ -4656,7 +4580,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "AudioJack3"
+		(property "Value" "STX-3120-3B"
 			(at 298.45 170.8149 0)
 			(effects
 				(font
@@ -4665,7 +4589,7 @@
 				(justify right)
 			)
 		)
-		(property "Footprint" "Connector_Audio:Jack_3.5mm_CUI_SJ1-3523N_Horizontal"
+		(property "Footprint" "Footprints:KYCON_STX-3120-3B"
 			(at 290.83 170.18 0)
 			(effects
 				(font
