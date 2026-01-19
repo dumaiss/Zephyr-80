@@ -186,7 +186,7 @@ SWITCH_TO_BANK1:
 |**$20 - $3F**|R/W|**SD Card / User Port** (SIO1)|
 |**$40 - $5F**|R/W|**CTC** (Counter/Timer)|
 |**$60 - $7F**|R/W|**Cartridge I/O Expansion**|
-|**$80 - $9F**|-|_Reserved / Unused_|
+|**$80 - $9F**|-|Unused|
 |**$A0 - $BF**|R/W|**Video VDP** (TMS9928)|
 |**$C0 - $DF**|R/W|**USB / Console / GPIO** (SIO0)|
 |**$E0 - $FF**|R|**USB / Console / GPIO** (Mirror for Controller Reads)|
@@ -338,6 +338,7 @@ Block_00 = !A7 & !A6 & !A5; /* $00-$1F */
 Block_20 = !A7 & !A6 &  A5; /* $20-$3F */
 Block_40 = !A7 &  A6 & !A5; /* $40-$5F */
 Block_60 = !A7 &  A6 &  A5; /* $60-$7F */
+Block_80 =  A7 & !A6 & !A5; /* $80-$7F */
 Block_A0 =  A7 & !A6 &  A5; /* $A0-$BF */
 Block_C0 =  A7 &  A6 & !A5; /* $C0-$DF */
 Block_E0 =  A7 &  A6 &  A5; /* $E0-$FF */
