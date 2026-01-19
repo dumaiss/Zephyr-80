@@ -182,7 +182,7 @@ SWITCH_TO_BANK1:
 
 |**Port Range**|**R/W**|**Function**|
 |---|---|---|
-|**$00 - $1F**|W|**Memory Banking Latch** (See Section 2)|
+|**$00 - $1F**|R/W|**Memory Banking Latch** (See Section 2)|
 |**$20 - $3F**|R/W|**SD Card / User Port** (SIO1)|
 |**$40 - $5F**|R/W|**CTC** (Counter/Timer)|
 |**$60 - $7F**|R/W|**Cartridge I/O Expansion**|
