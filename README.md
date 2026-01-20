@@ -1,4 +1,6 @@
-# Z80 HomeBrew Single-Board Computer
+# Zephyr-80 Single-Board Computer
+
+Retro Soul, Modern Flow -- The Zephyr-80 Way!
 
 A compact Z80-based single-board homebrew computer designed to run CP/M and provide classic retro I/O and expansion.
 

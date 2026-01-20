@@ -6541,7 +6541,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Connector_PCBEdge:BUS_PCI_Express_Mini"
+		(property "Footprint" "Connector_PCBEdge:BUS_PCI_Express_Mini_Full"
 			(at 102.108 199.39 0)
 			(effects
 				(font
@@ -7533,7 +7533,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Connector_PCBEdge:BUS_PCI_Express_Mini"
+		(property "Footprint" "Connector_PCBEdge:BUS_PCI_Express_Mini_Full"
 			(at 230.378 29.21 0)
 			(effects
 				(font

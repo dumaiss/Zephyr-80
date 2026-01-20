@@ -1326,16 +1326,16 @@
 		(uuid "ae28a8d9-a2f1-460e-b288-582fd1cff09a")
 	)
 	(junction
+		(at 109.22 198.12)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "beb40806-9bf6-4555-800b-c72c11c52415")
+	)
+	(junction
 		(at 50.8 49.53)
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "cf57e016-5a38-4ef7-975b-09ebb54051f1")
-	)
-	(junction
-		(at 109.22 170.18)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "e36954cc-6360-457e-8431-6f257f0c3ea6")
 	)
 	(no_connect
 		(at 129.54 170.18)
@@ -1486,6 +1486,16 @@
 			(type default)
 		)
 		(uuid "47a799f7-eb95-480b-8c1f-8de4b16dba6b")
+	)
+	(wire
+		(pts
+			(xy 109.22 198.12) (xy 109.22 203.2)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "482072f4-445b-40f9-a11e-d052d6b5b834")
 	)
 	(wire
 		(pts
@@ -1776,16 +1786,6 @@
 			(type default)
 		)
 		(uuid "f4206c83-eeb8-4f11-9408-de1ffb44e00b")
-	)
-	(wire
-		(pts
-			(xy 109.22 157.48) (xy 109.22 170.18)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "fa33ec15-c7bc-451b-b21a-0d3f2bde254c")
 	)
 	(label "CLK"
 		(at 115.57 135.89 180)
@@ -2988,17 +2988,17 @@
 		)
 	)
 	(symbol
-		(lib_id "power:+3.3V")
-		(at 109.22 157.48 0)
+		(lib_id "power:GND")
+		(at 109.22 203.2 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
 		(fields_autoplaced yes)
-		(uuid "c005f830-d218-49f8-b8f6-f8175395ab65")
+		(uuid "c51b4d39-863b-40e0-a963-3e6defc7a5e7")
 		(property "Reference" "#PWR052"
-			(at 109.22 161.29 0)
+			(at 109.22 209.55 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3006,8 +3006,8 @@
 				(hide yes)
 			)
 		)
-		(property "Value" "+3.3V"
-			(at 109.22 152.4 0)
+		(property "Value" "GND"
+			(at 109.22 208.28 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3015,7 +3015,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 109.22 157.48 0)
+			(at 109.22 203.2 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3024,7 +3024,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 109.22 157.48 0)
+			(at 109.22 203.2 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3032,8 +3032,8 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "Power symbol creates a global label with name \"+3.3V\""
-			(at 109.22 157.48 0)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 109.22 203.2 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3042,7 +3042,7 @@
 			)
 		)
 		(pin "1"
-			(uuid "6ddbdb9e-b7f5-4567-9122-bb2a61ee3a8b")
+			(uuid "51ad6c2d-6d3c-465e-ba61-90cbecf3f44c")
 		)
 		(instances
 			(project "Z80HomeBrew"

@@ -329,6 +329,206 @@
 			)
 			(embedded_fonts no)
 		)
+		(symbol "Connector_Generic:Conn_01x04"
+			(pin_names
+				(offset 1.016)
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "J"
+				(at 0 5.08 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Value" "Conn_01x04"
+				(at 0 -7.62 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Footprint" ""
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" "~"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" "Generic connector, single row, 01x04, script generated (kicad-library-utils/schlib/autogen/connector/)"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_keywords" "connector"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_fp_filters" "Connector*:*_1x??_*"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "Conn_01x04_1_1"
+				(rectangle
+					(start -1.27 3.81)
+					(end 1.27 -6.35)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type background)
+					)
+				)
+				(rectangle
+					(start -1.27 2.667)
+					(end 0 2.413)
+					(stroke
+						(width 0.1524)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(rectangle
+					(start -1.27 0.127)
+					(end 0 -0.127)
+					(stroke
+						(width 0.1524)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(rectangle
+					(start -1.27 -2.413)
+					(end 0 -2.667)
+					(stroke
+						(width 0.1524)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(rectangle
+					(start -1.27 -4.953)
+					(end 0 -5.207)
+					(stroke
+						(width 0.1524)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(pin passive line
+					(at -5.08 2.54 0)
+					(length 3.81)
+					(name "Pin_1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at -5.08 0 0)
+					(length 3.81)
+					(name "Pin_2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at -5.08 -2.54 0)
+					(length 3.81)
+					(name "Pin_3"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "3"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at -5.08 -5.08 0)
+					(length 3.81)
+					(name "Pin_4"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "4"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
 		(symbol "Device:C"
 			(pin_numbers
 				(hide yes)
@@ -1314,9 +1514,19 @@
 			(embedded_fonts no)
 		)
 	)
+	(text "Alternative header\nfor USB Console"
+		(exclude_from_sim no)
+		(at 70.866 46.228 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+		(uuid "14911f9c-9b97-44d3-a78b-b0fe4bc4ce54")
+	)
 	(text "Configure the FT230 so that \nCBUS0 (PWREN#) is asserted \n(low) to signal that a terminal\nis connected (DTR)"
 		(exclude_from_sim no)
-		(at 173.482 75.438 0)
+		(at 185.42 75.184 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -1336,6 +1546,12 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "1e75f699-2c13-4717-984a-e34c77d4fac5")
+	)
+	(junction
+		(at 71.12 63.5)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "312a9221-100f-4570-84a7-321dde3caf02")
 	)
 	(junction
 		(at 101.6 68.58)
@@ -1378,10 +1594,6 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "fe11f3a4-b380-453f-839f-3d35a01f6fda")
-	)
-	(no_connect
-		(at 171.45 72.39)
-		(uuid "25657d76-01aa-4a4f-a225-2882801a37fe")
 	)
 	(no_connect
 		(at 171.45 77.47)
@@ -1473,7 +1685,7 @@
 	)
 	(wire
 		(pts
-			(xy 71.12 60.96) (xy 71.12 74.93)
+			(xy 71.12 60.96) (xy 71.12 63.5)
 		)
 		(stroke
 			(width 0)
@@ -1523,13 +1735,13 @@
 	)
 	(wire
 		(pts
-			(xy 137.16 111.76) (xy 148.59 111.76)
+			(xy 83.82 39.37) (xy 83.82 49.53)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
-		(uuid "36f42b4b-c539-4ce8-b543-e9bcee3ec5d3")
+		(uuid "32e95abb-830d-4eff-8760-6ac4fe5afcb4")
 	)
 	(wire
 		(pts
@@ -1553,16 +1765,6 @@
 	)
 	(wire
 		(pts
-			(xy 137.16 121.92) (xy 137.16 124.46)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "42e906db-a2c5-4c66-b2bf-2473d71635dd")
-	)
-	(wire
-		(pts
 			(xy 95.25 87.63) (xy 95.25 104.14)
 		)
 		(stroke
@@ -1580,6 +1782,16 @@
 			(type default)
 		)
 		(uuid "4b8e2b06-5e0b-4eeb-b3aa-b982d7e9f861")
+	)
+	(wire
+		(pts
+			(xy 74.93 39.37) (xy 83.82 39.37)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "59c8a4fe-989f-47f1-819f-8e75b3a5a734")
 	)
 	(wire
 		(pts
@@ -1623,6 +1835,26 @@
 	)
 	(wire
 		(pts
+			(xy 74.93 36.83) (xy 78.74 36.83)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7328c0aa-42a1-411e-8d04-0dc49468db9b")
+	)
+	(wire
+		(pts
+			(xy 85.09 34.29) (xy 74.93 34.29)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "73992638-53d7-45f6-94a0-ec484888a57a")
+	)
+	(wire
+		(pts
 			(xy 148.59 124.46) (xy 160.02 124.46)
 		)
 		(stroke
@@ -1653,13 +1885,13 @@
 	)
 	(wire
 		(pts
-			(xy 137.16 114.3) (xy 137.16 111.76)
+			(xy 71.12 63.5) (xy 82.55 63.5)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
-		(uuid "805af7d9-6a03-4e6f-ab33-313394ebb498")
+		(uuid "8c06ef8d-0d9a-49be-9f1f-5db0870b889c")
 	)
 	(wire
 		(pts
@@ -1710,6 +1942,16 @@
 			(type default)
 		)
 		(uuid "9afe5d70-809d-4f88-b379-c5cb80073adf")
+	)
+	(wire
+		(pts
+			(xy 80.01 41.91) (xy 74.93 41.91)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "a11f2158-d831-4718-b9d9-037e707d9b7b")
 	)
 	(wire
 		(pts
@@ -1843,13 +2085,13 @@
 	)
 	(wire
 		(pts
-			(xy 137.16 124.46) (xy 148.59 124.46)
+			(xy 171.45 72.39) (xy 185.42 72.39)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
-		(uuid "d0c85bb4-5f9c-4a87-b1ca-348e75b701b4")
+		(uuid "cd539dc3-5d04-405e-b24a-890a2d5c4836")
 	)
 	(wire
 		(pts
@@ -1953,6 +2195,16 @@
 	)
 	(wire
 		(pts
+			(xy 71.12 63.5) (xy 71.12 74.93)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "edef778b-e39e-4b7e-9d6f-8fae19e7f483")
+	)
+	(wire
+		(pts
 			(xy 158.75 34.29) (xy 158.75 52.07)
 		)
 		(stroke
@@ -1981,6 +2233,26 @@
 		)
 		(uuid "f70c29e9-f11f-4bb5-881e-f0494b94ddb8")
 	)
+	(label "DP1"
+		(at 80.01 41.91 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "0b6ead32-6bca-44b7-8f4a-442d53211a99")
+	)
+	(label "VBUS_SENSE"
+		(at 185.42 72.39 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "129704cc-78d2-4cc6-9479-3d88dc335d3e")
+	)
 	(label "VBUS_SENSE"
 		(at 83.82 85.09 180)
 		(effects
@@ -1990,6 +2262,56 @@
 			(justify right bottom)
 		)
 		(uuid "5bb3209e-13d4-4969-9848-ea21adcef139")
+	)
+	(label "VBUS_PIN1"
+		(at 85.09 34.29 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "60c13d1b-6150-4f96-8d33-96fc0734e0c3")
+	)
+	(label "DM1"
+		(at 68.58 68.58 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "89f283a6-757b-4df9-a92a-0eca9962f2d6")
+	)
+	(label "DM1"
+		(at 78.74 36.83 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "8fa3696e-0ed3-4751-b028-9adc9324dfd4")
+	)
+	(label "DP1"
+		(at 68.58 66.04 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "c6e2bc9c-d9f2-48c5-b71e-84d9331e84e3")
+	)
+	(label "VBUS_PIN1"
+		(at 82.55 63.5 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "ec8cf0f3-cb43-4d88-8856-22237d5bf3a0")
 	)
 	(hierarchical_label "CONSOLE_RTS"
 		(shape output)
@@ -2393,6 +2715,83 @@
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/685e3ad0-b668-4082-bf36-08a728699034"
 					(reference "J3")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Connector_Generic:Conn_01x04")
+		(at 69.85 36.83 0)
+		(mirror y)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "39b0517e-a0dd-4bdf-9618-21c2619f5378")
+		(property "Reference" "J16"
+			(at 67.31 36.8299 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "Conn_01x04"
+			(at 67.31 39.3699 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Connector_PinSocket_2.54mm:PinSocket_1x04_P2.54mm_Vertical"
+			(at 69.85 36.83 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 69.85 36.83 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Generic connector, single row, 01x04, script generated (kicad-library-utils/schlib/autogen/connector/)"
+			(at 69.85 36.83 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "91ce5e63-9fcd-44fb-a2fe-93dce4ce7c6d")
+		)
+		(pin "4"
+			(uuid "d7465a4d-81d6-4540-a7a5-e96b7df5b7ef")
+		)
+		(pin "3"
+			(uuid "de404f94-b7c6-4b2c-bd17-806eeaa89703")
+		)
+		(pin "1"
+			(uuid "9a32e0cd-b4bc-4231-9e00-1d1970703467")
+		)
+		(instances
+			(project "Z80HomeBrew"
+				(path "/5593e793-d133-45d0-a91e-72805049e474/685e3ad0-b668-4082-bf36-08a728699034"
+					(reference "J16")
 					(unit 1)
 				)
 			)
@@ -2937,76 +3336,6 @@
 		)
 	)
 	(symbol
-		(lib_id "Device:C")
-		(at 137.16 118.11 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "aeea4630-ccb2-483a-a40e-2dec4b2662c7")
-		(property "Reference" "C25"
-			(at 140.97 116.8399 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "100n"
-			(at 140.97 119.3799 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
-			(at 138.1252 121.92 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 137.16 118.11 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Unpolarized capacitor"
-			(at 137.16 118.11 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "c28ead09-c443-4449-b18c-6a5c4c1b3172")
-		)
-		(pin "2"
-			(uuid "d9c2ab38-b204-47b4-8ec9-add08eea3212")
-		)
-		(instances
-			(project "Z80HomeBrew"
-				(path "/5593e793-d133-45d0-a91e-72805049e474/685e3ad0-b668-4082-bf36-08a728699034"
-					(reference "C25")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "Device:R")
 		(at 71.12 78.74 0)
 		(unit 1)
@@ -3413,6 +3742,72 @@
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/685e3ad0-b668-4082-bf36-08a728699034"
 					(reference "#PWR056")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:GND")
+		(at 83.82 49.53 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "e0f4438a-d74d-4b0f-8cdb-e5153ec005d0")
+		(property "Reference" "#PWR0147"
+			(at 83.82 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Value" "GND"
+			(at 83.82 54.61 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 83.82 49.53 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" ""
+			(at 83.82 49.53 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 83.82 49.53 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "8af3c0b4-bea7-49e3-b8f6-ef41a98c0cf5")
+		)
+		(instances
+			(project "Z80HomeBrew"
+				(path "/5593e793-d133-45d0-a91e-72805049e474/685e3ad0-b668-4082-bf36-08a728699034"
+					(reference "#PWR0147")
 					(unit 1)
 				)
 			)
