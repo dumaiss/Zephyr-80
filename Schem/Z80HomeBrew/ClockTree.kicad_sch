@@ -1181,7 +1181,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "0943bff6-c831-4fc4-a035-b54dbafc9450")
-		(property "Reference" "#PWR024"
+		(property "Reference" "#PWR033"
 			(at 137.16 34.29 0)
 			(effects
 				(font
@@ -1231,7 +1231,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/4d58af3c-6e53-412a-aa45-ebff8f550c35"
-					(reference "#PWR024")
+					(reference "#PWR033")
 					(unit 1)
 				)
 			)
@@ -1321,6 +1321,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 77.47 50.8 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 77.47 50.8 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "ECS-2100AX-147.4"
+			(at 77.47 50.8 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "5"
 			(uuid "ec040183-7ce2-43d9-9553-3a596110d8f7")
 		)
@@ -1349,7 +1376,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "8c3d446f-0e03-4c4b-8f44-cb5807d96d4f")
-		(property "Reference" "#PWR027"
+		(property "Reference" "#PWR036"
 			(at 101.6 90.17 0)
 			(effects
 				(font
@@ -1399,7 +1426,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/4d58af3c-6e53-412a-aa45-ebff8f550c35"
-					(reference "#PWR027")
+					(reference "#PWR036")
 					(unit 1)
 				)
 			)
@@ -1415,7 +1442,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "975bd651-2e71-4e15-ae91-60429687ec44")
-		(property "Reference" "#PWR023"
+		(property "Reference" "#PWR032"
 			(at 54.61 34.29 0)
 			(effects
 				(font
@@ -1465,7 +1492,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/4d58af3c-6e53-412a-aa45-ebff8f550c35"
-					(reference "#PWR023")
+					(reference "#PWR032")
 					(unit 1)
 				)
 			)
@@ -1481,7 +1508,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "978f6d23-fe48-4f8d-a71e-1e9c9a355576")
-		(property "Reference" "#PWR025"
+		(property "Reference" "#PWR034"
 			(at 180.34 52.07 0)
 			(effects
 				(font
@@ -1531,7 +1558,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/4d58af3c-6e53-412a-aa45-ebff8f550c35"
-					(reference "#PWR025")
+					(reference "#PWR034")
 					(unit 1)
 				)
 			)
@@ -1547,7 +1574,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "98acb9d4-016c-41e1-a303-c25fedf4b8ee")
-		(property "Reference" "#PWR026"
+		(property "Reference" "#PWR035"
 			(at 180.34 71.12 0)
 			(effects
 				(font
@@ -1597,7 +1624,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/4d58af3c-6e53-412a-aa45-ebff8f550c35"
-					(reference "#PWR026")
+					(reference "#PWR035")
 					(unit 1)
 				)
 			)
@@ -1613,7 +1640,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a584ab16-7793-47e6-9ce2-40777b714a48")
-		(property "Reference" "#PWR028"
+		(property "Reference" "#PWR037"
 			(at 137.16 90.17 0)
 			(effects
 				(font
@@ -1663,7 +1690,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/4d58af3c-6e53-412a-aa45-ebff8f550c35"
-					(reference "#PWR028")
+					(reference "#PWR037")
 					(unit 1)
 				)
 			)
@@ -1679,7 +1706,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "bb7b4096-fa42-4ec4-83eb-177d8130f0ac")
-		(property "Reference" "U5"
+		(property "Reference" "U4"
 			(at 139.3033 35.56 0)
 			(effects
 				(font
@@ -1716,6 +1743,33 @@
 			)
 		)
 		(property "Description" "Binary Counter 12 stages (Asynchronous)"
+			(at 137.16 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 137.16 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 137.16 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74HC4040DR"
 			(at 137.16 55.88 0)
 			(effects
 				(font
@@ -1775,7 +1829,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/4d58af3c-6e53-412a-aa45-ebff8f550c35"
-					(reference "U5")
+					(reference "U4")
 					(unit 1)
 				)
 			)
@@ -1791,7 +1845,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "ead1ce29-99f5-43b6-8e69-f9d3050aaeaa")
-		(property "Reference" "C13"
+		(property "Reference" "C12"
 			(at 184.15 54.6099 0)
 			(effects
 				(font
@@ -1836,6 +1890,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 180.34 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 180.34 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
+			(at 180.34 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "b341ee1d-5d6b-4e1c-adf9-a15ccf455f81")
 		)
@@ -1845,7 +1926,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/4d58af3c-6e53-412a-aa45-ebff8f550c35"
-					(reference "C13")
+					(reference "C12")
 					(unit 1)
 				)
 			)

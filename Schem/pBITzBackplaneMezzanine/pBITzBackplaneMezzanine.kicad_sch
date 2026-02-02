@@ -1,0 +1,538 @@
+(kicad_sch
+	(version 20250114)
+	(generator "eeschema")
+	(generator_version "9.0")
+	(uuid "d6d8aa35-1d9d-4c27-8a6c-fa24f1b19dce")
+	(paper "D")
+	(lib_symbols)
+	(junction
+		(at 142.24 74.93)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "348b7085-6937-4d2a-914b-129a640380b0")
+	)
+	(junction
+		(at 137.16 106.68)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "8d77c29d-d043-4d7b-8887-8a674f2c0de5")
+	)
+	(junction
+		(at 139.7 104.14)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "ad98a533-f1eb-4c82-8ffd-fcd51aca118a")
+	)
+	(wire
+		(pts
+			(xy 167.64 106.68) (xy 167.64 93.98)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "06209776-214d-4523-b594-348fd172c2f6")
+	)
+	(wire
+		(pts
+			(xy 165.1 104.14) (xy 165.1 93.98)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "20675db3-fba3-4a4a-af7b-5c6c799b5ea9")
+	)
+	(wire
+		(pts
+			(xy 147.32 64.77) (xy 147.32 123.19)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "23413896-617c-4c8d-a990-b4fa75e23d0f")
+	)
+	(wire
+		(pts
+			(xy 142.24 123.19) (xy 142.24 74.93)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "25b31835-bf41-49d1-be23-9a15903f7cde")
+	)
+	(wire
+		(pts
+			(xy 144.78 78.74) (xy 129.54 78.74)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2669fdad-6214-4e6a-abcb-676eae397779")
+	)
+	(wire
+		(pts
+			(xy 142.24 74.93) (xy 158.75 74.93)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2d2de703-53b1-45cb-881d-f19db460ca65")
+	)
+	(wire
+		(pts
+			(xy 149.86 123.19) (xy 149.86 78.74)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "350b5992-18d1-4b81-a773-69cc3efd1daf")
+	)
+	(wire
+		(pts
+			(xy 119.38 106.68) (xy 137.16 106.68)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "4cbbc274-29e8-4b5e-8b95-e6a5625581af")
+	)
+	(wire
+		(pts
+			(xy 121.92 104.14) (xy 121.92 97.79)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "6a79e19d-c4a1-4168-856b-033eef7b8ce5")
+	)
+	(wire
+		(pts
+			(xy 152.4 123.19) (xy 152.4 64.77)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "6c1ba381-f0d0-4846-a323-df6fee41c0be")
+	)
+	(wire
+		(pts
+			(xy 119.38 106.68) (xy 119.38 97.79)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "77bcdcfe-569b-4f79-8783-cf35a89c910b")
+	)
+	(wire
+		(pts
+			(xy 129.54 74.93) (xy 142.24 74.93)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "857eb3f9-59d6-4a5a-a3f1-bbb20ca7a4c6")
+	)
+	(wire
+		(pts
+			(xy 137.16 123.19) (xy 137.16 106.68)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "962f7b63-7078-407e-b5dc-5134d74872e4")
+	)
+	(wire
+		(pts
+			(xy 139.7 123.19) (xy 139.7 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "a4451ea4-3e4f-4f29-814a-dfa1aee6c224")
+	)
+	(wire
+		(pts
+			(xy 144.78 123.19) (xy 144.78 78.74)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b29d0612-b2d3-433f-954b-7012ae7c25b2")
+	)
+	(wire
+		(pts
+			(xy 129.54 64.77) (xy 147.32 64.77)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b492b970-eacf-484e-8296-243e2cb53da5")
+	)
+	(wire
+		(pts
+			(xy 139.7 104.14) (xy 165.1 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d5438d15-aa30-4edc-aac4-72226d1f386e")
+	)
+	(wire
+		(pts
+			(xy 149.86 78.74) (xy 158.75 78.74)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ed2d1554-0754-4e14-a7f4-0e74d5dd4cd7")
+	)
+	(wire
+		(pts
+			(xy 137.16 106.68) (xy 167.64 106.68)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ef3224d8-5dc0-4edb-be0e-61f16039841b")
+	)
+	(wire
+		(pts
+			(xy 139.7 104.14) (xy 121.92 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f43b1dc0-bacf-4563-8e06-aa9ebfb1e3a8")
+	)
+	(wire
+		(pts
+			(xy 152.4 64.77) (xy 158.75 64.77)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f4515509-19fd-4840-b079-e7625d37ed80")
+	)
+	(sheet
+		(at 80.01 49.53)
+		(size 49.53 48.26)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "22d64654-b4b9-4e63-a6ba-cec6f7c48b99")
+		(property "Sheetname" "USBPorts"
+			(at 80.01 48.8184 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "USBPorts.kicad_sch"
+			(at 80.01 98.3746 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(pin "SPI_MOSI" input
+			(at 121.92 97.79 270)
+			(uuid "345ab528-4826-4900-9aca-034a53104fa1")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "USB_INT" output
+			(at 129.54 64.77 0)
+			(uuid "a7178fd2-5861-43a9-a1e6-fb2ac13e78dc")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "SPI_MISO" output
+			(at 119.38 97.79 270)
+			(uuid "8c182dc9-6822-4192-aa40-c6c371f2fdf4")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "SPI_CLK" input
+			(at 129.54 74.93 0)
+			(uuid "f65e5cbb-d5b4-47ca-93d3-3c706daf099a")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "~{USB_CS}" input
+			(at 129.54 78.74 0)
+			(uuid "f158132b-d3cc-42b5-be93-9b9e7c2d7ea3")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(instances
+			(project "pBITzBackplaneMezzanine"
+				(path "/d6d8aa35-1d9d-4c27-8a6c-fa24f1b19dce"
+					(page "2")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 115.57 123.19)
+		(size 67.31 38.1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "50888a69-9ed2-4153-90b2-5bf201cc034f")
+		(property "Sheetname" "MezzanineConnector"
+			(at 115.57 122.4784 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "MezzanineConnector.kicad_sch"
+			(at 115.57 161.8746 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(pin "MISO" input
+			(at 137.16 123.19 90)
+			(uuid "c3eb9475-304e-49db-b6e8-c78013931e2e")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "~{SPI_INT}" input
+			(at 147.32 123.19 90)
+			(uuid "d7e0d7c3-f42e-4843-8e22-111043f793fa")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "SPI_CD" output
+			(at 152.4 123.19 90)
+			(uuid "0155e75f-574e-4986-8a03-bfc3b25e2864")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "~{USB_CS}" output
+			(at 144.78 123.19 90)
+			(uuid "3b6e72ad-d19a-493f-93c0-6ee16829df54")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "~{SD_CS}" output
+			(at 149.86 123.19 90)
+			(uuid "87ca4022-5aaa-4d4d-80d8-7de7e6da0260")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "MOSI" output
+			(at 139.7 123.19 90)
+			(uuid "6096dbce-0e8b-4a51-a8be-354f3a9e806a")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "SPI_CLK" output
+			(at 142.24 123.19 90)
+			(uuid "9a02da12-00ee-4f1e-8d31-b3a6ae550336")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(instances
+			(project "pBITzBackplaneMezzanine"
+				(path "/d6d8aa35-1d9d-4c27-8a6c-fa24f1b19dce"
+					(page "4")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 158.75 50.8)
+		(size 52.07 43.18)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "69b53c94-5f6b-4388-8faf-39be6ea6cb21")
+		(property "Sheetname" "SD_Card"
+			(at 158.75 50.0884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "SD_Card.kicad_sch"
+			(at 158.75 94.5646 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(pin "SPI_MISO" output
+			(at 167.64 93.98 270)
+			(uuid "32e24d2b-5e88-4915-97b3-6c2903a29ea2")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "SPI_CLK" input
+			(at 158.75 74.93 180)
+			(uuid "102f3347-1d7d-455d-bd6b-eae9363dffa5")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "SD_PRESENT" output
+			(at 158.75 64.77 180)
+			(uuid "7970dc16-c3dd-4893-a64b-b3262f064183")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "SPI_MOSI" input
+			(at 165.1 93.98 270)
+			(uuid "2aa7a309-3ab6-4116-88a3-307b8d837336")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "~{SD_CS}" input
+			(at 158.75 78.74 180)
+			(uuid "4bbb4f04-abde-4f72-85c1-e86e4b137352")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(instances
+			(project "pBITzBackplaneMezzanine"
+				(path "/d6d8aa35-1d9d-4c27-8a6c-fa24f1b19dce"
+					(page "3")
+				)
+			)
+		)
+	)
+	(sheet_instances
+		(path "/"
+			(page "1")
+		)
+	)
+	(embedded_fonts no)
+)

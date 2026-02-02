@@ -1,0 +1,8 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "pBITz")(type "KiCad")(uri "${PBITZ_ROOT}/99-KiCad-Lib/Symbols/pBITz.kicad_sym")(options "")(descr ""))
+  (lib (name "MAX3421EETJ_T")(type "KiCad")(uri "${PBITZ_ROOT}/99-KiCad-Lib/Symbols/MAX3421EETJ_T.kicad_sym")(options "")(descr ""))
+  (lib (name "2026-01-31_22-05-17")(type "KiCad")(uri "${PBITZ_ROOT}/99-KiCad-Lib/Symbols/2026-01-31_22-05-17.kicad_sym")(options "")(descr ""))
+  (lib (name "Z80HomeBrew")(type "KiCad")(uri "${PBITZ_ROOT}/99-KiCad-Lib/Symbols/Z80HomeBrew.kicad_sym")(options "")(descr ""))
+  (lib (name "10067847-001RLF")(type "KiCad")(uri "${PBITZ_ROOT}/99-KiCad-Lib/Symbols/10067847-001RLF.kicad_sym")(options "")(descr ""))
+)

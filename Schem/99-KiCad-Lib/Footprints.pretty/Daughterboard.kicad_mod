@@ -1,0 +1,147 @@
+(footprint "Daughterboard"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(property "Reference" "REF**"
+		(at 0 -0.5 0)
+		(unlocked yes)
+		(layer "F.SilkS")
+		(hide yes)
+		(uuid "2e128379-ec80-41b9-9f8d-9843c0ae202b")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.1)
+			)
+		)
+	)
+	(property "Value" "Daughterboard"
+		(at 0 1 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "e9c16e84-a225-4aaa-a3e7-14d778e6bc85")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "dcfdccfc-441f-4978-b9b3-9730916e008c")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "bf31a51f-543c-43f1-b70c-e40b8ff95cf5")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_circle
+		(center 26.614 35.227)
+		(end 26.5 35)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "6a3ed79a-a756-4c19-898a-d9008feaf5a0")
+	)
+	(fp_circle
+		(center 70.636 35.227)
+		(end 70.5 35)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "71702399-5e31-454a-ac26-a6f2d1162a8d")
+	)
+	(fp_rect
+		(start -67.5 24)
+		(end 71.5 154)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "Edge.Cuts")
+		(uuid "96ecc35a-79c5-4d03-9f75-dc497c835bd3")
+	)
+	(fp_text user "Connector 2 pin 1"
+		(at 12 35 0)
+		(unlocked yes)
+		(layer "F.SilkS")
+		(uuid "b62b8bd3-cf6b-477a-bf6b-f11709c22dd1")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.1)
+			)
+			(justify left bottom)
+		)
+	)
+	(fp_text user "Connector 1 pin 1"
+		(at 55 35.227 0)
+		(unlocked yes)
+		(layer "F.SilkS")
+		(uuid "d9d9b313-f9d5-4931-b6ce-547f05435a01")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.1)
+			)
+			(justify left bottom)
+		)
+	)
+	(pad "" np_thru_hole circle
+		(at -63 28.5)
+		(size 3.2 3.2)
+		(drill 3.2)
+		(layers "*.Cu" "*.Mask")
+		(uuid "63bdf93b-03b9-4bb5-b71d-518bb194d97b")
+	)
+	(pad "" np_thru_hole circle
+		(at -63 149.5)
+		(size 3.2 3.2)
+		(drill 3.2)
+		(layers "*.Cu" "*.Mask")
+		(uuid "cdb21798-b4c8-41ff-b3b2-0827e2c9b53e")
+	)
+	(pad "" np_thru_hole circle
+		(at 67 28.5)
+		(size 3.2 3.2)
+		(drill 3.2)
+		(layers "*.Cu" "*.Mask")
+		(uuid "03367fe2-5c91-42b8-9782-ba2d570656a8")
+	)
+	(pad "" np_thru_hole circle
+		(at 67 149.5)
+		(size 3.2 3.2)
+		(drill 3.2)
+		(layers "*.Cu" "*.Mask")
+		(uuid "77b6cbb5-53b6-4002-95e2-d3dab8a87fcb")
+	)
+	(embedded_fonts no)
+)

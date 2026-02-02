@@ -2500,9 +2500,9 @@
 		)
 		(uuid "5bb26c4f-0036-42b0-b015-3d68cc4f7089")
 	)
-	(text "Noise Suppression\nCeramic"
+	(text "Noise Suppression"
 		(exclude_from_sim no)
-		(at 259.08 82.804 0)
+		(at 272.288 81.534 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -2522,7 +2522,7 @@
 	)
 	(text "Bulk Cap\nElectr.\n"
 		(exclude_from_sim no)
-		(at 273.558 83.058 0)
+		(at 258.572 82.55 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -2607,12 +2607,6 @@
 		(uuid "12da8f55-f3e3-490f-8089-4ecee62fcf3f")
 	)
 	(junction
-		(at 158.75 44.45)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "1ab28e56-88e0-4a8b-8bf9-5c33df173918")
-	)
-	(junction
 		(at 85.09 105.41)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -2671,12 +2665,6 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "7a71816a-5303-4b9f-be46-0addd7937f7b")
-	)
-	(junction
-		(at 148.59 67.31)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "909ebace-a523-4389-af65-299b75797d7e")
 	)
 	(junction
 		(at 270.51 71.12)
@@ -2980,16 +2968,6 @@
 	)
 	(wire
 		(pts
-			(xy 158.75 44.45) (xy 158.75 52.07)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "5a3f65bc-1fa3-4e90-b07c-a387ea2597a3")
-	)
-	(wire
-		(pts
 			(xy 167.64 59.69) (xy 167.64 68.58)
 		)
 		(stroke
@@ -3070,16 +3048,6 @@
 	)
 	(wire
 		(pts
-			(xy 158.75 44.45) (xy 167.64 44.45)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "81ab730c-9eab-4239-bec6-9a6477fb6334")
-	)
-	(wire
-		(pts
 			(xy 130.81 88.9) (xy 130.81 83.82)
 		)
 		(stroke
@@ -3087,16 +3055,6 @@
 			(type default)
 		)
 		(uuid "81c24935-bd50-4410-a01a-a6327e104922")
-	)
-	(wire
-		(pts
-			(xy 158.75 59.69) (xy 158.75 67.31)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "8485ed8c-1b3e-4bb6-afe1-0de8b75a59e9")
 	)
 	(wire
 		(pts
@@ -3130,26 +3088,6 @@
 	)
 	(wire
 		(pts
-			(xy 148.59 69.85) (xy 148.59 67.31)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "8ded7b7b-542b-4794-8c21-e587da0f165e")
-	)
-	(wire
-		(pts
-			(xy 158.75 67.31) (xy 148.59 67.31)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "90874e16-4dff-472a-9da7-27ce529460f7")
-	)
-	(wire
-		(pts
 			(xy 135.89 96.52) (xy 135.89 105.41)
 		)
 		(stroke
@@ -3180,17 +3118,7 @@
 	)
 	(wire
 		(pts
-			(xy 270.51 82.55) (xy 270.51 105.41)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "9840f112-63f5-4089-807d-a378e8fbbe83")
-	)
-	(wire
-		(pts
-			(xy 153.67 44.45) (xy 158.75 44.45)
+			(xy 153.67 44.45) (xy 167.64 44.45)
 		)
 		(stroke
 			(width 0)
@@ -3580,7 +3508,17 @@
 	)
 	(wire
 		(pts
-			(xy 148.59 64.77) (xy 148.59 67.31)
+			(xy 270.51 82.55) (xy 270.51 105.41)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f68b692d-9516-4ecc-99d4-095f6dae6771")
+	)
+	(wire
+		(pts
+			(xy 148.59 64.77) (xy 148.59 69.85)
 		)
 		(stroke
 			(width 0)
@@ -3722,6 +3660,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 224.79 76.2 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 224.79 76.2 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RMCF0603FT100K"
+			(at 224.79 76.2 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "4b87426b-3748-4ce6-bf26-10468b32c078")
 		)
@@ -3788,6 +3753,33 @@
 		)
 		(property "Description" "Resistor"
 			(at 167.64 55.88 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 167.64 55.88 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 167.64 55.88 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RMCF0603FT100K"
+			(at 167.64 55.88 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3871,6 +3863,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 77.47 71.12 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 77.47 71.12 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "MINISMDC200F-2"
+			(at 77.47 71.12 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "6db221d3-a6a7-4541-8746-ade248cd1adb")
 		)
@@ -3902,7 +3921,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "17d37b4e-cc3b-4a34-b49e-a6d3744e8736")
-		(property "Reference" "C2"
+		(property "Reference" "C1"
 			(at 261.62 76.5809 0)
 			(effects
 				(font
@@ -3920,7 +3939,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:CP_Elec_10x10.5"
+		(property "Footprint" "Capacitor_THT:CP_Radial_D10.0mm_P5.00mm"
 			(at 258.7752 82.55 0)
 			(effects
 				(font
@@ -3947,6 +3966,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 257.81 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 257.81 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "16YXJ1000MT810X16"
+			(at 257.81 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "2b5b4756-2af3-454c-9124-8b47314cc09c")
 		)
@@ -3956,7 +4002,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "C2")
+					(reference "C1")
 					(unit 1)
 				)
 			)
@@ -3978,7 +4024,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "233f726f-5dc3-4084-8bea-09d923937a69")
-		(property "Reference" "#PWR04"
+		(property "Reference" "#PWR010"
 			(at 217.17 71.12 0)
 			(effects
 				(font
@@ -4028,7 +4074,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR04")
+					(reference "#PWR010")
 					(unit 1)
 				)
 			)
@@ -4085,6 +4131,33 @@
 		)
 		(property "Description" "Resistor"
 			(at 217.17 76.2 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 217.17 76.2 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 217.17 76.2 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-0710KL"
+			(at 217.17 76.2 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4168,6 +4241,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 148.59 46.99 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 148.59 46.99 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "AO3401A"
+			(at 148.59 46.99 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "ee186afa-6269-4e85-a047-50287ec188ff")
 		)
@@ -4196,7 +4296,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "2d09309f-8406-4ae2-81e8-ed40f64c6090")
-		(property "Reference" "#PWR07"
+		(property "Reference" "#PWR013"
 			(at 171.45 114.3 0)
 			(effects
 				(font
@@ -4246,7 +4346,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR07")
+					(reference "#PWR013")
 					(unit 1)
 				)
 			)
@@ -4268,7 +4368,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "3e029b40-b809-4202-b8d0-bc142caeb637")
-		(property "Reference" "C4"
+		(property "Reference" "C3"
 			(at 330.2 77.8509 0)
 			(effects
 				(font
@@ -4313,6 +4413,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 326.39 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 326.39 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "T494B226M016AT"
+			(at 326.39 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "612005fc-9805-4cb4-b786-f01868868ade")
 		)
@@ -4322,82 +4449,13 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "C4")
+					(reference "C3")
 					(unit 1)
 				)
 			)
 			(project "Power"
 				(path "/b434dbaa-625e-4b8b-b58d-a44d69f34612"
 					(reference "C3")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:C")
-		(at 158.75 55.88 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(uuid "4a9a1263-420a-4ec1-8634-05e2553d0d1f")
-		(property "Reference" "C1"
-			(at 152.4 54.356 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "10n"
-			(at 152.4 56.896 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
-			(at 159.7152 59.69 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 158.75 55.88 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Unpolarized capacitor X7R/X5R 20V"
-			(at 158.75 55.88 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "971a4bf9-d639-4dfd-801d-f9b72fa593c3")
-		)
-		(pin "2"
-			(uuid "144b9c12-b9d6-4256-aac6-f675325ab4ac")
-		)
-		(instances
-			(project "Z80HomeBrew"
-				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "C1")
 					(unit 1)
 				)
 			)
@@ -4413,7 +4471,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "522b841a-51a8-4b00-992c-8b0cbaa10f9c")
-		(property "Reference" "#PWR02"
+		(property "Reference" "#PWR08"
 			(at 262.89 68.58 0)
 			(effects
 				(font
@@ -4463,89 +4521,13 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR02")
+					(reference "#PWR08")
 					(unit 1)
 				)
 			)
 			(project "Power"
 				(path "/b434dbaa-625e-4b8b-b58d-a44d69f34612"
 					(reference "#PWR01")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:C")
-		(at 270.51 78.74 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "5c3ea328-8fbf-4685-8016-fd20ae29db4a")
-		(property "Reference" "C3"
-			(at 274.32 77.4699 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "10u"
-			(at 274.32 80.0099 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
-			(at 271.4752 82.55 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 270.51 78.74 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Unpolarized capacitor X7R/X5R 20V"
-			(at 270.51 78.74 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "06ae767c-e400-44b1-b03d-2cd0317078d8")
-		)
-		(pin "2"
-			(uuid "c880ecd4-7da9-423d-92b6-28243f4a2e13")
-		)
-		(instances
-			(project ""
-				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "C3")
-					(unit 1)
-				)
-			)
-			(project "Power"
-				(path "/b434dbaa-625e-4b8b-b58d-a44d69f34612"
-					(reference "C2")
 					(unit 1)
 				)
 			)
@@ -4596,6 +4578,33 @@
 			)
 		)
 		(property "Description" "1A Low Dropout regulator, positive, 3.3V fixed output, SOT-223"
+			(at 304.8 71.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 304.8 71.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 304.8 71.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "AMS1117-3.3"
 			(at 304.8 71.12 0)
 			(effects
 				(font
@@ -4680,6 +4689,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 148.59 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 148.59 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RMCF0603FT100K"
+			(at 148.59 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "39e6f7cc-0087-4767-af7c-0c1525af6be5")
 		)
@@ -4705,7 +4741,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "6dfb8d30-672a-4bd1-a5f8-9dff55682131")
-		(property "Reference" "#PWR08"
+		(property "Reference" "#PWR014"
 			(at 85.09 115.57 0)
 			(effects
 				(font
@@ -4755,7 +4791,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR08")
+					(reference "#PWR014")
 					(unit 1)
 				)
 			)
@@ -4777,7 +4813,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "76ccd9c9-125d-43de-8bdc-887a8a623326")
-		(property "Reference" "C7"
+		(property "Reference" "C6"
 			(at 212.09 93.9799 0)
 			(effects
 				(font
@@ -4795,7 +4831,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
 			(at 209.2452 99.06 0)
 			(effects
 				(font
@@ -4822,6 +4858,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 208.28 95.25 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 208.28 95.25 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "CL05B224KO5NNNC"
+			(at 208.28 95.25 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "90aebd69-1d86-4190-81d3-313fa452ec3f")
 		)
@@ -4831,13 +4894,92 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "C7")
+					(reference "C6")
 					(unit 1)
 				)
 			)
 			(project "Power"
 				(path "/b434dbaa-625e-4b8b-b58d-a44d69f34612"
 					(reference "C6")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:C_Polarized")
+		(at 270.51 78.74 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "77ebaab0-2fb7-46bf-b974-7bc711c921f1")
+		(property "Reference" "C2"
+			(at 274.32 76.5809 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "10u"
+			(at 274.32 79.1209 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Capacitor_THT:CP_Radial_D5.0mm_P2.50mm"
+			(at 271.4752 82.55 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 270.51 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Polarized capacitor"
+			(at 270.51 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "ECA-1CM100I"
+			(at 270.51 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "c766b3d6-e772-4577-a8a6-caf2a9394bf1")
+		)
+		(pin "2"
+			(uuid "55d4af94-2270-441d-94f4-4d19883c4957")
+		)
+		(instances
+			(project ""
+				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
+					(reference "C2")
 					(unit 1)
 				)
 			)
@@ -4898,6 +5040,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 85.09 95.25 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 85.09 95.25 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RMCF0603FT1K00"
+			(at 85.09 95.25 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "87f100a3-be43-4682-8cb2-1702fc0cb857")
 		)
@@ -4929,7 +5098,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "86f36e18-961e-4f93-ad29-b73b00ba247e")
-		(property "Reference" "#PWR05"
+		(property "Reference" "#PWR011"
 			(at 224.79 71.12 0)
 			(effects
 				(font
@@ -4979,7 +5148,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR05")
+					(reference "#PWR011")
 					(unit 1)
 				)
 			)
@@ -5036,6 +5205,33 @@
 		)
 		(property "Description" "Resistor"
 			(at 177.8 57.15 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 177.8 57.15 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 177.8 57.15 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RMCF0603FT100K"
+			(at 177.8 57.15 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5128,13 +5324,31 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "ltc2954cts81"
+		(property "MANUFACTURER_PART_NUMBER" " LTC2954CTS8-1#TRMBF "
 			(at 142.24 81.28 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
 				(justify bottom)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 142.24 81.28 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 142.24 81.28 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
 				(hide yes)
 			)
 		)
@@ -5230,6 +5444,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 40.64 73.66 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 40.64 73.66 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "PJ-037A"
+			(at 40.64 73.66 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "42488a1d-799d-470e-86dc-5ad112bf86ee")
 		)
@@ -5305,6 +5546,24 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 130.81 93.98 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 130.81 93.98 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "074d3139-947e-4b39-97fa-c8270c0f522c")
 		)
@@ -5336,7 +5595,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a253454c-97ec-4c9a-9edc-fa753a9d9348")
-		(property "Reference" "C6"
+		(property "Reference" "C5"
 			(at 139.7 91.4399 0)
 			(effects
 				(font
@@ -5354,7 +5613,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
 			(at 136.8552 96.52 0)
 			(effects
 				(font
@@ -5381,6 +5640,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 135.89 92.71 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 135.89 92.71 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C103K4RACTU"
+			(at 135.89 92.71 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "e2309015-d57d-48bd-b3a7-e8a55420fe69")
 		)
@@ -5390,7 +5676,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "C6")
+					(reference "C5")
 					(unit 1)
 				)
 			)
@@ -5451,6 +5737,33 @@
 		)
 		(property "Description" "-4.0A Id, -30V Vds, P-Channel MOSFET, SOT-23"
 			(at 177.8 46.99 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 177.8 46.99 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 177.8 46.99 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "AO3401A"
+			(at 177.8 46.99 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5536,6 +5849,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 85.09 80.01 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 85.09 80.01 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "BZT52C5V6"
+			(at 85.09 80.01 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "4e4bdad4-f70c-41b8-aebc-87dd86e4e41c")
 		)
@@ -5612,6 +5952,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 284.48 91.44 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 284.48 91.44 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603JR-07470RL"
+			(at 284.48 91.44 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "1187da26-5e97-4848-b197-a8fc0190f13a")
 		)
@@ -5643,7 +6010,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "bf17c57d-44c6-467b-9ab7-2cc69af6c0ca")
-		(property "Reference" "#PWR06"
+		(property "Reference" "#PWR012"
 			(at 148.59 76.2 0)
 			(effects
 				(font
@@ -5693,7 +6060,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR06")
+					(reference "#PWR012")
 					(unit 1)
 				)
 			)
@@ -5709,7 +6076,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "c0aa5e35-ae52-4bf0-b574-93b04f943872")
-		(property "Reference" "C5"
+		(property "Reference" "C4"
 			(at 346.71 78.7399 0)
 			(effects
 				(font
@@ -5754,6 +6121,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 342.9 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 342.9 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "0402B104K160CT"
+			(at 342.9 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "53d6c83b-7e21-489d-9574-3b4eb5bc8cb8")
 		)
@@ -5763,7 +6157,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "C5")
+					(reference "C4")
 					(unit 1)
 				)
 			)
@@ -5785,7 +6179,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "cdcbd5a1-0d42-444f-8dd2-21ca1bfecddd")
-		(property "Reference" "#PWR09"
+		(property "Reference" "#PWR015"
 			(at 257.81 118.11 0)
 			(effects
 				(font
@@ -5835,7 +6229,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR09")
+					(reference "#PWR015")
 					(unit 1)
 				)
 			)
@@ -5857,7 +6251,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "d9d2797b-cfff-4d02-9828-cc42c554df13")
-		(property "Reference" "#PWR01"
+		(property "Reference" "#PWR07"
 			(at 205.74 43.18 0)
 			(effects
 				(font
@@ -5907,7 +6301,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR01")
+					(reference "#PWR07")
 					(unit 1)
 				)
 			)
@@ -5929,7 +6323,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "dd25c248-1df6-4bac-8a11-c8ec775b9884")
-		(property "Reference" "#PWR03"
+		(property "Reference" "#PWR09"
 			(at 334.01 68.58 0)
 			(effects
 				(font
@@ -5979,7 +6373,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/3988d86f-c93e-49bc-9714-528a8b658c82"
-					(reference "#PWR03")
+					(reference "#PWR09")
 					(unit 1)
 				)
 			)
@@ -6055,6 +6449,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 284.48 78.74 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 284.48 78.74 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "LTST-C150GKT"
+			(at 284.48 78.74 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "7b5ccd91-fc8a-4acb-bd77-80f79bac61d6")
 		)
@@ -6122,6 +6543,33 @@
 			)
 		)
 		(property "Description" "Silicon controlled rectifier, gate/anode/cathode"
+			(at 99.06 86.36 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 99.06 86.36 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 99.06 86.36 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "MCR08BT1G"
 			(at 99.06 86.36 0)
 			(effects
 				(font

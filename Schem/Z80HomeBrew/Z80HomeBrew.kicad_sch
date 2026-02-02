@@ -1624,7 +1624,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "03b275e9-de69-49a8-883e-d841843c651c")
-		(property "Reference" "#PWR0156"
+		(property "Reference" "#PWR05"
 			(at 34.29 220.98 0)
 			(effects
 				(font
@@ -1674,7 +1674,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474"
-					(reference "#PWR0156")
+					(reference "#PWR05")
 					(unit 1)
 				)
 			)
@@ -1690,7 +1690,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "0f850d6a-5317-48e2-ad0a-c6487ae9ddfa")
-		(property "Reference" "#PWR0155"
+		(property "Reference" "#PWR03"
 			(at 34.29 204.47 0)
 			(effects
 				(font
@@ -1740,7 +1740,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474"
-					(reference "#PWR0155")
+					(reference "#PWR03")
 					(unit 1)
 				)
 			)
@@ -1756,7 +1756,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "2bb5ee8b-3052-4706-9a0d-f08e77bb7fc3")
-		(property "Reference" "H2"
+		(property "Reference" "H3"
 			(at 36.83 189.2299 0)
 			(effects
 				(font
@@ -1801,13 +1801,31 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 34.29 191.77 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 34.29 191.77 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "4d6ec5c9-cc8d-47c0-90d1-2af4eb2fbf72")
 		)
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474"
-					(reference "H2")
+					(reference "H3")
 					(unit 1)
 				)
 			)
@@ -1823,7 +1841,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "681189a7-4939-43f6-b8b7-e928a3afae28")
-		(property "Reference" "#PWR0157"
+		(property "Reference" "#PWR02"
 			(at 58.42 187.96 0)
 			(effects
 				(font
@@ -1873,7 +1891,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474"
-					(reference "#PWR0157")
+					(reference "#PWR02")
 					(unit 1)
 				)
 			)
@@ -1889,7 +1907,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "759f5af2-5c08-4861-97b2-ef0e1700d11b")
-		(property "Reference" "H3"
+		(property "Reference" "H5"
 			(at 36.83 205.7399 0)
 			(effects
 				(font
@@ -1934,13 +1952,31 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 34.29 208.28 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 34.29 208.28 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "c348ff53-1ab7-48de-9c6f-2cc857ece7c7")
 		)
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474"
-					(reference "H3")
+					(reference "H5")
 					(unit 1)
 				)
 			)
@@ -1956,7 +1992,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "822f05cc-f65f-4588-aba1-91fac7163c36")
-		(property "Reference" "#PWR0159"
+		(property "Reference" "#PWR06"
 			(at 58.42 220.98 0)
 			(effects
 				(font
@@ -2006,7 +2042,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474"
-					(reference "#PWR0159")
+					(reference "#PWR06")
 					(unit 1)
 				)
 			)
@@ -2022,7 +2058,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "90fd39ef-d1bd-448a-81d8-0d7542c8cdb8")
-		(property "Reference" "#PWR0158"
+		(property "Reference" "#PWR04"
 			(at 58.42 204.47 0)
 			(effects
 				(font
@@ -2072,7 +2108,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474"
-					(reference "#PWR0158")
+					(reference "#PWR04")
 					(unit 1)
 				)
 			)
@@ -2125,6 +2161,24 @@
 			)
 		)
 		(property "Description" "Mounting Hole with connection"
+			(at 58.42 208.28 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 58.42 208.28 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
 			(at 58.42 208.28 0)
 			(effects
 				(font
@@ -2200,6 +2254,24 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 34.29 175.26 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 34.29 175.26 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "a91f0baa-43b2-4310-83dc-75f2b9fb7b47")
 		)
@@ -2222,7 +2294,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "cc3db1d4-ad4c-4534-a739-8b7918e1ee4b")
-		(property "Reference" "H5"
+		(property "Reference" "H4"
 			(at 60.96 189.2299 0)
 			(effects
 				(font
@@ -2267,13 +2339,31 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 58.42 191.77 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 58.42 191.77 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "94412cfa-4010-4f1d-ab65-763b631cb87c")
 		)
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474"
-					(reference "H5")
+					(reference "H4")
 					(unit 1)
 				)
 			)
@@ -2289,7 +2379,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "e5b69198-16d9-418f-aac7-9c498091309f")
-		(property "Reference" "H4"
+		(property "Reference" "H2"
 			(at 60.96 172.7199 0)
 			(effects
 				(font
@@ -2334,13 +2424,31 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 58.42 175.26 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 58.42 175.26 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "94bef119-ca13-4b8e-8378-c20bf1db8d33")
 		)
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474"
-					(reference "H4")
+					(reference "H2")
 					(unit 1)
 				)
 			)
@@ -2356,7 +2464,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "fa9aea1a-384a-4c7c-ad13-a76a27d10304")
-		(property "Reference" "#PWR0148"
+		(property "Reference" "#PWR01"
 			(at 34.29 187.96 0)
 			(effects
 				(font
@@ -2406,7 +2514,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474"
-					(reference "#PWR0148")
+					(reference "#PWR01")
 					(unit 1)
 				)
 			)

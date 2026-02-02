@@ -8924,7 +8924,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "005332be-88d4-43cd-bea8-f64ef0a3d7af")
-		(property "Reference" "#PWR015"
+		(property "Reference" "#PWR022"
 			(at 76.2 127 0)
 			(effects
 				(font
@@ -8974,7 +8974,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR015")
+					(reference "#PWR022")
 					(unit 1)
 				)
 			)
@@ -9126,6 +9126,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 222.25 177.8 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 222.25 177.8 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "A 40-LC-TT"
+			(at 222.25 177.8 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "1b642918-e1bb-4db7-b4f4-f5691b3c4624")
 		)
@@ -9265,7 +9292,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "07da921e-7bbb-417f-8b13-2beebec0f9b2")
-		(property "Reference" "#PWR014"
+		(property "Reference" "#PWR020"
 			(at 154.94 83.82 0)
 			(effects
 				(font
@@ -9315,7 +9342,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR014")
+					(reference "#PWR020")
 					(unit 1)
 				)
 			)
@@ -9374,6 +9401,24 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 66.04 96.52 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 66.04 96.52 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "69b34bf9-85ad-4018-b5ec-0ab36be4cd23")
 		)
@@ -9408,7 +9453,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "ATmega1284-P"
+		(property "Value" "ATmega1284-PU"
 			(at 107.5533 193.04 0)
 			(effects
 				(font
@@ -9437,6 +9482,33 @@
 			)
 		)
 		(property "Description" "20MHz, 128kB Flash, 16kB SRAM, 4kB EEPROM, JTAG, DIP-40"
+			(at 105.41 139.7 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 105.41 139.7 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 105.41 139.7 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "ATmega1284-PU"
 			(at 105.41 139.7 0)
 			(effects
 				(font
@@ -9584,7 +9656,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "1b505270-b9df-4825-9c98-b6a0062e9967")
-		(property "Reference" "#PWR017"
+		(property "Reference" "#PWR024"
 			(at 295.91 128.27 0)
 			(effects
 				(font
@@ -9634,7 +9706,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR017")
+					(reference "#PWR024")
 					(unit 1)
 				)
 			)
@@ -9785,6 +9857,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 316.23 81.28 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 316.23 81.28 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "110-44-328-41-001000"
+			(at 316.23 81.28 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "8"
 			(uuid "8ffbe444-9656-4556-8a92-08f7e6df57cc")
 		)
@@ -9888,7 +9987,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "299e3192-21ee-4952-9760-3a51cc9ef4ae")
-		(property "Reference" "R36"
+		(property "Reference" "R10"
 			(at 44.45 143.5099 0)
 			(effects
 				(font
@@ -9933,6 +10032,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 41.91 144.78 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 41.91 144.78 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603JR-07470RL"
+			(at 41.91 144.78 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "b090c500-abd1-4a2b-94e6-61f396428e0f")
 		)
@@ -9942,7 +10068,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "R36")
+					(reference "R10")
 					(unit 1)
 				)
 			)
@@ -9958,7 +10084,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "3ab5691a-5d78-4e73-a263-5302cee24140")
-		(property "Reference" "#PWR022"
+		(property "Reference" "#PWR031"
 			(at 245.11 223.52 0)
 			(effects
 				(font
@@ -10008,7 +10134,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR022")
+					(reference "#PWR031")
 					(unit 1)
 				)
 			)
@@ -10024,7 +10150,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "4b1263d3-5ec2-4e8c-a32a-2f251d228063")
-		(property "Reference" "C12"
+		(property "Reference" "C11"
 			(at 96.52 200.6599 0)
 			(effects
 				(font
@@ -10069,6 +10195,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 92.71 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 92.71 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
+			(at 92.71 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "cf2900cb-5f9a-49b7-9e9b-af94900f7bf1")
 		)
@@ -10078,7 +10231,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "C12")
+					(reference "C11")
 					(unit 1)
 				)
 			)
@@ -10094,7 +10247,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "57caebd1-e9b1-4366-88ac-2c0efd5dbd3b")
-		(property "Reference" "#PWR0138"
+		(property "Reference" "#PWR026"
 			(at 41.91 158.75 0)
 			(effects
 				(font
@@ -10144,7 +10297,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR0138")
+					(reference "#PWR026")
 					(unit 1)
 				)
 			)
@@ -10212,6 +10365,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 53.34 135.89 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 53.34 135.89 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "LTST-C150KRKT"
+			(at 53.34 135.89 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "fd52506b-1927-4d9b-969c-c8b0a6a8d4ad")
 		)
@@ -10237,7 +10417,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "622d9666-8a99-4390-9f17-ce6ef22f80a2")
-		(property "Reference" "#PWR010"
+		(property "Reference" "#PWR017"
 			(at 245.11 53.34 0)
 			(effects
 				(font
@@ -10287,7 +10467,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR010")
+					(reference "#PWR017")
 					(unit 1)
 				)
 			)
@@ -10303,7 +10483,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "654ef2cf-5dfb-4c90-af78-9c8a93c1a447")
-		(property "Reference" "#PWR018"
+		(property "Reference" "#PWR025"
 			(at 245.11 139.7 0)
 			(effects
 				(font
@@ -10353,7 +10533,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR018")
+					(reference "#PWR025")
 					(unit 1)
 				)
 			)
@@ -10369,7 +10549,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "65c01cfb-886c-44e8-acf8-e46157fab1c0")
-		(property "Reference" "#PWR020"
+		(property "Reference" "#PWR029"
 			(at 73.66 217.17 0)
 			(effects
 				(font
@@ -10419,7 +10599,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR020")
+					(reference "#PWR029")
 					(unit 1)
 				)
 			)
@@ -10435,7 +10615,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "69f5be36-dccb-4b38-a345-c6a30aed2cc9")
-		(property "Reference" "#PWR019"
+		(property "Reference" "#PWR028"
 			(at 73.66 195.58 0)
 			(effects
 				(font
@@ -10485,7 +10665,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR019")
+					(reference "#PWR028")
 					(unit 1)
 				)
 			)
@@ -10501,7 +10681,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "6df50518-83da-43cc-85db-83f8a0dfc22a")
-		(property "Reference" "#PWR012"
+		(property "Reference" "#PWR018"
 			(at 295.91 53.34 0)
 			(effects
 				(font
@@ -10551,7 +10731,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR012")
+					(reference "#PWR018")
 					(unit 1)
 				)
 			)
@@ -10567,7 +10747,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "724cc7ad-5076-4058-9019-0f9a93d09b4b")
-		(property "Reference" "#PWR021"
+		(property "Reference" "#PWR030"
 			(at 105.41 223.52 0)
 			(effects
 				(font
@@ -10617,7 +10797,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR021")
+					(reference "#PWR030")
 					(unit 1)
 				)
 			)
@@ -10633,7 +10813,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "73553413-44c9-4e2d-8188-0e7a6f5943e0")
-		(property "Reference" "C11"
+		(property "Reference" "C10"
 			(at 83.82 200.6599 0)
 			(effects
 				(font
@@ -10678,6 +10858,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 80.01 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 80.01 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
+			(at 80.01 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "1ab223e8-f489-47b9-947e-2185bcefe448")
 		)
@@ -10687,7 +10894,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "C11")
+					(reference "C10")
 					(unit 1)
 				)
 			)
@@ -10703,7 +10910,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "85dc29cb-34df-48b6-b01d-ecb7e4a83cdc")
-		(property "Reference" "#PWR011"
+		(property "Reference" "#PWR016"
 			(at 342.9 52.07 0)
 			(effects
 				(font
@@ -10753,7 +10960,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR011")
+					(reference "#PWR016")
 					(unit 1)
 				)
 			)
@@ -10901,6 +11108,33 @@
 					(size 1.27 1.27)
 				)
 				(justify bottom)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 222.25 91.44 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 222.25 91.44 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "A 40-LC-TT"
+			(at 222.25 91.44 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
 				(hide yes)
 			)
 		)
@@ -11087,6 +11321,24 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 53.34 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 53.34 167.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "12ea236c-8813-428e-8fb4-210cf0d09bbf")
 		)
@@ -11112,7 +11364,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "91e4e3e6-7c63-452f-8c33-2a50d512898b")
-		(property "Reference" "C8"
+		(property "Reference" "C7"
 			(at 46.99 200.6599 0)
 			(effects
 				(font
@@ -11157,6 +11409,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 43.18 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 43.18 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
+			(at 43.18 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "320695cc-8bdd-41d9-b38f-a7a5c1a0a2f0")
 		)
@@ -11166,7 +11445,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "C8")
+					(reference "C7")
 					(unit 1)
 				)
 			)
@@ -11182,7 +11461,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a2d76192-c6ff-4c0e-a40b-74dede2451aa")
-		(property "Reference" "C9"
+		(property "Reference" "C8"
 			(at 58.42 200.6599 0)
 			(effects
 				(font
@@ -11227,6 +11506,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 54.61 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 54.61 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
+			(at 54.61 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "57702af2-5c3c-43d2-b10e-a974a4e91872")
 		)
@@ -11236,7 +11542,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "C9")
+					(reference "C8")
 					(unit 1)
 				)
 			)
@@ -11252,7 +11558,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a4d0f9bb-e240-4be3-bfcc-c6783e10caf5")
-		(property "Reference" "#PWR016"
+		(property "Reference" "#PWR023"
 			(at 245.11 128.27 0)
 			(effects
 				(font
@@ -11302,7 +11608,7 @@
 		(instances
 			(project ""
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR016")
+					(reference "#PWR023")
 					(unit 1)
 				)
 			)
@@ -11363,6 +11669,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 154.94 87.63 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 154.94 87.63 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-0710KL"
+			(at 154.94 87.63 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "a763114b-8d0e-49d4-8732-27dd4a934799")
 		)
@@ -11388,7 +11721,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "d30b54b5-acda-486c-9647-b5711a37231b")
-		(property "Reference" "C10"
+		(property "Reference" "C9"
 			(at 72.39 200.6599 0)
 			(effects
 				(font
@@ -11433,6 +11766,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 68.58 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 68.58 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
+			(at 68.58 201.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "b1e4a57b-5c24-4542-a4d4-ccbd5228b0c8")
 		)
@@ -11442,7 +11802,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "C10")
+					(reference "C9")
 					(unit 1)
 				)
 			)
@@ -11503,6 +11863,33 @@
 				(hide yes)
 			)
 		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 80.01 87.63 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 80.01 87.63 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-0710KL"
+			(at 80.01 87.63 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "04a5a74d-8ce1-49ce-b702-856b2dc42383")
 		)
@@ -11528,7 +11915,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f2ebe03e-be63-4e5c-9f16-b6030aad4d44")
-		(property "Reference" "#PWR0139"
+		(property "Reference" "#PWR027"
 			(at 41.91 185.42 0)
 			(effects
 				(font
@@ -11578,7 +11965,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR0139")
+					(reference "#PWR027")
 					(unit 1)
 				)
 			)
@@ -11594,7 +11981,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f850d02d-6330-4be3-9fca-ffd6cc519ed8")
-		(property "Reference" "#PWR013"
+		(property "Reference" "#PWR019"
 			(at 106.68 72.39 0)
 			(effects
 				(font
@@ -11644,7 +12031,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR013")
+					(reference "#PWR019")
 					(unit 1)
 				)
 			)
@@ -11660,7 +12047,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f93d5df2-3a49-4086-ab5e-4291bf96bf11")
-		(property "Reference" "#PWR0137"
+		(property "Reference" "#PWR021"
 			(at 50.8 127 0)
 			(effects
 				(font
@@ -11710,7 +12097,7 @@
 		(instances
 			(project "Z80HomeBrew"
 				(path "/5593e793-d133-45d0-a91e-72805049e474/a1a9379e-380a-453b-a773-3c2b5a71d396"
-					(reference "#PWR0137")
+					(reference "#PWR021")
 					(unit 1)
 				)
 			)
