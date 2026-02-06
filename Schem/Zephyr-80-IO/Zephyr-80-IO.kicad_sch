@@ -640,6 +640,16 @@
 	)
 	(wire
 		(pts
+			(xy 276.86 168.91) (xy 292.1 168.91)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "db3be9a1-1490-4e4b-a799-e53f898ce19a")
+	)
+	(wire
+		(pts
 			(xy 383.54 203.2) (xy 383.54 153.67)
 		)
 		(stroke
@@ -657,6 +667,16 @@
 			(type default)
 		)
 		(uuid "de645cdb-2669-4f38-8379-1877cb95e621")
+	)
+	(wire
+		(pts
+			(xy 320.04 196.85) (xy 320.04 224.79)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e31dc0b0-b809-4512-a87d-f4f4f733c751")
 	)
 	(wire
 		(pts
@@ -954,6 +974,16 @@
 				(justify right)
 			)
 		)
+		(pin "~{CE_CTRL}" output
+			(at 276.86 168.91 0)
+			(uuid "becd9f91-82c9-4547-8244-961e818cfcbd")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
 		(instances
 			(project "Zephyr-80-IO"
 				(path "/db33a8e4-587d-4e74-8d3f-b68910957121"
@@ -1006,26 +1036,6 @@
 				(justify right)
 			)
 		)
-		(pin "EXT_UART_RTS" output
-			(at 368.3 149.86 0)
-			(uuid "cc408a88-f812-45f5-a590-7342357a0b9e")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-		(pin "EXT_UART_RX" input
-			(at 368.3 144.78 0)
-			(uuid "f4bdfa7b-e067-4bc3-8ab4-610298c264d0")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
 		(pin "SPI_MISO" input
 			(at 356.87 196.85 270)
 			(uuid "781f92ed-ff6b-421d-9256-c19d3bda67b2")
@@ -1036,29 +1046,9 @@
 				(justify left)
 			)
 		)
-		(pin "EXT_UART_CTS" input
-			(at 368.3 147.32 0)
-			(uuid "ad3e3750-fdd5-4783-a8be-6443005fe241")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
 		(pin "USR_UART_TX" output
 			(at 337.82 130.81 90)
 			(uuid "1cdb0032-68cc-409e-870c-e6abfa816060")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-		(pin "EXT_UART_TX" output
-			(at 368.3 142.24 0)
-			(uuid "bfe5f9ab-b255-494c-80c9-ab09dfbe3319")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1226,16 +1216,6 @@
 				(justify left)
 			)
 		)
-		(pin "EXT_UART_DCD" input
-			(at 368.3 139.7 0)
-			(uuid "b4a99c63-082e-4817-a1b1-6d3fd7f61f10")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
 		(pin "~{POWER_OFF_RQ}" input
 			(at 304.8 196.85 270)
 			(uuid "1c944e57-271f-4eaf-ba26-9cfdfd4d014b")
@@ -1279,16 +1259,6 @@
 		(pin "~{SD_CS}" output
 			(at 292.1 158.75 180)
 			(uuid "8e2b9ad4-86b3-4711-8dd6-de1ecaf175e3")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(pin "USB_INT" input
-			(at 364.49 196.85 270)
-			(uuid "2466731a-6eed-4208-8300-36340713d13a")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1404,6 +1374,86 @@
 					(size 1.27 1.27)
 				)
 				(justify left)
+			)
+		)
+		(pin "CONS_UART_RTS" output
+			(at 368.3 149.86 0)
+			(uuid "ce459c08-d57a-4dd9-8ec3-237d66d6a113")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "CONS_UART_CTS" input
+			(at 368.3 147.32 0)
+			(uuid "1bb2df0c-7029-4160-b0ab-f8fb84ce8b50")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "CONS_UART_TX" output
+			(at 368.3 142.24 0)
+			(uuid "918bcd2f-5a73-450a-a148-2a2662726d20")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "CONS_UART_DCD" input
+			(at 368.3 139.7 0)
+			(uuid "267faaa8-01eb-4d27-ab39-1ecd5c8862d8")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "~{USB_INT}" input
+			(at 364.49 196.85 270)
+			(uuid "1856a8d1-bd0f-40b8-afea-074c9b601ad7")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "~{CE_CTRL}" input
+			(at 292.1 168.91 180)
+			(uuid "33a6aff4-711e-4362-abd9-b1dc8602d42a")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "~{WAIT}" passive
+			(at 320.04 196.85 270)
+			(uuid "3c58714b-acd4-4746-b2ac-7ff9c7feef31")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "CONS_UART_RX" input
+			(at 368.3 144.78 0)
+			(uuid "272a7c07-d183-4850-b924-07311244356a")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
 			)
 		)
 		(instances
@@ -1721,6 +1771,16 @@
 		(pin "IEO" output
 			(at 339.09 224.79 90)
 			(uuid "40d064dc-a164-4ec8-b156-f652a6f6dd90")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "~{WAIT}" passive
+			(at 320.04 224.79 90)
+			(uuid "4dfd1c77-0fb9-4d16-aa01-f74bd9349064")
 			(effects
 				(font
 					(size 1.27 1.27)

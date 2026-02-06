@@ -180,17 +180,26 @@ SWITCH_TO_BANK1:
 
 ## 5. I/O Map
 
-|**Port Range**|**R/W**|**Function**|
-|---|---|---|
-|**$00 - $1F**|R/W|**Memory Banking Latch** (See Section 2)|
-|**$20 - $3F**|R/W|**SD Card / User Port** (SIO1)|
-|**$40 - $5F**|R/W|**CTC** (Counter/Timer)|
-|**$60 - $7F**|R/W|**Cartridge I/O Expansion**|
-|**$80 - $9F**|-|Unused|
-|**$A0 - $BF**|R/W|**Video VDP** (TMS9928)|
-|**$C0 - $DF**|R/W|**USB / Console / GPIO** (SIO0)|
-|**$E0 - $FF**|R|**USB / Console / GPIO** (Mirror for Controller Reads)|
-|**$E0 - $FF**|W|**Sound Generators** (SN76489 x2)|
+| **Port Range** | **R/W** | **Function**                         |
+| -------------- | ------- | ------------------------------------ |
+| $00 - $0F      | R/W     | Memory Banking Latch (See Section 2) |
+| $10 - $1F      | --      | Unused                               |
+| $20 - $2F      | R/W     | Console / User Port (SIO0)           |
+| $30 - $3F      | R/W     | SD Card / USB (SIO1)                 |
+| $40 - $4F      | R/W     | CTC (Counter/Timer)                  |
+| $50 - $5F      | --      | Unused                               |
+| $60 - $6F      | R/W     | Cartridge I/O Expansion              |
+| $70 - $7F      | --      | Unused                               |
+| $80 - $8F      | R/W     | RESERVED (Coleco Compat)             |
+| $90 - $9F      | R/W     | RESERVED (Coleco Compat)             |
+| $A0 - $AF      | R/W     | Video VDP (TMS9928)                  |
+| $B0 - $BF      | R/W     | Video VDP (TMS9928)                  |
+| $C0 - $CF      | R/W     | RESERVED (Coleco Compat)             |
+| $D0 - $DF      | R/W     | RESERVED (Coleco Compat)             |
+| $E0 - $EF      | R       | Controller                           |
+| $E0 - $EF      | W       | Sound Generators (SN76489 x2)        |
+| $F0 - $FF      | R       | Controller                           |
+| $F0 - $FF      | W       | Sound Generators (SN76489 x2)        |
 
 ---
 
@@ -297,18 +306,19 @@ Device   g22v10;
 Pin 1  = A7;
 Pin 2  = A6;
 Pin 3  = A5;
+Pin 4  = A4;
 
 /* Control Signals (Active Low on Bus) */
-Pin 4  = !IORQ;
-Pin 5  = !M1;
-Pin 6  = !RD;
-Pin 7  = !WR;
+Pin 5  = !IORQ;
+Pin 6  = !M1;
+Pin 7  = !RD;
+Pin 8  = !WR;
 
 /* RESET Logic:
    The Z80 /RESET pin is Active Low.
    Pin 8 = !RESET means the variable 'RESET' is TRUE when Pin 8 is LOW.
 */
-Pin 8  = !RESET; 
+Pin 9  = !RESET; 
 
 /* ----------------------------------------------------------- */
 /* Outputs (Active Low Chip Selects) */
@@ -319,12 +329,13 @@ Pin 23 = !CS_MEMBANK_WR; /* Write: Clocks the 74HC273 (Rising Edge) */
 Pin 16 = !CS_MEMBANK_RD; /* Read:  Enables the 74HC244 (Active Low Level) */
 
 /* Peripherals */
-Pin 22 = !CS_SIO1;       /* SD Card / User Port */
+Pin 22 = !CS_SIO1;       /* SD Card / USB Port */
 Pin 21 = !CS_CTC;        /* Counter/Timer */
 Pin 20 = !CS_CART_IO;    /* Cartridge Expansion */
 Pin 19 = !CS_VDP;        /* Video Processor */
-Pin 18 = !CS_SIO0;       /* USB / Console (Read/Write) + Controller Mirror (Read) */
+Pin 18 = !CS_SIO0;       /* User Port / Console */
 Pin 17 = !CS_SOUND;      /* Sound Generators (Write Only) */
+	Pin 15 = !CS_CTRL;       /* Controller (Read Only) */
 
 /* ----------------------------------------------------------- */
 /* Logic Equations */
@@ -334,14 +345,22 @@ Pin 17 = !CS_SOUND;      /* Sound Generators (Write Only) */
 ValidIO = IORQ & !M1 & !RESET;
 
 /* Address Decoding Blocks */
-Block_00 = !A7 & !A6 & !A5; /* $00-$1F */
-Block_20 = !A7 & !A6 &  A5; /* $20-$3F */
-Block_40 = !A7 &  A6 & !A5; /* $40-$5F */
-Block_60 = !A7 &  A6 &  A5; /* $60-$7F */
-Block_80 =  A7 & !A6 & !A5; /* $80-$7F */
-Block_A0 =  A7 & !A6 &  A5; /* $A0-$BF */
-Block_C0 =  A7 &  A6 & !A5; /* $C0-$DF */
-Block_E0 =  A7 &  A6 &  A5; /* $E0-$FF */
+Block_00 = !A7 & !A6 & !A5 & !A4; /* $00-$0F */
+Block_10 = !A7 & !A6 & !A5 & A4;  /* $10-$1F */
+Block_20 = !A7 & !A6 &  A5 & !A4; /* $20-$2F */
+Block_30 = !A7 & !A6 &  A5 & A4;  /* $30-$3F */
+Block_40 = !A7 &  A6 & !A5 & !A4; /* $40-$4F */
+Block_50 = !A7 &  A6 & !A5 & A4;  /* $50-$5F */
+Block_60 = !A7 &  A6 &  A5 & !A4; /* $60-$6F */
+Block_70 = !A7 &  A6 &  A5 & A4;  /* $70-$7F */
+Block_80 =  A7 & !A6 & !A5 & !A4; /* $80-$8F */
+Block_90 =  A7 & !A6 & !A5 & A4;  /* $90-$9F */
+Block_A0 =  A7 & !A6 &  A5 & !A4; /* $A0-$AF */
+Block_B0 =  A7 & !A6 &  A5 & A4;  /* $B0-$BF */
+Block_C0 =  A7 &  A6 & !A5 & !A4; /* $C0-$CF */
+Block_D0 =  A7 &  A6 & !A5 & A4;  /* $D0-$DF */
+Block_E0 =  A7 &  A6 &  A5 & !A4; /* $E0-$EF */
+Block_F0 =  A7 &  A6 &  A5 & A4;  /* $F0-$FF */
 
 
 /* 1. Memory Banking ($00-$1F) */
@@ -353,16 +372,18 @@ CS_MEMBANK_RD = ValidIO & Block_00 & RD;
 
 
 /* 2. Standard Peripherals */
-CS_SIO1       = ValidIO & Block_20;
+CS_SIO0       = ValidIO & Block_20;
+CS_SIO1       = ValidIO & Block_30;
 CS_CTC        = ValidIO & Block_40;
 CS_CART_IO    = ValidIO & Block_60;
 CS_VDP        = ValidIO & Block_A0;
-
-
-/* 3. Shared Block ($E0-$FF) */
-/* CS_SIO0 is selected for $C0-$DF (Always) OR $E0-$FF (Read Only) */
-CS_SIO0       = ValidIO & (Block_C0 # (Block_E0 & RD)); 
+CS_VDP        = ValidIO & Block_B0;
 
 /* CS_SOUND is selected for $E0-$FF (Write Only) */
 CS_SOUND      = ValidIO & Block_E0 & WR;
+CS_SOUND      = ValidIO & Block_F0 & WR;
+
+/* CS_CTRL is selected for $E0-$FF (Read Only) */
+CS_CTRL      = ValidIO & Block_E0 & RD;
+CS_CTRL      = ValidIO & Block_F0 & RD;
 ```

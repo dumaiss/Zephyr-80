@@ -36,4 +36,6 @@
   (lib (name "2026-01-11_09-36-54")(type "KiCad")(uri "${PBITZ_ROOT}/99-KiCad-Lib/Symbols/2026-01-11_09-36-54.kicad_sym")(options "")(descr ""))
   (lib (name "10067847-001RLF")(type "KiCad")(uri "${PBITZ_ROOT}/99-KiCad-Lib/Symbols/10067847-001RLF.kicad_sym")(options "")(descr ""))
   (lib (name "10018783-10202TLF")(type "KiCad")(uri "${PBITZ_ROOT}/99-KiCad-Lib/Symbols/10018783-10202TLF.kicad_sym")(options "")(descr ""))
+  (lib (name "L77HDA26SD1CH4F")(type "KiCad")(uri "${PBITZ_ROOT}/99-KiCad-Lib/Symbols/L77HDA26SD1CH4F.kicad_sym")(options "")(descr ""))
+  (lib (name "2026-02-03_20-00-14")(type "KiCad")(uri "${PBITZ_ROOT}/99-KiCad-Lib/Symbols/2026-02-03_20-00-14.kicad_sym")(options "")(descr ""))
 )

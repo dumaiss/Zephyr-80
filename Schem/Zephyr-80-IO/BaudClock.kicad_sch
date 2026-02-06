@@ -957,7 +957,7 @@
 	)
 	(wire
 		(pts
-			(xy 92.71 69.85) (xy 99.06 69.85)
+			(xy 92.71 69.85) (xy 96.52 69.85)
 		)
 		(stroke
 			(width 0)
@@ -977,7 +977,7 @@
 	)
 	(wire
 		(pts
-			(xy 99.06 69.85) (xy 99.06 62.23)
+			(xy 96.52 69.85) (xy 96.52 62.23)
 		)
 		(stroke
 			(width 0)
@@ -1057,7 +1057,7 @@
 	)
 	(wire
 		(pts
-			(xy 99.06 62.23) (xy 121.92 62.23)
+			(xy 96.52 62.23) (xy 121.92 62.23)
 		)
 		(stroke
 			(width 0)
@@ -1149,7 +1149,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "083af1bb-c806-4a62-8da1-1a3a88d71874")
-		(property "Reference" "#PWR035"
+		(property "Reference" "#PWR045"
 			(at 99.06 109.22 0)
 			(effects
 				(font
@@ -1200,7 +1200,7 @@
 		(instances
 			(project "Zephyr-80-IO"
 				(path "/db33a8e4-587d-4e74-8d3f-b68910957121/1e002eec-a925-41bd-9968-565c74f66dea"
-					(reference "#PWR035")
+					(reference "#PWR045")
 					(unit 1)
 				)
 			)
@@ -1345,7 +1345,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "17aed971-b24e-4975-86c5-e733946f80dc")
-		(property "Reference" "#PWR032"
+		(property "Reference" "#PWR042"
 			(at 134.62 53.34 0)
 			(effects
 				(font
@@ -1395,7 +1395,7 @@
 		(instances
 			(project "Zephyr-80-IO"
 				(path "/db33a8e4-587d-4e74-8d3f-b68910957121/1e002eec-a925-41bd-9968-565c74f66dea"
-					(reference "#PWR032")
+					(reference "#PWR042")
 					(unit 1)
 				)
 			)
@@ -1411,7 +1411,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "189e5713-d45d-4bb3-a45e-52ce536a7d3a")
-		(property "Reference" "#PWR034"
+		(property "Reference" "#PWR044"
 			(at 177.8 90.17 0)
 			(effects
 				(font
@@ -1461,7 +1461,7 @@
 		(instances
 			(project "Zephyr-80-IO"
 				(path "/db33a8e4-587d-4e74-8d3f-b68910957121/1e002eec-a925-41bd-9968-565c74f66dea"
-					(reference "#PWR034")
+					(reference "#PWR044")
 					(unit 1)
 				)
 			)
@@ -1477,7 +1477,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "34885f01-8519-46db-bbf9-55832463c9e0")
-		(property "Reference" "C11"
+		(property "Reference" "C15"
 			(at 181.61 73.6599 0)
 			(effects
 				(font
@@ -1558,7 +1558,7 @@
 		(instances
 			(project "Zephyr-80-IO"
 				(path "/db33a8e4-587d-4e74-8d3f-b68910957121/1e002eec-a925-41bd-9968-565c74f66dea"
-					(reference "C11")
+					(reference "C15")
 					(unit 1)
 				)
 			)
@@ -1574,7 +1574,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "38c61a2a-00e9-4298-9ee6-d0d9de9f0e50")
-		(property "Reference" "#PWR033"
+		(property "Reference" "#PWR043"
 			(at 177.8 71.12 0)
 			(effects
 				(font
@@ -1624,7 +1624,7 @@
 		(instances
 			(project "Zephyr-80-IO"
 				(path "/db33a8e4-587d-4e74-8d3f-b68910957121/1e002eec-a925-41bd-9968-565c74f66dea"
-					(reference "#PWR033")
+					(reference "#PWR043")
 					(unit 1)
 				)
 			)
@@ -1640,7 +1640,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "440aee7d-0196-40e5-acde-231e7351b3b8")
-		(property "Reference" "#PWR031"
+		(property "Reference" "#PWR041"
 			(at 52.07 53.34 0)
 			(effects
 				(font
@@ -1690,7 +1690,7 @@
 		(instances
 			(project "Zephyr-80-IO"
 				(path "/db33a8e4-587d-4e74-8d3f-b68910957121/1e002eec-a925-41bd-9968-565c74f66dea"
-					(reference "#PWR031")
+					(reference "#PWR041")
 					(unit 1)
 				)
 			)
@@ -1706,7 +1706,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "8283e895-31f8-4791-9faf-f1e10910791a")
-		(property "Reference" "U3"
+		(property "Reference" "U8"
 			(at 136.7633 54.61 0)
 			(effects
 				(font
@@ -1724,7 +1724,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Package_SO:SO-16_3.9x9.9mm_P1.27mm"
+		(property "Footprint" "Package_SO:TSSOP-16_4.4x5mm_P0.65mm"
 			(at 134.62 74.93 0)
 			(effects
 				(font
@@ -1769,7 +1769,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "SN74HC4040DR"
+		(property "MANUFACTURER_PART_NUMBER" "MC74HC4040ADTR2G"
 			(at 134.62 74.93 0)
 			(effects
 				(font
@@ -1829,7 +1829,7 @@
 		(instances
 			(project "Zephyr-80-IO"
 				(path "/db33a8e4-587d-4e74-8d3f-b68910957121/1e002eec-a925-41bd-9968-565c74f66dea"
-					(reference "U3")
+					(reference "U8")
 					(unit 1)
 				)
 			)
@@ -1845,7 +1845,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "adb0947d-8024-41e3-b044-f31dccad478e")
-		(property "Reference" "#PWR036"
+		(property "Reference" "#PWR046"
 			(at 134.62 109.22 0)
 			(effects
 				(font
@@ -1895,7 +1895,7 @@
 		(instances
 			(project "Zephyr-80-IO"
 				(path "/db33a8e4-587d-4e74-8d3f-b68910957121/1e002eec-a925-41bd-9968-565c74f66dea"
-					(reference "#PWR036")
+					(reference "#PWR046")
 					(unit 1)
 				)
 			)
