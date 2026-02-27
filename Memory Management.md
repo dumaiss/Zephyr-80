@@ -1,18 +1,18 @@
 
-# Z80 HomeBrew Single-Board Computer
+# Zephyr-80 Computer Memory Management
 
 **Memory & I/O Architecture Reference Manual**
 
 ## 1. Architecture Overview
 
-This system is a Z80-based single-board computer designed for flexibility, supporting both classic "ColecoVision-style" fixed memory maps and a modern "All-RAM" banked architecture suitable for CP/M or complex homebrew software.
+This system is a Z80-based computer designed for flexibility, supporting both classic "ColecoVision-style" fixed memory maps and a modern "All-RAM" banked architecture suitable for CP/M or complex homebrew software.
 
 ### Core Specifications
 
-- **CPU:** Z80 @ 3.68MHz (or up to 8MHz depending on parts).    
+- **CPU:** Z80 @ 10MHz (or up to 20MHz depending on parts).    
 - **RAM:** 512KB Static RAM (Banked).    
 - **ROM:** 512KB Flash/EEPROM (Banked).    
-- **Memory Controller:** Hybrid design using a **74HC273 Latch** for state storage and a **GAL22V10** for address decoding and logic injection.
+- **Memory Controller:** Hybrid design using a **74HC273 Latch** for state storage and a **ATF22V10** for address decoding and logic injection.
    
 
 ---
@@ -318,7 +318,8 @@ Pin 8  = !WR;
    The Z80 /RESET pin is Active Low.
    Pin 8 = !RESET means the variable 'RESET' is TRUE when Pin 8 is LOW.
 */
-Pin 9  = !RESET; 
+Pin 9  = !RESET;
+
 
 /* ----------------------------------------------------------- */
 /* Outputs (Active Low Chip Selects) */
@@ -326,25 +327,28 @@ Pin 9  = !RESET;
 
 /* Memory Banking Latch Control */
 Pin 23 = !CS_MEMBANK_WR; /* Write: Clocks the 74HC273 (Rising Edge) */
-Pin 16 = !CS_MEMBANK_RD; /* Read:  Enables the 74HC244 (Active Low Level) */
+Pin 22 = !CS_MEMBANK_RD; /* Read:  Enables the 74HC244 (Active Low Level) */
 
-/* Peripherals */
-Pin 22 = !CS_SIO1;       /* SD Card / USB Port */
-Pin 21 = !CS_CTC;        /* Counter/Timer */
-Pin 20 = !CS_CART_IO;    /* Cartridge Expansion */
-Pin 19 = !CS_VDP;        /* Video Processor */
-Pin 18 = !CS_SIO0;       /* User Port / Console */
-Pin 17 = !CS_SOUND;      /* Sound Generators (Write Only) */
-	Pin 15 = !CS_CTRL;       /* Controller (Read Only) */
+/* New Outputs for 74LS138 */
+Pin [17, 18, 19] = [SEL2..0];  /* Grouping pins 18, 17, and 15 */
+Pin 16 = !IO_EN;               /* Global Enable */
+
+/* Define the bit field */
+FIELD IO_ADDR = [SEL2..0];
+
+/* Vector Generator & Daisy Chain */
+Pin 14 = D1;         /* Data Bus Bit 1 (Output) */
+Pin 15 = IEO;        /* Interrupt Enable Out (Active High) */
+
+/* Interrupt Signals */
+Pin 10 = !INT_VDP;   /* Video Interrupt Request (Active Low) */
+Pin 11 = IEI;        /* Interrupt Enable In (Active High) */
 
 /* ----------------------------------------------------------- */
 /* Logic Equations */
 /* ----------------------------------------------------------- */
 
-/* ValidIO: IORQ is Low (Active), M1 is High (Inactive), NOT in Reset */
-ValidIO = IORQ & !M1 & !RESET;
-
-/* Address Decoding Blocks */
+/* --- Address Decoding Blocks --- */
 Block_00 = !A7 & !A6 & !A5 & !A4; /* $00-$0F */
 Block_10 = !A7 & !A6 & !A5 & A4;  /* $10-$1F */
 Block_20 = !A7 & !A6 &  A5 & !A4; /* $20-$2F */
@@ -362,28 +366,54 @@ Block_D0 =  A7 &  A6 & !A5 & A4;  /* $D0-$DF */
 Block_E0 =  A7 &  A6 &  A5 & !A4; /* $E0-$EF */
 Block_F0 =  A7 &  A6 &  A5 & A4;  /* $F0-$FF */
 
+/* --- Cycle Definitions --- */
 
-/* 1. Memory Banking ($00-$1F) */
+/* Standard IO Cycle: IORQ Low, M1 High, RESET High */
+StdIO_Cycle = IORQ & !M1 & !RESET;
+
+/* Interrupt Acknowledge Cycle: IORQ Low, M1 Low (Active), RESET High */
+IntAck_Cycle = IORQ & M1 & !RESET;
+
+/* --- 1. Daisy Chain Logic (IEO) --- */
+/* Pass 'High' to the next device ONLY if:
+   1. We have priority (IEI is High)
+   2. The VDP is NOT requesting an interrupt (!INT_VDP is High/Inactive) 
+      Note: !INT_VDP in logic means "Pin 10 is High"
+*/
+IEO = IEI & !INT_VDP;
+
+/* --- 2. VDP "Smart" Vector Generation (D1) --- */
+/* We pull D1 Low to turn default 0xFF into 0xFD.
+   Conditions:
+   a. Interrupt Acknowledge Cycle (IORQ & M1 Active)
+   b. VDP is interrupting (INT_VDP variable is True/Active)
+   c. We have Priority (IEI is High)
+*/
+
+D1 = 'b'0;  /* Always drive logical 0 when enabled */
+
+/* Enable Output ONLY during valid vector generation event */
+D1.oe = IntAck_Cycle & INT_VDP & IEI;
+
+/* --- 2. Memory Banking ($00-$1F) --- */
 /* Write: ValidIO + Block00 + Write Strobe */
-CS_MEMBANK_WR = ValidIO & Block_00 & WR;
+CS_MEMBANK_WR = StdIO_Cycle & Block_00 & WR;
 
 /* Read: ValidIO + Block00 + Read Strobe */
-CS_MEMBANK_RD = ValidIO & Block_00 & RD;
+CS_MEMBANK_RD = StdIO_Cycle & Block_00 & RD;
 
+/* --- 3. Standard Peripherals --- */
 
-/* 2. Standard Peripherals */
-CS_SIO0       = ValidIO & Block_20;
-CS_SIO1       = ValidIO & Block_30;
-CS_CTC        = ValidIO & Block_40;
-CS_CART_IO    = ValidIO & Block_60;
-CS_VDP        = ValidIO & Block_A0;
-CS_VDP        = ValidIO & Block_B0;
+/* Logic Equations */
+IO_EN = StdIO_Cycle & (Block_20 # Block_30 # Block_40 # Block_60 # 
+                      Block_A0 # Block_B0 # Block_E0 # Block_F0);
 
-/* CS_SOUND is selected for $E0-$FF (Write Only) */
-CS_SOUND      = ValidIO & Block_E0 & WR;
-CS_SOUND      = ValidIO & Block_F0 & WR;
-
-/* CS_CTRL is selected for $E0-$FF (Read Only) */
-CS_CTRL      = ValidIO & Block_E0 & RD;
-CS_CTRL      = ValidIO & Block_F0 & RD;
+/* Assign values to the field based on the active Block */
+IO_ADDR =  StdIO_Cycle & 'b'000 & Block_20                    /* SIO0 */  
+         # StdIO_Cycle & 'b'001 & Block_30                    /* SIO1 */         
+         # StdIO_Cycle & 'b'010 & Block_40                    /* CTC */
+         # StdIO_Cycle & 'b'011 & Block_60                    /* CART_IO */
+         # StdIO_Cycle & 'b'100 & (Block_A0 # Block_B0)       /* VDP */
+         # StdIO_Cycle & 'b'101 & (Block_E0 # Block_F0) & WR  /* SOUND */
+         # StdIO_Cycle & 'b'110 & (Block_E0 # Block_F0) & RD; /* CTRL */
 ```

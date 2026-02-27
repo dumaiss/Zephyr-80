@@ -1,8 +1,8 @@
-# Zephyr-80 Single-Board Computer
+# Zephyr-80 Computer
 
 Retro Soul, Modern Flow -- The Zephyr-80 Way!
 
-A compact Z80-based single-board homebrew computer designed to run CP/M and provide classic retro I/O and expansion.
+A compact Z80-based homebrew computer designed to run CP/M and provide classic retro I/O and expansion.
 
 ## Overview
 
@@ -12,22 +12,22 @@ This board implements a banked-memory Z80 system with modern conveniences (SD st
 
 - **CPU**: Z80-compatible core
 - **RAM**: 512KB, banked (Z80 address banking for CP/M usage and extended RAM experiments)
-- **ROM**: 32KB EEPROM for bootloader/firmware
+- **ROM**: 512KB EEPROM for bootloader/firmware
 - **Storage**: SD Card support for disk images and CP/M volumes
 - **USB Serial**: USB serial port for terminal access and debug console
 - **USB Input**: USB keyboard plus D-Pad support for interactive input
 - **Sound**: SN76489-compatible sound chip for PSG audio
 - **Video**: TMS9928-based output; YPbPr analog video output supported
-- **Expansion**: mini-PCIe style expansion slot for additional cards or peripherals
+- **Expansion**: PCIe style expansion slot for additional cards or peripherals
 - **Power**: Designed to run from a regulated 5V wall power supply
 
 ## Hardware Notes
 
 - The 512KB RAM is banked to map into the Z80 64KB address space as needed by the firmware or CP/M.
-- The 32KB EEPROM contains the primary bootloader/firmware; update via the board's programming interface (refer to device-specific docs).
+- The 512KB EEPROM contains the primary bootloader/firmware; update via the board's programming interface (refer to device-specific docs).
 - Video uses a TMS9928-compatible video pipeline exposed as YPbPr analog output; a compatible monitor or converter is required.
-- Sound is provided by an SN76489-compatible PSG; connect to an amplifier or powered speakers for audio output.
-- The mini-PCIe expansion slot exposes power, bus, and selected signals for optional modules; treat it as an extension header for retro or modern expansion boards.
+- Sound is provided by a sound board hosting four SN76489 PSGs; connected to an amplifier or powered speakers for audio output.
+- The PCIe expansion slots exposes power, bus, and selected signals for optional modules; treat it as an extension header for retro or modern expansion boards.
 
 ## Getting Started
 

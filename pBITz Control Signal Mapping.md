@@ -16,13 +16,13 @@
 | **A11** | **CTRL10**      | `/BUSREQ` | `/HALT`           | `/BE`            | `/BR`              | Bus Arbitration      |
 | **A12** | **CTRL11**      | `/BUSACK` | `BA/BS`           | `MLB`            | `/BG`              | Bus Arbitration      |
 | **A13** | **CTRL12**      | `/WAIT`   | `MRDY`            | `RDY`            | `/DTACK`           | Speed Control        |
-| **A14** | **CTRL13**      | `/RESET`  | `/RESET`          | `/RESET`         | `/RESET`           | System Reset         |
-| **A15** | **CTRL14**      | `/INT`    | `/IRQ`            | `/IRQ`           | `/IPL0-2` (mapped) | Interrupt            |
-| **A16** | **CTRL15**      | `/NMI`    | `/NMI`            | `/NMI`           | —                  | Non-Maskable Int     |
-| **A17** | **CTRL16**      | —         | `/FIRQ`           | `/ABORT`         | —                  | Fast Interrupt       |
+| **A14** | **CTRL13**      | ---       | ---               | ---              | ---                | Unused               |
+| **A15** | **CTRL14**      | `/INT`    | `/IRQ`            | `/IRQ`           | `/IPL0` (mapped)   | Interrupt            |
+| **A16** | **CTRL15**      | `/NMI`    | `/NMI`            | `/NMI`           | `/IPL1`            | Non-Maskable Int     |
+| **A17** | **CTRL16**      | —         | `/FIRQ`           | `/ABORT`         | `/IPL2`            | Fast Interrupt       |
 | **A18** | **CTRL17**      | **IEI**   | —                 | —                | —                  | Int. Daisy Chain In  |
 | **A19** | **CTRL18**      | **IEO**   | —                 | —                | —                  | Int. Daisy Chain Out |
-| **A20** | **CTRL19**      | —         | —                 | —                | —                  | Unused               |
+| **A20** | **CTRL19**      | /CS_CART  | /CS_CART          | /CS_CART         | /CS_CART           | Cartridge ROM Select |
 
 
 ---
