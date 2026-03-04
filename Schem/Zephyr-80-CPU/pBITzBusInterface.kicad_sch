@@ -2451,6 +2451,10 @@
 		(at 107.95 130.81)
 		(uuid "e24ea8cb-4530-4c4e-a325-1cf79baf2819")
 	)
+	(no_connect
+		(at 107.95 166.37)
+		(uuid "f70d3193-8600-4b24-96ac-f6365b7e3c29")
+	)
 	(bus_entry
 		(at 146.05 194.31)
 		(size 2.54 -2.54)
@@ -3377,16 +3381,6 @@
 		)
 		(uuid "c102b777-a971-4e50-b2f0-6adc71774f55")
 	)
-	(wire
-		(pts
-			(xy 95.25 166.37) (xy 107.95 166.37)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "c59e09b4-bd42-4516-b795-f94a43973e42")
-	)
 	(bus
 		(pts
 			(xy 148.59 196.85) (xy 148.59 199.39)
@@ -3910,17 +3904,6 @@
 		)
 		(uuid "11fdd48f-86b7-462c-9ba2-510b23562437")
 	)
-	(hierarchical_label "CS3"
-		(shape input)
-		(at 95.25 166.37 180)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "27fda285-8052-4aa7-82ef-1dbe8b2cc003")
-	)
 	(hierarchical_label "CS2"
 		(shape input)
 		(at 95.25 163.83 180)
@@ -3964,6 +3947,17 @@
 			(justify left)
 		)
 		(uuid "59b236a7-08fc-4b1e-9a49-a7e289ba68ef")
+	)
+	(hierarchical_label "A[0..15]"
+		(shape input)
+		(at 92.71 189.23 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "659f25ca-89e7-41a1-b08e-567d0b0cc55f")
 	)
 	(hierarchical_label "~{WAIT}"
 		(shape passive)

@@ -4898,9 +4898,9 @@
 			(embedded_fonts no)
 		)
 	)
-	(text "Write Latch"
+	(text "Write Latch\nOUT to port 0x00"
 		(exclude_from_sim no)
-		(at 65.532 194.564 0)
+		(at 68.834 194.818 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -4908,9 +4908,9 @@
 		)
 		(uuid "4f37e87f-cd7e-4a97-ae12-910b7c1eb563")
 	)
-	(text "Read Buffer"
+	(text "Read Buffer\nIN to port 0x00"
 		(exclude_from_sim no)
-		(at 134.112 194.564 0)
+		(at 136.398 194.818 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -5167,6 +5167,10 @@
 	(no_connect
 		(at 44.45 74.93)
 		(uuid "811b966b-36c3-41bf-a20e-709627107026")
+	)
+	(no_connect
+		(at 229.87 73.66)
+		(uuid "8bad5eee-bde2-4d56-9fdc-5e542d7ed249")
 	)
 	(no_connect
 		(at 229.87 60.96)
@@ -7502,16 +7506,6 @@
 	)
 	(wire
 		(pts
-			(xy 229.87 73.66) (xy 240.03 73.66)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "c1d3dede-6927-4de0-a802-268e8347637b")
-	)
-	(wire
-		(pts
 			(xy 149.86 179.07) (xy 139.7 179.07)
 		)
 		(stroke
@@ -8201,7 +8195,7 @@
 		(uuid "01ff5e47-04ab-47da-9bdb-015590195c04")
 	)
 	(label "~{WR}"
-		(at 186.69 73.66 0)
+		(at 186.69 71.12 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -8261,7 +8255,7 @@
 		(uuid "0fab1b9b-cdd1-4893-a5a9-4049475656ed")
 	)
 	(label "A0"
-		(at 302.26 52.07 0)
+		(at 302.26 54.61 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -8291,7 +8285,7 @@
 		(uuid "11a37b0e-cd42-4d70-ae80-c088ae14a94b")
 	)
 	(label "~{RD}"
-		(at 186.69 71.12 0)
+		(at 186.69 73.66 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -8531,7 +8525,7 @@
 		(uuid "3a6ff5b0-3a14-4b24-a070-cd22ed1d0d7f")
 	)
 	(label "A1"
-		(at 302.26 54.61 0)
+		(at 302.26 52.07 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -8551,7 +8545,7 @@
 		(uuid "3ed7fdb1-701e-482f-81fc-4435de991fd0")
 	)
 	(label "D0"
-		(at 302.26 67.31 0)
+		(at 302.26 77.47 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -8601,7 +8595,7 @@
 		(uuid "4670b18c-988d-476f-b0bc-ae7156a0c2a2")
 	)
 	(label "D1"
-		(at 302.26 69.85 0)
+		(at 302.26 80.01 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -8821,12 +8815,12 @@
 		(uuid "6eb1b882-4ee5-4f5e-8566-d247ed3ab131")
 	)
 	(label "D3"
-		(at 302.26 80.01 0)
+		(at 388.62 67.31 180)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify left bottom)
+			(justify right bottom)
 		)
 		(uuid "6f4a0371-9028-4915-9ab7-bb4d17a8c46d")
 	)
@@ -8951,7 +8945,7 @@
 		(uuid "85b3a57d-83ae-4d2f-9c3e-6b65f97c6298")
 	)
 	(label "A15"
-		(at 190.5 152.4 0)
+		(at 190.5 157.48 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -9111,7 +9105,7 @@
 		(uuid "a2265830-d57f-43e9-b623-9f478e8df5f3")
 	)
 	(label "D2"
-		(at 302.26 77.47 0)
+		(at 302.26 69.85 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -9121,7 +9115,7 @@
 		(uuid "a34aed0e-60c5-45f0-867d-70ce3aea50d3")
 	)
 	(label "~{RD}"
-		(at 190.5 172.72 0)
+		(at 190.5 175.26 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -9381,7 +9375,7 @@
 		(uuid "d685c94d-6c98-4040-9b49-dcf403d6415f")
 	)
 	(label "~{WR}"
-		(at 190.5 175.26 0)
+		(at 190.5 172.72 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -9541,12 +9535,12 @@
 		(uuid "e511e48c-8cf9-4491-ac1b-9f75a753238b")
 	)
 	(label "D7"
-		(at 388.62 67.31 180)
+		(at 302.26 67.31 0)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify right bottom)
+			(justify left bottom)
 		)
 		(uuid "e7131347-1eff-4906-9c13-dd1460032788")
 	)
@@ -9571,7 +9565,7 @@
 		(uuid "ea3cec8e-4553-46b7-afd6-90763892f5b6")
 	)
 	(label "A13"
-		(at 190.5 157.48 0)
+		(at 190.5 152.4 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -9750,17 +9744,6 @@
 			(justify left)
 		)
 		(uuid "0dca13e1-3bdf-4a1c-b671-5a7c035f4fa3")
-	)
-	(hierarchical_label "~{IO_EN}"
-		(shape output)
-		(at 240.03 73.66 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "115b316d-2253-4a3c-9809-c38316c9b148")
 	)
 	(hierarchical_label "PROG"
 		(shape input)
