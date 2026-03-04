@@ -48,42 +48,11 @@
         "silk_text_thickness": 0.1,
         "silk_text_upright": false,
         "zones": {
-          "min_clearance": 0.3
+          "min_clearance": 0.5
         }
       },
-      "diff_pair_dimensions": [
-        {
-          "gap": 0.0,
-          "via_gap": 0.0,
-          "width": 0.0
-        }
-      ],
-      "drc_exclusions": [
-        [
-          "courtyards_overlap|129855000|64305000|5d3f8cf7-d4fc-4aec-ab54-2d002ac828c7|71647ba4-11e9-4d51-a4b9-eea63c558235",
-          "Purposefully put SMD under the socket"
-        ],
-        [
-          "courtyards_overlap|153585000|67545000|09e78ecb-1a66-4991-ac71-c9c7adf3c452|f3e0edea-52ae-477b-afe3-5f76cc7962bf",
-          "Purposefully put SMD under the socket"
-        ],
-        [
-          "courtyards_overlap|174195000|63375000|68654174-a537-4827-b1cf-1a80836f3512|b34adcc1-ba24-4028-a183-b8e2a6606acd",
-          "Purposefully put SMD under the socket"
-        ],
-        [
-          "net_conflict|200937500|92712400|aa6c70ab-9e18-4d21-8352-2947c7604914|00000000-0000-0000-0000-000000000000",
-          "Same net QH' vs. QH&apos; because of escaping of the apos"
-        ],
-        [
-          "silk_edge_clearance|76530200|57934901|3ff83b68-926b-46e5-be17-ffcfb9a4715a|9690f384-68e3-4a07-a1a0-17bf681562f7",
-          "USB Connector needs to extend slightly off the board"
-        ],
-        [
-          "silk_edge_clearance|76530200|65885101|3ff83b68-926b-46e5-be17-ffcfb9a4715a|acdf29d2-3cbf-4c42-a9b0-9d1d50a4418d",
-          "USB Connector needs to extend slightly off the board"
-        ]
-      ],
+      "diff_pair_dimensions": [],
+      "drc_exclusions": [],
       "meta": {
         "version": 2
       },
@@ -150,7 +119,7 @@
         "max_error": 0.005,
         "min_clearance": 0.0,
         "min_connection": 0.0,
-        "min_copper_edge_clearance": 0.4,
+        "min_copper_edge_clearance": 0.5,
         "min_groove_width": 0.0,
         "min_hole_clearance": 0.25,
         "min_hole_to_hole": 0.25,
@@ -164,7 +133,7 @@
         "min_track_width": 0.0,
         "min_via_annular_width": 0.1,
         "min_via_diameter": 0.5,
-        "solder_mask_to_copper_clearance": 0.005,
+        "solder_mask_to_copper_clearance": 0.0,
         "use_height_for_length_calcs": true
       },
       "teardrop_options": [
@@ -211,10 +180,7 @@
           "td_width_to_size_filter_ratio": 0.9
         }
       ],
-      "track_widths": [
-        0.0,
-        0.254
-      ],
+      "track_widths": [],
       "tuning_pattern_settings": {
         "diff_pair_defaults": {
           "corner_radius_percentage": 80,
@@ -241,12 +207,7 @@
           "spacing": 0.6
         }
       },
-      "via_dimensions": [
-        {
-          "diameter": 0.0,
-          "drill": 0.0
-        }
-      ],
+      "via_dimensions": [],
       "zones_allow_external_fillets": false
     },
     "ipc2581": {
@@ -265,84 +226,7 @@
     "equivalence_files": []
   },
   "erc": {
-    "erc_exclusions": [
-      [
-        "lib_symbol_mismatch|1206500|800100|33bafa50-6569-43c0-8946-749944e23f78|00000000-0000-0000-0000-000000000000|||",
-        ""
-      ],
-      [
-        "lib_symbol_mismatch|215900|622300|cbae31e7-29f6-4893-991d-5a211c83c453|00000000-0000-0000-0000-000000000000|||",
-        ""
-      ],
-      [
-        "lib_symbol_mismatch|2311400|1854200|0240033e-9fb9-4143-8e04-2260b84965b7|00000000-0000-0000-0000-000000000000|||",
-        ""
-      ],
-      [
-        "lib_symbol_mismatch|2311400|990600|8ce2ac87-2cc6-4231-8194-71608e59cd93|00000000-0000-0000-0000-000000000000|||",
-        ""
-      ],
-      [
-        "lib_symbol_mismatch|2844800|1168400|8ce2ac87-2cc6-4231-8194-71608e59cd93|00000000-0000-0000-0000-000000000000|||",
-        ""
-      ],
-      [
-        "lib_symbol_mismatch|2844800|2032000|0240033e-9fb9-4143-8e04-2260b84965b7|00000000-0000-0000-0000-000000000000|||",
-        ""
-      ],
-      [
-        "lib_symbol_mismatch|3251200|889000|2937f742-e9ac-4c63-9343-37d2422d529a|00000000-0000-0000-0000-000000000000|||",
-        ""
-      ],
-      [
-        "lib_symbol_mismatch|3784600|1066800|2937f742-e9ac-4c63-9343-37d2422d529a|00000000-0000-0000-0000-000000000000|||",
-        ""
-      ],
-      [
-        "lib_symbol_mismatch|787400|571500|06bfbc84-bc33-4a53-984b-fe4050da1ab5|00000000-0000-0000-0000-000000000000|||",
-        ""
-      ],
-      [
-        "multiple_net_names|1905000|927100|0706cd62-f914-4b11-b5f3-63eb6781cb8f|2f3d443a-4336-4014-bae2-84530dc8448b|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe",
-        ""
-      ],
-      [
-        "multiple_net_names|1905000|952500|3bab9714-9c32-40d9-bf26-880da2b6f3ba|3a3eda48-81a8-460d-a8ca-4d183aa0c82f|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe",
-        ""
-      ],
-      [
-        "pin_not_driven|2641600|1778000|6561d679-f8dc-4a7a-821d-2e1b8e661e40|00000000-0000-0000-0000-000000000000|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|",
-        ""
-      ],
-      [
-        "pin_not_driven|2641600|914400|1c31749e-572c-47a9-ae93-972f62743cca|00000000-0000-0000-0000-000000000000|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|",
-        ""
-      ],
-      [
-        "pin_to_pin|1206500|927100|317ff44e-3bb9-4745-b7f8-e32a7473fd62|cb961a18-29b0-4920-a507-12ed1e6f3449|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe",
-        ""
-      ],
-      [
-        "pin_to_pin|2641600|1270000|1c7c347f-9468-43fa-ae62-39fb2fd1a984|d086a755-042a-4b5f-8234-4fd685bf2ed6|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe",
-        ""
-      ],
-      [
-        "pin_to_pin|2641600|1854200|d086a755-042a-4b5f-8234-4fd685bf2ed6|7b60731e-59c5-4e57-9c78-796651a96cf5|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe",
-        ""
-      ],
-      [
-        "pin_to_pin|2641600|990600|a8f530d4-d1e0-442a-b2d6-3b1cfa1d07f0|1c7c347f-9468-43fa-ae62-39fb2fd1a984|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe",
-        ""
-      ],
-      [
-        "pin_to_pin|444500|800100|1b1448ba-1787-4dd8-ba51-9dc328e5dde2|cb961a18-29b0-4920-a507-12ed1e6f3449|/db33a8e4-587d-4e74-8d3f-b68910957121/fb434b62-1a0f-4105-8c0f-c7518eedf97d|/db33a8e4-587d-4e74-8d3f-b68910957121/fb434b62-1a0f-4105-8c0f-c7518eedf97d|/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe",
-        ""
-      ],
-      [
-        "pin_to_pin|469900|800100|1092323a-4ba4-4aed-998c-d927e7919154|1b1448ba-1787-4dd8-ba51-9dc328e5dde2|/db33a8e4-587d-4e74-8d3f-b68910957121/fb434b62-1a0f-4105-8c0f-c7518eedf97d|/db33a8e4-587d-4e74-8d3f-b68910957121/fb434b62-1a0f-4105-8c0f-c7518eedf97d|/db33a8e4-587d-4e74-8d3f-b68910957121/fb434b62-1a0f-4105-8c0f-c7518eedf97d",
-        ""
-      ]
-    ],
+    "erc_exclusions": [],
     "meta": {
       "version": 0
     },
@@ -567,14 +451,14 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "Zephyr-80-IO.kicad_pro",
+    "filename": "pBITzTestCard.kicad_pro",
     "version": 3
   },
   "net_settings": {
     "classes": [
       {
         "bus_width": 12,
-        "clearance": 0.1524,
+        "clearance": 0.2,
         "diff_pair_gap": 0.25,
         "diff_pair_via_gap": 0.25,
         "diff_pair_width": 0.2,
@@ -585,7 +469,7 @@
         "pcb_color": "rgba(0, 0, 0, 0.000)",
         "priority": 2147483647,
         "schematic_color": "rgba(0, 0, 0, 0.000)",
-        "track_width": 0.1524,
+        "track_width": 0.2,
         "via_diameter": 0.6,
         "via_drill": 0.3,
         "wire_width": 6
@@ -727,32 +611,16 @@
   },
   "sheets": [
     [
-      "db33a8e4-587d-4e74-8d3f-b68910957121",
+      "bb19c3d4-10ff-41bc-8ad1-6998ebb68ad5",
       "Root"
     ],
     [
-      "40aeb9cf-7834-4efc-b850-38b27b4487fe",
-      "IO Controller Card"
+      "e88bacb2-3805-4eb3-be74-25c4115bc002",
+      "Main MCU Controller"
     ],
     [
-      "61c97d6f-c0cd-4540-8832-42e8c844ef6d",
-      "pBITz Bus Interface"
-    ],
-    [
-      "fb434b62-1a0f-4105-8c0f-c7518eedf97d",
-      "Console Port"
-    ],
-    [
-      "1e002eec-a925-41bd-9968-565c74f66dea",
-      "Baud Clock"
-    ],
-    [
-      "305a452b-f523-4469-92bb-957195b37b9f",
-      "Device Select Decode"
-    ],
-    [
-      "7059b866-7ffc-47f2-bc9f-41763c65c3a7",
-      "GPIOs and User Serial"
+      "fda17503-8854-471e-aac9-a537120ee578",
+      "External Programmer"
     ]
   ],
   "text_variables": {}

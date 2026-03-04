@@ -590,6 +590,16 @@
 	)
 	(wire
 		(pts
+			(xy 297.18 196.85) (xy 297.18 224.79)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "c83859f8-5bc3-4978-b61e-525b9314d10b")
+	)
+	(wire
+		(pts
 			(xy 364.49 196.85) (xy 364.49 224.79)
 		)
 		(stroke
@@ -1266,6 +1276,16 @@
 				(justify left)
 			)
 		)
+		(pin "CLK_20M" input
+			(at 297.18 196.85 270)
+			(uuid "55ab99a3-ffa0-4f03-9149-801ebcd525a2")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
 		(pin "CLK_10M" input
 			(at 299.72 196.85 270)
 			(uuid "9db63285-b4d1-4acb-a885-f4b96fb69633")
@@ -1501,6 +1521,16 @@
 		(pin "A0" output
 			(at 344.17 224.79 90)
 			(uuid "228e231f-936d-4159-a5a0-173362c91f50")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "CLK_20M" output
+			(at 297.18 224.79 90)
+			(uuid "59cd5dde-9bc1-42d5-91ae-02f5475442ae")
 			(effects
 				(font
 					(size 1.27 1.27)

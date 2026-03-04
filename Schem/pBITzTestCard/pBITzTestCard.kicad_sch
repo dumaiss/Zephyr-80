@@ -1,0 +1,103 @@
+(kicad_sch
+	(version 20250114)
+	(generator "eeschema")
+	(generator_version "9.0")
+	(uuid "bb19c3d4-10ff-41bc-8ad1-6998ebb68ad5")
+	(paper "D")
+	(title_block
+		(title "pBITz Test Card")
+		(date "2026-02-23")
+		(company "Kita's Retro Brews")
+	)
+	(lib_symbols)
+	(sheet
+		(at 87.63 76.2)
+		(size 175.26 114.3)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "e88bacb2-3805-4eb3-be74-25c4115bc002")
+		(property "Sheetname" "Main MCU Controller"
+			(at 87.63 75.4884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "MainMCUController.kicad_sch"
+			(at 87.63 191.0846 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "pBITzTestCard"
+				(path "/bb19c3d4-10ff-41bc-8ad1-6998ebb68ad5"
+					(page "2")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 300.99 76.2)
+		(size 214.63 107.95)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "fda17503-8854-471e-aac9-a537120ee578")
+		(property "Sheetname" "External Programmer"
+			(at 300.99 75.4884 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "ExternalProgrammer.kicad_sch"
+			(at 300.99 184.7346 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "pBITzTestCard"
+				(path "/bb19c3d4-10ff-41bc-8ad1-6998ebb68ad5"
+					(page "3")
+				)
+			)
+		)
+	)
+	(sheet_instances
+		(path "/"
+			(page "1")
+		)
+	)
+	(embedded_fonts no)
+)

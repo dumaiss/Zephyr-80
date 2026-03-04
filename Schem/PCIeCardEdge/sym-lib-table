@@ -1,0 +1,5 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "x8-Connector")(type "Altium")(uri "/home/kitamura/Downloads/[$plugins.Download.fileTypes.altiumDesigner(1)/x8-Connector.SCHLIB")(options "")(descr ""))
+  (lib (name "PCIe-x8 Card Template-altium-import")(type "KiCad")(uri "${KIPRJMOD}/PCIe-x8 Card Template-altium-import.kicad_sym")(options "")(descr ""))
+)
