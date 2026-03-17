@@ -5633,6 +5633,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 97.79 77.47 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "30930687-a7f3-40a8-aff5-bcd257b03926")
 		)
@@ -5768,6 +5777,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 240.03 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "a2f83b63-3050-4e01-ac1a-47a3d9413abc")
 		)
@@ -5829,6 +5847,15 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 68.58 207.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
 			(at 68.58 207.01 0)
 			(effects
 				(font
@@ -6039,6 +6066,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
+			(at 73.66 137.16 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "0cb307d6-4f19-4e57-8546-6fe14439e6c9")
 		)
@@ -6108,6 +6144,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 91.44 77.47 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "f939dbec-3126-4221-b176-9a10eb7057c6")
 		)
@@ -6169,6 +6214,15 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 497.84 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
 			(at 497.84 80.01 0)
 			(effects
 				(font
@@ -6312,6 +6366,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 85.09 77.47 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "339b819a-0aef-40bd-8f56-37130f21edb3")
 		)
@@ -6373,6 +6436,15 @@
 			)
 		)
 		(property "Description" "Rotary switch, 4-bit encoding, 10 positions, Complementary code"
+			(at 50.8 275.59 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "428527520909"
 			(at 50.8 275.59 0)
 			(effects
 				(font
@@ -6459,6 +6531,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 370.84 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "4d551ea7-f411-477c-9b73-d7019fcfe434")
 		)
@@ -6521,6 +6602,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 86.36 137.16 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
 			(at 86.36 137.16 0)
 			(effects
 				(font
@@ -6796,6 +6886,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 358.14 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "10ba58a7-e0f4-4d10-880a-ffbd2d474017")
 		)
@@ -6857,6 +6956,15 @@
 			)
 		)
 		(property "Description" "Rotary switch, 4-bit encoding, 16 positions, Complementary code"
+			(at 58.42 91.44 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SH-7070TB"
 			(at 58.42 91.44 0)
 			(effects
 				(font
@@ -6935,6 +7043,15 @@
 			)
 		)
 		(property "Description" "Rotary switch, 4-bit encoding, 10 positions, Complementary code"
+			(at 50.8 220.98 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "428527520909"
 			(at 50.8 220.98 0)
 			(effects
 				(font
@@ -7417,6 +7534,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 74.93 207.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "f0c3cc58-40c5-4db5-9b6c-44a7f8d7ba21")
 		)
@@ -7488,6 +7614,15 @@
 			)
 		)
 		(property "Manufacturer Code" "SN74HC244PWR"
+			(at 140.97 250.19 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74HC244PWR"
 			(at 140.97 250.19 0)
 			(effects
 				(font
@@ -7685,6 +7820,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 74.93 261.62 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "82a9dc42-ef31-4666-8155-2d5baf62af7c")
 		)
@@ -7820,6 +7964,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 102.87 77.47 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "df189c9b-976d-4583-8768-cd9b5cff9b0a")
 		)
@@ -7881,6 +8034,15 @@
 			)
 		)
 		(property "Description" "Rotary switch, 4-bit encoding, 16 positions, Complementary code"
+			(at 331.47 93.98 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SH-7070TB"
 			(at 331.47 93.98 0)
 			(effects
 				(font
@@ -7959,6 +8121,15 @@
 			)
 		)
 		(property "Description" "Rotary switch, 4-bit encoding, 16 positions, Complementary code"
+			(at 200.66 92.71 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SH-7070TB"
 			(at 200.66 92.71 0)
 			(effects
 				(font
@@ -8111,6 +8282,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 233.68 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "a6330bd3-ce4c-4345-a05e-46504694c5e3")
 		)
@@ -8246,6 +8426,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 245.11 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "9f58e4bd-9bb5-4b34-9ea7-280bd4bf1a09")
 		)
@@ -8306,6 +8495,15 @@
 			)
 		)
 		(property "Description" "8-bit magnitude comparator"
+			(at 271.78 113.03 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74HC688PWR"
 			(at 271.78 113.03 0)
 			(effects
 				(font
@@ -8437,6 +8635,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 227.33 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "e3a0caf6-5a97-48f3-b964-e33cbdc33eb9")
 		)
@@ -8499,6 +8706,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 50.8 137.16 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
 			(at 50.8 137.16 0)
 			(effects
 				(font
@@ -8642,6 +8858,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 68.58 261.62 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "e7826d67-b2be-4966-bb4c-d6b3ddde2108")
 		)
@@ -8712,6 +8937,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
+			(at 62.23 137.16 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "fde8affb-1166-495c-a863-4c8c96eceb81")
 		)
@@ -8773,6 +9007,15 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 492.76 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
 			(at 492.76 80.01 0)
 			(effects
 				(font
@@ -8916,6 +9159,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 375.92 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "034c9712-a8e0-4615-ba3b-4b8ac682fe00")
 		)
@@ -9050,6 +9302,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74HC688PWR"
+			(at 524.51 114.3 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "9"
 			(uuid "c7733aba-e6c4-4ee5-83f3-c8f87f978a8f")
 		)
@@ -9166,6 +9427,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 97.79 137.16 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
 			(at 97.79 137.16 0)
 			(effects
 				(font
@@ -9300,6 +9570,15 @@
 			)
 		)
 		(property "Description" "8-bit magnitude comparator"
+			(at 402.59 114.3 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74HC688PWR"
 			(at 402.59 114.3 0)
 			(effects
 				(font
@@ -9497,6 +9776,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 480.06 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "35e01141-e2a3-400e-9261-ffdc7824f1ff")
 		)
@@ -9632,6 +9920,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 364.49 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "a2f8d768-9f00-4419-910b-0599b9162c24")
 		)
@@ -9693,6 +9990,15 @@
 			)
 		)
 		(property "Description" "Rotary switch, 4-bit encoding, 16 positions, Complementary code"
+			(at 453.39 93.98 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SH-7070TB"
 			(at 453.39 93.98 0)
 			(effects
 				(font
@@ -9911,6 +10217,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 486.41 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "1ee36f2e-c3ad-4907-af00-9e273906d8cf")
 		)
@@ -9980,6 +10295,15 @@
 			)
 		)
 		(property "Manufacturer Code" "SN74HC688PWR"
+			(at 129.54 111.76 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74HC688PWR"
 			(at 129.54 111.76 0)
 			(effects
 				(font

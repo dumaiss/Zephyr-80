@@ -11090,7 +11090,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
 			(at 68.2752 243.84 0)
 			(effects
 				(font
@@ -11135,7 +11135,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "0402B104K160CT"
+		(property "MANUFACTURER_PART_NUMBER" "0603B104K160CT"
 			(at 67.31 240.03 0)
 			(effects
 				(font
@@ -11427,7 +11427,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
 			(at 44.1452 243.84 0)
 			(effects
 				(font
@@ -11472,7 +11472,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "0402B104K160CT"
+		(property "MANUFACTURER_PART_NUMBER" "0603B104K160CT"
 			(at 43.18 240.03 0)
 			(effects
 				(font
@@ -12144,7 +12144,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
 			(at 78.4352 243.84 0)
 			(effects
 				(font
@@ -12189,7 +12189,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "0402B104K160CT"
+		(property "MANUFACTURER_PART_NUMBER" "0603B104K160CT"
 			(at 77.47 240.03 0)
 			(effects
 				(font
@@ -12331,7 +12331,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
 			(at 102.5652 243.84 0)
 			(effects
 				(font
@@ -12376,7 +12376,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "0402B104K160CT"
+		(property "MANUFACTURER_PART_NUMBER" "0603B104K160CT"
 			(at 101.6 240.03 0)
 			(effects
 				(font
@@ -12616,7 +12616,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
 			(at 113.9952 243.84 0)
 			(effects
 				(font
@@ -12661,7 +12661,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "0402B104K160CT"
+		(property "MANUFACTURER_PART_NUMBER" "0603B104K160CT"
 			(at 113.03 240.03 0)
 			(effects
 				(font
@@ -12725,7 +12725,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
 			(at 125.4252 243.84 0)
 			(effects
 				(font
@@ -12770,7 +12770,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "0402B104K160CT"
+		(property "MANUFACTURER_PART_NUMBER" "0603B104K160CT"
 			(at 124.46 240.03 0)
 			(effects
 				(font
@@ -13388,7 +13388,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
 			(at 91.1352 243.84 0)
 			(effects
 				(font
@@ -13433,7 +13433,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "0402B104K160CT"
+		(property "MANUFACTURER_PART_NUMBER" "0603B104K160CT"
 			(at 90.17 240.03 0)
 			(effects
 				(font
@@ -13798,7 +13798,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
 			(at 56.8452 243.84 0)
 			(effects
 				(font
@@ -13843,7 +13843,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "0402B104K160CT"
+		(property "MANUFACTURER_PART_NUMBER" "0603B104K160CT"
 			(at 55.88 240.03 0)
 			(effects
 				(font

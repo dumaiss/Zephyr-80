@@ -12961,6 +12961,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74AHC1G125DCKR"
+			(at 227.33 177.8 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "5189e537-69c0-42fa-9530-59f11fb8b984")
 		)
@@ -13048,6 +13057,15 @@
 			)
 		)
 		(property "KLC_S4.2_VCC" ""
+			(at 62.23 118.11 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
 			(at 62.23 118.11 0)
 			(effects
 				(font
@@ -13652,6 +13670,15 @@
 			)
 		)
 		(property "MANUFACTURER PART NUMBER" "PIC18F57Q84-I/PT"
+			(at 120.65 80.01 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "PIC18F57Q84-I/PT"
 			(at 120.65 80.01 0)
 			(effects
 				(font
@@ -14383,6 +14410,15 @@
 			)
 		)
 		(property "Description" "3-to-8 line decoder/multiplexer inverting, DIP-16/SOIC-16/SSOP-16"
+			(at 218.44 364.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74HC138PWR"
 			(at 218.44 364.49 0)
 			(effects
 				(font
@@ -15810,6 +15846,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+			(at 62.23 177.8 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "12ea236c-8813-428e-8fb4-210cf0d09bbf")
 		)
@@ -16132,6 +16177,15 @@
 			)
 		)
 		(property "Description" "8-bit serial in/out Shift Register 3-State Outputs"
+			(at 273.05 288.29 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "74AHC595PW,118"
 			(at 273.05 288.29 0)
 			(effects
 				(font
@@ -16636,6 +16690,15 @@
 			)
 		)
 		(property "Description" "8-bit serial in/out Shift Register 3-State Outputs"
+			(at 208.28 288.29 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "74AHC595PW,118"
 			(at 208.28 288.29 0)
 			(effects
 				(font
@@ -17340,6 +17403,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74AHC1G125DCKR"
+			(at 223.52 208.28 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "0f4fa8a7-fa13-4a82-883e-0454fc526988")
 		)
@@ -17466,7 +17538,7 @@
 		(at 90.17 118.11 0)
 		(unit 1)
 		(exclude_from_sim no)
-		(in_bom yes)
+		(in_bom no)
 		(on_board yes)
 		(dnp no)
 		(fields_autoplaced yes)

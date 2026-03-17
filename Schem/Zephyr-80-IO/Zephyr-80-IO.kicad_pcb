@@ -1297,7 +1297,7 @@
 		(property "Reference" "U5"
 			(at 0.4335 -0.7974 0)
 			(layer "F.SilkS")
-			(uuid "b25654b9-d8a4-4a17-8b0e-dfcdad41230f")
+			(uuid "239d856f-7612-4d41-8249-7ac40c6a3888")
 			(effects
 				(font
 					(size 1 1)
@@ -1308,7 +1308,7 @@
 		(property "Value" "74AHC595"
 			(at 0 3.45 0)
 			(layer "F.Fab")
-			(uuid "b79e4d46-f299-4cee-8219-eee75256083e")
+			(uuid "a5940cb0-dd71-45c2-bae2-3ee0856babea")
 			(effects
 				(font
 					(size 1 1)
@@ -1320,7 +1320,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "819f5502-f263-4b83-a005-8505c10068b3")
+			(uuid "5ca35038-5ca3-48b0-ba0e-624f2cf5ab9f")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1332,7 +1332,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "273a5732-0855-4ce4-a648-70d41dd42384")
+			(uuid "d984fac1-a06f-4cad-9de4-e4917e2caf0e")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3416,7 +3416,7 @@
 		(property "Reference" "U4"
 			(at -1.3117 -3.5152 0)
 			(layer "F.SilkS")
-			(uuid "04716cf2-6937-4a81-a261-b177567359ee")
+			(uuid "ae54fd8b-a4aa-42da-8fcc-1bbb0159d938")
 			(effects
 				(font
 					(size 1 1)
@@ -3427,7 +3427,7 @@
 		(property "Value" "74AHC595"
 			(at 0 3.45 0)
 			(layer "F.Fab")
-			(uuid "8bf17cbd-cdb1-461a-97c3-c2e50a3d8a56")
+			(uuid "7a05c588-eb07-435e-ab76-efa42a575735")
 			(effects
 				(font
 					(size 1 1)
@@ -3439,7 +3439,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "919553e6-01c5-4b8a-a975-db801e7fd80c")
+			(uuid "88f65483-5070-49ff-8e1b-55bc5660157c")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3451,7 +3451,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "85c84e51-1fc1-4543-b53c-19b36e4e21b1")
+			(uuid "cc5666b8-1f83-404b-9337-1e0697fb3294")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4448,7 +4448,7 @@
 			(net 1 "GND")
 			(pinfunction "C")
 			(pintype "passive")
-			(uuid "79d8fd23-9466-4ca3-bae6-ad1c76e2f85c")
+			(uuid "8567caf2-c336-4fec-a5f1-b89d243d6d16")
 		)
 		(embedded_fonts no)
 		(model "${KICAD9_3DMODEL_DIR}/Button_Switch_THT.3dshapes/Nidec_Copal_SH-7010C.step"
@@ -6515,7 +6515,7 @@
 			(net 1 "GND")
 			(pinfunction "C")
 			(pintype "passive")
-			(uuid "e21a0e0c-8485-42ce-9b2f-a069b4bcc39f")
+			(uuid "6e68a8ea-debc-4859-a350-e5ecc79a9dec")
 		)
 		(embedded_fonts no)
 		(model "${KICAD9_3DMODEL_DIR}/Button_Switch_THT.3dshapes/Nidec_Copal_SH-7010C.step"
@@ -6539,7 +6539,7 @@
 		(property "Reference" "C3"
 			(at 2.6285 2.253 0)
 			(layer "F.SilkS")
-			(uuid "ae1811f5-3fd2-4795-a8e0-1945bdfa2cbf")
+			(uuid "a4175cc8-cced-4c73-ab92-75da869334e2")
 			(effects
 				(font
 					(size 1 1)
@@ -6550,7 +6550,7 @@
 		(property "Value" "100n"
 			(at 0 1.43 0)
 			(layer "F.Fab")
-			(uuid "05f97f7d-460a-49a9-82c7-ef08adc31334")
+			(uuid "c8d9d6d7-cab9-41ee-9bda-7672bf33b576")
 			(effects
 				(font
 					(size 1 1)
@@ -6562,7 +6562,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "2607316c-b492-40d0-8d53-ea81a520edd3")
+			(uuid "2a8f9458-ac58-49a7-9351-732024840d40")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6574,7 +6574,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "9e41d95b-2f9c-4484-905e-0a2ce7ec358b")
+			(uuid "b9a606c0-4eeb-4b01-b251-9b01e16344a8")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -11242,7 +11242,7 @@
 			(net 1 "GND")
 			(pinfunction "C")
 			(pintype "passive")
-			(uuid "4cc10ec5-327f-4c90-af4d-d06c82cd7ae5")
+			(uuid "07f74bad-1afe-4045-8f16-581500157275")
 		)
 		(embedded_fonts no)
 		(model "${KICAD9_3DMODEL_DIR}/Button_Switch_THT.3dshapes/Nidec_Copal_SH-7010C.step"
@@ -11409,7 +11409,7 @@
 		(property "Reference" "U6"
 			(at 0.3049 0.11 0)
 			(layer "F.SilkS")
-			(uuid "4a0df0c1-fe9a-4ffe-87da-74d7d8450170")
+			(uuid "63bd45e4-24af-4787-9283-76a8788dac6e")
 			(effects
 				(font
 					(size 1 1)
@@ -11420,7 +11420,7 @@
 		(property "Value" "74HC138"
 			(at 0 3.45 0)
 			(layer "F.Fab")
-			(uuid "008b1cb8-cc9d-4029-a29f-21b6c49c4d09")
+			(uuid "4346f76c-ccc5-4616-b6f0-add5eb8c42b4")
 			(effects
 				(font
 					(size 1 1)
@@ -11432,7 +11432,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "5a90cd24-19ee-467a-b93a-7aff4c4a1946")
+			(uuid "13b7924a-3fbf-4841-a8f9-5a48ed949e77")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -11444,7 +11444,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "1378797c-41b9-4d7e-a318-4d88594f59f9")
+			(uuid "3cb4aece-aa16-4d2c-b0ff-185b069b47ae")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14264,7 +14264,7 @@
 		(property "Reference" "C4"
 			(at 0 -1.43 0)
 			(layer "F.SilkS")
-			(uuid "89820618-6267-47ed-b555-98b73b39a3c4")
+			(uuid "ff7e1cf2-3375-42a1-a8f4-24024ccf2252")
 			(effects
 				(font
 					(size 1 1)
@@ -14275,7 +14275,7 @@
 		(property "Value" "100n"
 			(at 0 1.43 0)
 			(layer "F.Fab")
-			(uuid "8695d1f1-28a0-40ff-9fb3-28fa03f73e8f")
+			(uuid "8f93d7b6-da26-4e4d-b0f5-02b91e0d5423")
 			(effects
 				(font
 					(size 1 1)
@@ -14287,7 +14287,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "e69856b8-d5c4-49a3-b00e-17aebc0815d5")
+			(uuid "55c14fac-f632-462e-aa2e-80b073bb990c")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14299,7 +14299,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "908ac976-ef51-4369-8506-b88e1933a500")
+			(uuid "570212c5-4f54-4d3b-9254-2ff72d693bc0")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -21825,7 +21825,7 @@
 		(property "Reference" "C2"
 			(at 0 -1.43 0)
 			(layer "F.SilkS")
-			(uuid "edf2f1ff-0078-428c-bbfe-b77b14c2f8d6")
+			(uuid "a7708376-472f-4733-940d-8c7f483adb08")
 			(effects
 				(font
 					(size 1 1)
@@ -21836,7 +21836,7 @@
 		(property "Value" "100n"
 			(at 0 1.43 0)
 			(layer "F.Fab")
-			(uuid "d5f3e844-25be-4a4b-a793-1483874794e7")
+			(uuid "64e750d9-74a4-4d85-a1f5-0ece4e25f4ce")
 			(effects
 				(font
 					(size 1 1)
@@ -21848,7 +21848,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "b2df6cb4-8d20-470c-86d1-38a426734545")
+			(uuid "7b0ee434-36a1-4657-b124-60be82b7e129")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -21860,7 +21860,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "5abe67db-def7-4dcb-8679-2da59b6a5c0f")
+			(uuid "b39b1073-6035-41b5-8d75-11472226e99e")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -22311,7 +22311,7 @@
 			(net 1 "GND")
 			(pinfunction "C")
 			(pintype "passive")
-			(uuid "1c9feaa6-c4b6-4326-bd36-0362bb6e4c62")
+			(uuid "0b7ec498-cc28-4acf-8b52-78616d72aa1d")
 		)
 		(embedded_fonts no)
 		(model "${KICAD9_3DMODEL_DIR}/Button_Switch_THT.3dshapes/Nidec_Copal_SH-7010C.step"
@@ -24355,7 +24355,7 @@
 			(net 1 "GND")
 			(pinfunction "C")
 			(pintype "passive")
-			(uuid "8dbb3ccd-81db-4c6c-af10-df9dcd2a2490")
+			(uuid "97d92db6-85a5-42f9-8fc1-017967d09d34")
 		)
 		(embedded_fonts no)
 		(model "${KICAD9_3DMODEL_DIR}/Button_Switch_THT.3dshapes/Nidec_Copal_SH-7010C.step"
@@ -25008,7 +25008,7 @@
 			(net 1 "GND")
 			(pinfunction "C")
 			(pintype "passive")
-			(uuid "c21aae36-7f7f-4672-bab5-8e733ff9a89b")
+			(uuid "8d7cae13-29c7-4a3f-8ad6-86a19c12aed3")
 		)
 		(embedded_fonts no)
 		(model "${KICAD9_3DMODEL_DIR}/Button_Switch_THT.3dshapes/Nidec_Copal_SH-7010C.step"
@@ -28710,6 +28710,476 @@
 				(thickness 0.1)
 			)
 			(justify left bottom)
+		)
+	)
+	(table
+		(column_count 2)
+		(layer "B.SilkS")
+		(border
+			(external yes)
+			(header yes)
+			(stroke
+				(width 0.1)
+				(type solid)
+			)
+		)
+		(separators
+			(rows yes)
+			(cols yes)
+			(stroke
+				(width 0.1)
+				(type solid)
+			)
+		)
+		(column_widths 20.2946 20.2946)
+		(row_heights 3.4798 3.4798 3.4798)
+		(cells
+			(table_cell "Zephyr-80 IO"
+				(start 164.3132 91.7364)
+				(end 184.6078 95.2162)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "2c81dd8c-9c8b-4e8b-ad00-cbdce5059fc7")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "Project"
+				(start 184.6078 91.7364)
+				(end 204.9024 95.2162)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "dd7c89c7-c815-4d26-b602-6f52596322c6")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "20260316.01"
+				(start 164.3132 95.2162)
+				(end 184.6078 98.696)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "aac6efa7-360f-4ead-b01e-2b8981025ecd")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "Revision"
+				(start 184.6078 95.2162)
+				(end 204.9024 98.696)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "64830724-9c81-43fe-9d90-84237d384082")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "Sébastien Dumais"
+				(start 164.3132 98.696)
+				(end 184.6078 102.1758)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "c5d58868-ff11-4a56-af25-0ffc4dad11cb")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "Designed By"
+				(start 184.6078 98.696)
+				(end 204.9024 102.1758)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "8adce08c-bccb-44c5-8b34-14fa042185ac")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+		)
+	)
+	(table
+		(column_count 2)
+		(layer "B.SilkS")
+		(border
+			(external yes)
+			(header yes)
+			(stroke
+				(width 0.1)
+				(type solid)
+			)
+		)
+		(separators
+			(rows yes)
+			(cols yes)
+			(stroke
+				(width 0.1)
+				(type solid)
+			)
+		)
+		(column_widths 19.95 16.1798)
+		(row_heights 3.048 3.048 3.048 3.048 3.048 3.048 3.048 3.048 3.048 3.048
+			3.048 3.048
+		)
+		(cells
+			(table_cell "Function"
+				(start 183.4651 52.352)
+				(end 203.4151 55.4)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "8788a5da-464c-444f-83b5-2856b7c9d3be")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "PIN"
+				(start 203.4151 52.352)
+				(end 219.5949 55.4)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "421ed69c-a58f-4234-a0a2-3870b0243e88")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "GPIO from MCU"
+				(start 183.4651 55.4)
+				(end 203.4151 58.448)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "c97fe98c-2510-49b7-bb23-9c3b374953a2")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "1-8"
+				(start 203.4151 55.4)
+				(end 219.5949 58.448)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "85143f27-6bbf-45e6-8543-0f1fc3cb2fa8")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "+5V"
+				(start 183.4651 58.448)
+				(end 203.4151 61.496)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "c6bf88d2-430d-4597-8b88-ffa31911a4d8")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "9-10"
+				(start 203.4151 58.448)
+				(end 219.5949 61.496)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "a4cc9919-3b06-47f9-94f8-50e49d0dc429")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "GND / NC"
+				(start 183.4651 61.496)
+				(end 203.4151 64.544)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "89bd8b1c-0e7c-44cb-863b-4ef50c9a6156")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "11-18"
+				(start 203.4151 61.496)
+				(end 219.5949 64.544)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "0a2e9e86-948a-4565-9bf0-373209cd6a1f")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "UART RX"
+				(start 183.4651 64.544)
+				(end 203.4151 67.592)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "bdc404fa-8c01-4457-a289-1c92ee45a798")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "19"
+				(start 203.4151 64.544)
+				(end 219.5949 67.592)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "b2b21485-f527-4f70-8c3f-1923db43c6f8")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "GND"
+				(start 183.4651 67.592)
+				(end 203.4151 70.64)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "6debcb0c-f902-4ebd-8519-6c6ba702ad08")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "20"
+				(start 203.4151 67.592)
+				(end 219.5949 70.64)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "5a84b342-6837-4b06-bad2-6e64a290999c")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "UART TX"
+				(start 183.4651 70.64)
+				(end 203.4151 73.688)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "47f10619-b17e-4cbe-84ba-e2b2f5e7603e")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "21"
+				(start 203.4151 70.64)
+				(end 219.5949 73.688)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "802c7752-f10d-4e64-8023-ae3009d0ee22")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "GND"
+				(start 183.4651 73.688)
+				(end 203.4151 76.736)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "47f10619-b17e-4cbe-84ba-e2b2f5e7603e")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "22"
+				(start 203.4151 73.688)
+				(end 219.5949 76.736)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "51b3a65b-4134-4541-8ea3-d7b4b50e1924")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "UART CTS"
+				(start 183.4651 76.736)
+				(end 203.4151 79.784)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "47f10619-b17e-4cbe-84ba-e2b2f5e7603e")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "23"
+				(start 203.4151 76.736)
+				(end 219.5949 79.784)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "51b3a65b-4134-4541-8ea3-d7b4b50e1924")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "UART RTS"
+				(start 183.4651 79.784)
+				(end 203.4151 82.832)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "47f10619-b17e-4cbe-84ba-e2b2f5e7603e")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "24"
+				(start 203.4151 79.784)
+				(end 219.5949 82.832)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "51b3a65b-4134-4541-8ea3-d7b4b50e1924")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "CTC T01 TRIGGER"
+				(start 183.4651 82.832)
+				(end 203.4151 85.88)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "47f10619-b17e-4cbe-84ba-e2b2f5e7603e")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "25"
+				(start 203.4151 82.832)
+				(end 219.5949 85.88)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "51b3a65b-4134-4541-8ea3-d7b4b50e1924")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "CTC T02 TRIGGER"
+				(start 183.4651 85.88)
+				(end 203.4151 88.928)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "47f10619-b17e-4cbe-84ba-e2b2f5e7603e")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
+			(table_cell "26"
+				(start 203.4151 85.88)
+				(end 219.5949 88.928)
+				(margins 1.0025 1.0025 1.0025 1.0025)
+				(span 1 1)
+				(layer "B.SilkS")
+				(uuid "802c7752-f10d-4e64-8023-ae3009d0ee22")
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left mirror)
+				)
+			)
 		)
 	)
 	(segment

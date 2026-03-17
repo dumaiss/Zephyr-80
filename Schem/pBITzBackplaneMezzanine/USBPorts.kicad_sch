@@ -7960,6 +7960,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "0484060001"
+			(at 387.35 52.07 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "5"
 			(uuid "f3813ba6-dc93-4040-91cb-9cf7ff52639d")
 		)
@@ -9041,7 +9050,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "~"
+		(property "Datasheet" "C0603C104K5RACTU"
 			(at 147.32 34.29 0)
 			(effects
 				(font
@@ -9495,6 +9504,15 @@
 			)
 		)
 		(property "Description" "USB 3.0 A connector, stacked"
+			(at 387.35 99.06 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "0484060001"
 			(at 387.35 99.06 0)
 			(effects
 				(font
@@ -13621,7 +13639,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "~"
+		(property "Datasheet" "C0603C104K5RACTU"
 			(at 135.89 34.29 0)
 			(effects
 				(font

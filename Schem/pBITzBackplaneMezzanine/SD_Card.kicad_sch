@@ -2779,7 +2779,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "~"
+		(property "Datasheet" "C0603C104K5RACTU"
 			(at 60.96 201.93 0)
 			(effects
 				(font
@@ -3022,6 +3022,15 @@
 					(size 1.27 1.27)
 				)
 				(justify bottom)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "10067847-001RLF"
+			(at 124.46 72.39 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
 				(hide yes)
 			)
 		)
@@ -3847,7 +3856,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "~"
+		(property "Datasheet" "C0603C104K5RACTU"
 			(at 76.2 76.2 0)
 			(effects
 				(font

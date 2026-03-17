@@ -45839,6 +45839,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
+			(at 207.01 194.31 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "9769f340-7c93-49f6-ac62-f7d02bb4173a")
 		)
@@ -45965,6 +45974,15 @@
 					(size 1.27 1.27)
 				)
 				(justify bottom)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "EXB-2HV330JV"
+			(at 521.97 378.46 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
 				(hide yes)
 			)
 		)
@@ -46202,6 +46220,15 @@
 					(size 1.27 1.27)
 				)
 				(justify bottom)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "EXB-2HV330JV"
+			(at 521.97 346.71 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
 				(hide yes)
 			)
 		)
@@ -47001,6 +47028,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "4816P-T02-472LF"
+			(at 143.51 218.44 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "14"
 			(uuid "3e87545c-b4f6-41ac-a735-f83a861e4968")
 		)
@@ -47233,6 +47269,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 160.02 194.31 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
 			(at 160.02 194.31 90)
 			(effects
 				(font
@@ -47701,6 +47746,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "EXB-2HV330JV"
+			(at 612.14 314.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "7"
 			(uuid "0584a95a-3449-434b-bd91-6105b294dd2b")
 		)
@@ -47918,6 +47972,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 83.82 173.99 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "4820P-2-472LF"
 			(at 83.82 173.99 0)
 			(effects
 				(font
@@ -49241,6 +49304,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "EXB-2HV330JV"
+			(at 612.14 410.21 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "7"
 			(uuid "18d6ea1a-d2d7-4209-b8b3-752a62479ad8")
 		)
@@ -49406,6 +49478,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 229.87 176.53 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
 			(at 229.87 176.53 90)
 			(effects
 				(font
@@ -49602,6 +49683,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 229.87 185.42 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
 			(at 229.87 185.42 90)
 			(effects
 				(font
@@ -50171,6 +50261,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 207.01 176.53 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
 			(at 207.01 176.53 90)
 			(effects
 				(font
@@ -50876,6 +50975,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "EXB-2HV330JV"
+			(at 521.97 281.94 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "7"
 			(uuid "6dbaf2a6-1755-4bbd-9a76-ecc690eaa5a9")
 		)
@@ -51112,6 +51220,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "EXB-2HV330JV"
+			(at 521.97 314.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "7"
 			(uuid "6b4a8c8b-34cb-42f3-9b36-83d6095a04b2")
 		)
@@ -51280,6 +51397,15 @@
 					(size 1.27 1.27)
 				)
 				(justify bottom)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "EXB-2HV330JV"
+			(at 521.97 410.21 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
 				(hide yes)
 			)
 		)
@@ -51892,6 +52018,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "EXB-2HV330JV"
+			(at 612.14 378.46 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "7"
 			(uuid "a33437c1-c358-4f2b-9c51-4c33af97bc0a")
 		)
@@ -52060,6 +52195,15 @@
 					(size 1.27 1.27)
 				)
 				(justify bottom)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "EXB-2HV330JV"
+			(at 521.97 444.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
 				(hide yes)
 			)
 		)
@@ -52428,6 +52572,15 @@
 					(size 1.27 1.27)
 				)
 				(justify bottom)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "EXB-2HV330JV"
+			(at 612.14 346.71 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
 				(hide yes)
 			)
 		)
@@ -53217,6 +53370,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 83.82 214.63 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "4820P-2-472LF"
 			(at 83.82 214.63 0)
 			(effects
 				(font
@@ -54933,6 +55095,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
+			(at 160.02 185.42 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "7c95ad83-136f-4d85-b73e-0baf545b4534")
 		)
@@ -55449,6 +55620,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
+			(at 184.15 194.31 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "b425d3db-afbc-4aab-be21-5058b76eea29")
 		)
@@ -55572,6 +55752,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 184.15 176.53 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
 			(at 184.15 176.53 90)
 			(effects
 				(font
@@ -56216,6 +56405,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
+			(at 207.01 185.42 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "bd7a096f-131d-41d5-b834-e8fac00373f3")
 		)
@@ -56342,6 +56540,15 @@
 					(size 1.27 1.27)
 				)
 				(justify bottom)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "EXB-2HV330JV"
+			(at 612.14 281.94 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
 				(hide yes)
 			)
 		)
@@ -56510,6 +56717,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 160.02 176.53 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
 			(at 160.02 176.53 90)
 			(effects
 				(font
@@ -56842,6 +57058,15 @@
 					(size 1.27 1.27)
 				)
 				(justify bottom)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "EXB-2HV330JV"
+			(at 612.14 444.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
 				(hide yes)
 			)
 		)
@@ -57966,6 +58191,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 184.15 185.42 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
 			(at 184.15 185.42 90)
 			(effects
 				(font

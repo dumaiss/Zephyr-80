@@ -20767,6 +20767,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
+			(at 106.68 351.79 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "4a732f87-106a-4a5b-acca-229e2e1a7f5b")
 		)
@@ -20828,6 +20837,15 @@
 			)
 		)
 		(property "Description" "Rotary switch, 4-bit encoding, 10 positions, Complementary code"
+			(at 85.09 323.85 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RDS-10S-7229-A-CR"
 			(at 85.09 323.85 0)
 			(effects
 				(font
@@ -20906,6 +20924,15 @@
 		)
 		(property "Description" "pBITz backplane Connector"
 			(at 458.216 206.756 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "PCIE-098-02-F-D-RA"
+			(at 457.2 154.94 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -21347,6 +21374,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74HC688DWR"
+			(at 186.69 341.63 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "20"
 			(uuid "3abfb00b-64e6-403e-b08a-d959c5f7bc17")
 		)
@@ -21544,6 +21580,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
+			(at 106.68 314.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "45f49876-8b0d-4c67-8606-d5c6fee4fbc4")
 		)
@@ -21606,6 +21651,15 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 114.3 351.79 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
 			(at 114.3 351.79 0)
 			(effects
 				(font
@@ -21747,6 +21801,15 @@
 			)
 		)
 		(property "Description" "8-bit magnitude comparator"
+			(at 293.37 341.63 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74HC688DWR"
 			(at 293.37 341.63 0)
 			(effects
 				(font
@@ -22164,6 +22227,15 @@
 		)
 		(property "Description" "pBITz backplane Connector"
 			(at 374.396 163.576 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "PCIE-098-02-F-D-RA"
+			(at 373.38 111.76 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -24334,6 +24406,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
+			(at 114.3 314.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "c361eb6e-8985-442a-a77d-6d628fe99517")
 		)
@@ -24827,6 +24908,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "PCIE-098-02-F-D-RA"
+			(at 457.2 189.23 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "B26"
 			(uuid "2e691147-4ae5-4ba5-a6d7-a604f447d73d")
 		)
@@ -25182,6 +25272,15 @@
 			)
 		)
 		(property "Description" "Rotary switch, 4-bit encoding, 10 positions, Complementary code"
+			(at 85.09 360.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RDS-10S-7229-A-CR"
 			(at 85.09 360.68 0)
 			(effects
 				(font

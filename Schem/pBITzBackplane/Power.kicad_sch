@@ -2459,6 +2459,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
+			(at 96.52 138.43 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "be955220-ff87-4974-a6a4-6764b7a13a50")
 		)
@@ -2724,6 +2733,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "BSS138"
+			(at 139.7 115.57 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "fe608f8c-3718-49a9-bd50-889f4d237c2f")
 		)
@@ -2849,6 +2867,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 87.63 101.6 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-0710KL"
 			(at 87.63 101.6 90)
 			(effects
 				(font
@@ -3181,6 +3208,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 69.85 120.65 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "A 08-LC-TT"
 			(at 69.85 120.65 0)
 			(effects
 				(font
@@ -3665,6 +3701,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-0710KL"
+			(at 104.14 118.11 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "c18f0d81-0b99-46bd-8c6e-91795d97c0cb")
 		)
@@ -3928,6 +3973,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
+			(at 102.87 102.87 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "9a71662e-d4a7-4494-83ae-1cd4c1838812")
 		)
@@ -3962,7 +4016,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100"
+		(property "Value" "100n"
 			(at 36.83 92.7099 0)
 			(effects
 				(font
@@ -4053,6 +4107,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 33.02 91.44 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K3RACTU"
 			(at 33.02 91.44 0)
 			(effects
 				(font
@@ -4194,6 +4257,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-074K7L"
+			(at 109.22 138.43 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "153b834e-8e9b-4ab4-99d1-1d66d6f781a0")
 		)
@@ -4317,6 +4389,15 @@
 			)
 		)
 		(property "VENDOR" ""
+			(at 191.77 100.33 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "0039281243"
 			(at 191.77 100.33 0)
 			(effects
 				(font

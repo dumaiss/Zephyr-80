@@ -4210,6 +4210,15 @@
 				(hide yes)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "L77HDA26SD1CH4F"
+			(at 78.74 57.15 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "19"
 			(uuid "e466ae51-b99b-486f-99f2-2dfe0a07f6b9")
 		)
