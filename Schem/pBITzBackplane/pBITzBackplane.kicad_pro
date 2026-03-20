@@ -58,7 +58,16 @@
           "width": 0.0
         }
       ],
-      "drc_exclusions": [],
+      "drc_exclusions": [
+        [
+          "starved_thermal|193287215|235020215|19161a77-5cdb-4c35-8331-a3591474fb2a|29e5eae1-e94c-46d0-91af-b390fad7651b|In2.Cu",
+          ""
+        ],
+        [
+          "starved_thermal|233846275|235122293|19161a77-5cdb-4c35-8331-a3591474fb2a|9d915065-0aba-43f3-a9cc-47fe399008b9|In2.Cu",
+          ""
+        ]
+      ],
       "meta": {
         "version": 2
       },
@@ -139,7 +148,7 @@
         "min_track_width": 0.0,
         "min_via_annular_width": 0.1,
         "min_via_diameter": 0.5,
-        "solder_mask_to_copper_clearance": 0.005,
+        "solder_mask_to_copper_clearance": 0.0,
         "use_height_for_length_calcs": true
       },
       "teardrop_options": [
