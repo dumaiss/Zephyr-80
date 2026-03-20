@@ -13065,7 +13065,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+		(property "MANUFACTURER_PART_NUMBER" ""
 			(at 62.23 118.11 0)
 			(effects
 				(font
@@ -15846,7 +15846,7 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "CRCW06034K70FKEA"
+		(property "MANUFACTURER_PART_NUMBER" ""
 			(at 62.23 177.8 0)
 			(effects
 				(font
