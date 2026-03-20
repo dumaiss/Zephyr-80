@@ -5065,6 +5065,12 @@
 		(uuid "0374d13e-6ff7-4352-90d1-ce109902d221")
 	)
 	(junction
+		(at 124.46 232.41)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "1bdf096a-842f-4880-b6cc-6571978f000b")
+	)
+	(junction
 		(at 113.03 232.41)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -5093,6 +5099,12 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "66cef3c9-bb8f-449a-9c1b-847ff85bcff1")
+	)
+	(junction
+		(at 124.46 248.92)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "a6aa3730-f18a-4b2d-8cba-4001e723bc1e")
 	)
 	(junction
 		(at 67.31 232.41)
@@ -5693,6 +5705,16 @@
 			(type default)
 		)
 		(uuid "0a59115f-fc49-42f0-b1de-5450f59e469e")
+	)
+	(wire
+		(pts
+			(xy 137.16 243.84) (xy 137.16 248.92)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "0b066920-be2c-4bba-ae84-08b97d16787f")
 	)
 	(wire
 		(pts
@@ -7216,6 +7238,16 @@
 	)
 	(wire
 		(pts
+			(xy 124.46 232.41) (xy 137.16 232.41)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "a9f53e73-e001-427d-9460-7be3c7bac168")
+	)
+	(wire
+		(pts
 			(xy 30.48 92.71) (xy 44.45 92.71)
 		)
 		(stroke
@@ -7243,6 +7275,16 @@
 			(type default)
 		)
 		(uuid "abae22e1-ddbe-4647-9f3c-56bda59213e4")
+	)
+	(wire
+		(pts
+			(xy 137.16 236.22) (xy 137.16 232.41)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "acc6cf92-8425-402c-b3bc-61f66cff25d9")
 	)
 	(wire
 		(pts
@@ -8116,6 +8158,16 @@
 	)
 	(wire
 		(pts
+			(xy 124.46 248.92) (xy 137.16 248.92)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f439e9b0-30c6-42a1-807b-8bce844adf9d")
+	)
+	(wire
+		(pts
 			(xy 149.86 163.83) (xy 139.7 163.83)
 		)
 		(stroke
@@ -8464,7 +8516,7 @@
 		)
 		(uuid "35ac97f7-da1f-4e05-a5ef-5c3bfb850cba")
 	)
-	(label "~{MREQ}"
+	(label "~{SRAM_CS}"
 		(at 302.26 64.77 0)
 		(effects
 			(font
@@ -9414,7 +9466,7 @@
 		)
 		(uuid "d8e1e407-469c-4f22-ac11-53af683348f0")
 	)
-	(label "~{SRAM_CS}"
+	(label "~{RD}"
 		(at 388.62 64.77 180)
 		(effects
 			(font
@@ -12305,6 +12357,115 @@
 	)
 	(symbol
 		(lib_id "Device:C")
+		(at 124.46 240.03 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "bbbcd75c-fe4e-458b-9e6b-a6dd58f765f4")
+		(property "Reference" "C9"
+			(at 128.27 238.7599 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "100n"
+			(at 128.27 241.2999 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
+			(at 125.4252 243.84 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 124.46 240.03 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Unpolarized capacitor"
+			(at 124.46 240.03 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 124.46 240.03 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 124.46 240.03 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "0603B104K160CT"
+			(at 124.46 240.03 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "37abbe90-5a60-45ab-bb2e-b1b264e6c7ce")
+		)
+		(pin "2"
+			(uuid "91565219-693b-4726-b60f-c5adce046d89")
+		)
+		(instances
+			(project "Z80HomeBrew"
+				(path "/5593e793-d133-45d0-a91e-72805049e474/42f260a1-43d6-4f51-bd99-df380e29398c"
+					(reference "C20")
+					(unit 1)
+				)
+			)
+			(project "Z80HomeBrew"
+				(path "/dc6b683c-bfa8-4cb5-a3c8-a89070b5c279/236fa83f-f78f-4d87-90cb-d181eac13394"
+					(reference "C9")
+					(unit 1)
+				)
+			)
+			(project "CPU_AddressDecoding"
+				(path "/f3536fc1-7602-4cc7-ae5a-b620f9bbf363"
+					(reference "C?")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:C")
 		(at 101.6 240.03 0)
 		(unit 1)
 		(exclude_from_sim no)
@@ -12699,7 +12860,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 124.46 240.03 0)
+		(at 137.16 240.03 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -12708,7 +12869,7 @@
 		(fields_autoplaced yes)
 		(uuid "cec977fb-28e5-42a9-b5ba-a7a321e88439")
 		(property "Reference" "C8"
-			(at 128.27 238.7599 0)
+			(at 140.97 238.7599 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -12716,8 +12877,8 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100n"
-			(at 128.27 241.2999 0)
+		(property "Value" "47u"
+			(at 140.97 241.2999 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -12725,8 +12886,8 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
-			(at 125.4252 243.84 0)
+		(property "Footprint" "Capacitor_SMD:C_1206_3216Metric"
+			(at 138.1252 243.84 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -12735,7 +12896,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 124.46 240.03 0)
+			(at 137.16 240.03 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -12744,7 +12905,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 124.46 240.03 0)
+			(at 137.16 240.03 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -12753,7 +12914,7 @@
 			)
 		)
 		(property "KLC_S4.2_3V3OUT" ""
-			(at 124.46 240.03 0)
+			(at 137.16 240.03 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -12762,7 +12923,7 @@
 			)
 		)
 		(property "KLC_S4.2_VCC" ""
-			(at 124.46 240.03 0)
+			(at 137.16 240.03 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -12770,8 +12931,8 @@
 				(hide yes)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "0603B104K160CT"
-			(at 124.46 240.03 0)
+		(property "MANUFACTURER_PART_NUMBER" "C3216X5R1E476M160AC"
+			(at 137.16 240.03 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -12786,21 +12947,9 @@
 			(uuid "91565219-693b-4726-b60f-c5adce046d89")
 		)
 		(instances
-			(project "Z80HomeBrew"
-				(path "/5593e793-d133-45d0-a91e-72805049e474/42f260a1-43d6-4f51-bd99-df380e29398c"
-					(reference "C20")
-					(unit 1)
-				)
-			)
-			(project "Z80HomeBrew"
+			(project "Zephyr-80-CPU"
 				(path "/dc6b683c-bfa8-4cb5-a3c8-a89070b5c279/236fa83f-f78f-4d87-90cb-d181eac13394"
 					(reference "C8")
-					(unit 1)
-				)
-			)
-			(project "CPU_AddressDecoding"
-				(path "/f3536fc1-7602-4cc7-ae5a-b620f9bbf363"
-					(reference "C?")
 					(unit 1)
 				)
 			)
