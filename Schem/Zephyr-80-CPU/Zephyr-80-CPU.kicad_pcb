@@ -4514,6 +4514,17 @@
 			(uuid "66644195-3a5b-4aac-ad1b-ca8c6e811de9")
 		)
 		(embedded_fonts no)
+		(model "${PBITZ_ROOT}/99-KiCad-Lib/3D-Models/ECS-2100AX-147.4.step"
+			(offset
+				(xyz 0 0 0)
+			)
+			(scale
+				(xyz 1 1 1)
+			)
+			(rotate
+				(xyz -90 -0 -0)
+			)
+		)
 	)
 	(footprint "Capacitor_SMD:C_0603_1608Metric"
 		(layer "F.Cu")
@@ -8339,6 +8350,17 @@
 			(uuid "f4d00bfe-ba25-4ca6-b219-d3a19974e634")
 		)
 		(embedded_fonts no)
+		(model "${PBITZ_ROOT}/99-KiCad-Lib/3D-Models/TSOP-44_MIL400_ALL.step"
+			(offset
+				(xyz 0 0 0)
+			)
+			(scale
+				(xyz 1 1 1)
+			)
+			(rotate
+				(xyz 0 0 0)
+			)
+		)
 	)
 	(footprint "Capacitor_SMD:C_0603_1608Metric"
 		(layer "F.Cu")
@@ -12055,6 +12077,17 @@
 			(uuid "8f464fb6-d28c-4f4a-a879-c25b5a1b2648")
 		)
 		(embedded_fonts no)
+		(model "${PBITZ_ROOT}/99-KiCad-Lib/3D-Models/1-2199300-2.STEP"
+			(offset
+				(xyz 8 -19 3.5)
+			)
+			(scale
+				(xyz 1 1 1)
+			)
+			(rotate
+				(xyz -0 -0 -90)
+			)
+		)
 	)
 	(footprint "MountingHole:MountingHole_2.2mm_M2"
 		(layer "F.Cu")

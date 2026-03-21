@@ -12941,10 +12941,10 @@
 			)
 		)
 		(pin "1"
-			(uuid "37abbe90-5a60-45ab-bb2e-b1b264e6c7ce")
+			(uuid "37abbe90-5a60-45ab-bb2e-b1b264e6c7cf")
 		)
 		(pin "2"
-			(uuid "91565219-693b-4726-b60f-c5adce046d89")
+			(uuid "91565219-693b-4726-b60f-c5adce046d8a")
 		)
 		(instances
 			(project "Zephyr-80-CPU"
