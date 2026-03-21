@@ -2022,7 +2022,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Footprints:SOIC127P600X175-16N"
+		(property "Footprint" "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm"
 			(at 97.79 157.48 0)
 			(effects
 				(font
@@ -2165,7 +2165,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Footprints:SOIC127P600X175-16N"
+		(property "Footprint" "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm"
 			(at 119.38 219.71 0)
 			(effects
 				(font
@@ -2380,7 +2380,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Footprints:SOIC127P600X175-16N"
+		(property "Footprint" "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm"
 			(at 97.79 123.19 0)
 			(effects
 				(font
@@ -2625,7 +2625,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Footprints:SOIC127P600X175-16N"
+		(property "Footprint" "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm"
 			(at 119.38 191.77 0)
 			(effects
 				(font
@@ -3114,7 +3114,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Footprints:SOIC127P600X175-16N"
+		(property "Footprint" "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm"
 			(at 97.79 139.7 0)
 			(effects
 				(font
@@ -3481,7 +3481,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Footprints:SOIC127P600X175-16N"
+		(property "Footprint" "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm"
 			(at 81.28 201.93 0)
 			(effects
 				(font
@@ -3702,7 +3702,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Footprints:SOIC127P600X175-16N"
+		(property "Footprint" "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm"
 			(at 119.38 205.74 0)
 			(effects
 				(font
