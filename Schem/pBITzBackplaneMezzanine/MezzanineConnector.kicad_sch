@@ -22131,7 +22131,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0504_1310Metric_Pad0.83x1.28mm_HandSolder"
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
 			(at 360.3752 316.23 0)
 			(effects
 				(font
@@ -22150,6 +22150,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 359.41 312.42 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
 			(at 359.41 312.42 0)
 			(effects
 				(font
@@ -22863,7 +22872,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0504_1310Metric_Pad0.83x1.28mm_HandSolder"
+		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
 			(at 373.0752 316.23 0)
 			(effects
 				(font
@@ -22882,6 +22891,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 372.11 312.42 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "C0603C104K5RACTU"
 			(at 372.11 312.42 0)
 			(effects
 				(font
