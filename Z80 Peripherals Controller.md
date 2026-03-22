@@ -1,12 +1,12 @@
 Here is the updated **Z80 Peripherals Controller** document, revised to match the hardware implementation found in the provided KiCad schematics.
 
-### **Z80 I/O Subsystem — SD + Dual-USB-HID via SIO + ATmega1284P**
+### **Z80 I/O Subsystem — SD + Dual-USB-HID via SIO + PIC18 Micro Controller**
 
 ## **1) Overall Architecture**
 
 ### **1.1 Goals**
 
-- **Decoupled I/O:** The ATmega1284P acts as an I/O co-processor, managing the "chunky" (SD Card) and "urgent" (USB HID) tasks via SPI, isolating the Z80 from complex protocols.
+- **Decoupled I/O:** The PIC18 acts as an I/O co-processor, managing the "chunky" (SD Card) and "urgent" (USB HID) tasks via SPI, isolating the Z80 from complex protocols.
     
 - **Simple Z80 Integration:** The Z80 interacts with these peripherals strictly through standard Z80 SIO UART links, treating the modern subsystems as simple serial streams.
     
@@ -15,15 +15,15 @@ Here is the updated **Z80 Peripherals Controller** document, revised to match th
 ### **1.2 Major Blocks**
 
 - **Z80 Host:** Driven by a **14.7456 MHz** system clock oscillator (`Y1`).    
-- **Clock Management:** A 4040 counter (`U3`) derives the system and peripheral clocks from the main oscillator.
+- **Clock Management:** A 4040 counter (`U8`) derives the system and peripheral clocks from the main oscillator.
     
-    - **7.3728 MHz** for high-speed SIO links (SD)5.        
-    - **3.6864 MHz** for the CTC and CPU system clock6.        
+    - **7.3728 MHz** for high-speed SIO links.        
+    - **3.6864 MHz** for the CTC and CPU system clock.        
     - **1.8432 MHz** for standard baud rate generation (115.2k).
         
-- **2× Z80 SIO/0:** Providing 4 serial channels total (`IC1`, `IC2`).      
-- **Z80 CTC:** Used for the User Port baud rate generation and system timing (`IC3`).    
-- **ATmega1284P:** The 5V I/O co-processor (`U4`). It connects to the SIOs via bit-banged UART links on **Port C** and manages peripherals via hardware SPI on **Port D**11.    
+- **2× Z80 SIO/0:** Providing 4 serial channels total (`IC2`, `IC3`).      
+- **Z80 CTC:** Used for the User Port baud rate generation and system timing (`IC1`).    
+- **PIC18F57Q84:** The 5V I/O co-processor (`U15`). It connects to the SIOs via bit-banged UART links on **Port C** and manages peripherals via hardware SPI on **Port D**11.    
 
 ---
 
@@ -31,16 +31,16 @@ Here is the updated **Z80 Peripherals Controller** document, revised to match th
 
 The hardware implementation uses the following channel mapping. Note that the MCU communicates with the SIOs using **Port C** pins.
 
-### **2.1 SIO 0 (`IC1`) — Base Address 0xE0**
+### **2.1 SIO 0 (`IC2`) — Base Address 0x20**
 
 Driven by a **1.8432 MHz** clock, providing fixed **115,200 baud** (x16 divisor).
 
 | **Channel** | **Role**       | **Description**                         | **I/O Address (Data / Ctrl)** |
 | ----------- | -------------- | --------------------------------------- | ----------------------------- |
-| **A**       | **USB / GPIO** | Link to MCU for Keyboard/Mouse HID data | **0xE0 / 0xE2**               |
-| **B**       | **Console**    | Main user terminal (FTDI/Serial header) | **0xE1 / 0xE3**               |
+| **A**       | **USB / GPIO** | Link to MCU for Keyboard/Mouse HID data | **0x20 / 0x22**               |
+| **B**       | **Console**    | Main user terminal (FTDI/Serial header) | **0x21 / 0x23**               |
 
-### **2.2 SIO 1 (`IC2`) — Base Address 0x20**
+### **2.2 SIO 1 (`IC2`) — Base Address 0x30**
 
 Driven by mixed clocks for high-speed and variable rate support.
 
@@ -64,7 +64,7 @@ Driven by **3.6864 MHz**.
 
 ## **3) MCU & Data Paths**
 
-### **3.1 MCU Pin Usage (`U4` ATmega1284P)**
+### **3.1 MCU Pin Usage (`U15` PIC18F57Q84)**
 
 The MCU uses its hardware SPI port to act as the master for the SD Card and USB Host Controller (MAX3421E), while using Port C to emulate serial links to the Z80.
 
@@ -137,8 +137,6 @@ Suggested TYPE values:
 MODS bitfield (DATA for TYPE=MODS):
 
 - b0 LCTRL, b1 LSHIFT, b2 LALT, b3 LGUI, b4 RCTRL, b5 RSHIFT, b6 RALT, b7 RGUI
-
-> Keycode policy: keep it “neutral” (HID usage IDs or your own table). CP/M can translate in software.
 
 #### Z80 ISR sketch (ring buffer)
 
