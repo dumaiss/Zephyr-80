@@ -72,16 +72,44 @@
           "Purposefully put SMD under the socket"
         ],
         [
-          "net_conflict|200937500|92712400|aa6c70ab-9e18-4d21-8352-2947c7604914|00000000-0000-0000-0000-000000000000",
-          "Same net QH' vs. QH&apos; because of escaping of the apos"
-        ],
-        [
           "silk_edge_clearance|76530200|57934901|3ff83b68-926b-46e5-be17-ffcfb9a4715a|9690f384-68e3-4a07-a1a0-17bf681562f7",
           "USB Connector needs to extend slightly off the board"
         ],
         [
           "silk_edge_clearance|76530200|65885101|3ff83b68-926b-46e5-be17-ffcfb9a4715a|acdf29d2-3cbf-4c42-a9b0-9d1d50a4418d",
           "USB Connector needs to extend slightly off the board"
+        ],
+        [
+          "silk_over_copper|198629008|57525395|c97fe98c-2510-49b7-bb23-9c3b374953a2|00000000-0000-0000-0000-000000000000",
+          ""
+        ],
+        [
+          "silk_over_copper|198979807|63500924|89bd8b1c-0e7c-44cb-863b-4ef50c9a6156|00000000-0000-0000-0000-000000000000",
+          ""
+        ],
+        [
+          "silk_over_copper|199691172|65857500|bdc404fa-8c01-4457-a289-1c92ee45a798|00000000-0000-0000-0000-000000000000",
+          ""
+        ],
+        [
+          "silk_over_copper|199872600|54319767|8788a5da-464c-444f-83b5-2856b7c9d3be|00000000-0000-0000-0000-000000000000",
+          ""
+        ],
+        [
+          "silk_over_copper|200089878|81911981|47f10619-b17e-4cbe-84ba-e2b2f5e7603e|00000000-0000-0000-0000-000000000000",
+          ""
+        ],
+        [
+          "silk_over_copper|200094044|75355999|47f10619-b17e-4cbe-84ba-e2b2f5e7603e|00000000-0000-0000-0000-000000000000",
+          ""
+        ],
+        [
+          "silk_overlap|107764718|79974718|2368f4e9-6d54-4851-b515-80ce294d7bf7|d7cba1c2-e3d7-4706-b980-af38f5d5d622",
+          ""
+        ],
+        [
+          "silk_overlap|109716333|81926333|2368f4e9-6d54-4851-b515-80ce294d7bf7|871ef351-d5c3-4c64-9ea4-a35411abf023",
+          ""
         ]
       ],
       "meta": {
@@ -164,7 +192,7 @@
         "min_track_width": 0.0,
         "min_via_annular_width": 0.1,
         "min_via_diameter": 0.5,
-        "solder_mask_to_copper_clearance": 0.005,
+        "solder_mask_to_copper_clearance": 0.0,
         "use_height_for_length_calcs": true
       },
       "teardrop_options": [
