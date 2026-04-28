@@ -1,0 +1,9 @@
+/build/*
+!/build/.gitkeep
+*.elf
+*.hex
+*.eep
+*.map
+*.lst
+*.o
+*.d
