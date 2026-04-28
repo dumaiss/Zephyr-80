@@ -91,7 +91,7 @@ the IO Controller.
 ## Power-On Sequence
 
 When the enclosure power switch is pressed while the system is off, the ATTiny85
-records a pending power-on request. PB0 is activated only after `PWR_OK` is
-asserted. `PWR_STATE` remains high during this startup window so the IO
-Controller holds the system in reset. When `PWR_OK` is asserted, the ATTiny85
-sets `PWR_STATE` low to allow the IO Controller to run.
+turns PB0 on immediately, pulling ATX `PS_ON#` low to start the PSU.
+`PWR_STATE` remains high during this startup window so the IO Controller holds
+the system in reset. When `PWR_OK` is asserted, the ATTiny85 sets `PWR_STATE`
+low to allow the IO Controller to run.

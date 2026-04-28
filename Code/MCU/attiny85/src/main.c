@@ -1,16 +1,6 @@
 #include <stdint.h>
 
-#if defined(__has_include)
-#  if __has_include(<util/delay.h>)
-#    include <util/delay.h>
-#  elif __has_include(<avr/delay.h>)
-#    include <avr/delay.h>
-#  else
-#    error "Delay header not found"
-#  endif
-#else
-#  include <util/delay.h>
-#endif
+#include <util/delay.h>
 
 #include "config.h"
 #include "power_controller.h"

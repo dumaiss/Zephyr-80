@@ -42,48 +42,48 @@ static void expect_action(const char *test_name,
     }
 }
 
-static void test_press_while_off_waits_for_pwr_ok_before_psu_on(void)
+static void test_press_while_off_turns_psu_on_and_waits_for_pwr_ok(void)
 {
     power_controller_t controller;
 
     power_controller_init(&controller, 0, 0);
 
-    expect_action("press while off records pending power-on",
+    expect_action("press while off turns PSU on and holds IO reset",
                   step(&controller, 1, 0, 0),
-                  POWER_CONTROLLER_ACTION_NONE);
+                  POWER_CONTROLLER_ACTION_PSU_ON |
+                      POWER_CONTROLLER_ACTION_HOLD_IO_RESET);
 
-    expect_action("release while PWR_OK is low keeps PB0 inactive",
+    expect_action("release while PWR_OK is low keeps IO reset held",
                   step(&controller, 0, 0, 0),
                   POWER_CONTROLLER_ACTION_NONE);
 
-    expect_action("PWR_OK assertion activates PB0 and releases IO reset",
+    expect_action("PWR_OK assertion releases IO reset",
                   step(&controller, 0, 1, 0),
-                  POWER_CONTROLLER_ACTION_PSU_ON |
-                      POWER_CONTROLLER_ACTION_RELEASE_IO_RESET);
+                  POWER_CONTROLLER_ACTION_RELEASE_IO_RESET);
 
     expect_action("after power-on no shutdown request is emitted",
                   step(&controller, 0, 1, 0),
                   POWER_CONTROLLER_ACTION_NONE);
 }
 
-static void test_held_press_while_off_does_not_activate_pb0_before_pwr_ok(void)
+static void test_held_press_while_off_turns_psu_on_before_pwr_ok(void)
 {
     power_controller_t controller;
 
     power_controller_init(&controller, 0, 0);
 
-    expect_action("off-state press starts pending power-on",
+    expect_action("off-state press enables PSU before PWR_OK",
                   step(&controller, 1, 0, 0),
-                  POWER_CONTROLLER_ACTION_NONE);
-
-    expect_action("held off-state press keeps PB0 inactive without PWR_OK",
-                  step(&controller, 1, 0, 0),
-                  POWER_CONTROLLER_ACTION_NONE);
-
-    expect_action("held off-state press activates PB0 and releases IO reset after PWR_OK",
-                  step(&controller, 1, 1, 0),
                   POWER_CONTROLLER_ACTION_PSU_ON |
-                      POWER_CONTROLLER_ACTION_RELEASE_IO_RESET);
+                      POWER_CONTROLLER_ACTION_HOLD_IO_RESET);
+
+    expect_action("held off-state press waits for PWR_OK",
+                  step(&controller, 1, 0, 0),
+                  POWER_CONTROLLER_ACTION_NONE);
+
+    expect_action("held off-state press releases IO reset after PWR_OK",
+                  step(&controller, 1, 1, 0),
+                  POWER_CONTROLLER_ACTION_RELEASE_IO_RESET);
 }
 
 static void test_pwr_ok_releases_io_reset(void)
@@ -251,8 +251,8 @@ static void test_button_held_at_reset_keeps_io_reset_held(void)
 
 int main(void)
 {
-    test_press_while_off_waits_for_pwr_ok_before_psu_on();
-    test_held_press_while_off_does_not_activate_pb0_before_pwr_ok();
+    test_press_while_off_turns_psu_on_and_waits_for_pwr_ok();
+    test_held_press_while_off_turns_psu_on_before_pwr_ok();
     test_pwr_ok_releases_io_reset();
     test_short_press_while_powered_holds_io_reset();
     test_short_press_does_not_turn_psu_off_without_io_reply();

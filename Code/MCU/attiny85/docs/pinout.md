@@ -21,8 +21,9 @@ Power-control firmware pin assignments.
   High means the IO Controller must hold the system in reset.
 - During startup, `PWR_STATE` stays high until `PWR_OK` is asserted. When
   `PWR_OK` is asserted, the ATTiny85 sets `PWR_STATE` low.
-- A falling edge on `PWR_SW` while off records a pending power-on request. PB0
-  and `PWR_STATE` low are activated only after `PWR_OK` is asserted.
+- A falling edge on `PWR_SW` while off turns PB0 on immediately, pulling ATX
+  `PS_ON#` low to start the PSU. `PWR_STATE` stays high until `PWR_OK` is
+  asserted.
 - When the system is already powered and the user presses `PWR_SW`, the
   ATTiny85 sets `PWR_STATE` high so the IO Controller can finish its shutdown
   work.

@@ -50,7 +50,7 @@ power_controller_action_t power_controller_step(
 
     /*
      * A new press means different things depending on current power state:
-     * - off: remember the power-on request until PWR_OK is asserted
+     * - off: turn on the PSU and wait for PWR_OK before releasing reset
      * - on: hold the IO Controller in reset so it can finish shutdown work
      */
     if (inputs->pwr_switch_pressed && !controller->was_pressed) {
@@ -63,16 +63,17 @@ power_controller_action_t power_controller_step(
         } else {
             controller->power_on_pending = 1;
             controller->power_button_armed = 0;
+            action |= POWER_CONTROLLER_ACTION_PSU_ON;
+            action |= hold_io_reset(controller);
         }
     }
 
     /*
-     * Power-on is a two-stage sequence. The switch press records intent, but
-     * PB0 is not activated and the IO Controller is not released until PWR_OK
-     * is asserted.
+     * Power-on is a two-stage sequence. The switch press enables the PSU first.
+     * PWR_STATE stays high until the PSU asserts PWR_OK, then the IO Controller
+     * is released from reset.
      */
     if (controller->power_on_pending && inputs->pwr_ok) {
-        action |= POWER_CONTROLLER_ACTION_PSU_ON;
         action |= release_io_reset(controller);
         controller->power_on_pending = 0;
     } else if (inputs->pwr_ok &&
@@ -88,7 +89,6 @@ power_controller_action_t power_controller_step(
      */
     if (inputs->pwr_switch_pressed &&
         controller->power_button_armed &&
-        inputs->pwr_ok &&
         !controller->force_off_done) {
         if (controller->press_ticks < POWER_CONTROLLER_FORCE_OFF_TICKS) {
             controller->press_ticks++;
