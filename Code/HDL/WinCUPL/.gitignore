@@ -1,0 +1,11 @@
+/build/*
+!/build/.gitkeep
+/src/.wincupl-*/
+*.jed
+*.lst
+*.doc
+*.abs
+*.so
+*.sim
+*.tt*
+*.pin

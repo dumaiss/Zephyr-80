@@ -1,0 +1,65 @@
+Name     Z80_MEM_DECODE;
+Partno   008;
+Date     2026-01-17;
+Revision 08;
+Designer HomeBrew;
+Company  Z80 Project;
+Assembly Memory Board;
+Location U_MEM_GAL;
+Device   g22v10;
+
+/* Inputs */
+Pin 1  = A15;
+Pin 2  = A14;
+Pin 3  = A13;
+Pin 4  = MREQ;        /* Active Low */
+Pin 5  = RAM_SHADOW;  /* 1 = Shadow Mode */
+Pin 6  = ROM_DIS;     /* 1 = Disable ROM */
+Pin 7  = CART_DETECT; /* 1 = Cartridge Present */
+Pin 8  = PROG;        /* 1 = Programming Mode */
+Pin 9  = RD;          /* Active Low */
+Pin 10 = WR;          /* Active Low */
+
+/* Banking Latch Inputs (Reassigned to free pins) */
+Pin 11 = BANK_Q0;
+Pin 13 = BANK_Q1;
+Pin 14 = BANK_Q2;
+
+/* Outputs */
+Pin 23 = !SRAM_CS;
+Pin 22 = !ROM_CS;
+Pin 21 = !CART_CS;
+
+/* RAM Banking Address Lines (To RAM A16-A18) */
+Pin 15 = RAM_A16;
+Pin 16 = RAM_A17;
+Pin 17 = RAM_A18;
+
+/* Address Definitions */
+BIOS_RANGE = !A15 & (!A14 # !A13);    /* $0000 - $5FFF */
+COMMON_RAM = !A15 & !A14 & !A13;      /* $0000 - $1FFF (Bottom 8K) */
+UPPER_32K  = A15;                     /* $8000 - $FFFF */
+RAM_ONLY   = !A15 & A14 & A13;        /* $6000 - $7FFF */
+
+/* Logic Conditions */
+ALL_RAM_MODE = ROM_DIS & !CART_DETECT;
+FORCE_BANK0  = COMMON_RAM & ALL_RAM_MODE;
+
+/* Equations */
+/* Force RAM Address to 0 in Common Area, otherwise pass Latch */
+RAM_A16 = BANK_Q0 & !FORCE_BANK0;
+RAM_A17 = BANK_Q1 & !FORCE_BANK0;
+RAM_A18 = BANK_Q2 & !FORCE_BANK0;
+
+ROM_CS = !MREQ & (PROG # (RD & !ROM_DIS & (RAM_SHADOW # BIOS_RANGE)));
+
+CART_CS = !MREQ & !PROG & UPPER_32K & CART_DETECT & !RAM_SHADOW;
+
+SRAM_CS = !MREQ & !PROG & (
+            (RAM_SHADOW & WR) 
+          # (!RAM_SHADOW & (
+               (BIOS_RANGE & (WR # ROM_DIS))
+             # RAM_ONLY
+             # (UPPER_32K & !CART_DETECT)
+            ))
+          );
