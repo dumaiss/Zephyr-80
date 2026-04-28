@@ -1,6 +1,6 @@
-# ATTiny85 Firmware
+# PMU Firmware
 
-Firmware project for an ATTiny85 microcontroller used in the Zephyr-80 system.
+Power management unit firmware for the Zephyr-80 system.
 
 The project is intentionally self-contained so additional MCU firmware projects
 can be added beside it under `Code/MCU/`.
@@ -8,7 +8,7 @@ can be added beside it under `Code/MCU/`.
 ## Layout
 
 ```text
-attiny85/
+PMU/
   Makefile          AVR-GCC build and flash targets
   include/          Project headers and configuration
   src/              Firmware source
@@ -79,19 +79,19 @@ See `docs/pinout.md` for the full pinout and signal behavior.
 ## Power-Off Handshake
 
 When the system is already powered and the enclosure power switch is pressed,
-the ATTiny85 sets `PWR_STATE` high. This tells the IO Controller to hold the
-system in reset and finish its shutdown work. The ATTiny85 keeps the PSU enabled
+the PMU sets `PWR_STATE` high. This tells the IO Controller to hold the
+system in reset and finish its shutdown work. The PMU keeps the PSU enabled
 until the IO Controller asserts `PWR_OFF_RQ` low. At that point PB0 is turned
 off, disabling the `PS_ON#` MOSFET and allowing the ATX supply to shut down.
 
 If the enclosure power switch is held for 5 seconds while the system is powered,
-the ATTiny85 turns PB0 off directly and shuts the PSU down without waiting for
-the IO Controller.
+the PMU turns PB0 off directly and shuts the PSU down without waiting for the IO
+Controller.
 
 ## Power-On Sequence
 
-When the enclosure power switch is pressed while the system is off, the ATTiny85
+When the enclosure power switch is pressed while the system is off, the PMU
 turns PB0 on immediately, pulling ATX `PS_ON#` low to start the PSU.
 `PWR_STATE` remains high during this startup window so the IO Controller holds
-the system in reset. When `PWR_OK` is asserted, the ATTiny85 sets `PWR_STATE`
-low to allow the IO Controller to run.
+the system in reset. When `PWR_OK` is asserted, the PMU sets `PWR_STATE` low to
+allow the IO Controller to run.

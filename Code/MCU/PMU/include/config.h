@@ -6,14 +6,14 @@
 #include "power_controller.h"
 
 /*
- * ATTiny85 power-controller pin map.
+ * PMU power-controller pin map.
  *
  * Each signal defines the data-direction register, output/input register, and
  * bit used by main.c. Keeping these names signal-oriented makes the firmware
  * easier to check against the schematic.
  */
 
-/* IO Controller asks the ATTiny85 to shut down the PSU. Active low input. */
+/* IO Controller asks the PMU to shut down the PSU. Active low input. */
 #define PWR_OFF_RQ_DDR  DDRB
 #define PWR_OFF_RQ_PORT PORTB
 #define PWR_OFF_RQ_PINR PINB

@@ -8,7 +8,7 @@
 static void psu_off(void);
 
 /*
- * Configure the ATTiny85 GPIO.
+ * Configure the PMU GPIO.
  *
  * Active-low external inputs use internal pull-ups. PWR_OK is left without an
  * internal pull-up because it is driven by the ATX PSU. Outputs start with the

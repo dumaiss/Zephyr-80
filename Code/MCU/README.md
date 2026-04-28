@@ -9,7 +9,8 @@ isolated.
 
 ## Projects
 
-- `attiny85/` - ATTiny85 firmware project skeleton.
+- `PMU/` - Power management unit firmware project.
+- `IOController/` - PIC18F57Q84 IO Controller firmware project.
 
 ## Suggested Layout
 
