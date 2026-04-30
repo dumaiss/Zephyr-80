@@ -4,13 +4,14 @@
 #include <stdint.h>
 
 typedef struct {
-    uint8_t pmu_hold_reset;
+    uint8_t pmu_reset_or_shutdown;
     uint8_t storage_busy;
     uint8_t usb_busy;
 } io_controller_inputs_t;
 
 typedef struct {
     uint8_t pwr_off_rq;
+    uint8_t host_reset;
 } io_controller_outputs_t;
 
 typedef struct {

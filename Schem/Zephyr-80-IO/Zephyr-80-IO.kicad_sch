@@ -1,7 +1,7 @@
 (kicad_sch
-	(version 20250114)
+	(version 20260306)
 	(generator "eeschema")
-	(generator_version "9.0")
+	(generator_version "10.0")
 	(uuid "db33a8e4-587d-4e74-8d3f-b68910957121")
 	(paper "D")
 	(title_block
@@ -751,11 +751,13 @@
 			(type solid)
 		)
 		(fill
-			(color 0 0 0 0.0000)
+			(color 0 0 0 0)
 		)
 		(uuid "1e002eec-a925-41bd-9968-565c74f66dea")
 		(property "Sheetname" "Baud Clock"
 			(at 392.43 168.1984 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -765,6 +767,8 @@
 		)
 		(property "Sheetfile" "BaudClock.kicad_sch"
 			(at 392.43 197.4346 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -833,11 +837,13 @@
 			(type solid)
 		)
 		(fill
-			(color 0 0 0 0.0000)
+			(color 0 0 0 0)
 		)
 		(uuid "305a452b-f523-4469-92bb-957195b37b9f")
 		(property "Sheetname" "Device Select Decode"
 			(at 212.09 150.4184 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -847,6 +853,8 @@
 		)
 		(property "Sheetfile" "DeviceSelectDecode.kicad_sch"
 			(at 212.09 179.6546 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -995,11 +1003,13 @@
 			(type solid)
 		)
 		(fill
-			(color 0 0 0 0.0000)
+			(color 0 0 0 0)
 		)
 		(uuid "40aeb9cf-7834-4efc-b850-38b27b4487fe")
 		(property "Sheetname" "IO Controller Card"
 			(at 292.1 130.0984 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1009,6 +1019,8 @@
 		)
 		(property "Sheetfile" "IO Controller.kicad_sch"
 			(at 292.1 197.4346 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1457,11 +1469,13 @@
 			(type solid)
 		)
 		(fill
-			(color 0 0 0 0.0000)
+			(color 0 0 0 0)
 		)
 		(uuid "61c97d6f-c0cd-4540-8832-42e8c844ef6d")
 		(property "Sheetname" "pBITz Bus Interface"
 			(at 292.1 224.0784 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1471,6 +1485,8 @@
 		)
 		(property "Sheetfile" "pBITzBusInterface.kicad_sch"
 			(at 292.1 268.5546 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1779,11 +1795,13 @@
 			(type solid)
 		)
 		(fill
-			(color 0 0 0 0.0000)
+			(color 0 0 0 0)
 		)
 		(uuid "7059b866-7ffc-47f2-bc9f-41763c65c3a7")
 		(property "Sheetname" "GPIOs and User Serial"
 			(at 392.43 91.9984 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1793,6 +1811,8 @@
 		)
 		(property "Sheetfile" "GPIOUserSerial.kicad_sch"
 			(at 392.43 122.5046 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1891,11 +1911,13 @@
 			(type solid)
 		)
 		(fill
-			(color 0 0 0 0.0000)
+			(color 0 0 0 0)
 		)
 		(uuid "fb434b62-1a0f-4105-8c0f-c7518eedf97d")
 		(property "Sheetname" "Console Port"
 			(at 392.43 130.0984 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1905,6 +1927,8 @@
 		)
 		(property "Sheetfile" "ConsolePort.kicad_sch"
 			(at 392.43 159.3346 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)

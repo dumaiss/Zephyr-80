@@ -11,14 +11,16 @@ io_controller_outputs_t io_controller_step(
 {
     io_controller_outputs_t outputs = {
         .pwr_off_rq = 0,
+        .host_reset = 0,
     };
 
     /*
-     * PWR_STATE high from the PMU means the IO Controller should stop normal
-     * work and prepare for power removal.
+     * PWR_STATE high from the PMU means the IO Controller should hold the
+     * system in reset or initiate shutdown work.
      */
-    if (inputs->pmu_hold_reset) {
+    if (inputs->pmu_reset_or_shutdown) {
         controller->shutdown_pending = 1;
+        outputs.host_reset = 1;
     } else {
         controller->shutdown_pending = 0;
     }

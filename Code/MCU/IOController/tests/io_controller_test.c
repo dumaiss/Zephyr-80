@@ -6,12 +6,12 @@
 static unsigned failures;
 
 static io_controller_outputs_t step(io_controller_t *controller,
-                                    uint8_t pmu_hold_reset,
+                                    uint8_t pmu_reset_or_shutdown,
                                     uint8_t storage_busy,
                                     uint8_t usb_busy)
 {
     const io_controller_inputs_t inputs = {
-        .pmu_hold_reset = pmu_hold_reset,
+        .pmu_reset_or_shutdown = pmu_reset_or_shutdown,
         .storage_busy = storage_busy,
         .usb_busy = usb_busy,
     };
@@ -32,25 +32,64 @@ static void expect_pwr_off_rq(const char *test_name,
     }
 }
 
+static void expect_host_reset(const char *test_name,
+                              io_controller_outputs_t outputs,
+                              uint8_t expected)
+{
+    if (outputs.host_reset != expected) {
+        printf("FAIL: %s: expected host_reset=%u, got %u\n",
+               test_name,
+               expected,
+               outputs.host_reset);
+        failures++;
+    }
+}
+
 static void test_idle_controller_does_not_request_power_off(void)
 {
     io_controller_t controller;
+    io_controller_outputs_t outputs;
 
     io_controller_init(&controller);
+    outputs = step(&controller, 0, 0, 0);
 
     expect_pwr_off_rq("idle run state has no power-off request",
-                      step(&controller, 0, 0, 0),
+                      outputs,
+                      0);
+    expect_host_reset("idle run state leaves host reset released",
+                      outputs,
                       0);
 }
 
 static void test_shutdown_request_asserts_when_idle(void)
 {
     io_controller_t controller;
+    io_controller_outputs_t outputs;
 
     io_controller_init(&controller);
+    outputs = step(&controller, 1, 0, 0);
 
     expect_pwr_off_rq("shutdown request asserts power-off when idle",
-                      step(&controller, 1, 0, 0),
+                      outputs,
+                      1);
+    expect_host_reset("shutdown request asserts host reset",
+                      outputs,
+                      1);
+}
+
+static void test_host_reset_follows_pmu_request_while_busy(void)
+{
+    io_controller_t controller;
+    io_controller_outputs_t outputs;
+
+    io_controller_init(&controller);
+    outputs = step(&controller, 1, 1, 1);
+
+    expect_pwr_off_rq("busy shutdown delays power-off request",
+                      outputs,
+                      0);
+    expect_host_reset("busy shutdown keeps host reset asserted",
+                      outputs,
                       1);
 }
 
@@ -97,6 +136,9 @@ static void test_run_state_clears_pending_shutdown(void)
     expect_pwr_off_rq("run state clears pending shutdown",
                       step(&controller, 0, 0, 0),
                       0);
+    expect_host_reset("run state releases host reset",
+                      step(&controller, 0, 0, 0),
+                      0);
 
     expect_pwr_off_rq("remaining in run state stays clear",
                       step(&controller, 0, 0, 0),
@@ -107,6 +149,7 @@ int main(void)
 {
     test_idle_controller_does_not_request_power_off();
     test_shutdown_request_asserts_when_idle();
+    test_host_reset_follows_pmu_request_while_busy();
     test_shutdown_waits_for_storage_to_drain();
     test_shutdown_waits_for_usb_to_drain();
     test_run_state_clears_pending_shutdown();
