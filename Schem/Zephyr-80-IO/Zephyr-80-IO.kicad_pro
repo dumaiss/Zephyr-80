@@ -291,7 +291,7 @@
       "internal_id": "",
       "mfg": "",
       "mpn": "",
-      "sch_revision": ""
+      "sch_revision": "0.1"
     },
     "layer_pairs": [],
     "layer_presets": [],
@@ -918,7 +918,7 @@
       {
         "filename": "Zephyr-80-IO.kicad_sch",
         "name": "Zephyr-80-IO",
-        "uuid": "00000000-0000-0000-0000-000000000000"
+        "uuid": "db33a8e4-587d-4e74-8d3f-b68910957121"
       }
     ],
     "used_designators": "",
@@ -927,7 +927,7 @@
   "sheets": [
     [
       "db33a8e4-587d-4e74-8d3f-b68910957121",
-      "Root"
+      "Zephyr-80-IO"
     ],
     [
       "40aeb9cf-7834-4efc-b850-38b27b4487fe",
