@@ -61,8 +61,11 @@ The template focuses on the PMU shutdown handshake:
 - `PWR_STATE` is read on `RB0`.
 - The host CPU reset output is driven on `RB2` and asserted low while
   `PWR_STATE` is high.
+- `RESET_HIGH` is driven on `RB5` and is always the inverse of `RB2`.
 - During IO Controller startup, `RB2` is held low for 500 ms before the host CPU
   and bus are released.
+- `NMI_RQ` on `RB3` uses the internal pull-up. A low-going switch press pulses
+  bus `NMI` on `RB4` low for 100 ms.
 - The IO Controller waits until local work is idle.
 - Once idle, it asserts `PWR_OFF_RQ` on `RB1` low so the PMU can remove ATX
   power.

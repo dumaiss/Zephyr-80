@@ -35,4 +35,22 @@
 #define HOST_RESET_ASSERTED 0
 #define HOST_RESET_IDLE     1
 
+#define HOST_RESET_HIGH_TRIS     TRISBbits.TRISB5
+#define HOST_RESET_HIGH_ANSEL    ANSELBbits.ANSELB5
+#define HOST_RESET_HIGH_LAT      LATBbits.LATB5
+#define HOST_RESET_HIGH_ASSERTED 1
+#define HOST_RESET_HIGH_IDLE     0
+
+#define NMI_RQ_TRIS      TRISBbits.TRISB3
+#define NMI_RQ_ANSEL     ANSELBbits.ANSELB3
+#define NMI_RQ_WPU       WPUBbits.WPUB3
+#define NMI_RQ_PORT      PORTBbits.RB3
+#define NMI_RQ_ASSERTED  0
+
+#define BUS_NMI_TRIS     TRISBbits.TRISB4
+#define BUS_NMI_ANSEL    ANSELBbits.ANSELB4
+#define BUS_NMI_LAT      LATBbits.LATB4
+#define BUS_NMI_ASSERTED 0
+#define BUS_NMI_IDLE     1
+
 #endif

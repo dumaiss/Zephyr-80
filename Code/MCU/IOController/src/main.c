@@ -38,6 +38,31 @@
 #define SD_BUSY_TRIS  TRISFbits.TRISF5
 #define SD_BUSY_LAT   LATFbits.LATF5
 
+static void write_host_reset(uint8_t asserted)
+{
+    HOST_RESET_LAT = asserted ? HOST_RESET_ASSERTED : HOST_RESET_IDLE;
+    HOST_RESET_HIGH_LAT = asserted ? HOST_RESET_HIGH_ASSERTED : HOST_RESET_HIGH_IDLE;
+}
+
+static void pulse_bus_nmi(void)
+{
+    BUS_NMI_LAT = BUS_NMI_ASSERTED;
+    __delay_ms(100);
+    BUS_NMI_LAT = BUS_NMI_IDLE;
+}
+
+static void service_nmi_request(void)
+{
+    static uint8_t nmi_rq_was_asserted;
+    const uint8_t nmi_rq_asserted = NMI_RQ_PORT == NMI_RQ_ASSERTED;
+
+    if (nmi_rq_asserted && !nmi_rq_was_asserted) {
+        pulse_bus_nmi();
+    }
+
+    nmi_rq_was_asserted = nmi_rq_asserted;
+}
+
 static void platform_init(void)
 {
     INTCON0bits.GIE = 0;
@@ -138,12 +163,22 @@ static void platform_init(void)
     PWR_OFF_RQ_LAT = PWR_OFF_RQ_IDLE;
     PWR_OFF_RQ_TRIS = 0;
 
+    NMI_RQ_ANSEL = 0;
+    NMI_RQ_WPU = 1;
+    NMI_RQ_TRIS = 1;
+
+    BUS_NMI_ANSEL = 0;
+    BUS_NMI_LAT = BUS_NMI_IDLE;
+    BUS_NMI_TRIS = 0;
+
     HOST_RESET_ANSEL = 0;
-    HOST_RESET_LAT = HOST_RESET_ASSERTED;
+    HOST_RESET_HIGH_ANSEL = 0;
+    write_host_reset(1);
     HOST_RESET_TRIS = 0;
+    HOST_RESET_HIGH_TRIS = 0;
     __delay_ms(500);
     if (PWR_STATE_PORT != PWR_STATE_ASSERTED) {
-        HOST_RESET_LAT = HOST_RESET_IDLE;
+        write_host_reset(0);
     }
 }
 
@@ -166,7 +201,7 @@ static io_controller_inputs_t read_inputs(void)
 static void write_outputs(const io_controller_outputs_t *outputs)
 {
     PWR_OFF_RQ_LAT = outputs->pwr_off_rq ? PWR_OFF_RQ_ASSERTED : PWR_OFF_RQ_IDLE;
-    HOST_RESET_LAT = outputs->host_reset ? HOST_RESET_ASSERTED : HOST_RESET_IDLE;
+    write_host_reset(outputs->host_reset);
 }
 
 int main(void)
@@ -182,5 +217,6 @@ int main(void)
             io_controller_step(&controller, &inputs);
 
         write_outputs(&outputs);
+        service_nmi_request();
     }
 }
