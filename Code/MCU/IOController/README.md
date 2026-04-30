@@ -70,3 +70,15 @@ The template focuses on the PMU shutdown handshake:
 - Once idle, it asserts `PWR_OFF_RQ` on `RB1` low so the PMU can remove ATX
   power.
 - If `PWR_STATE` returns low, the shutdown request is cleared.
+
+The SPI management template initializes the IO Controller as SPI master for the
+USB and SD card subsystems:
+
+- `RA0` reads active-low SIO port A `SYNCA` for SD synchronization.
+- `RA1` reads active-low SIO port B `SYNCB` for USB synchronization.
+- `RA2` reads the active-low USB interrupt.
+- `RA3` and `RA4` drive active-low USB and SD SPI chip selects.
+- `RA5`, `RA6`, and `RA7` are MOSI, MISO, and SPI clock.
+- `RF1` and `RF2` are active-low SIO RTS service request inputs for USB and SD.
+  Their interrupt-on-change ISR latches work flags; the main loop turns those
+  flags into SD/USB mailbox messages.

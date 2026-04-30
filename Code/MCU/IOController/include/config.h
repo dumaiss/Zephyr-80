@@ -53,4 +53,57 @@
 #define BUS_NMI_ASSERTED 0
 #define BUS_NMI_IDLE     1
 
+#define CS_SIO_SD_TRIS     TRISAbits.TRISA0
+#define CS_SIO_SD_ANSEL    ANSELAbits.ANSELA0
+#define CS_SIO_SD_PORT     PORTAbits.RA0
+#define CS_SIO_SD_ASSERTED 0
+
+#define CS_SIO_USB_TRIS     TRISAbits.TRISA1
+#define CS_SIO_USB_ANSEL    ANSELAbits.ANSELA1
+#define CS_SIO_USB_PORT     PORTAbits.RA1
+#define CS_SIO_USB_ASSERTED 0
+
+#define USB_INT_TRIS     TRISAbits.TRISA2
+#define USB_INT_ANSEL    ANSELAbits.ANSELA2
+#define USB_INT_PORT     PORTAbits.RA2
+#define USB_INT_ASSERTED 0
+
+#define USB_CS_TRIS     TRISAbits.TRISA3
+#define USB_CS_ANSEL    ANSELAbits.ANSELA3
+#define USB_CS_LAT      LATAbits.LATA3
+#define USB_CS_ASSERTED 0
+#define USB_CS_IDLE     1
+
+#define SD_CS_TRIS     TRISAbits.TRISA4
+#define SD_CS_ANSEL    ANSELAbits.ANSELA4
+#define SD_CS_LAT      LATAbits.LATA4
+#define SD_CS_ASSERTED 0
+#define SD_CS_IDLE     1
+
+#define SPI_MOSI_TRIS  TRISAbits.TRISA5
+#define SPI_MOSI_ANSEL ANSELAbits.ANSELA5
+
+#define SPI_MISO_TRIS  TRISAbits.TRISA6
+#define SPI_MISO_ANSEL ANSELAbits.ANSELA6
+
+#define SPI_CLK_TRIS  TRISAbits.TRISA7
+#define SPI_CLK_ANSEL ANSELAbits.ANSELA7
+
+#define SIO_USB_RTS_TRIS     TRISFbits.TRISF1
+#define SIO_USB_RTS_ANSEL    ANSELFbits.ANSELF1
+#define SIO_USB_RTS_PORT     PORTFbits.RF1
+#define SIO_USB_RTS_ASSERTED 0
+#define SIO_USB_RTS_IOCN     IOCFNbits.IOCFN1
+#define SIO_USB_RTS_IOCF     IOCFFbits.IOCFF1
+
+#define SIO_SD_RTS_TRIS     TRISFbits.TRISF2
+#define SIO_SD_RTS_ANSEL    ANSELFbits.ANSELF2
+#define SIO_SD_RTS_PORT     PORTFbits.RF2
+#define SIO_SD_RTS_ASSERTED 0
+#define SIO_SD_RTS_IOCN     IOCFNbits.IOCFN2
+#define SIO_SD_RTS_IOCF     IOCFFbits.IOCFF2
+
+#define SIO_RTS_IOCIE PIE0bits.IOCIE
+#define SIO_RTS_IOCIF PIR0bits.IOCIF
+
 #endif

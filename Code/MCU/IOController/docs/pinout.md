@@ -12,9 +12,15 @@ Target MCU: `PIC18F57Q84`.
 | RESET_HIGH | RB5 | Output | High | Always driven as the inverse of HOST_RESET/RB2. |
 | SD_PRESENT | TBD | Input | TBD | SD card detect. |
 | SD_BUSY | TBD | Output | TBD | Optional activity/status signal. |
-| USB_INT | TBD | Input | Low | MAX3421E interrupt line. |
-| SPI_CLK | TBD | Output | Clock | Shared SPI clock. |
-| MOSI | TBD | Output | Data | Shared SPI MOSI. |
-| MISO | TBD | Input | Data | Shared SPI MISO. |
+| SIO1B_INT | RF1 | Input | Low | USB SIO RTSB service request. IOC interrupt latches mailbox work. |
+| SIO1A_INT | RF2 | Input | Low | SD SIO RTSA service request. IOC interrupt latches mailbox work. |
+| CS_SIO_SD | RA0 | Input | Low | Tied to SIO port A SYNCA for SD synchronization. Stubbed/ignored in current code. |
+| CS_SIO_USB | RA1 | Input | Low | Tied to SIO port B SYNCB for USB synchronization. Stubbed/ignored in current code. |
+| USB_INT | RA2 | Input | Low | Interrupt from USB subsystem. |
+| USB_CS | RA3 | Output | Low | SPI chip select for USB. |
+| SD_CS | RA4 | Output | Low | SPI chip select for SD card. |
+| MOSI | RA5 | Output | Data | SPI MOSI from IO Controller master. |
+| MISO | RA6 | Input | Data | SPI MISO to IO Controller master. |
+| SPI_CLK | RA7 | Output | Clock | SPI clock from IO Controller master. |
 
 See `Z80 Peripherals Controller.md` for the architectural notes.

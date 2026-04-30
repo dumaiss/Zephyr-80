@@ -11,13 +11,13 @@ XC8 ?= xc8-cc
 HOST_CC ?= gcc
 
 FIRMWARE_SRCS := $(wildcard $(SRC_DIR)/*.c)
-TEST_SRCS := $(SRC_DIR)/io_controller.c $(TEST_DIR)/io_controller_test.c
+TEST_SRCS := $(SRC_DIR)/power_management.c $(TEST_DIR)/io_controller_test.c
 
 FIRMWARE_HEX := $(BUILD_DIR)/$(TARGET).hex
 TEST_BIN := $(TEST_BUILD_DIR)/io_controller_test
 
 XC8FLAGS ?= -mcpu=$(DEVICE) -I$(INC_DIR)
-HOST_CFLAGS := -std=c11 -Wall -Wextra -Werror -I$(INC_DIR)
+HOST_CFLAGS := -std=c11 -Wall -Wextra -Werror -DUNIT_TEST -I$(INC_DIR)
 
 .PHONY: all clean test size
 
