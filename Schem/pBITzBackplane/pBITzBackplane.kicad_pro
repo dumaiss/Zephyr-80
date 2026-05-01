@@ -834,7 +834,7 @@
       {
         "filename": "pBITzBackplane.kicad_sch",
         "name": "pBITzBackplane",
-        "uuid": "00000000-0000-0000-0000-000000000000"
+        "uuid": "09491510-942e-431b-9079-5419d947115d"
       }
     ],
     "used_designators": "",
@@ -843,7 +843,7 @@
   "sheets": [
     [
       "09491510-942e-431b-9079-5419d947115d",
-      "Root"
+      "pBITzBackplane"
     ],
     [
       "1341913b-78c7-4763-99ca-789ce5f0fe08",
