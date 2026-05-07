@@ -1,7 +1,7 @@
 (kicad_sch
-	(version 20250114)
+	(version 20260306)
 	(generator "eeschema")
-	(generator_version "9.0")
+	(generator_version "10.0")
 	(uuid "d6d8aa35-1d9d-4c27-8a6c-fa24f1b19dce")
 	(paper "D")
 	(lib_symbols)
@@ -246,11 +246,13 @@
 			(type solid)
 		)
 		(fill
-			(color 0 0 0 0.0000)
+			(color 0 0 0 0)
 		)
 		(uuid "22d64654-b4b9-4e63-a6ba-cec6f7c48b99")
 		(property "Sheetname" "USBPorts"
 			(at 80.01 48.8184 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -260,6 +262,8 @@
 		)
 		(property "Sheetfile" "USBPorts.kicad_sch"
 			(at 80.01 98.3746 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -275,16 +279,6 @@
 					(size 1.27 1.27)
 				)
 				(justify left)
-			)
-		)
-		(pin "USB_INT" output
-			(at 129.54 64.77 0)
-			(uuid "a7178fd2-5861-43a9-a1e6-fb2ac13e78dc")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
 			)
 		)
 		(pin "SPI_MISO" output
@@ -317,6 +311,16 @@
 				(justify right)
 			)
 		)
+		(pin "~{USB_INT}" output
+			(at 129.54 64.77 0)
+			(uuid "b2e864b6-8444-4287-ae30-8cd27de5d1c3")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
 		(instances
 			(project "pBITzBackplaneMezzanine"
 				(path "/d6d8aa35-1d9d-4c27-8a6c-fa24f1b19dce"
@@ -338,11 +342,13 @@
 			(type solid)
 		)
 		(fill
-			(color 0 0 0 0.0000)
+			(color 0 0 0 0)
 		)
 		(uuid "50888a69-9ed2-4153-90b2-5bf201cc034f")
 		(property "Sheetname" "MezzanineConnector"
 			(at 115.57 122.4784 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -352,6 +358,8 @@
 		)
 		(property "Sheetfile" "MezzanineConnector.kicad_sch"
 			(at 115.57 161.8746 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -372,16 +380,6 @@
 		(pin "~{SPI_INT}" input
 			(at 147.32 123.19 90)
 			(uuid "d7e0d7c3-f42e-4843-8e22-111043f793fa")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-		(pin "SPI_CD" output
-			(at 152.4 123.19 90)
-			(uuid "0155e75f-574e-4986-8a03-bfc3b25e2864")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -429,6 +427,16 @@
 				(justify right)
 			)
 		)
+		(pin "~{SD_PRESENT}" input
+			(at 152.4 123.19 90)
+			(uuid "14c96113-a54e-4e1e-bda0-43d3f07a7f54")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
 		(instances
 			(project "pBITzBackplaneMezzanine"
 				(path "/d6d8aa35-1d9d-4c27-8a6c-fa24f1b19dce"
@@ -450,11 +458,13 @@
 			(type solid)
 		)
 		(fill
-			(color 0 0 0 0.0000)
+			(color 0 0 0 0)
 		)
 		(uuid "69b53c94-5f6b-4388-8faf-39be6ea6cb21")
 		(property "Sheetname" "SD_Card"
 			(at 158.75 50.0884 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -464,6 +474,8 @@
 		)
 		(property "Sheetfile" "SD_Card.kicad_sch"
 			(at 158.75 94.5646 0)
+			(show_name no)
+			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -491,16 +503,6 @@
 				(justify left)
 			)
 		)
-		(pin "SD_PRESENT" output
-			(at 158.75 64.77 180)
-			(uuid "7970dc16-c3dd-4893-a64b-b3262f064183")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
 		(pin "SPI_MOSI" input
 			(at 165.1 93.98 270)
 			(uuid "2aa7a309-3ab6-4116-88a3-307b8d837336")
@@ -514,6 +516,16 @@
 		(pin "~{SD_CS}" input
 			(at 158.75 78.74 180)
 			(uuid "4bbb4f04-abde-4f72-85c1-e86e4b137352")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "~{SD_PRESENT}" output
+			(at 158.75 64.77 180)
+			(uuid "b473175e-f6b9-4ef1-a0c8-98b46e150b57")
 			(effects
 				(font
 					(size 1.27 1.27)
