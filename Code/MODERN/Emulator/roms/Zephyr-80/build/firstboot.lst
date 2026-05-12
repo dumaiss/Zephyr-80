@@ -1,0 +1,32 @@
+                                      1 ; Zephyr-80 first boot ROM
+                                      2 ;
+                                      3 ; Source format: SDCC/ASxxxx Z80 assembly, assembled with sdasz80.
+                                      4 ; The linker places the _CODE area at 0x0000.
+                                      5 
+                                      6 	.module firstboot
+                                      7 	.optsdcc -mz80
+                                      8 
+                                      9 	.area _CODE
+                                     10 
+                                     11 	.globl start
+                                     12 
+    00000000                         13 start:
+    00000000 21r0Fr00         [10]   14 	ld	hl, #msg
+                                     15 
+    00000003                         16 print_loop:
+    00000003 7E               [ 7]   17 	ld	a, (hl)
+    00000004 B7               [ 4]   18 	or	a, a
+    00000005 28 05            [12]   19 	jr	Z, halt_loop
+    00000007 D3 00            [11]   20 	out	(#0), a
+    00000009 23               [ 6]   21 	inc	hl
+    0000000A 18 F7            [12]   22 	jr	print_loop
+                                     23 
+    0000000C                         24 halt_loop:
+    0000000C 76               [ 4]   25 	halt
+    0000000D 18 FD            [12]   26 	jr	halt_loop
+                                     27 
+    0000000F                         28 msg:
+    0000000F 48 65 6C 6C 6F 20 66    29 	.ascii	"Hello from Zephyr-80"
+             72 6F 6D 20 5A 65 70
+             68 79 72 2D 38 30
+    00000023 0A 00                   30 	.db	0x0a, 0x00
