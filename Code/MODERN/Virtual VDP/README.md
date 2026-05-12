@@ -128,6 +128,9 @@ Virtual Drip uses a **packetized serial protocol** carrying VDP semantics.
 [SYNC=0xA5][LEN][TYPE][PAYLOAD...][CRC8]
 ```
 
+`LEN` is the payload length in bytes. `CRC8` is calculated over `LEN`,
+`TYPE`, and `PAYLOAD` using polynomial `0x07` with initial value `0x00`.
+
 ### Core packet types
 
 | Type              | Description             |
@@ -146,6 +149,51 @@ Virtual Drip uses a **packetized serial protocol** carrying VDP semantics.
 ```text
 The protocol transports VDP operations, NOT pixels.
 ```
+
+### Packet input sources
+
+The proxy can decode packets from a binary file, feed them into the VDP
+emulator, and then keep running the VNC server with the resulting
+framebuffer:
+
+```bash
+./build/virtual-vdp packets.bin
+./build/virtual-vdp --file packets.bin
+```
+
+It can also read the same packet stream from a serial device:
+
+```bash
+./build/virtual-vdp --serial /dev/ttyUSB0 115200
+```
+
+The video chip personality is selected with `--video-backend`. The only
+backend currently implemented is `tms9928`, which uses `vrEmuTms9918`:
+
+```bash
+./build/virtual-vdp --video-backend tms9928
+```
+
+During file replay or serial input, decoded packets are dispatched to `vrEmuTms9918`.
+`VDP_CTRL_WRITE` feeds the emulator control/address port,
+`VDP_DATA_WRITE` feeds the emulator data port, and the VDP output is
+rendered into the VNC framebuffer after each write. After replay
+completes, connect a VNC client to `localhost:5900` to inspect the final
+frame. In serial mode, the VNC server stays live while incoming packets
+continue to update the framebuffer.
+
+Packet type values currently used by the decoder:
+
+| Value | Type              |
+| ----- | ----------------- |
+| 0x01  | `VDP_CTRL_WRITE`  |
+| 0x02  | `VDP_DATA_WRITE`  |
+| 0x03  | `VDP_STATUS_READ` |
+| 0x04  | `VDP_DATA_READ`   |
+| 0x05  | `KEY_EVENT`       |
+| 0x06  | `RESET`           |
+| 0x07  | `PING`            |
+| 0x08  | `FRAME_MARK`      |
 
 ---
 
@@ -172,6 +220,27 @@ VNC Client → Proxy → Serial → Zephyr
 * Immediate key events (no block mode)
 * ASCII-first implementation
 * Expandable to scan codes / modifiers
+
+The proxy receives keyboard input through LibVNCServer's `kbdAddEvent`
+callback and sends structured `KEY_EVENT` packets back over the same serial
+port used for incoming VDP operations. This can be disabled with
+`--no-keyboard` or debugged with `--log-keys`.
+
+Current `KEY_EVENT` payload:
+
+| Byte | Meaning |
+| ---- | ------- |
+| 0 | flags: bit 0 down, bit 1 up, bit 2 has ASCII, bit 3 has special key |
+| 1 | ASCII value, or 0 |
+| 2 | special key code, or 0 |
+| 3 | modifiers: bit 0 shift, bit 1 ctrl, bit 2 alt, bit 3 meta/super |
+
+Printable ASCII is sent directly. Enter is ASCII `0x0D`, Backspace is ASCII
+`0x08`, Escape is ASCII `0x1B`, and Tab is ASCII `0x09`. Arrow keys, Insert,
+Delete, Home, End, Page Up/Down, and F1-F12 use special key codes.
+Modifier keysyms update an internal modifier state and are also emitted as
+`KEY_EVENT` packets with no ASCII or special key code so the host can observe
+modifier-only presses and releases.
 
 ---
 
@@ -321,12 +390,10 @@ Minimal C project scaffold for a virtual display server using
 ├── CMakeLists.txt
 ├── cmake/
 │   └── FindLibVNCServer.cmake
-├── include/
-│   └── virtual_vdp/
-│       └── vdp_server.h
 └── src/
     ├── main.c
-    └── vdp_server.c
+    ├── display_libvncserver.c
+    └── display_libvncserver.h
 ```
 
 ### Dependencies
@@ -356,14 +423,12 @@ cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/libvncserver
 
 ```sh
 ./build/virtual-vdp
+./build/virtual-vdp --file tests/packets.bin
+./build/virtual-vdp --serial /dev/ttyUSB0 115200
+./build/virtual-vdp --serial /dev/ttyUSB0 115200 --vnc-port 5901 --log-keys
+./build/virtual-vdp --video-backend tms9928
 ```
 
-Optional arguments are `width`, `height`, and `port`:
-
-```sh
-./build/virtual-vdp 1280 720 5901
-```
-
-Connect with a VNC client to `localhost:5900` by default. The sample server
-draws a gradient framebuffer and updates a pointer marker when the client moves
-the mouse.
+Connect with a VNC client to `localhost:5900`. The serial input expects the
+same framed packet stream as the binary replay fixtures, so a `pyserial`
+sender can write packet bytes directly to the configured device.
