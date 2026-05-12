@@ -1,0 +1,3 @@
+[submodule "Code/MODERN/Emulator/mame"]
+	path = Code/MODERN/Emulator/mame
+	url = https://github.com/mamedev/mame.git
