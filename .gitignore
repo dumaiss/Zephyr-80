@@ -40,9 +40,7 @@ fp-info-cache
 *.kicad_prl
 
 .obsidian
-Schem/pBITzBackplane/C:/Users/User/Desktop/kleplace.log
-Schem/pBITzBackplane/C:/Users/User/Desktop/kleplace.log
-Schem/pBITzBackplane/ibom.config.ini
 .codex
 **/.vscode/**
 **/build/**
+**/backups/**
