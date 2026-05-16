@@ -43,3 +43,11 @@ fp-info-cache
 Schem/pBITzBackplane/C:/Users/User/Desktop/kleplace.log
 Schem/pBITzBackplane/C:/Users/User/Desktop/kleplace.log
 Schem/pBITzBackplane/ibom.config.ini
+.codex
+.vscode/c_cpp_properties.json
+.vscode/settings.json
+.vscode/extensions.json
+.vscode/tasks.json
+Schem/pBITzBackplaneMezzanine/fabrication-toolkit-options.json
+Schem/Zephyr-80-CPU/production/backups/*.zip
+Schem/pBITzBackplaneMezzanine/production/backups/*.zip
