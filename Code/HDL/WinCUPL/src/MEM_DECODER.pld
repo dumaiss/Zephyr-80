@@ -9,16 +9,20 @@ Location U_MEM_GAL;
 Device   g22v10;
 
 /* Inputs */
-Pin 1  = A15;
+Pin 1  = A13;
 Pin 2  = A14;
-Pin 3  = A13;
+Pin 3  = A15;
 Pin 4  = MREQ;        /* Active Low */
 Pin 5  = RAM_SHADOW;  /* 1 = Shadow Mode */
 Pin 6  = ROM_DIS;     /* 1 = Disable ROM */
-Pin 7  = CART_DETECT; /* 1 = Cartridge Present */
-Pin 8  = PROG;        /* 1 = Programming Mode */
-Pin 9  = RD;          /* Active Low */
-Pin 10 = WR;          /* Active Low */
+/* Pin 7  = CART_DETECT;  1 = Cartridge Present */
+/* Pin 8  = PROG;         1 = Programming Mode */
+Pin 9  = !WR;          /* Active Low */
+Pin 10 = !RD;          /* Active Low */
+
+/* Board v0: no cartridge/programmer support */
+CART_DETECT = 'b'0;
+PROG    = 'b'0;
 
 /* Banking Latch Inputs (Reassigned to free pins) */
 Pin 11 = BANK_Q0;

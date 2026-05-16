@@ -19,8 +19,8 @@ Pin 4  = A4;
 /* Control Signals (Active Low on Bus) */
 Pin 5  = !IORQ;
 Pin 6  = !M1;
-Pin 7  = !RD;
-Pin 8  = !WR;
+Pin 7  = !WR;
+Pin 8  = !RD;
 
 /* RESET Logic:
    The Z80 /RESET pin is Active Low.
@@ -38,19 +38,10 @@ Pin 23 = !CS_MEMBANK_WR; /* Write: Clocks the 74HC273 (Rising Edge) */
 Pin 22 = !CS_MEMBANK_RD; /* Read:  Enables the 74HC244 (Active Low Level) */
 
 /* New Outputs for 74LS138 */
-Pin [17, 18, 19] = [SEL2..0];  /* Grouping pins 18, 17, and 15 */
-Pin 16 = !IO_EN;               /* Global Enable */
+Pin [19, 18, 17] = [SEL2..0];  /* Grouping pins 18, 17, and 15 */
 
 /* Define the bit field */
 FIELD IO_ADDR = [SEL2..0];
-
-/* Vector Generator & Daisy Chain */
-Pin 14 = D1;         /* Data Bus Bit 1 (Output) */
-Pin 15 = IEO;        /* Interrupt Enable Out (Active High) */
-
-/* Interrupt Signals */
-Pin 10 = !INT_VDP;   /* Video Interrupt Request (Active Low) */
-Pin 11 = IEI;        /* Interrupt Enable In (Active High) */
 
 /* ----------------------------------------------------------- */
 /* Logic Equations */
@@ -82,27 +73,6 @@ StdIO_Cycle = IORQ & !M1 & !RESET;
 /* Interrupt Acknowledge Cycle: IORQ Low, M1 Low (Active), RESET High */
 IntAck_Cycle = IORQ & M1 & !RESET;
 
-/* --- 1. Daisy Chain Logic (IEO) --- */
-/* Pass 'High' to the next device ONLY if:
-   1. We have priority (IEI is High)
-   2. The VDP is NOT requesting an interrupt (!INT_VDP is High/Inactive) 
-      Note: !INT_VDP in logic means "Pin 10 is High"
-*/
-IEO = IEI & !INT_VDP;
-
-/* --- 2. VDP "Smart" Vector Generation (D1) --- */
-/* We pull D1 Low to turn default 0xFF into 0xFD.
-   Conditions:
-   a. Interrupt Acknowledge Cycle (IORQ & M1 Active)
-   b. VDP is interrupting (INT_VDP variable is True/Active)
-   c. We have Priority (IEI is High)
-*/
-
-D1 = 'b'0;  /* Always drive logical 0 when enabled */
-
-/* Enable Output ONLY during valid vector generation event */
-D1.oe = IntAck_Cycle & INT_VDP & IEI;
-
 /* --- 2. Memory Banking ($00-$1F) --- */
 /* Write: ValidIO + Block00 + Write Strobe */
 CS_MEMBANK_WR = StdIO_Cycle & Block_00 & WR;
@@ -117,10 +87,10 @@ IO_EN = StdIO_Cycle & (Block_20 # Block_30 # Block_40 # Block_60 #
                       Block_A0 # Block_B0 # Block_E0 # Block_F0);
 
 /* Assign values to the field based on the active Block */
-IO_ADDR =  StdIO_Cycle & 'b'000 & Block_20                    /* SIO0 */  
-         # StdIO_Cycle & 'b'001 & Block_30                    /* SIO1 */         
-         # StdIO_Cycle & 'b'010 & Block_40                    /* CTC */
-         # StdIO_Cycle & 'b'011 & Block_60                    /* CART_IO */
-         # StdIO_Cycle & 'b'100 & (Block_A0 # Block_B0)       /* VDP */
-         # StdIO_Cycle & 'b'101 & (Block_E0 # Block_F0) & WR  /* SOUND */
-         # StdIO_Cycle & 'b'110 & (Block_E0 # Block_F0) & RD; /* CTRL */
+IO_ADDR =  StdIO_Cycle & 'b'001 & Block_20                    /* SIO0 */  
+         # StdIO_Cycle & 'b'010 & Block_30                    /* SIO1 */         
+         # StdIO_Cycle & 'b'011 & Block_40                    /* CTC */
+         # StdIO_Cycle & 'b'100 & Block_60                    /* CART_IO */
+         # StdIO_Cycle & 'b'101 & (Block_A0 # Block_B0)       /* VDP */
+         # StdIO_Cycle & 'b'110 & (Block_E0 # Block_F0) & WR  /* SOUND */
+         # StdIO_Cycle & 'b'111 & (Block_E0 # Block_F0) & RD; /* CTRL */
