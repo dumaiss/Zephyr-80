@@ -15,6 +15,27 @@ SIOB_CTRL		= 0x23
 SIO_RR0_RX_AVAIL	= 0x01
 SIO_RR0_TX_EMPTY	= 0x04
 
+; CP/M-style BIOS jump table. The monitor uses these console ABI entries
+; instead of touching the SIO directly.
+BIOS_BASE		= 0xe000
+BIOS_BOOT		= BIOS_BASE + 0x00
+BIOS_WBOOT		= BIOS_BASE + 0x03
+BIOS_CONST		= BIOS_BASE + 0x06
+BIOS_CONIN		= BIOS_BASE + 0x09
+BIOS_CONOUT		= BIOS_BASE + 0x0c
+BIOS_LIST		= BIOS_BASE + 0x0f
+BIOS_PUNCH		= BIOS_BASE + 0x12
+BIOS_READER		= BIOS_BASE + 0x15
+BIOS_HOME		= BIOS_BASE + 0x18
+BIOS_SELDSK		= BIOS_BASE + 0x1b
+BIOS_SETTRK		= BIOS_BASE + 0x1e
+BIOS_SETSEC		= BIOS_BASE + 0x21
+BIOS_SETDMA		= BIOS_BASE + 0x24
+BIOS_READ		= BIOS_BASE + 0x27
+BIOS_WRITE		= BIOS_BASE + 0x2a
+BIOS_LISTST		= BIOS_BASE + 0x2d
+BIOS_SECTRAN		= BIOS_BASE + 0x30
+
 ; Memory banking latch at I/O port 00h:
 ; - D0-D2 = SRAM bank number 0-7
 ; - D3    = shadow/copy mode

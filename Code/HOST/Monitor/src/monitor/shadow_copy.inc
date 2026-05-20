@@ -1,10 +1,11 @@
 ; Early ROM-to-RAM relocation for the monitor.
 ;
 ; This code runs at reset before the monitor initializes SP, so it must not use
-; CALL, RET, PUSH, or POP. The reset vector jumps here in ROM at E000h. This
-; routine copies the high safe/common window into SRAM bank 0, uses the memory
-; decoder's shadow/copy mode to copy ROM pages into matching RAM banks, disables
-; ROM, and then falls through to normal monitor initialization from RAM.
+; CALL, RET, PUSH, or POP. The reset vector jumps here in the high common ROM
+; window after the BIOS jump table. This routine copies the high safe/common
+; window into SRAM bank 0, uses the memory decoder's shadow/copy mode to copy
+; ROM pages into matching RAM banks, disables ROM, and then falls through to
+; normal monitor initialization from RAM.
 
 monitor_rom_entry_high:
 shadow_copy_rom_to_ram:

@@ -6,18 +6,29 @@ First polling-only ROM monitor for the Zephyr-80 homebrew Z80 machine.
 
 - CPU: Z80
 - ROM entry: `0000h`
-- Console: Z80 SIO channel B
+- Console: Z80 SIO channel B through resident BIOS console services
 - SIO B data port: `22h`
 - SIO B control port: `23h`
 - Serial mode: 115200 8N1, 1.8432 MHz SIO clock, x16 async clocking
 - SIO WR3 auto-enables: disabled, for FT230-style USB serial wiring without the
   corresponding modem-control input
 
-The monitor uses polling only. Interrupts are disabled at reset. On boot, the
-reset vector at `0000h` jumps to high ROM code at `E000h`. That code copies the
-ROM image into SRAM banks with the memory decoder's shadow/copy mode, disables
-ROM, then continues running from high common RAM. It then waits silently until
-Enter is pressed once before printing the banner and prompt.
+The resident BIOS uses polling only. Interrupts are disabled at reset. On boot,
+the reset vector at `0000h` jumps to high ROM code after the BIOS jump table at
+`E000h`. That code copies the ROM image into SRAM banks with the memory
+decoder's shadow/copy mode, disables ROM, then continues running from high
+common RAM. The monitor initializes the BIOS console, waits silently until Enter
+is pressed once, then prints the banner and prompt.
+
+The ROM monitor now uses Zephyr CBIOS-style console services:
+
+- BIOS owns SIO channel B initialization and low-level polling I/O.
+- The monitor owns command parsing, line editing/history, Intel HEX load/export,
+  memory/port commands, and the `G` trampoline.
+- Human monitor I/O currently goes through BIOS `CONIN` and `CONOUT`.
+
+This prepares the firmware for BBC BASIC and future CP/M integration while
+keeping the existing monitor command behavior.
 
 ## Memory Map Constraints
 
@@ -33,7 +44,8 @@ under this common-area model; `E000h-FFFFh` always maps to SRAM bank 0 in
 RAM-only mode. The monitor sets `SP=FFFFh` after relocation and keeps workspace
 in high common RAM around `F000h-FEFFh`.
 
-In RAM-only mode:
+The CP/M-style BIOS jump table lives at `E000h` in the high common area. In
+RAM-only mode:
 
 - `0000h-DFFFh`: selected SRAM bank
 - `E000h-FFFFh`: fixed/common SRAM bank 0 for monitor/BIOS/stack

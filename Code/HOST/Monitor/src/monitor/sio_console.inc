@@ -1,73 +1,43 @@
-; SIO channel B console initialization and polling I/O routines.
+; BIOS-backed monitor console routines.
 ;
-; This module owns the monitor console. It talks directly to SIO channel B and
-; uses polling only: transmit waits for RR0 Tx Buffer Empty, receive waits for
-; RR0 Rx Character Available. Interrupts remain disabled for the whole monitor.
+; The monitor keeps its historical sio_* routine names so command, line-editing,
+; and Intel HEX code stay unchanged. These wrappers call the resident
+; CP/M-style BIOS console ABI; the BIOS owns SIO initialization and hardware
+; polling.
 
-; Initialize SIO channel B for 115200 8N1 using x16 async clocking.
+; Initialize the BIOS console.
 ; Input: none.
-; Output: SIO channel B configured for polled 115200 8N1 console I/O.
+; Output: BIOS BOOT has initialized SIO channel B.
 ; Clobbers: AF.
 sio_init:
-	; WR0: channel reset
-	ld a,#0x18
-	out (SIOB_CTRL),a
-
-	; WR4: x16 clock, 1 stop bit, no parity
-	ld a,#0x04
-	out (SIOB_CTRL),a
-	ld a,#0x44
-	out (SIOB_CTRL),a
-
-	; WR3: RX enable, 8-bit RX, auto-enables disabled. FT230-style USB serial
-	; adapters may not drive modem-control inputs in the way SIO auto-enables
-	; expect, so receive gating is kept under software control.
-	ld a,#0x03
-	out (SIOB_CTRL),a
-	ld a,#0xc1
-	out (SIOB_CTRL),a
-
-	; WR5: DTR, TX 8-bit, TX enable, RTS
-	ld a,#0x05
-	out (SIOB_CTRL),a
-	ld a,#0xea
-	out (SIOB_CTRL),a
-
-	; WR1: interrupts disabled
-	ld a,#0x01
-	out (SIOB_CTRL),a
-	xor a
-	out (SIOB_CTRL),a
+	call BIOS_BOOT
 	ret
 
-; Write A to SIO channel B after RR0 Tx Buffer Empty is set.
+; Write A through BIOS CONOUT.
 ; Input: A = byte to transmit.
-; Output: byte written to SIOB_DATA.
+; Output: byte written to the BIOS console.
 ; Preserves: BC, DE, HL, IX, IY. Clobbers: AF.
 sio_putc:
-	push af
-sio_putc_wait:
-	; RR0 is read from the control port. The loop exits only when the SIO can
-	; accept another transmit byte.
-	in a,(SIOB_CTRL)
-	and #SIO_RR0_TX_EMPTY
-	jr z,sio_putc_wait
-	pop af
-	out (SIOB_DATA),a
+	push bc
+	ld c,a
+	call BIOS_CONOUT
+	pop bc
 	ret
 
-; Read one byte from SIO channel B after RR0 Rx Character Available is set.
+; Read one byte through BIOS CONIN.
 ; Input: none.
 ; Output: A = received byte.
 ; Clobbers: AF.
 sio_getc:
-sio_getc_wait:
-	; Poll RR0 until receive data is present, then fetch exactly one byte from
-	; the channel B data port.
-	in a,(SIOB_CTRL)
-	and #SIO_RR0_RX_AVAIL
-	jr z,sio_getc_wait
-	in a,(SIOB_DATA)
+	call BIOS_CONIN
+	ret
+
+; Query BIOS CONST.
+; Input: none.
+; Output: A = 00h if no character is pending, FFh if one is available.
+; Clobbers: AF.
+sio_const:
+	call BIOS_CONST
 	ret
 
 ; Wait silently until the operator presses Enter once.

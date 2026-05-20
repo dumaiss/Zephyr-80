@@ -7,8 +7,8 @@
 ; - At reset, the monitor copies ROM pages into SRAM with the memory decoder's
 ;   shadow/copy mode, disables ROM, then continues from RAM.
 ; - The monitor is a polling command loop. It never enables interrupts.
-; - Z80 SIO channel B is the console. All input and output routines below the
-;   dispatcher wait on SIO RR0 status bits before touching the data port.
+; - Z80 SIO channel B is the console, owned by the resident BIOS. Monitor
+;   console calls go through the CP/M-style BIOS jump table.
 ; - Commands are single-letter dispatches from LINE_BUF. Argument parsing and
 ;   command actions live in the included modules; every command returns by
 ;   jumping back to monitor_loop or one of the shared error exits.
@@ -17,7 +17,7 @@
 ; - ROM entry point is 0000h.
 ; - The reset vector at 0000h jumps to monitor_rom_entry_high in the high
 ;   safe/common area at E000h.
-; - Z80 SIO channel B is the monitor console.
+; - Z80 SIO channel B is the BIOS-backed monitor console.
 ; - A0 is wired to SIO C/D and A1 is wired to SIO B/A:
 ;     20h = SIO A data, 21h = SIO A control
 ;     22h = SIO B data, 23h = SIO B control
@@ -46,13 +46,17 @@ start:
 
 	.org HIGH_COPY_START
 
+	; The CP/M-style BIOS jump table owns the first bytes of the high common
+	; area. The reset vector jumps past it to the ROM copy routine below.
+	.include "bios_console.inc"
+
 	; Before the monitor uses the stack or calls any subroutine, relocate ROM
 	; into RAM and disable ROM. shadow_copy.inc falls through here with RAM-only
 	; bank 0 selected, so the normal monitor path continues from SRAM.
 	.include "shadow_copy.inc"
 
 monitor_init:
-	; With ROM disabled, move the stack into RAM, initialize the polled console,
+	; With ROM disabled, move the stack into RAM, initialize the BIOS console,
 	; and clear the CR/LF tracking flag before accepting operator input.
 	ld sp,#STACK_TOP
 	call sio_init
