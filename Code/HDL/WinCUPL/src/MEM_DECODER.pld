@@ -36,9 +36,13 @@ Pin 17 = RAM_A18;
 
 /* Address Definitions */
 BIOS_RANGE = !A15 & (!A14 # !A13);    /* $0000 - $5FFF */
-COMMON_RAM = !A15 & !A14 & !A13;      /* $0000 - $1FFF (Bottom 8K) */
 UPPER_32K  = A15;                     /* $8000 - $FFFF */
 RAM_ONLY   = !A15 & A14 & A13;        /* $6000 - $7FFF */
+
+/* high safe/common area */
+SAFE_RAM   = A15 & A14 & A13;         /* $E000 - $FFFF */
+BOOT_ROM   = BIOS_RANGE # SAFE_RAM;   /* Normal ROM-readable regions */
+
 
 /* Logic Conditions */
 ALL_RAM_MODE = ROM_DIS;
@@ -46,8 +50,9 @@ ALL_RAM_MODE = ROM_DIS;
 /* Shadow/copy mode only applies while ROM is enabled */
 EFFECTIVE_SHADOW = RAM_SHADOW & !ROM_DIS;
 
-/* Force RAM bank 0 for the low 8K when RAM-only or shadow/copy mode */
-FORCE_BANK0 = COMMON_RAM & (ROM_DIS # RAM_SHADOW);
+/* Force RAM bank 0 for the high 8K when RAM-only or shadow/copy mode */
+FORCE_BANK0 = SAFE_RAM & (ROM_DIS # RAM_SHADOW);
+
 
 /* Equations */
 /* Force RAM Address to 0 in forced/common area, otherwise pass latch */
@@ -55,29 +60,32 @@ RAM_A16 = BANK_Q0 & !FORCE_BANK0;
 RAM_A17 = BANK_Q1 & !FORCE_BANK0;
 RAM_A18 = BANK_Q2 & !FORCE_BANK0;
 
+
 /* ROM select:
    Normal mode:
-     $0000-$5FFF reads select ROM.
+     $0000-$5FFF and $E000-$FFFF reads select ROM.
    Shadow/copy mode:
-     $2000-$FFFF reads select ROM.
-     $0000-$1FFF reads select SRAM safe zone.
+     $0000-$DFFF reads select ROM.
+     $E000-$FFFF reads select SRAM safe zone.
    RAM-only:
      ROM never selected.
 */
 ROM_CS = !MREQ & RD & !ROM_DIS & (
-           (RAM_SHADOW & !COMMON_RAM)
-         # (!RAM_SHADOW & BIOS_RANGE)
+           (RAM_SHADOW & !SAFE_RAM)
+         # (!RAM_SHADOW & BOOT_ROM)
          );
+
 
 /* SRAM select:
    - all memory writes go to SRAM
    - RAM-only mode reads go to SRAM everywhere
-   - normal mode reads go to SRAM only in $6000-$FFFF
-   - shadow/copy mode reads go to SRAM only in low safe 8K
+   - normal mode reads go to SRAM only in $6000-$DFFF
+   - shadow/copy mode reads go to SRAM only in high safe 8K
 */
 SRAM_CS = !MREQ & (
             WR
           # (RD & ROM_DIS)
-          # (RD & !ROM_DIS & !RAM_SHADOW & (RAM_ONLY # UPPER_32K))
-          # (RD & !ROM_DIS & RAM_SHADOW & COMMON_RAM)
+          # (RD & !ROM_DIS & !RAM_SHADOW & RAM_ONLY)
+          # (RD & !ROM_DIS & !RAM_SHADOW & UPPER_32K & !SAFE_RAM)
+          # (RD & !ROM_DIS & RAM_SHADOW & SAFE_RAM)
           );
