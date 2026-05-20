@@ -3,25 +3,40 @@ SRC_DIR := src
 TOOLS_DIR := tools
 
 Z80ASM ?= z80asm
-OBJCOPY ?= objcopy
+SDASZ80 ?= sdasz80
+SDLDZ80 ?= sdldz80
 PYTHON ?= python3
 Z80ASMFLAGS ?=
+ASXXXX_ASFLAGS ?= -o -l -s
+ASXXXX_LDFLAGS ?= -i
 HEX_ORIGIN ?= 8000h
-HEX_OFFSET ?= 0x8000
 
 SWAPBITS := $(TOOLS_DIR)/swapbits.py
+LISTING_TO_IHEX := $(TOOLS_DIR)/listing_to_ihex.py
 
-ASM_SRCS := $(wildcard $(SRC_DIR)/*.asm)
+ASXXXX_TARGETS := vdrip_checkerboard vdrip_smiley shadow_copy_test shadow_copy_low
+ASXXXX_SRCS := $(addprefix $(SRC_DIR)/,$(addsuffix .asm,$(ASXXXX_TARGETS)))
+ASXXXX_INCS := $(wildcard $(SRC_DIR)/*.inc)
+ASM_SRCS := $(filter-out $(ASXXXX_SRCS),$(wildcard $(SRC_DIR)/*.asm))
 TARGETS := $(basename $(notdir $(ASM_SRCS)))
 
 RAW_BIN_DIR := $(BUILD_DIR)/raw
 HEX_SRC_DIR := $(BUILD_DIR)/hex-src
 HEX_RAW_DIR := $(BUILD_DIR)/hex-raw
+HEX_LST_DIR := $(BUILD_DIR)/hex-lst
+ASXXXX_DIR := $(BUILD_DIR)/asxxxx
 
 BINS := $(addprefix $(BUILD_DIR)/,$(addsuffix .bin,$(TARGETS)))
-HEXS := $(addprefix $(BUILD_DIR)/,$(addsuffix .hex,$(TARGETS)))
+Z80ASM_HEXS := $(addprefix $(BUILD_DIR)/,$(addsuffix .hex,$(TARGETS)))
+ASXXXX_HEXS := $(addprefix $(BUILD_DIR)/,$(addsuffix .hex,$(ASXXXX_TARGETS)))
+ASXXXX_IHXS := $(addprefix $(BUILD_DIR)/,$(addsuffix .ihx,$(ASXXXX_TARGETS)))
+HEXS := $(Z80ASM_HEXS) $(ASXXXX_HEXS)
+HEX_SRCS := $(addprefix $(HEX_SRC_DIR)/,$(addsuffix .asm,$(TARGETS)))
+HEX_LSTS := $(addprefix $(HEX_LST_DIR)/,$(addsuffix .lst,$(TARGETS)))
+ASXXXX_RELS := $(addprefix $(ASXXXX_DIR)/,$(addsuffix .rel,$(ASXXXX_TARGETS)))
 
 .PHONY: all clean bins hex
+.SECONDARY: $(HEX_SRCS) $(HEX_LSTS) $(ASXXXX_RELS) $(ASXXXX_IHXS)
 
 all: bins hex
 
@@ -29,7 +44,7 @@ bins: $(BINS)
 
 hex: $(HEXS)
 
-$(BUILD_DIR) $(RAW_BIN_DIR) $(HEX_SRC_DIR) $(HEX_RAW_DIR):
+$(BUILD_DIR) $(RAW_BIN_DIR) $(HEX_SRC_DIR) $(HEX_RAW_DIR) $(HEX_LST_DIR) $(ASXXXX_DIR):
 	mkdir -p $@
 
 $(RAW_BIN_DIR)/%.bin: $(SRC_DIR)/%.asm | $(RAW_BIN_DIR)
@@ -41,12 +56,20 @@ $(BUILD_DIR)/%.bin: $(RAW_BIN_DIR)/%.bin $(SWAPBITS) | $(BUILD_DIR)
 $(HEX_SRC_DIR)/%.asm: $(SRC_DIR)/%.asm | $(HEX_SRC_DIR)
 	awk 'BEGIN { fixed = 0 } /^[[:space:]]*[Oo][Rr][Gg][[:space:]]/ && !fixed { print "                org $(HEX_ORIGIN)"; fixed = 1; next } { print }' $< > $@
 
-$(HEX_RAW_DIR)/%.bin: $(HEX_SRC_DIR)/%.asm | $(HEX_RAW_DIR)
-	$(Z80ASM) $(Z80ASMFLAGS) -o $@ $<
+$(HEX_LST_DIR)/%.lst: $(HEX_SRC_DIR)/%.asm | $(HEX_RAW_DIR) $(HEX_LST_DIR)
+	$(Z80ASM) $(Z80ASMFLAGS) -l -o $(HEX_RAW_DIR)/$*.bin $< > $@ 2>&1
 
-$(BUILD_DIR)/%.hex: $(HEX_RAW_DIR)/%.bin | $(BUILD_DIR)
-	$(OBJCOPY) -I binary -O ihex --change-addresses $(HEX_OFFSET) $< $@
-	sed -i '/^:04000003/d;/^:04000005/d' $@
+$(Z80ASM_HEXS): $(BUILD_DIR)/%.hex: $(HEX_LST_DIR)/%.lst $(LISTING_TO_IHEX) | $(BUILD_DIR)
+	$(PYTHON) $(LISTING_TO_IHEX) $< $(HEX_RAW_DIR)/$*.bin $@
+
+$(ASXXXX_DIR)/%.rel: $(SRC_DIR)/%.asm $(ASXXXX_INCS) | $(ASXXXX_DIR)
+	$(SDASZ80) $(ASXXXX_ASFLAGS) $@ $<
+
+$(ASXXXX_IHXS): $(BUILD_DIR)/%.ihx: $(ASXXXX_DIR)/%.rel | $(BUILD_DIR)
+	$(SDLDZ80) $(ASXXXX_LDFLAGS) $@ $<
+
+$(ASXXXX_HEXS): $(BUILD_DIR)/%.hex: $(BUILD_DIR)/%.ihx | $(BUILD_DIR)
+	cp $< $@
 
 clean:
 	rm -rf "$(BUILD_DIR)"/*

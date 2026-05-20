@@ -10,12 +10,16 @@ individual tests can be burned to ROM or loaded through the monitor.
   `Hello, World!`.
 - `echo.asm`: initializes SIO channel B and echoes received serial characters.
 - `ctctest.asm`: samples CTC channel 0 into a small RAM buffer.
+- `vdrip_checkerboard.asm`: monitor-loadable Virtual Drip serial demo that
+  repeatedly streams a TMS9928A Graphics I checkerboard over SIO channel B.
+- `vdrip_smiley.asm`: monitor-loadable Virtual Drip serial demo with a smiley
+  sprite moving left-to-right over a Graphics I background.
 - `testiorq.asm`: repeatedly writes `55h` to I/O port `80h`.
 - `testlatchport.asm`: repeatedly reads I/O port `00h` with short delay loops.
 
 `main.asm` was the original hello-world source name. The current source file is
-`helloworld.asm`, and the Makefile builds whatever `.asm` files are present in
-`src/`.
+`helloworld.asm`. Most sources are built with `z80asm`; the Virtual Drip demos
+are built with the same ASxxxx-style toolchain used by the monitor.
 
 ## Walkthroughs
 
@@ -73,6 +77,89 @@ been written to `8100h` through `811Fh`.
 After the last sample, `ret` returns to the caller. When run from the monitor,
 the captured CTC values can be inspected by dumping memory starting at `8100h`.
 
+### `vdrip_checkerboard.asm`
+
+This is a standalone monitor-loadable Virtual Drip demo assembled with
+`sdasz80`/`sdldz80` syntax. It is loaded at `8000h` and run from the monitor
+with:
+
+```text
+G 8000
+```
+
+After launch, it takes over SIO channel B, reinitializes it for 115200 8N1, waits
+a few seconds, then repeatedly sends Virtual Drip binary packets:
+
+- RESET
+- PING
+- TMS9928A Graphics I register setup
+- checkerboard pattern, color, and name table writes
+- FRAME_MARK
+- a replay delay
+
+The demo does not return to the monitor. Reset or power cycle the machine to
+recover the monitor.
+
+Host-side handoff:
+
+1. Start the monitor terminal.
+2. Load `build/vdrip_checkerboard.hex` with the monitor `L` command.
+3. Run `G 8000`.
+4. Close the monitor terminal quickly while the demo is in its startup delay.
+5. Start Virtual Drip on the same serial device:
+
+```sh
+./build/virtual-vdp --serial /dev/serial/by-id/<device> 115200 --vnc-port 5900
+```
+
+6. Connect a VNC viewer to `localhost:5900`.
+
+The demo resends the full checkerboard state forever, so the proxy can attach
+late and still eventually display the image.
+
+### `vdrip_smiley.asm`
+
+This is a standalone monitor-loadable Virtual Drip animation demo assembled with
+`sdasz80`/`sdldz80` syntax. It uses the same serial handoff model as
+`vdrip_checkerboard.asm`: load `build/vdrip_smiley.hex` with the monitor `L`
+command, then start it with:
+
+```text
+G 8000
+```
+
+After launch, it reinitializes SIO channel B for 115200 8N1, waits a few
+seconds for the terminal-to-proxy handoff, then sends a full TMS9928A Graphics I
+state:
+
+- RESET and PING
+- Graphics I register setup
+- checkerboard background pattern, color, and name table data
+- two overlaid 8x8 sprite patterns for the smiley face and facial details
+- initial sprite attribute table
+
+The main animation loop updates only the sprite attribute table bytes for the
+two smiley sprites, sends `FRAME_MARK`, delays briefly, advances X, and wraps
+back to the left edge. On wrap it resends full state so Virtual Drip can attach
+late and recover without requiring framebuffer-style streaming.
+
+Host-side handoff:
+
+1. Start the monitor terminal.
+2. Load `build/vdrip_smiley.hex` with the monitor `L` command.
+3. Run `G 8000`.
+4. Close the monitor terminal quickly while the demo is in its startup delay.
+5. Start Virtual Drip on the same serial device:
+
+```sh
+./build/virtual-vdp --serial /dev/serial/by-id/<device> 115200 --vnc-port 5900
+```
+
+6. Connect a VNC viewer to `localhost:5900`.
+
+The demo does not return to the monitor. Reset or power cycle the machine to
+recover the monitor.
+
 ### `testiorq.asm`
 
 This ROM-style I/O request test starts at `0000h`, disables interrupts, and
@@ -99,10 +186,11 @@ behavior on the bus.
 make
 ```
 
-The default build emits two outputs for every `src/*.asm` file:
+The default build emits these outputs:
 
 - `build/<name>.bin`: binary for EPROM burning, with the data-bit swap fix
-  applied by `tools/swapbits.py`.
+  applied by `tools/swapbits.py`. The ASxxxx-only `vdrip_checkerboard.asm`
+  demo is monitor-loadable only and does not produce this ROM-style output.
 - `build/<name>.hex`: Intel HEX for loading without the bit swap fix. These HEX
   files are assembled to run at address `8000h`.
 
@@ -117,6 +205,7 @@ Override tools from the command line when needed:
 
 ```sh
 make Z80ASM=/path/to/z80asm
+make SDASZ80=/path/to/sdasz80 SDLDZ80=/path/to/sdldz80
 make PYTHON=/path/to/python3
 ```
 
