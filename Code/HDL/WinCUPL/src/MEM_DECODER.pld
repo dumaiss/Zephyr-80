@@ -1,8 +1,8 @@
 Name     Z80_MEM_DECODE;
 Partno   008;
-Date     2026-01-17;
-Revision 08;
-Designer HomeBrew;
+Date     2026-05-19;
+Revision 09;
+Designer Kitamura;
 Company  Z80 Project;
 Assembly Memory Board;
 Location U_MEM_GAL;
@@ -15,14 +15,9 @@ Pin 3  = A15;
 Pin 4  = MREQ;        /* Active Low */
 Pin 5  = RAM_SHADOW;  /* 1 = Shadow Mode */
 Pin 6  = ROM_DIS;     /* 1 = Disable ROM */
-/* Pin 7  = CART_DETECT;  1 = Cartridge Present */
-/* Pin 8  = PROG;         1 = Programming Mode */
 Pin 9  = !WR;          /* Active Low */
 Pin 10 = !RD;          /* Active Low */
 
-/* Board v0: no cartridge/programmer support */
-CART_DETECT = 'b'0;
-PROG    = 'b'0;
 
 /* Banking Latch Inputs (Reassigned to free pins) */
 Pin 11 = BANK_Q0;
@@ -46,24 +41,43 @@ UPPER_32K  = A15;                     /* $8000 - $FFFF */
 RAM_ONLY   = !A15 & A14 & A13;        /* $6000 - $7FFF */
 
 /* Logic Conditions */
-ALL_RAM_MODE = ROM_DIS & !CART_DETECT;
-FORCE_BANK0  = COMMON_RAM & ALL_RAM_MODE;
+ALL_RAM_MODE = ROM_DIS;
+
+/* Shadow/copy mode only applies while ROM is enabled */
+EFFECTIVE_SHADOW = RAM_SHADOW & !ROM_DIS;
+
+/* Force RAM bank 0 for the low 8K when RAM-only or shadow/copy mode */
+FORCE_BANK0 = COMMON_RAM & (ROM_DIS # RAM_SHADOW);
 
 /* Equations */
-/* Force RAM Address to 0 in Common Area, otherwise pass Latch */
+/* Force RAM Address to 0 in forced/common area, otherwise pass latch */
 RAM_A16 = BANK_Q0 & !FORCE_BANK0;
 RAM_A17 = BANK_Q1 & !FORCE_BANK0;
 RAM_A18 = BANK_Q2 & !FORCE_BANK0;
 
-ROM_CS = !MREQ & (PROG # (RD & !ROM_DIS & (RAM_SHADOW # BIOS_RANGE)));
+/* ROM select:
+   Normal mode:
+     $0000-$5FFF reads select ROM.
+   Shadow/copy mode:
+     $2000-$FFFF reads select ROM.
+     $0000-$1FFF reads select SRAM safe zone.
+   RAM-only:
+     ROM never selected.
+*/
+ROM_CS = !MREQ & RD & !ROM_DIS & (
+           (RAM_SHADOW & !COMMON_RAM)
+         # (!RAM_SHADOW & BIOS_RANGE)
+         );
 
-CART_CS = !MREQ & !PROG & UPPER_32K & CART_DETECT & !RAM_SHADOW;
-
-SRAM_CS = !MREQ & !PROG & (
-            (RAM_SHADOW & WR) 
-          # (!RAM_SHADOW & (
-               (BIOS_RANGE & (WR # ROM_DIS))
-             # RAM_ONLY
-             # (UPPER_32K & !CART_DETECT)
-            ))
+/* SRAM select:
+   - all memory writes go to SRAM
+   - RAM-only mode reads go to SRAM everywhere
+   - normal mode reads go to SRAM only in $6000-$FFFF
+   - shadow/copy mode reads go to SRAM only in low safe 8K
+*/
+SRAM_CS = !MREQ & (
+            WR
+          # (RD & ROM_DIS)
+          # (RD & !ROM_DIS & !RAM_SHADOW & (RAM_ONLY # UPPER_32K))
+          # (RD & !ROM_DIS & RAM_SHADOW & COMMON_RAM)
           );
