@@ -176,15 +176,13 @@ to_upper_a:
 	sub #0x20
 	ret
 
-; Carry set if HL is in the ROM-read region 0000h-5FFFh.
-; Carry clear if HL is writable RAM 6000h-FFFFh.
+; Carry clear if HL is writable monitor-visible RAM.
 ; Input: HL = address to test.
-; Output: carry clear for writable monitor-visible RAM, carry set otherwise.
+; Output: carry clear.
 ; Clobbers: AF.
-; The low ROM window is write-shadowed to SRAM, but reads still return ROM
-; while ROM_DIS=0. Refuse monitor writes below 6000h so the user does not think
-; they changed readable memory when only hidden SRAM was written.
+; The monitor disables ROM during startup, so all 64 KiB are RAM from the
+; monitor's point of view. Keep this helper for command code that wants a
+; single writability check point.
 check_hl_writable:
-	ld a,h
-	cp #0x60
+	xor a
 	ret

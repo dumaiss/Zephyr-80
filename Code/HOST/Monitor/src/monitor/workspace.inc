@@ -1,12 +1,17 @@
-; Fixed Zephyr-80 monitor workspace addresses in upper RAM.
+; Fixed Zephyr-80 monitor workspace addresses in high common SRAM bank 0.
 ;
 ; These symbols name absolute RAM locations; they do not allocate storage in
 ; the assembled ROM image. Keep this layout stable because command handlers,
 ; loader state, and dump/export state share the F000h-FEFFh monitor workspace.
+; The monitor code currently fits below this area in E000h-EFFFh, and the stack
+; grows downward from FFFFh.
 
 ; Console line input buffer. sio_getline writes a NUL-terminated command here.
 LINE_BUF		= 0xf000
 LINE_MAX		= 80
+
+; Single-entry command history used by the console line editor.
+HISTORY_BUF		= 0xf050
 
 ; Intel HEX loader data buffer. One parsed record is staged here until its
 ; checksum and destination range have been validated.
@@ -34,6 +39,7 @@ DUMP_LINE_COUNT		= 0xf216
 TEMP_WORD		= 0xf220
 TEMP_BYTE		= 0xf222
 EOL_CR_FLAG		= 0xf223
+HISTORY_LEN		= 0xf224
 
 ; Intel HEX loader record state: byte count, record type, checksum accumulator,
 ; and 16-bit target address.

@@ -63,20 +63,12 @@ msg_load_ok:
 	.ascii /LOAD OK/
 	.db CR,LF,0
 
-; Warnings.
-msg_warn_rom_reads:
-	.ascii /WARN: 0000-5FFF READS ROM/
-	.db CR,LF,0
-
 ; Errors.
 msg_err_command:
 	.ascii /ERR: COMMAND/
 	.db CR,LF,0
 msg_err_args:
 	.ascii /ERR: ARG/
-	.db CR,LF,0
-msg_err_rom_region:
-	.ascii /ERR: ROM-READ REGION/
 	.db CR,LF,0
 msg_err_hex_parse:
 	.ascii /ERR: HEX PARSE/

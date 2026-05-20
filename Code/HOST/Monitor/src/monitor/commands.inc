@@ -53,8 +53,8 @@ cmd_registers:
 	jp monitor_loop
 
 ; D addr len
-; Parse a start address and byte count, warn if reads are in the ROM window,
-; then call dump_memory to emit 16-byte rows. Bad arguments print ERR: ARG.
+; Parse a start address and byte count, then call dump_memory to emit 16-byte
+; rows. Bad arguments print ERR: ARG.
 cmd_dump:
 	call parse_hex_word
 	jp c,cmd_error_args
@@ -62,21 +62,13 @@ cmd_dump:
 	call parse_hex_word
 	jp c,cmd_error_args
 	ld (DUMP_LEN),de
-	ld hl,(DUMP_ADDR)
-	ld a,h
-	cp #0x60
-	jr nc,cmd_dump_nowarn
-	ld hl,#msg_warn_rom_reads
-	call sio_puts
-cmd_dump_nowarn:
 	call dump_memory
 	jp monitor_loop
 
 ; M addr value
-; Parse an address and byte value, reject writes below RAM_SAFE_BASE, then store
-; the byte and report OK. The low ROM window is write-shadowed to SRAM, but
-; reads still return ROM while ROM_DIS=0, so accepting those writes would be
-; misleading.
+; Parse an address and byte value, store the byte, and report OK. The monitor
+; disables ROM during startup, so formerly ROM-visible addresses now read and
+; write SRAM.
 cmd_memory_set:
 	call parse_hex_word
 	jp c,cmd_error_args
@@ -85,8 +77,6 @@ cmd_memory_set:
 	jp c,cmd_error_args
 	ld (TEMP_BYTE),a
 	ld hl,(TEMP_WORD)
-	call check_hl_writable
-	jp c,cmd_error_rom_region
 	ld a,(TEMP_BYTE)
 	ld (hl),a
 	ld hl,#msg_ok
@@ -103,8 +93,10 @@ cmd_port_in:
 	ld c,a
 	ld b,#0x00
 	in a,(c)
+	ld (TEMP_BYTE),a
 	ld hl,#msg_in_value
 	call sio_puts
+	ld a,(TEMP_BYTE)
 	call print_hex_byte
 	call print_crlf
 	jp monitor_loop

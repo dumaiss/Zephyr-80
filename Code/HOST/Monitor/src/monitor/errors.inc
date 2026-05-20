@@ -15,9 +15,3 @@ cmd_error_args:
 	ld hl,#msg_err_args
 	call sio_puts
 	jp monitor_loop
-
-; Requested write targets the ROM-read window below RAM_SAFE_BASE.
-cmd_error_rom_region:
-	ld hl,#msg_err_rom_region
-	call sio_puts
-	jp monitor_loop

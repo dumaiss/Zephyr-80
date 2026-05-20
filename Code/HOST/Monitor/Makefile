@@ -9,8 +9,9 @@ SDLDZ80 ?= sdldz80
 MAKEBIN ?= makebin
 PYTHON ?= python3
 
-# Leave ROM_SIZE empty for a packed binary. Example: make ROM_SIZE=32768
-ROM_SIZE ?=
+# The monitor intentionally places the reset vector at 0000h and the runtime in
+# the high safe/common ROM window at E000h, so build a full 64 KiB image.
+ROM_SIZE ?= 65536
 ASFLAGS ?= -o -l -s
 LDFLAGS ?= -i
 
@@ -22,11 +23,7 @@ RAW_BIN := $(BUILD_DIR)/$(TARGET).raw.bin
 BIN := $(BUILD_DIR)/$(TARGET).bin
 SWAPBITS := $(TOOLS_DIR)/swapbits.py
 
-ifeq ($(strip $(ROM_SIZE)),)
-MAKEBIN_FLAGS := -p
-else
 MAKEBIN_FLAGS := -s $(ROM_SIZE)
-endif
 
 .PHONY: all clean
 

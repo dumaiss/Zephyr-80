@@ -104,9 +104,10 @@ sio_puts:
 
 ; Read an edited console line into LINE_BUF and NUL-terminate it.
 ; Echoes printable characters. CR or LF ends the line. Backspace/delete edits.
+; Up arrow recalls the previous command line stored in HISTORY_BUF.
 ; Input: none.
 ; Output: HL = LINE_BUF, containing a NUL-terminated line without CR/LF.
-; Clobbers: AF, BC, HL.
+; Clobbers: AF, BC, DE, HL.
 sio_getline:
 	ld hl,#LINE_BUF
 	ld c,#0x00
@@ -132,7 +133,7 @@ sio_getline_lf_done:
 	ld (EOL_CR_FLAG),a
 	ld a,b
 	; A real LF line ending falls through to the common terminator path.
-	jr sio_getline_done
+	jp sio_getline_done
 
 sio_getline_not_lf:
 	; Any non-LF input clears the pending-CR state. CR below marks the state
@@ -143,6 +144,8 @@ sio_getline_not_lf:
 	ld a,b
 	cp #CR
 	jr z,sio_getline_cr_done
+	cp #ESC
+	jr z,sio_getline_escape
 	cp #BS
 	jr z,sio_getline_backspace
 	cp #DEL
@@ -169,21 +172,66 @@ sio_getline_bell:
 	call sio_putc
 	jr sio_getline_loop
 
+sio_getline_escape:
+	; Terminals send up arrow as ESC [ A. Ignore other escape sequences.
+	call sio_getc
+	cp #0x5b		; [
+	jr nz,sio_getline_loop
+	call sio_getc
+	cp #0x41		; A
+	jr nz,sio_getline_loop
+	ld a,(HISTORY_LEN)
+	or a
+	jr z,sio_getline_bell
+
+sio_getline_recall_erase:
+	ld a,c
+	or a
+	jr z,sio_getline_recall_copy
+	dec hl
+	dec c
+	call sio_erase_echo
+	jr sio_getline_recall_erase
+
+sio_getline_recall_copy:
+	ld hl,#LINE_BUF
+	ld de,#HISTORY_BUF
+	ld a,(HISTORY_LEN)
+	ld b,a
+	ld c,#0x00
+
+sio_getline_recall_copy_loop:
+	ld a,b
+	or a
+	jp z,sio_getline_loop
+	ld a,(de)
+	ld (hl),a
+	inc de
+	inc hl
+	inc c
+	call sio_putc
+	dec b
+	jr sio_getline_recall_copy_loop
+
 sio_getline_backspace:
 	; Backspace and DEL both erase one buffered character. Echo the conventional
 	; BS-space-BS sequence to remove it from simple terminals.
 	ld a,c
 	or a
-	jr z,sio_getline_loop
+	jp z,sio_getline_loop
 	dec hl
 	dec c
+	call sio_erase_echo
+	jp sio_getline_loop
+
+sio_erase_echo:
 	ld a,#BS
 	call sio_putc
 	ld a,#0x20
 	call sio_putc
 	ld a,#BS
 	call sio_putc
-	jr sio_getline_loop
+	ret
 
 sio_getline_cr_done:
 	; Remember CR termination so a following LF from CRLF input does not become
@@ -198,4 +246,31 @@ sio_getline_done:
 	ld (hl),#0x00
 	call print_crlf
 	ld hl,#LINE_BUF
+	ret
+
+; Save the current non-empty LINE_BUF contents as the one-line recall history.
+; Input: LINE_BUF contains a NUL-terminated command line.
+; Output: HISTORY_BUF and HISTORY_LEN updated for non-empty lines.
+; Clobbers: AF, BC, DE, HL.
+sio_save_line_history:
+	ld hl,#LINE_BUF
+	ld a,(hl)
+	or a
+	ret z
+	ld de,#HISTORY_BUF
+	ld c,#0x00
+
+sio_save_line_history_loop:
+	ld a,(hl)
+	ld (de),a
+	or a
+	jr z,sio_save_line_history_done
+	inc hl
+	inc de
+	inc c
+	jr sio_save_line_history_loop
+
+sio_save_line_history_done:
+	ld a,c
+	ld (HISTORY_LEN),a
 	ret

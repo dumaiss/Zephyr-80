@@ -4,6 +4,8 @@
 ;
 ; Overview:
 ; - The ROM image starts at 0000h and enters at start after reset.
+; - At reset, the monitor copies ROM pages into SRAM with the memory decoder's
+;   shadow/copy mode, disables ROM, then continues from RAM.
 ; - The monitor is a polling command loop. It never enables interrupts.
 ; - Z80 SIO channel B is the console. All input and output routines below the
 ;   dispatcher wait on SIO RR0 status bits before touching the data port.
@@ -13,6 +15,8 @@
 ;
 ; Hardware assumptions:
 ; - ROM entry point is 0000h.
+; - The reset vector at 0000h jumps to monitor_rom_entry_high in the high
+;   safe/common area at E000h.
 ; - Z80 SIO channel B is the monitor console.
 ; - A0 is wired to SIO C/D and A1 is wired to SIO B/A:
 ;     20h = SIO A data, 21h = SIO A control
@@ -22,11 +26,12 @@
 ;   provide the modem-control input needed for auto-enable receive gating.
 ; - No interrupts are used. All console I/O is polling.
 ;
-; Memory map with ROM_DIS=0, RAM_SHADOW=0, CART_DETECT=0, PROG=0:
-; - 0000h-5FFFh: reads select ROM, writes select SRAM.
-;   Do not use this range for stack, variables, buffers, or loader output.
-; - 6000h-FFFFh: SRAM reads and writes.
-; Monitor workspace is fixed in upper RAM around F000h-FEFFh.
+; Startup memory map:
+; - Normal mode starts with ROM visible for reads and SRAM underneath for writes.
+; - Shadow/copy mode makes E000h-FFFFh safe SRAM bank 0 while 0000h-DFFFh reads
+;   selected ROM pages and writes matching SRAM banks.
+; - After relocation, ROM is disabled and the monitor runs from SRAM bank 0.
+; Monitor runtime, workspace, and stack live in high common RAM bank 0.
 
 	.module zephyr80_monitor
 	.area CODE (ABS)
@@ -37,14 +42,23 @@
 	.include "ascii.inc"
 
 start:
-	; Reset-time setup is deliberately minimal: keep interrupts disabled, move
-	; the stack into high RAM, initialize the polled console, and clear the
-	; CR/LF tracking flag before accepting operator input.
-	di
+	jp monitor_rom_entry_high
+
+	.org HIGH_COPY_START
+
+	; Before the monitor uses the stack or calls any subroutine, relocate ROM
+	; into RAM and disable ROM. shadow_copy.inc falls through here with RAM-only
+	; bank 0 selected, so the normal monitor path continues from SRAM.
+	.include "shadow_copy.inc"
+
+monitor_init:
+	; With ROM disabled, move the stack into RAM, initialize the polled console,
+	; and clear the CR/LF tracking flag before accepting operator input.
 	ld sp,#STACK_TOP
 	call sio_init
 	xor a
 	ld (EOL_CR_FLAG),a
+	ld (HISTORY_LEN),a
 
 	; Wait for the first Enter before printing the banner. This lets a terminal
 	; connect or finish sending its opening line ending without losing the first
@@ -60,6 +74,7 @@ monitor_loop:
 	ld hl,#msg_prompt
 	call sio_puts
 	call sio_getline
+	call sio_save_line_history
 	call save_monitor_context
 
 	; Commands are selected by the first non-space character. Empty lines simply

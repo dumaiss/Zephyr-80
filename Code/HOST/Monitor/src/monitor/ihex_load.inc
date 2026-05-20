@@ -84,19 +84,9 @@ load_record_data:
 	ld a,(HEX_COUNT)
 	or a
 	jr z,load_record_good
-	; Check the entire destination range before writing any byte. Below 6000h,
-	; the board writes SRAM but reads still select ROM, so loader writes there
-	; would not be visible as normal memory while ROM_DIS=0.
-	ld b,a
-	ld hl,(HEX_ADDR)
-load_range_check_loop:
-	call check_hl_writable
-	jp c,load_error_rom_region
-	inc hl
-	djnz load_range_check_loop
 
-	; With the record validated and the full range known writable, copy the
-	; staged bytes into RAM.
+	; With the record validated, copy the staged bytes into RAM. ROM is disabled
+	; during monitor startup, so the full 64 KiB address space is writable SRAM.
 	ld a,(HEX_COUNT)
 	ld b,a
 	ld hl,(HEX_ADDR)
@@ -133,11 +123,6 @@ load_error_parse:
 
 load_error_checksum:
 	ld hl,#msg_err_checksum
-	call sio_puts
-	jp monitor_loop
-
-load_error_rom_region:
-	ld hl,#msg_err_rom_region
 	call sio_puts
 	jp monitor_loop
 
