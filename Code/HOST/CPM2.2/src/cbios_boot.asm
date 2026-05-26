@@ -15,7 +15,7 @@
 	.globl WBOOT_RESIDENT_START,WBOOT_RESIDENT_END
 	.globl RUNTIME_WORK_AREA_START,RUNTIME_WORK_AREA_END
 	.globl CURRENT_BANK,cbios_dma_addr
-	
+	.globl NMI_DEBOUNCE_ACTIVE	
 
 ; BOOT
 ; Cold boot entry after ROM has been copied to RAM. Runtime setup hands control

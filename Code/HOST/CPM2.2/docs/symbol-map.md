@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 25198 bytes |
+| Firmware symbol map | `build/firmware.map` | 26602 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 524288 bytes |
 | Final burnable image | `build/zephyr80.bin` | 524288 bytes |
 | Layout manifest | `build/layout.manifest` | 882 bytes |
