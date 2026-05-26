@@ -17,17 +17,18 @@ individual tests can be burned to ROM or loaded through the monitor.
 - `testiorq.asm`: repeatedly writes `55h` to I/O port `80h`.
 - `testlatchport.asm`: repeatedly reads I/O port `00h` with short delay loops.
 
-`main.asm` was the original hello-world source name. The current source file is
-`helloworld.asm`. Most sources are built with `z80asm`; the Virtual Drip demos
-are built with the same ASxxxx-style toolchain used by the monitor.
-
 ## Walkthroughs
+
+All programs starting at address `0000h` cannot be run from CP/M, they need
+to be burned separately into an EEPROM. Those that start at `0100h` are meant
+to be run from CP/M and those starting at `8000h` can be loaded from within
+the monitor.
 
 ### `helloworld.asm`
 
-This ROM-style test starts at `0000h`, disables interrupts, sets the stack to
-`FFFFh`, and initializes Z80 SIO channel B on data port `22h` and control port
-`23h`.
+This ROM-style test (ie: cannot be run in CP/M) starts at `0000h`, disables 
+interrupts, sets the stack to `FFFFh`, and initializes Z80 SIO channel B on 
+data port `22h` and control port `23h`.
 
 The SIO initialization resets the channel, selects x16 asynchronous serial mode
 with one stop bit and no parity, enables 8-bit receive with auto-enables, and
@@ -109,7 +110,7 @@ Host-side handoff:
 5. Start Virtual Drip on the same serial device:
 
 ```sh
-./build/virtual-vdp --serial /dev/serial/by-id/<device> 115200 --vnc-port 5900
+virtual-vdp --serial /dev/serial/by-id/<device> 115200 --vnc-port 5900
 ```
 
 6. Connect a VNC viewer to `localhost:5900`.
@@ -152,7 +153,7 @@ Host-side handoff:
 5. Start Virtual Drip on the same serial device:
 
 ```sh
-./build/virtual-vdp --serial /dev/serial/by-id/<device> 115200 --vnc-port 5900
+virtual-vdp --serial /dev/serial/by-id/<device> 115200 --vnc-port 5900
 ```
 
 6. Connect a VNC viewer to `localhost:5900`.
