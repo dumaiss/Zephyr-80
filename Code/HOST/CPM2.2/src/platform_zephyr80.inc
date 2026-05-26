@@ -1,42 +1,47 @@
-; Zephyr-80 platform constants for the local CP/M 2.2 runtime.
-;
-; This file defines hardware ports and bit fields only. Service behavior lives
-; in the CBIOS/runtime modules that include these constants.
+; ------------------------------------------------------------------------------
+; Zephyr-80 Platform Constants (CP/M 2.2 Runtime)
+; ------------------------------------------------------------------------------
+; Physical port mappings and hardware bit fields. 
+; Service behavior resides in the CBIOS modules.
+; ------------------------------------------------------------------------------
 
-SIOA_DATA		= 0x20
-SIOA_CTRL		= 0x21
-SIOB_DATA		= 0x22
-SIOB_CTRL		= 0x23
+; --- Physical I/O Ports ---
+BANK_PORT                   = 0x00
 
-BANK_PORT		= 0x00
+SIOA_DATA                   = 0x20
+SIOA_CTRL                   = 0x21
+SIOB_DATA                   = 0x22
+SIOB_CTRL                   = 0x23
 
-CTC0_CTRL		= 0x40
-CTC1_CTRL		= 0x41
-CTC2_CTRL		= 0x42
-CTC3_CTRL		= 0x43
+CTC0_CTRL                   = 0x40
+CTC1_CTRL                   = 0x41
+CTC2_CTRL                   = 0x42
+CTC3_CTRL                   = 0x43
 
-RR0_RX_AVAILABLE	= 0x01
-RR0_TX_EMPTY		= 0x04
-SIO_WR0_RESET_HIGHEST_IUS	= 0x38
-SIO_WR1_RX_INT_ALL	= 0x10
-SIO_WR1_TX_INT_ENABLE	= 0x02
-SIO_WR1_RX_TX_INT	= SIO_WR1_RX_INT_ALL | SIO_WR1_TX_INT_ENABLE
-SIO_WR9_MIE		= 0x08
-CTC_RESET_DISABLE	= 0x03
+; --- Memory & Bank Configuration ---
+MEM                         = 56
+RAM_BANK_MASK               = 0x07
+ROM_PAGE_SHIFT              = 5
+ROM_VISIBLE_BANK0           = 0x00
+ROMDIS_BIT                  = 0x10
+SHADOW_BIT                  = 0x08
+SHADOW_COPY_BANK_VAR        = 0xfffe
 
-RAM_BANK_MASK		= 0x07
-SHADOW_BIT		= 0x08
-ROMDIS_BIT		= 0x10
-ROM_PAGE_SHIFT		= 5
+HIGH_COPY_START             = 0xc000
+HIGH_COPY_LEN               = 0x4000
+PAGE_COPY_START             = 0x0000
+PAGE_COPY_LEN               = 0xc000
 
-ROM_VISIBLE_BANK0	= 0x00
-COPY_LATCH0		= SHADOW_BIT
-RAM_ONLY_BANK0		= ROMDIS_BIT
+; --- SIO & CTC Commands / Bitmasks ---
+CTC_RESET_DISABLE           = 0x03
+RR0_RX_AVAILABLE            = 0x01
+RR0_TX_EMPTY                = 0x04
+SIO_WR0_RESET_HIGHEST_IUS   = 0x38
+SIO_WR1_RX_INT_ALL          = 0x10
+SIO_WR1_TX_INT_ENABLE       = 0x02
+SIO_WR9_MIE                 = 0x08
 
-HIGH_COPY_START		= 0xc000
-HIGH_COPY_LEN		= 0x4000
-PAGE_COPY_START		= 0x0000
-PAGE_COPY_LEN		= 0xc000
-SHADOW_COPY_BANK_VAR	= 0xfffe
-
-; COPY_LATCH(N) is computed as (N << ROM_PAGE_SHIFT) | SHADOW_BIT | N.
+; --- Dependent Aliases & Composites ---
+COPY_LATCH0                 = SHADOW_BIT
+RAM_ONLY_BANK0              = ROMDIS_BIT
+SIO_WR1_RX_TX_INT           = SIO_WR1_RX_INT_ALL | SIO_WR1_TX_INT_ENABLE

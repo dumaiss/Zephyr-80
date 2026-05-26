@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 25018 bytes |
+| Firmware symbol map | `build/firmware.map` | 24934 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 524288 bytes |
 | Final burnable image | `build/zephyr80.bin` | 524288 bytes |
 | Layout manifest | `build/layout.manifest` | 882 bytes |
@@ -145,8 +145,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `RUNTIME_WORK_AREA_END` | `F903h` | Runtime work area end. |
 | `CONSOLE_STATE_START` | `F904h` | Console state start. |
 | `CONSOLE_DRIVER` | `F904h` | Active console driver table pointer. |
-| `CONOUT_SOFT_COUNT` | `F906h` | Reserved console facade word. |
-| `CONSOLE_STATE_END` | `F908h` | Console state end. |
+| `CONSOLE_STATE_END` | `F906h` | Console state end. |
 | `BANKING_STATE_START` | `F920h` | Banking state start. |
 | `SAVED_BANK` | `F920h` | Saved active bank for cross-bank moves. |
 | `DMA_BANK` | `F921h` | Recorded DMA bank. |

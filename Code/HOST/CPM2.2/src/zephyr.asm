@@ -8,8 +8,6 @@
 	.include "platform_zephyr80.inc"
 	.include "cbios_defs.inc"
 
-MEM	= CPM_MEM_K
-
 	.globl cpm_rom_entry_high
 	.globl boot,wboot
 	.globl bdos_entry_shim
