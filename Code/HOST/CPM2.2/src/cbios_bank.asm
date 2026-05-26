@@ -11,7 +11,6 @@
 	.globl MOVE_BUFFER,APP_LAUNCH_BANK
 	.globl CURRENT_BANK,cbios_dma_addr
 	.globl WBOOT,FBASE
-	.globl NMI_HANDLER
 	
 	.area CODE (ABS)
 	.org CBIOS_BANKING_CODE_BASE

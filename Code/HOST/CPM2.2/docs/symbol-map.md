@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 26602 bytes |
+| Firmware symbol map | `build/firmware.map` | 25018 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 524288 bytes |
 | Final burnable image | `build/zephyr80.bin` | 524288 bytes |
 | Layout manifest | `build/layout.manifest` | 882 bytes |
@@ -86,9 +86,9 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `restore_ccp_from_rom` | `DB25h` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
 | `ctc_disable_interrupts` | `DB3Dh` | CTC interrupt disable helper. |
 | `prepare_runnable_bank` | `DB48h` | Page-zero and DMA preparation helper. |
-| `init_page_zero` | `DB55h` | Installs `JP WBOOT` and `JP FBASE`. |
-| `runtime_set_default_dma` | `DB6Ah` | Sets default DMA to `0080h`. |
-| `runtime_clear_default_dma` | `DB78h` | Clears command tail/default DMA area. |
+| `init_page_zero` | `DB52h` | Installs `JP WBOOT` and `JP FBASE`. |
+| `runtime_set_default_dma` | `DB67h` | Sets default DMA to `0080h`. |
+| `runtime_clear_default_dma` | `DB75h` | Clears command tail/default DMA area. |
 | `CONSOLE_CODE_START` | `DB80h` | Console BIOS facade start. |
 | `console_init` | `DB80h` | Installs and initializes the default console driver. |
 | `console_set_driver` | `DB89h` | Installs an alternate console driver table. |
@@ -146,7 +146,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `CONSOLE_STATE_START` | `F904h` | Console state start. |
 | `CONSOLE_DRIVER` | `F904h` | Active console driver table pointer. |
 | `CONOUT_SOFT_COUNT` | `F906h` | Reserved console facade word. |
-| `CONSOLE_STATE_END` | `F911h` | Console state end. |
+| `CONSOLE_STATE_END` | `F908h` | Console state end. |
 | `BANKING_STATE_START` | `F920h` | Banking state start. |
 | `SAVED_BANK` | `F920h` | Saved active bank for cross-bank moves. |
 | `DMA_BANK` | `F921h` | Recorded DMA bank. |

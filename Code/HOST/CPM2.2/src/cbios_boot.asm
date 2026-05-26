@@ -15,7 +15,6 @@
 	.globl WBOOT_RESIDENT_START,WBOOT_RESIDENT_END
 	.globl RUNTIME_WORK_AREA_START,RUNTIME_WORK_AREA_END
 	.globl CURRENT_BANK,cbios_dma_addr
-	.globl NMI_DEBOUNCE_ACTIVE	
 
 ; BOOT
 ; Cold boot entry after ROM has been copied to RAM. Runtime setup hands control
@@ -112,7 +111,6 @@ ctc_disable_interrupts:
 ; Prepare the currently selected runnable bank for CP/M-style execution.
 prepare_runnable_bank:
 	xor a
-	ld (NMI_DEBOUNCE_ACTIVE),a
 	call init_page_zero
 	call runtime_set_default_dma
 	jp runtime_clear_default_dma
