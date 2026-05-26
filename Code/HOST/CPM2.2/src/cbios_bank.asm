@@ -2,6 +2,11 @@
 ;
 ; This module is owned by the CPM2.2 port and implements the extended BIOS
 ; ABI exposed after ZBIOS_EXT_BASE.
+;
+; These services are core BIOS, not drivers. CP/M storage and application
+; launch paths depend on a single authoritative view of CURRENT_BANK, DMA_BANK,
+; and pending XMOVE state. A replaceable device driver may call these services,
+; but must not own the bank latch policy.
 
 	.globl MOVE,XMOVE,SELMEM,SETBNK,LAUNCH
 	.globl BIOS_CODE_END
@@ -18,8 +23,14 @@
 BANKING_CODE_START:
 
 ; SELMEM
-; Input: A = target RAM bank.
-; Clobbers: AF. Preserves: BC, DE, HL, IX, IY.
+; Purpose:
+;   Select the active RAM-only execution/data bank.
+; Input:
+;   A = target RAM bank.
+; Output:
+;   CURRENT_BANK and the hardware bank latch are updated.
+; Clobbers:
+;   AF. Preserves BC, DE, HL, IX, IY.
 SELMEM:
 	and #BANK_MASK
 	ld (CURRENT_BANK),a
@@ -28,16 +39,28 @@ SELMEM:
 	ret
 
 ; SETBNK
-; Input: A = future disk DMA bank.
-; Clobbers: AF. Preserves: BC, DE, HL, IX, IY.
+; Purpose:
+;   Record the bank containing the next CP/M disk DMA buffer.
+; Input:
+;   A = future disk DMA bank.
+; Output:
+;   DMA_BANK updated; the active hardware bank is unchanged.
+; Clobbers:
+;   AF. Preserves BC, DE, HL, IX, IY.
 SETBNK:
 	and #BANK_MASK
 	ld (DMA_BANK),a
 	ret
 
 ; XMOVE
-; Input: C = source bank, B = destination bank.
-; Clobbers: AF. Preserves: BC, DE, HL, IX, IY.
+; Purpose:
+;   Arm the next MOVE as a cross-bank transfer.
+; Input:
+;   C = source bank, B = destination bank.
+; Output:
+;   XMOVE_SRC_BANK, XMOVE_DST_BANK, and XMOVE_PENDING updated.
+; Clobbers:
+;   AF. Preserves BC, DE, HL, IX, IY.
 XMOVE:
 	ld a,c
 	and #BANK_MASK
@@ -50,8 +73,20 @@ XMOVE:
 	ret
 
 ; MOVE
-; Input: BC = byte count, DE = source, HL = destination.
-; Clobbers: AF, BC, DE, HL. Preserves: IX, IY.
+; Purpose:
+;   Copy BC bytes from DE to HL. With no pending XMOVE, this is a same-bank
+;   LDIR. With XMOVE_PENDING set, bytes are copied between two banks via the
+;   common MOVE_BUFFER scratch area.
+; Inputs:
+;   BC = byte count, DE = source address, HL = destination address.
+; Outputs:
+;   Same-bank move leaves LDIR results in BC/DE/HL. Cross-bank move restores the
+;   original active bank and clears XMOVE_PENDING.
+; Clobbers:
+;   AF, BC, DE, HL. Preserves IX, IY.
+; Important invariants:
+;   MOVE_BUFFER is scratch, not persistent state. C000h-C3FFh is protected
+;   common TPA and remains application-owned; this routine does not reserve it.
 MOVE:
 	ld a,(XMOVE_PENDING)
 	or a
@@ -63,6 +98,8 @@ MOVE:
 	ret
 
 MOVE_CROSS_BANK:
+	; Snapshot the foreground bank and pointers, then copy in chunks no larger
+	; than MOVE_BUFFER_SIZE so the common scratch buffer is the only bridge.
 	ld a,(CURRENT_BANK)
 	ld (SAVED_BANK),a
 	ld (MOVE_SRC_PTR),de
@@ -128,7 +165,19 @@ MOVE_CROSS_DONE:
 	ret
 
 ; LAUNCH
-; Input: A = target application bank. Does not return.
+; Purpose:
+;   Restore a low-memory application bank from its ROM payload page and enter it
+;   at MONITOR_ENTRY with CP/M-compatible page-zero vectors installed.
+; Input:
+;   A = target application bank.
+; Output:
+;   Does not return.
+; Clobbers:
+;   All primary registers and SP are consumed by the launch handoff.
+; Important invariants:
+;   The high/common BIOS remains executable while the low 48 KiB bank is copied.
+;   Page zero is rebuilt with JP WBOOT at 0000h and JP FBASE at 0005h, and the
+;   default DMA buffer at 0080h is cleared before jumping to the application.
 LAUNCH:
 	di
 	and #BANK_MASK

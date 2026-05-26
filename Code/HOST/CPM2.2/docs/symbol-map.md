@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 24934 bytes |
+| Firmware symbol map | `build/firmware.map` | 26713 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 524288 bytes |
 | Final burnable image | `build/zephyr80.bin` | 524288 bytes |
 | Layout manifest | `build/layout.manifest` | 882 bytes |
@@ -110,30 +110,30 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `write` | `DC24h` | Storage WRITE facade; transfers to RAM disk. |
 | `sectran` | `DC2Eh` | Returns untranslated 0-based logical sector for no-skew media. |
 | `STORAGE_STUB_CODE_END` | `DC31h` | Storage BIOS facade end. |
-| `RAMDISK_CODE_START` | `E200h` | RAM disk backend code start. |
-| `ramdisk_seldsk` | `E211h` | Selects CP/M drive A and returns its DPH. |
-| `ramdisk_read` | `E225h` | Reads one 128-byte record from RAM disk storage. |
-| `ramdisk_write` | `E25Ch` | Writes one 128-byte record to RAM disk storage. |
-| `RAMDISK_DPH` | `E2F1h` | Drive A disk parameter header. |
-| `RAMDISK_DPB` | `E301h` | Drive A disk parameter block. |
-| `RAMDISK_CODE_END` | `E310h` | RAM disk backend code end. |
+| `RAMDISK_CODE_START` | `DE00h` | RAM disk backend code start. |
+| `ramdisk_seldsk` | `DE11h` | Selects CP/M drive A and returns its DPH. |
+| `ramdisk_read` | `DE25h` | Reads one 128-byte record from RAM disk storage. |
+| `ramdisk_write` | `DE5Ch` | Writes one 128-byte record to RAM disk storage. |
+| `RAMDISK_DPH` | `DEF1h` | Drive A disk parameter header. |
+| `RAMDISK_DPB` | `DF01h` | Drive A disk parameter block. |
+| `RAMDISK_CODE_END` | `DF10h` | RAM disk backend code end. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `E500h` | Console IM2 vector table start. |
-| `CONSOLE_IM2_VECTOR_TABLE_END` | `E601h` | Console IM2 vector table end. |
-| `CONSOLE_DRIVER_CODE_START` | `E340h` | Default SIO console driver code start. |
-| `sio_console_driver` | `E340h` | Default console driver dispatch table. |
-| `sio_console_init` | `E34Eh` | Default SIO console driver initialization. |
-| `sio_console_enable_interrupts` | `E36Ch` | Enables the SIO/IM2 console interrupt path after boot. |
-| `sio_console_disable_interrupts` | `E497h` | Disables SIO console interrupts. |
-| `sio_console_isr` | `E3F5h` | SIO console interrupt service routine. |
+| `CONSOLE_IM2_VECTOR_TABLE_END` | `E600h` | Console IM2 vector table end. |
+| `CONSOLE_DRIVER_CODE_START` | `E200h` | Default SIO console driver code start. |
+| `sio_console_driver` | `E200h` | Default console driver dispatch table. |
+| `sio_console_init` | `E20Eh` | Default SIO console driver initialization. |
+| `sio_console_enable_interrupts` | `E22Ch` | Enables the SIO/IM2 console interrupt path after boot. |
+| `sio_console_disable_interrupts` | `E357h` | Disables SIO console interrupts. |
+| `sio_console_isr` | `E2B5h` | SIO console interrupt service routine. |
 | `CONSOLE_DRIVER_CODE_END` | `E4E7h` | Default SIO console driver code end. |
-| `BANKING_CODE_START` | `E700h` | Banking extension implementation start. |
-| `SELMEM` | `E700h` | Select RAM bank. |
-| `SETBNK` | `E70Ah` | Record future DMA bank. |
-| `XMOVE` | `E710h` | Set source/destination banks for next `MOVE`. |
-| `MOVE` | `E722h` | Same-bank or cross-bank memory move. |
-| `LAUNCH` | `E7AEh` | Launch application bank from high memory. |
-| `BANKING_CODE_END` | `E805h` | Banking extension implementation end. |
-| `BIOS_CODE_END` | `E805h` | End of generated BIOS code. |
+| `BANKING_CODE_START` | `DC80h` | Banking extension implementation start. |
+| `SELMEM` | `DC80h` | Select RAM bank. |
+| `SETBNK` | `DC8Ah` | Record future DMA bank. |
+| `XMOVE` | `DC90h` | Set source/destination banks for next `MOVE`. |
+| `MOVE` | `DCA2h` | Same-bank or cross-bank memory move. |
+| `LAUNCH` | `DD2Eh` | Launch application bank from high memory. |
+| `BANKING_CODE_END` | `DD85h` | Banking extension implementation end. |
+| `BIOS_CODE_END` | `DD85h` | End of generated BIOS code. |
 
 ## Runtime State Symbols
 

@@ -25,8 +25,25 @@ cpm:
 ; Stock CP/M 2.2 source remains read-only in cpm-2.2.
 	.include "../cpm-2.2/src/cpm22.asm"
 
-; CP/M BIOS jump table. UOW-002 owns BOOT/WBOOT surfaces. Other BIOS entries
-; are declared as future-unit surfaces and are implemented by later units.
+; CP/M BIOS jump table.
+;
+; CP/M enters the BIOS only through this fixed sequence of three-byte jumps.
+; The order is the CP/M 2.2 ABI, so exported labels and spacing are part of
+; the operating-system contract:
+;   BOOT/WBOOT            cold and warm boot entry points
+;   CONST/CONIN/CONOUT    console status, blocking input, blocking output
+;   LIST/PUNCH/READER     legacy auxiliary character devices
+;   HOME..SECTRAN         disk selection, address setup, and sector I/O
+;
+; ZBIOS_EXT_BASE is a Zephyr extension table placed immediately after the
+; standard CP/M entries. It exposes memory services used by bank-aware tools:
+;   MOVE                  copy bytes, honoring a pending XMOVE if one exists
+;   XMOVE                 set source/destination banks for the next MOVE
+;   SELMEM/SETBNK         select execution bank / record disk DMA bank
+;   LAUNCH                restore and enter an application bank
+;
+; Banking, XMOVE, and LAUNCH live in the core BIOS range because they define
+; how CP/M itself crosses banks. They are not replaceable card drivers.
 	.area CODE (ABS)
 	.org CBIOS_BASE
 

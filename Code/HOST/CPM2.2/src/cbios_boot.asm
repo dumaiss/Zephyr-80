@@ -17,8 +17,20 @@
 	.globl CURRENT_BANK,cbios_dma_addr
 
 ; BOOT
-; Cold boot entry after ROM has been copied to RAM. Runtime setup hands control
-; to the resident CP/M CCP in the selected bank.
+; Purpose:
+;   Cold boot entry after the ROM image has been shadow-copied into RAM. This
+;   path establishes the firmware stack, initializes core hardware, prepares
+;   bank 0 as a runnable CP/M environment, and enters the CCP.
+; Inputs:
+;   None. Execution arrives from cbios_boot_after_rom_copy with ROM disabled.
+; Outputs:
+;   Does not return; jumps to CCP_CLEARBUF_ENTRY with C = selected drive.
+; Clobbers:
+;   All primary registers are available for boot-time setup.
+; Important invariants:
+;   Page zero gets JP WBOOT at 0000h and JP FBASE at 0005h before applications
+;   run. DEFAULT_DMA at 0080h is recorded and cleared. Interrupts are enabled
+;   only after console state, banking state, and page zero are coherent.
 boot:
 	di
 	ld sp,#CBIOS_STACK_TOP
@@ -42,12 +54,33 @@ boot:
 	ld c,a
 	jp CCP_CLEARBUF_ENTRY
 
-; BIOS WBOOT table target. Keep this as a small trampoline so validation can
-; reason about the resident WBOOT body separately.
+; WBOOT
+; Purpose:
+;   CP/M warm boot entry from the BIOS jump table and page-zero JP at 0000h.
+;   This stays a small trampoline so validation can reason about the protected
+;   resident warm-boot body separately.
+; Outputs:
+;   Does not return; wboot_resident re-enters the CCP.
 wboot:
 	jp wboot_resident
 
 WBOOT_RESIDENT_START:
+; WBOOT resident path
+; Purpose:
+;   Rebuild the CP/M runtime environment after a transient program exits or
+;   jumps through page zero. It restores the CCP, reinstalls safe hardware
+;   state, preserves the selected drive, and returns through the CCP warm
+;   entry at CBASE+3.
+; Inputs:
+;   TDRIVE contains the current CP/M drive number.
+; Outputs:
+;   Does not return; C = TDRIVE at CCP_CLEARBUF_ENTRY.
+; Clobbers:
+;   All primary registers may be used during warm boot.
+; Important invariants:
+;   No stack use or helper CALL occurs until bank 0 is selected. This protects
+;   WBOOT when it is entered from an arbitrary application bank. Bank 0 and the
+;   protected firmware stack are established before any normal subroutine call.
 wboot_resident:
 	di
 
@@ -75,6 +108,10 @@ WBOOT_RESIDENT_END:
 ; use memory from 0100h up to the BDOS base and may overwrite the CCP at CBASE.
 ; WBOOT therefore reloads only CBASE..FBASE-1 from ROM before returning to the
 ; CCP clear-buffer entry; BDOS and BIOS remain untouched.
+;
+; For MEM=56, CBASE is C400h. C000h-C3FFh is protected/common TPA that remains
+; application-owned, so the CCP restore starts at C400h and does not treat the
+; lower common window as BIOS storage.
 ;
 ; This routine runs from protected high/common BIOS RAM after WBOOT has selected
 ; bank 0 and installed CBIOS_STACK_TOP, so CALL/RET and LDIR are safe here.
@@ -109,6 +146,14 @@ ctc_disable_interrupts:
 	ret
 
 ; Prepare the currently selected runnable bank for CP/M-style execution.
+; Purpose:
+;   Install page zero and default DMA state expected by CP/M transient programs.
+; Inputs:
+;   CURRENT_BANK records the bank being prepared.
+; Outputs:
+;   Page zero contains CP/M vectors; cbios_dma_addr and DMA_BANK point at 0080h.
+; Clobbers:
+;   AF, BC, HL.
 prepare_runnable_bank:
 	xor a
 	call init_page_zero
@@ -118,6 +163,8 @@ prepare_runnable_bank:
 ; Install page-zero vectors in the selected low RAM bank:
 ;   0000h: JP WBOOT
 ;   0005h: JP FBASE. Programs inspect 0006h as the BDOS/top-of-memory marker.
+; DEFAULT_DMA at 0080h is not installed here; runtime_set_default_dma records
+; the DMA address and runtime_clear_default_dma clears the command-tail area.
 init_page_zero:
 	ld a,#0xc3
 	ld (PZWBOOT),a
@@ -128,6 +175,10 @@ init_page_zero:
 	ld (PZBDOS + 1),hl
 	ret
 
+; Record the CP/M default DMA buffer.
+; Inputs: none.
+; Outputs: cbios_dma_addr = 0080h, DMA_BANK = CURRENT_BANK.
+; Clobbers: AF, BC.
 runtime_set_default_dma:
 	ld bc,#DEFAULT_DMA
 	ld (cbios_dma_addr),bc
@@ -135,6 +186,10 @@ runtime_set_default_dma:
 	ld (DMA_BANK),a
 	ret
 
+; Clear the default DMA/command-tail buffer at 0080h.
+; Inputs: none.
+; Outputs: 128 bytes at DEFAULT_DMA are zeroed in the selected bank.
+; Clobbers: AF, B, HL.
 runtime_clear_default_dma:
 	xor a
 	ld hl,#DEFAULT_DMA

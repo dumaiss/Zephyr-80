@@ -13,6 +13,9 @@ BANK_HELPERS_START:
 ; Input: A = RAM bank number.
 ; Output: selected RAM-only bank A&07h, CURRENT_BANK updated.
 ; Clobbers: AF.
+; Invariant:
+;   This primitive is safe for early BOOT/WBOOT use. It performs no CALL, RET
+;   side effects beyond its own return and does not depend on driver state.
 bank_select_internal:
 	and #RAM_BANK_MASK
 	ld (CURRENT_BANK),a

@@ -146,6 +146,39 @@ RUNTIME_STATE = [
     ("CONSOLE_TX_BUFFER", 16),
 ]
 
+DRIVER_SLOT_OWNERS = {
+    0: "RAM disk backend",
+    1: "legacy SIO console backend",
+    2: "available",
+    3: "available",
+    4: "available",
+    5: "available",
+}
+
+DRIVER_DECLARATIONS = [
+    ("RAM disk backend", "RAMDISK_CODE_START", "RAMDISK_CODE_END", 0, 0),
+    ("legacy SIO console backend", "CONSOLE_DRIVER_CODE_START", "CONSOLE_DRIVER_CODE_END", 1, 1),
+    ("legacy SIO IM2 table", "CONSOLE_IM2_VECTOR_TABLE_START", "CONSOLE_IM2_VECTOR_TABLE_END", 1, 1),
+]
+
+CORE_RANGES = [
+    ("BIOS jump table and boot glue", "BIOS_CODE_START", "CONSOLE_CODE_START"),
+    ("console facade", "CONSOLE_CODE_START", "CONSOLE_CODE_END"),
+    ("storage facade", "STORAGE_STUB_CODE_START", "STORAGE_STUB_CODE_END"),
+    ("banking/XMOVE/LAUNCH", "BANKING_CODE_START", "BANKING_CODE_END"),
+]
+
+VALIDATION_NOTES = [
+    "BIOS core must stay inside CBIOS_CORE_BASE-CBIOS_CORE_END.",
+    "Each declared driver must stay inside its declared fixed slot range.",
+    "RAM disk backend must stay inside slot 0.",
+    "Legacy SIO console backend and its IM2 table must stay inside slot 1.",
+    "Scratch buffers must not overlap resident code.",
+    "Runtime state must not overlap scratch, stack, or the SIO-owned IM2 table.",
+    "Stack guard must remain above runtime state.",
+    "Protected/common TPA C000h-C3FFh is application-owned and must not be used by BIOS.",
+]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -215,6 +248,21 @@ def span(start: int, end: int) -> str:
     return f"{h4(start)}-{h4(end)}"
 
 
+def exclusive_span(start: int, limit: int) -> str:
+    return span(start, limit - 1)
+
+
+def slot_range(symbols: dict[str, int], slot: int) -> tuple[int, int]:
+    return (
+        require_symbol(symbols, f"CBIOS_DRIVER_SLOT{slot}_BASE"),
+        require_symbol(symbols, f"CBIOS_DRIVER_SLOT{slot}_LIMIT"),
+    )
+
+
+def ranges_overlap(left_start: int, left_limit: int, right_start: int, right_limit: int) -> bool:
+    return left_start < right_limit and right_start < left_limit
+
+
 def artifact_size(path: Path) -> int:
     require_file(path)
     return path.stat().st_size
@@ -261,6 +309,220 @@ def runtime_range(symbols: dict[str, int]) -> tuple[int, int]:
         require_symbol(symbols, "CONSOLE_DRIVER_STATE_END"),
     ]
     return min(starts), max(ends) - 1
+
+
+def scratch_buffer_ranges(symbols: dict[str, int]) -> list[tuple[str, int, int, str]]:
+    move_start = require_symbol(symbols, "MOVE_BUFFER")
+    move_limit = move_start + require_symbol(symbols, "MOVE_BUFFER_SIZE")
+    dirbuf_start = require_symbol(symbols, "RAMDISK_DIRBUF")
+    dirbuf_limit = dirbuf_start + require_symbol(symbols, "DEFAULT_DMA_LEN")
+    return [
+        ("MOVE_BUFFER", move_start, move_limit, "Cross-bank MOVE and RAM disk transfer staging buffer."),
+        ("RAMDISK_DIRBUF", dirbuf_start, dirbuf_limit, "CP/M directory buffer referenced by the RAM disk DPH."),
+    ]
+
+
+def derived_free_scratch_ranges(symbols: dict[str, int]) -> list[tuple[int, int]]:
+    scratch_start = require_symbol(symbols, "CBIOS_SCRATCH_BASE")
+    scratch_limit = require_symbol(symbols, "CBIOS_SCRATCH_LIMIT")
+    used = sorted((start, limit) for _, start, limit, _ in scratch_buffer_ranges(symbols))
+    free: list[tuple[int, int]] = []
+    cursor = scratch_start
+    for start, limit in used:
+        if cursor < start:
+            free.append((cursor, start))
+        cursor = max(cursor, limit)
+    if cursor < scratch_limit:
+        free.append((cursor, scratch_limit))
+    return free
+
+
+def validation_error(message: str) -> str:
+    return f"ERROR: {message}"
+
+
+def validate_within(
+    errors: list[str],
+    symbols: dict[str, int],
+    label: str,
+    start_sym: str,
+    limit_sym: str,
+    allowed_start: int,
+    allowed_limit: int,
+    allowed_name: str,
+) -> tuple[int, int]:
+    start = require_symbol(symbols, start_sym)
+    limit = require_symbol(symbols, limit_sym)
+    if start < allowed_start or start >= allowed_limit:
+        errors.append(
+            validation_error(
+                f"{start_sym} = {h4(start)} is outside {allowed_name} "
+                f"({exclusive_span(allowed_start, allowed_limit)}) for {label}"
+            )
+        )
+    if limit > allowed_limit:
+        errors.append(
+            validation_error(
+                f"{limit_sym} = {h4(limit)} exceeds {allowed_name} limit "
+                f"{h4(allowed_limit)} (last byte {h4(allowed_limit - 1)}) for {label}"
+            )
+        )
+    if limit < start:
+        errors.append(validation_error(f"{limit_sym} = {h4(limit)} is below {start_sym} = {h4(start)}"))
+    return start, limit
+
+
+def validate_layout(symbols: dict[str, int]) -> list[str]:
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    cbios_base = require_symbol(symbols, "CBIOS_BASE")
+    cbios_code_limit = require_symbol(symbols, "CBIOS_CODE_LIMIT")
+    cbios_core_base = require_symbol(symbols, "CBIOS_CORE_BASE")
+    cbios_core_limit = require_symbol(symbols, "CBIOS_CORE_LIMIT")
+    scratch_start = require_symbol(symbols, "CBIOS_SCRATCH_BASE")
+    scratch_limit = require_symbol(symbols, "CBIOS_SCRATCH_LIMIT")
+    runtime_start = require_symbol(symbols, "CBIOS_RUNTIME_STATE_BASE")
+    runtime_limit = require_symbol(symbols, "CBIOS_RUNTIME_STATE_LIMIT")
+    stack_guard = require_symbol(symbols, "CBIOS_STACK_GUARD")
+    im2_start = require_symbol(symbols, "CBIOS_IM2_VECTOR_TABLE")
+    im2_limit = require_symbol(symbols, "CBIOS_IM2_VECTOR_LIMIT")
+
+    # Validate core BIOS ranges against both the core region and overall code limit.
+    for label, start_sym, limit_sym in CORE_RANGES:
+        validate_within(errors, symbols, label, start_sym, limit_sym, cbios_core_base, cbios_core_limit, "CBIOS core")
+    bios_code_end = require_symbol(symbols, "BIOS_CODE_END")
+    if bios_code_end > cbios_code_limit:
+        errors.append(
+            validation_error(
+                f"BIOS_CODE_END = {h4(bios_code_end)} crosses CBIOS_CODE_LIMIT = {h4(cbios_code_limit)}"
+            )
+        )
+    if cbios_base < require_symbol(symbols, "CBASE"):
+        errors.append(validation_error("CBIOS_BASE is below CBASE; BIOS overlaps CP/M CCP/BDOS space"))
+
+    # Validate declared driver ranges and check pairwise overlap.
+    declared_ranges: list[tuple[str, int, int]] = []
+    for label, start_sym, limit_sym, first_slot, last_slot in DRIVER_DECLARATIONS:
+        allowed_start, _ = slot_range(symbols, first_slot)
+        _, allowed_limit = slot_range(symbols, last_slot)
+        start, limit = validate_within(
+            errors,
+            symbols,
+            label,
+            start_sym,
+            limit_sym,
+            allowed_start,
+            allowed_limit,
+            f"slot {first_slot}" if first_slot == last_slot else f"slots {first_slot}-{last_slot}",
+        )
+        if limit > cbios_code_limit:
+            errors.append(
+                validation_error(
+                    f"{limit_sym} = {h4(limit)} crosses CBIOS_CODE_LIMIT = {h4(cbios_code_limit)}"
+                )
+            )
+        declared_ranges.append((label, start, limit))
+
+    for index, (left_label, left_start, left_limit) in enumerate(declared_ranges):
+        for right_label, right_start, right_limit in declared_ranges[index + 1 :]:
+            if ranges_overlap(left_start, left_limit, right_start, right_limit):
+                errors.append(
+                    validation_error(
+                        f"{left_label} ({exclusive_span(left_start, left_limit)}) overlaps "
+                        f"{right_label} ({exclusive_span(right_start, right_limit)})"
+                    )
+                )
+
+    slot1_start, slot1_limit = slot_range(symbols, 1)
+    if im2_start < slot1_start or im2_limit > slot1_limit:
+        errors.append(
+            validation_error(
+                f"IM2 table {exclusive_span(im2_start, im2_limit)} exceeds slot 1 "
+                f"({exclusive_span(slot1_start, slot1_limit)})"
+            )
+        )
+
+    for label, start, limit, _ in scratch_buffer_ranges(symbols):
+        if start < scratch_start or limit > scratch_limit:
+            errors.append(
+                validation_error(
+                    f"{label} {exclusive_span(start, limit)} is outside scratch "
+                    f"({exclusive_span(scratch_start, scratch_limit)})"
+                )
+            )
+        if start < cbios_code_limit:
+            errors.append(
+                validation_error(
+                    f"{label} starts at {h4(start)} before CBIOS_CODE_LIMIT = {h4(cbios_code_limit)}"
+                )
+            )
+
+    for left_name, left_start, left_limit, _ in scratch_buffer_ranges(symbols):
+        for right_name, right_start, right_limit, _ in scratch_buffer_ranges(symbols):
+            if left_name >= right_name:
+                continue
+            if ranges_overlap(left_start, left_limit, right_start, right_limit):
+                errors.append(
+                    validation_error(
+                        f"{left_name} ({exclusive_span(left_start, left_limit)}) overlaps "
+                        f"{right_name} ({exclusive_span(right_start, right_limit)})"
+                    )
+                )
+
+    for name in ("CBIOS_SCRATCH_FREE0", "CBIOS_SCRATCH_FREE1"):
+        limit_name = f"{name}_LIMIT"
+        if name in symbols and limit_name in symbols:
+            free_start = symbols[name]
+            free_limit = symbols[limit_name]
+            for buffer_name, buffer_start, buffer_limit, _ in scratch_buffer_ranges(symbols):
+                if ranges_overlap(free_start, free_limit, buffer_start, buffer_limit):
+                    warnings.append(
+                        f"WARNING: declared {name} ({exclusive_span(free_start, free_limit)}) overlaps "
+                        f"{buffer_name} ({exclusive_span(buffer_start, buffer_limit)}); derived scratch gaps are authoritative."
+                    )
+
+    if ranges_overlap(runtime_start, runtime_limit, scratch_start, scratch_limit):
+        errors.append(
+            validation_error(
+                f"runtime state ({exclusive_span(runtime_start, runtime_limit)}) overlaps scratch "
+                f"({exclusive_span(scratch_start, scratch_limit)})"
+            )
+        )
+    if ranges_overlap(runtime_start, runtime_limit, im2_start, im2_limit):
+        errors.append(
+            validation_error(
+                f"runtime state ({exclusive_span(runtime_start, runtime_limit)}) overlaps IM2 "
+                f"({exclusive_span(im2_start, im2_limit)})"
+            )
+        )
+    if runtime_limit > stack_guard:
+        errors.append(
+            validation_error(
+                f"runtime state limit {h4(runtime_limit)} exceeds CBIOS_STACK_GUARD = {h4(stack_guard)}"
+            )
+        )
+    if stack_guard < runtime_limit:
+        errors.append(
+            validation_error(
+                f"CBIOS_STACK_GUARD = {h4(stack_guard)} is below runtime state limit {h4(runtime_limit)}"
+            )
+        )
+
+    protected_effective_start, protected_effective_end = protected_tpa_effective_range(symbols)
+    protected_effective_limit = protected_effective_end + 1
+    for label, start, limit in declared_ranges + [("CBIOS core", cbios_core_base, cbios_core_limit)]:
+        if ranges_overlap(start, limit, protected_effective_start, protected_effective_limit):
+            errors.append(
+                validation_error(
+                    f"{label} ({exclusive_span(start, limit)}) overlaps protected/common TPA "
+                    f"({span(protected_effective_start, protected_effective_end)})"
+                )
+            )
+
+    if errors:
+        raise SystemExit("\n".join(errors))
+    return warnings
 
 
 def protected_tpa_effective_range(symbols: dict[str, int]) -> tuple[int, int]:
@@ -432,11 +694,17 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
     args.symbol_map.write_text("\n".join(lines))
 
 
-def write_memory_map(args: argparse.Namespace, symbols: dict[str, int], manifest: dict[str, str]) -> None:
-    common_base = manifest_int(manifest, "common.base")
+def write_memory_map(
+    args: argparse.Namespace,
+    symbols: dict[str, int],
+    manifest: dict[str, str],
+    validation_warnings: list[str],
+) -> None:
     cbios_base = require_symbol(symbols, "CBIOS_BASE")
     bios_code_end = require_symbol(symbols, "BIOS_CODE_END")
     code_limit = require_symbol(symbols, "CBIOS_CODE_LIMIT")
+    core_base = require_symbol(symbols, "CBIOS_CORE_BASE")
+    core_end = require_symbol(symbols, "CBIOS_CORE_END")
     stack_guard = require_symbol(symbols, "CBIOS_STACK_GUARD")
     stack_top = require_symbol(symbols, "CBIOS_STACK_TOP")
     area_end = require_symbol(symbols, "CBIOS_AREA_END")
@@ -459,18 +727,20 @@ def write_memory_map(args: argparse.Namespace, symbols: dict[str, int], manifest
         range_row(span(0x0100, banked_tpa_end), "CP/M banked TPA", "Runnable programs may use this banked low-memory range."),
         range_row(
             span(protected_tpa_effective_start, protected_tpa_effective_end),
-            "CP/M protected TPA",
-            f"Non-banked marker range is `{span(protected_tpa_start, protected_tpa_end)}`; the effective TPA portion stops before `CBASE`.",
+            "Protected/common TPA",
+            f"Application-owned common TPA. The marker range is `{span(protected_tpa_start, protected_tpa_end)}`; the effective TPA portion stops before `CBASE`.",
         ),
         range_row(span(require_symbol(symbols, "CBASE"), require_symbol(symbols, "CCPSTACK")), "CP/M CCP", f"`CBASE` is `{h4(require_symbol(symbols, 'CBASE'))}`."),
         range_row(span(require_symbol(symbols, "FBASE"), cbios_base - 1), "CP/M BDOS and state", f"`FBASE` is `{h4(require_symbol(symbols, 'FBASE'))}` in the current assembled image."),
-        range_row(span(cbios_base, bios_code_end - 1), "Zephyr BIOS code", "BIOS jump table, boot, console facade and driver, storage facade, RAM disk backend, banking, and launch routines."),
-        range_row(span(bios_code_end, code_limit - 1), "Reserved high BIOS/code space", "Available within the current firmware map for later BIOS code or validation reservations."),
+        range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, and LAUNCH."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT0_END")), "Driver slot 0", "Current transitional owner: RAM disk backend."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT1_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT1_END")), "Driver slot 1", "Current transitional owner: legacy SIO console backend, including SIO IM2 trampoline/table."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT2_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slots 2-5", "Available fixed 1 KiB slots for future drivers."),
         range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `RAMDISK_DIRBUF` is at `{h4(require_symbol(symbols, 'RAMDISK_DIRBUF'))}`."),
         range_row(span(runtime_start, runtime_end), "BIOS runtime state", "Current bank, DMA address, console driver state, storage state, and banking state."),
         range_row(span(stack_guard, area_end), "Protected firmware stack and work window", f"Stack top is `{h4(stack_top)}`; stack guard is `{h4(stack_guard)}`."),
         "",
-        "## Firmware Code Layout",
+        "## Core BIOS Layout",
         "",
         "| Range | Component |",
         "|---|---|",
@@ -485,16 +755,41 @@ def write_memory_map(args: argparse.Namespace, symbols: dict[str, int], manifest
         f"| `{span(require_symbol(symbols, 'boot'), require_symbol(symbols, 'CONSOLE_CODE_START') - 1)}` | Cold boot, warm boot, CCP restore, page-zero, DMA, CTC helpers, and alignment gap. |",
         f"| `{span(require_symbol(symbols, 'CONSOLE_CODE_START'), require_symbol(symbols, 'CONSOLE_CODE_END') - 1)}` | Console BIOS facade. |",
         f"| `{span(require_symbol(symbols, 'STORAGE_STUB_CODE_START'), require_symbol(symbols, 'STORAGE_STUB_CODE_END') - 1)}` | Storage BIOS facade. |",
-        f"| `{span(require_symbol(symbols, 'RAMDISK_CODE_START'), require_symbol(symbols, 'RAMDISK_CODE_END') - 1)}` | RAM disk backend, Drive A DPH, and DPB. |",
-        f"| `{span(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'), require_symbol(symbols, 'CONSOLE_DRIVER_CODE_END') - 1)}` | Default SIO console driver. |",
-        f"| `{span(require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_START'), require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_END') - 1)}` | Console IM2 vector table. |",
         f"| `{span(require_symbol(symbols, 'BANKING_CODE_START'), bios_code_end - 1)}` | Banking and high-memory `LAUNCH` implementation. |",
         "",
+        "## Driver Slot Table",
+        "",
+        "| Slot | Start | End | Size | Owner | Current contents |",
+        "|---:|---:|---:|---:|---|---|",
+    ]
+    for slot in range(6):
+        slot_start, slot_limit = slot_range(symbols, slot)
+        owner = DRIVER_SLOT_OWNERS[slot]
+        if slot == 0:
+            contents = f"`{span(require_symbol(symbols, 'RAMDISK_CODE_START'), require_symbol(symbols, 'RAMDISK_CODE_END') - 1)}` RAM disk backend."
+        elif slot == 1:
+            contents = (
+                f"`{span(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'), require_symbol(symbols, 'CONSOLE_DRIVER_CODE_END') - 1)}` "
+                "legacy SIO code/trampoline; "
+                f"`{span(require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_START'), require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_END') - 1)}` "
+                "SIO IM2 table."
+            )
+        else:
+            contents = "Available."
+        lines.append(
+            f"| {slot} | `{h4(slot_start)}` | `{h4(slot_limit - 1)}` | "
+            f"{slot_limit - slot_start} bytes | {owner} | {contents} |"
+        )
+
+    lines.extend(
+        [
+            "",
         "## BIOS Jump Table Layout",
         "",
         "| Address | Entry |",
         "|---:|---|",
-    ]
+        ]
+    )
     for entry, target in BIOS_TABLE:
         lines.append(f"| `{h4(require_symbol(symbols, entry))}` | `JP {target}` |")
     ext_base = require_symbol(symbols, "ZBIOS_EXT_BASE")
@@ -514,6 +809,42 @@ def write_memory_map(args: argparse.Namespace, symbols: dict[str, int], manifest
     for name, size in RUNTIME_STATE:
         start = require_symbol(symbols, name)
         lines.append(f"| `{span(start, start + size - 1)}` | `{name}` |")
+
+    lines.extend(
+        [
+            "",
+            "## Scratch Layout",
+            "",
+            "| Range | Use | Notes |",
+            "|---|---|---|",
+        ]
+    )
+    for name, start, limit, notes in scratch_buffer_ranges(symbols):
+        lines.append(f"| `{exclusive_span(start, limit)}` | `{name}` | {notes} |")
+    for start, limit in derived_free_scratch_ranges(symbols):
+        lines.append(f"| `{exclusive_span(start, limit)}` | unused scratch window | Derived from active buffers and scratch bounds. |")
+
+    im2_table = require_symbol(symbols, "CBIOS_IM2_VECTOR_TABLE")
+    im2_limit = require_symbol(symbols, "CBIOS_IM2_VECTOR_LIMIT")
+    im2_entry = require_symbol(symbols, "CBIOS_IM2_VECTOR_ENTRY")
+    lines.extend(
+        [
+            "",
+            "## IM2 Layout",
+            "",
+            "| Field | Value | Notes |",
+            "|---|---:|---|",
+            f"| Table base | `{h4(im2_table)}` | Start of the repeated-byte table. |",
+            f"| Table range | `{exclusive_span(im2_table, im2_limit)}` | Exactly {im2_limit - im2_table} bytes; `CONSOLE_IM2_VECTOR_TABLE_END` is the exclusive end label. |",
+            f"| Vector page | `{h2(require_symbol(symbols, 'CBIOS_IM2_VECTOR_PAGE'))}` | Loaded into the Z80 I register. |",
+            f"| Vector byte | `{h2(require_symbol(symbols, 'CBIOS_IM2_VECTOR_BYTE'))}` | Repeated table byte; E4h/E4h forms the trampoline address. |",
+            f"| SIO WR2 vector byte | `{h2(require_symbol(symbols, 'CBIOS_SIO_VECTOR'))}` | Current SIO channel B vector byte. |",
+            f"| Trampoline address | `{h4(im2_entry)}` | Contains `JP sio_console_isr`. |",
+            f"| Owner | legacy SIO console backend | Transitional SIO-only build; IM2 table lives in driver slot 1. |",
+            "",
+            "Future real video-card or storage interrupts may require global IM2 handling or a 257-byte FF-safe table. Devices that emit FFh vectors cannot rely on this compact SIO-only table without revisiting ownership and slot sizing.",
+        ]
+    )
 
     lines.extend(
         [
@@ -538,13 +869,30 @@ def write_memory_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             f"| `{args.pre_swap_image}` | {artifact_size(args.pre_swap_image)} bytes | Logical image after payload attachment and before CPU-board bit swap. |",
             f"| `{args.final_image}` | {artifact_size(args.final_image)} bytes | Final burnable image after `tools/swapbits.py`. |",
             "",
-            "## Validation Notes",
+            "## Validation Report",
+            "",
+            "Status: PASS. No fatal layout errors were found.",
+            "",
+        ]
+    )
+    if validation_warnings:
+        lines.extend(["Warnings:", ""])
+        lines.extend(f"- {warning}" for warning in validation_warnings)
+        lines.append("")
+    lines.extend(
+        [
+            "Validated expectations:",
+            "",
+            *(f"- {note}" for note in VALIDATION_NOTES),
+            "",
+            "Additional notes:",
             "",
             "- CP/M drive A is backed by RAM banks 2-7 across `0000h-BFFFh` in each bank.",
             "- The RAM disk seed image is copied from ROM to RAM during boot shadow-copy, then writes mutate RAM only.",
             f"- The protected TPA marker is `{span(protected_tpa_start, protected_tpa_end)}`; for this build, the application-usable protected TPA subrange is `{span(protected_tpa_effective_start, protected_tpa_effective_end)}` because `CBASE` starts at `{h4(require_symbol(symbols, 'CBASE'))}`.",
             f"- WBOOT restores the CCP range `{span(require_symbol(symbols, 'CBASE'), require_symbol(symbols, 'FBASE') - 1)}` from ROM page 0 using `ROM_VISIBLE_BANK0` (`{h2(require_symbol(symbols, 'ROM_VISIBLE_BANK0'))}`) before returning to `CCP_CLEARBUF_ENTRY`.",
             f"- `CBIOS_BASE` is `{h4(cbios_base)}`; CBIOS layout constants are derived from this base.",
+            f"- `CBIOS_CODE_LIMIT` is `{h4(code_limit)}`; no resident code may cross into scratch/staging.",
             f"- `LAUNCH` code resides at `{h4(require_symbol(symbols, 'LAUNCH'))}`, inside protected high BIOS memory.",
             f"- `WBOOT` resident code starts at `{h4(require_symbol(symbols, 'WBOOT_RESIDENT_START'))}`, inside protected high BIOS memory.",
             f"- `ZBIOS_EXT_BASE` is at `{h4(ext_base)}` and exposes `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, and `LAUNCH`.",
@@ -560,11 +908,14 @@ def main() -> int:
     require_file(args.map)
     symbols = parse_listing(args.listing)
     manifest = parse_manifest(args.manifest)
+    validation_warnings = validate_layout(symbols)
 
     args.symbol_map.parent.mkdir(parents=True, exist_ok=True)
     args.memory_map.parent.mkdir(parents=True, exist_ok=True)
     write_symbol_map(args, symbols, manifest)
-    write_memory_map(args, symbols, manifest)
+    write_memory_map(args, symbols, manifest, validation_warnings)
+    for warning in validation_warnings:
+        print(warning, file=sys.stderr)
     return 0
 
 

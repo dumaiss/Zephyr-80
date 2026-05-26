@@ -2,6 +2,18 @@
 ;
 ; CP/M entry labels stay stable while the active console backend is selected
 ; through a small driver table. The default backend is SIO channel B.
+;
+; Driver table contract, seven 16-bit little-endian entries:
+;   +00 const   -> A = FFh if input is available, A = 00h otherwise
+;   +02 conin   -> blocking input, returns character in A
+;   +04 conout  -> blocking output of character in C
+;   +06 list    -> list/printer output of C, or no-op
+;   +08 punch   -> punch output of C, or no-op
+;   +0A reader  -> reader input, A = character or CP/M EOF
+;   +0C listst  -> A = FFh if list device ready, A = 00h otherwise
+;
+; The facade preserves DE and HL around the indirect call. Backend routines
+; follow the CP/M register conventions for their specific entry points.
 
 	.globl const,conin,conout,list,punch,reader,listst
 	.globl console_init,console_set_driver
@@ -15,14 +27,26 @@
 
 CONSOLE_CODE_START:
 
-; Initialize the default console backend. Clobbers AF, HL.
+; Initialize the default console backend.
+; Purpose:
+;   Install the legacy SIO console table and clear its backend state.
+; Inputs: none.
+; Outputs: CONSOLE_DRIVER points at sio_console_driver.
+; Clobbers: AF, HL.
 console_init:
 	ld hl,#sio_console_driver
 	ld (CONSOLE_DRIVER),hl
 	jp sio_console_init
 
 ; Install a different console driver table.
-; Input: HL = table containing const, conin, conout, list, punch, reader, listst.
+; Purpose:
+;   Swap the CP/M console facade to another backend without changing the CP/M
+;   BIOS jump table.
+; Input:
+;   HL = table containing const, conin, conout, list, punch, reader, listst.
+; Output:
+;   CONSOLE_DRIVER updated.
+; Clobbers: none.
 console_set_driver:
 	ld (CONSOLE_DRIVER),hl
 	ret
@@ -55,6 +79,8 @@ listst:
 	ld a,#0x0c
 
 CONSOLE_DISPATCH:
+	; A contains a byte offset into the active driver table. Fetch the function
+	; pointer, call it through a tiny return shim, then restore facade registers.
 	push de
 	push hl
 	ld e,a

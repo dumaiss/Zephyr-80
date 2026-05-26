@@ -3,6 +3,17 @@
 ; The backend keeps pluggable driver state and foreground-safe RX/TX buffers.
 ; The boot path enables the maskable SIO interrupt receiver after CP/M runtime
 ; bank setup is stable.
+;
+; Transitional ownership:
+;   This file owns driver slot 1 for the current SIO-only build. Slot 1 holds
+;   the SIO console code, the E4E4h IM2 trampoline, and the E500h-E5FFh IM2
+;   repeated-byte table. IM2 is intentionally not global core yet because no
+;   other interrupting device participates in this transitional build.
+;
+; Future video-card/storage interrupts may need to move IM2 ownership into a
+;   global interrupt layer, especially for devices that emit FFh vectors or need
+;   a 257-byte FF-safe table. The compact table below is valid only because SIO
+;   WR2 is programmed with CBIOS_SIO_VECTOR = 00h.
 
 	.globl sio_console_driver,sio_console_init,sio_console_isr
 	.globl CONIRQ,sio_console_enable_interrupts,sio_console_disable_interrupts
@@ -30,6 +41,17 @@ CONSOLE_TX_BUFFER_MASK	= CONSOLE_TX_BUFFER_SIZE - 1
 	.area CODE (ABS)
 	.org CBIOS_IM2_VECTOR_TABLE
 
+; SIO-owned IM2 repeated-byte table.
+; Purpose:
+;   Provide the low/high bytes that the Z80 fetches in interrupt mode 2.
+; Inputs:
+;   I = CBIOS_IM2_VECTOR_PAGE and SIO WR2 = CBIOS_SIO_VECTOR.
+; Outputs:
+;   The CPU reads E4h/E4h from E500h/E501h and vectors to E4E4h.
+; Important invariants:
+;   This table is exactly 256 bytes and ends at the exclusive label E600h.
+;   A 257th byte would cross from slot 1 into slot 2. That is acceptable for
+;   some FF-safe IM2 designs, but not for the current fixed-slot SIO backend.
 CONSOLE_IM2_VECTOR_TABLE_START:
 	.db CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE
 	.db CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE
@@ -95,7 +117,8 @@ CONSOLE_IM2_VECTOR_TABLE_START:
 	.db CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE
 	.db CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE
 	.db CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE,CBIOS_IM2_VECTOR_BYTE
-	.db CBIOS_IM2_VECTOR_BYTE
+	; No 257th byte is emitted here. With SIO WR2 forced to 00h, the CPU uses
+	; E500h/E501h and never indexes the E5FFh/E600h pair for this device.
 CONSOLE_IM2_VECTOR_TABLE_END:
 
 	.area CODE (ABS)
@@ -103,6 +126,9 @@ CONSOLE_IM2_VECTOR_TABLE_END:
 
 CONSOLE_DRIVER_CODE_START:
 
+; Driver dispatch table consumed by cbios_console.asm.
+; Entry order must match the facade contract:
+;   const, conin, conout, list, punch, reader, listst.
 sio_console_driver:
 	.dw sio_console_const
 	.dw sio_console_conin
@@ -114,6 +140,11 @@ sio_console_driver:
 
 ; Initialize the SIO-backed console driver state. Boot enables interrupts after
 ; the current bank and CP/M page-zero vectors are in place.
+; Purpose:
+;   Clear RX/TX ring state and leave maskable SIO interrupts disabled.
+; Inputs: none.
+; Outputs:
+;   CONSOLE_IRQ_ENABLED = 0 and the RX/TX buffers are empty.
 ; Clobbers: AF, HL.
 sio_console_init:
 	xor a
@@ -129,9 +160,22 @@ sio_console_init:
 	ret
 
 CONIRQ:
+	; CP/M-facing interrupt switch. A = 0 disables; any nonzero value enables.
 	or a
 	jp z,sio_console_disable_interrupts
 
+; Enable the SIO/IM2 console interrupt path.
+; Purpose:
+;   Program the Z80 for IM2, program SIO WR2 with vector 00h, enable SIO receive
+;   interrupts, and enable the SIO master interrupt bit.
+; Inputs: none.
+; Outputs:
+;   CONSOLE_IRQ_ENABLED = 1, CONSOLE_IRQ_COUNT = 0, A = FFh.
+; Clobbers: AF.
+; Important invariants:
+;   The SIO vector and IM2 table belong to this legacy console driver in the
+;   current build. Interrupts are enabled only after boot/WBOOT has established
+;   bank 0, runtime state, and page zero.
 sio_console_enable_interrupts:
 	di
 	ld a,#CBIOS_IM2_VECTOR_PAGE
@@ -162,7 +206,13 @@ sio_console_enable_interrupts:
 	ld a,#0xff
 	ret
 
-; Returns A = 0xff when buffered input is available, A = 0x00 otherwise.
+; CONST backend.
+; Purpose:
+;   Report buffered input availability. This checks CONSOLE_RX_COUNT, not only
+;   raw SIO polling, so interrupt-received bytes are visible to CP/M.
+; Outputs:
+;   A = CONST_HAS_CHAR when buffered input is available, else CONST_NO_CHAR.
+; Clobbers: AF.
 sio_console_const:
 	call sio_console_rx_kick
 	ld a,(CONSOLE_RX_COUNT)
@@ -174,7 +224,16 @@ SIO_CONSOLE_CONST_NONE:
 	ld a,#CONST_NO_CHAR
 	ret
 
-; Blocks on the interrupt-filled receive buffer, not on SIO status polling.
+; CONIN backend.
+; Purpose:
+;   Block until a byte is available in the foreground-safe receive ring.
+; Outputs:
+;   A = received byte.
+; Clobbers:
+;   AF; DE and HL are preserved locally.
+; Important invariants:
+;   RX head/count may be updated by the ISR. Tail/count updates in the foreground
+;   are protected by sio_console_rx_lock when interrupt mode is active.
 sio_console_conin:
 	push de
 	push hl
@@ -206,7 +265,18 @@ SIO_CONSOLE_CONIN_HAVE_CHAR:
 	pop de
 	ret
 
-; Blocks until transmit is ready, then writes C exactly as supplied.
+; CONOUT backend.
+; Purpose:
+;   Blocking transmit of the character in C.
+; Inputs:
+;   C = byte to transmit.
+; Outputs:
+;   The byte is written to SIO channel B when TX is ready.
+; Clobbers:
+;   AF is preserved locally.
+; Important invariants:
+;   The current foreground output path still polls TX readiness and does not use
+;   the TX ring for CP/M CONOUT.
 sio_console_conout:
 	push af
 SIO_CONSOLE_CONOUT_WAIT:
@@ -232,6 +302,19 @@ sio_console_listst:
 	ld a,#CONSOLE_READY
 	ret
 
+; SIO interrupt service routine.
+; Purpose:
+;   Drain one available RX byte into the receive ring and optionally advance the
+;   TX ring when TX-ready interrupts are active.
+; Inputs:
+;   Entered through the E4E4h trampoline in IM2.
+; Outputs:
+;   CONSOLE_IRQ_COUNT increments; RX bytes are buffered unless the ring is full.
+; Clobbers:
+;   AF, BC, DE, HL are preserved; alternate registers, IX, and IY are untouched.
+; Important invariants:
+;   The ISR ends with SIO_WR0_RESET_HIGHEST_IUS and RETI. It does not switch
+;   banks, so all touched state must remain in common runtime memory.
 sio_console_isr:
 	push af
 	push bc
@@ -265,7 +348,14 @@ SIO_ISR_DONE:
 	pop af
 	reti
 
-; Input: C = received byte. Drops the new byte when the buffer is full.
+; Store one RX byte from foreground polling or the ISR.
+; Input: C = received byte.
+; Output:
+;   Byte appended to CONSOLE_RX_BUFFER unless the ring is full.
+; Clobbers: AF, DE, HL.
+; Important invariants:
+;   Full-buffer policy is drop-new-byte. This keeps the ISR bounded and avoids
+;   corrupting unread foreground input.
 sio_console_rx_store:
 	ld a,(CONSOLE_RX_COUNT)
 	cp #CONSOLE_RX_BUFFER_SIZE
@@ -285,6 +375,12 @@ sio_console_rx_store:
 	ld (CONSOLE_RX_COUNT),a
 	ret
 
+; Opportunistically poll one RX byte into the same ring used by interrupts.
+; Purpose:
+;   Covers the short windows before interrupts are enabled or while foreground
+;   code has IRQs temporarily disabled.
+; Clobbers:
+;   AF; BC and HL are preserved locally when a byte is read.
 sio_console_rx_kick:
 	call sio_console_rx_lock
 	in a,(CONSOLE_CTRL_PORT)
@@ -301,6 +397,8 @@ SIO_CONSOLE_RX_KICK_DONE:
 	call sio_console_rx_unlock
 	ret
 
+; Disable maskable interrupts around foreground RX ring updates when IRQ mode is
+; active. If the console is still polling-only, this is a no-op.
 sio_console_rx_lock:
 	ld a,(CONSOLE_IRQ_ENABLED)
 	or a
@@ -308,6 +406,8 @@ sio_console_rx_lock:
 	di
 	ret
 
+; Re-enable maskable interrupts after a foreground RX ring update when IRQ mode
+; is active.
 sio_console_rx_unlock:
 	ld a,(CONSOLE_IRQ_ENABLED)
 	or a
@@ -315,6 +415,9 @@ sio_console_rx_unlock:
 	ei
 	ret
 
+; Drain one pending TX ring byte if any are queued.
+; Note:
+;   CP/M CONOUT currently bypasses this path and performs blocking transmit.
 sio_console_tx_drain:
 	ld a,(CONSOLE_TX_COUNT)
 	or a
@@ -346,6 +449,13 @@ sio_console_tx_kick:
 	ret z
 	jp sio_console_tx_drain
 
+; Disable the SIO console interrupt path.
+; Purpose:
+;   Clear SIO WR1 interrupt enables, clear SIO master interrupt enable, and mark
+;   console IRQ mode inactive for foreground lock/unlock helpers.
+; Outputs:
+;   CONSOLE_IRQ_ENABLED = 0, CONSOLE_TX_ACTIVE = 0.
+; Clobbers: AF.
 sio_console_disable_interrupts:
 	di
 	ld a,#0x01
@@ -362,6 +472,8 @@ sio_console_disable_interrupts:
 
 	.area CODE (ABS)
 	.org CBIOS_IM2_VECTOR_ENTRY
+; IM2 trampoline inside slot 1. The repeated-byte table vectors here by storing
+; E4h/E4h as the fetched address word.
 CONSOLE_IM2_VECTOR_ENTRY:
 	jp sio_console_isr
 
