@@ -1,89 +1,33 @@
-; Zephyr-80 first ROM monitor
-; CPU: Z80
-; Assembler: SDCC sdasz80 / ASxxxx Z80 syntax
+; Zephyr-80 monitor application for the CP/M/BIOS ROM image.
 ;
-; Overview:
-; - The ROM image starts at 0000h and enters at start after reset.
-; - At reset, the monitor copies ROM pages into SRAM with the memory decoder's
-;   shadow/copy mode, disables ROM, then continues from RAM.
-; - The monitor is a polling command loop. It never enables interrupts.
-; - Z80 SIO channel B is the console, owned by the resident BIOS. Monitor
-;   console calls go through the CP/M-style BIOS jump table.
-; - Commands are single-letter dispatches from LINE_BUF. Argument parsing and
-;   command actions live in the included modules; every command returns by
-;   jumping back to monitor_loop or one of the shared error exits.
-;
-; Hardware assumptions:
-; - ROM entry point is 0000h.
-; - The reset vector at 0000h jumps to monitor_rom_entry_high in the high
-;   safe/common area at E000h.
-; - Z80 SIO channel B is the BIOS-backed monitor console.
-; - A0 is wired to SIO C/D and A1 is wired to SIO B/A:
-;     20h = SIO A data, 21h = SIO A control
-;     22h = SIO B data, 23h = SIO B control
-; - SIO clock is 1.8432 MHz, using x16 async clocking for 115200 8N1.
-; - SIO WR3 auto-enables are disabled. FT230-style USB serial wiring may not
-;   provide the modem-control input needed for auto-enable receive gating.
-; - No interrupts are used. All console I/O is polling.
-;
-; Startup memory map:
-; - Normal mode starts with ROM visible for reads and SRAM underneath for writes.
-; - Shadow/copy mode makes E000h-FFFFh safe SRAM bank 0 while 0000h-DFFFh reads
-;   selected ROM pages and writes matching SRAM banks.
-; - After relocation, ROM is disabled and the monitor runs from SRAM bank 0.
-; Monitor runtime, workspace, and stack live in high common RAM bank 0.
+; This assembles the existing monitor command shell as a TPA-style program at
+; 0100h. The resident BIOS enters it after platform setup.
 
-	.module zephyr80_monitor
-	.area CODE (ABS)
-	.org 0
+	.module zephyr80_monitor_app
+	.area MONAPP (ABS)
 
-	.include "constants.inc"
-	.include "workspace.inc"
 	.include "ascii.inc"
+	.include "workspace.inc"
+	.include "constants.inc"
 
-start:
-	jp monitor_rom_entry_high
-
-	.org HIGH_COPY_START
-
-	; The CP/M-style BIOS jump table owns the first bytes of the high common
-	; area. The reset vector jumps past it to the ROM copy routine below.
-	.include "bios_console.inc"
-
-	; Before the monitor uses the stack or calls any subroutine, relocate ROM
-	; into RAM and disable ROM. shadow_copy.inc falls through here with RAM-only
-	; bank 0 selected, so the normal monitor path continues from SRAM.
-	.include "shadow_copy.inc"
-
-monitor_init:
-	; With ROM disabled, move the stack into RAM, initialize the BIOS console,
-	; and clear the CR/LF tracking flag before accepting operator input.
-	ld sp,#STACK_TOP
-	call sio_init
+	.org 0x0100
+monitor_tpa_start:
+	ld (MONITOR_EXIT_SP),sp
+	ld sp,(MONITOR_STACK_TOP)
 	xor a
 	ld (EOL_CR_FLAG),a
 	ld (HISTORY_LEN),a
-
-	; Wait for the first Enter before printing the banner. This lets a terminal
-	; connect or finish sending its opening line ending without losing the first
-	; visible monitor prompt to a pending LF.
 	call wait_for_first_enter
 	ld hl,#msg_banner
 	call sio_puts
 
 monitor_loop:
-	; Prompt, read one edited command line into LINE_BUF, then snapshot the
-	; monitor's own register state for the R command. This is intentionally
-	; after input because sio_getline and parsing helpers clobber registers.
 	ld hl,#msg_prompt
 	call sio_puts
 	call sio_getline
 	call sio_save_line_history
 	call save_monitor_context
 
-	; Commands are selected by the first non-space character. Empty lines simply
-	; redisplay the prompt. The command byte is folded to uppercase so lowercase
-	; command letters take the same paths.
 	ld hl,#LINE_BUF
 	call skip_spaces
 	ld a,(hl)
@@ -94,19 +38,23 @@ monitor_loop:
 	cp #0x52		; R
 	jp z,cmd_registers
 	cp #0x44		; D
-	jp z,cmd_dump
+	jp z,cmd_droute
 	cp #0x4d		; M
 	jp z,cmd_memory_set
 	cp #0x49		; I
 	jp z,cmd_port_in
 	cp #0x4f		; O
 	jp z,cmd_port_out
+	cp #0x41		; A
+	jp z,cmd_app
 	cp #0x4c		; L
 	jp z,cmd_load_hex
 	cp #0x47		; G
 	jp z,cmd_go
 	cp #0x58		; X
 	jp z,cmd_hex_dump
+	cp #0x51		; Q
+	jp z,cmd_quit
 	cp #0x48		; H
 	jp z,cmd_help
 	cp #0x3f		; ?

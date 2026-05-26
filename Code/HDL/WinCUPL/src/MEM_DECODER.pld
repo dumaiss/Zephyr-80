@@ -40,7 +40,13 @@ UPPER_32K  = A15;                     /* $8000 - $FFFF */
 RAM_ONLY   = !A15 & A14 & A13;        /* $6000 - $7FFF */
 
 /* high safe/common area */
-SAFE_RAM   = A15 & A14 & A13;         /* $E000 - $FFFF */
+SAFE_RAM   = A15 & A14;               /* $C000 - $FFFF */
+COPY_AREA  = !SAFE_RAM;               /* $0000 - $BFFF */
+
+/* Normal ROM-readable regions:
+   - boot/BIOS range at $0000-$5FFF
+   - common high protected range at $C000-$FFFF
+*/
 BOOT_ROM   = BIOS_RANGE # SAFE_RAM;   /* Normal ROM-readable regions */
 
 
@@ -50,7 +56,7 @@ ALL_RAM_MODE = ROM_DIS;
 /* Shadow/copy mode only applies while ROM is enabled */
 EFFECTIVE_SHADOW = RAM_SHADOW & !ROM_DIS;
 
-/* Force RAM bank 0 for the high 8K when RAM-only or shadow/copy mode */
+/* Force RAM bank 0 for the high 16K when RAM-only or shadow/copy mode */
 FORCE_BANK0 = SAFE_RAM & (ROM_DIS # RAM_SHADOW);
 
 

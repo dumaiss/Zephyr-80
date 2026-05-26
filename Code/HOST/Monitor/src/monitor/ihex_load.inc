@@ -85,8 +85,8 @@ load_record_data:
 	or a
 	jr z,load_record_good
 
-	; With the record validated, copy the staged bytes into RAM. ROM is disabled
-	; during monitor startup, so the full 64 KiB address space is writable SRAM.
+	; With the record validated, copy the staged bytes into the current CP/M
+	; application bank.
 	ld a,(HEX_COUNT)
 	ld b,a
 	ld hl,(HEX_ADDR)

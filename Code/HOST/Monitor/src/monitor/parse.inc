@@ -180,9 +180,8 @@ to_upper_a:
 ; Input: HL = address to test.
 ; Output: carry clear.
 ; Clobbers: AF.
-; The monitor disables ROM during startup, so all 64 KiB are RAM from the
-; monitor's point of view. Keep this helper for command code that wants a
-; single writability check point.
+; Monitor runs in the current CP/M application bank. Keep this helper for
+; command code that wants a single writability check point.
 check_hl_writable:
 	xor a
 	ret

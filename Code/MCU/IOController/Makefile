@@ -4,20 +4,16 @@ TARGET := io_controller
 BUILD_DIR := build
 SRC_DIR := src
 INC_DIR := include
-TEST_DIR := tests
-TEST_BUILD_DIR := $(BUILD_DIR)/tests
 
-XC8 ?= xc8-cc
-HOST_CC ?= gcc
+XC8_DIR ?= /opt/microchip/xc8/v3.10/bin
+XC8 ?= $(XC8_DIR)/xc8-cc
+DFP ?= /home/kitamura/Downloads/xc8
 
-FIRMWARE_SRCS := $(wildcard $(SRC_DIR)/*.c)
-TEST_SRCS := $(SRC_DIR)/power_management.c $(TEST_DIR)/io_controller_test.c
+FIRMWARE_SRCS := $(SRC_DIR)/main.c
 
 FIRMWARE_HEX := $(BUILD_DIR)/$(TARGET).hex
-TEST_BIN := $(TEST_BUILD_DIR)/io_controller_test
 
-XC8FLAGS ?= -mcpu=$(DEVICE) -I$(INC_DIR)
-HOST_CFLAGS := -std=c11 -Wall -Wextra -Werror -DUNIT_TEST -I$(INC_DIR)
+XC8FLAGS ?= -mcpu=$(DEVICE) -mdfp=$(DFP) -I$(INC_DIR)
 
 .PHONY: all clean test size
 
@@ -26,17 +22,11 @@ all: $(FIRMWARE_HEX)
 $(BUILD_DIR):
 	mkdir -p $@
 
-$(TEST_BUILD_DIR): | $(BUILD_DIR)
-	mkdir -p $@
-
 $(FIRMWARE_HEX): $(FIRMWARE_SRCS) | $(BUILD_DIR)
 	$(XC8) $(XC8FLAGS) $^ -o $(BUILD_DIR)/$(TARGET)
 
-$(TEST_BIN): $(TEST_SRCS) | $(TEST_BUILD_DIR)
-	$(HOST_CC) $(HOST_CFLAGS) $^ -o $@
-
-test: $(TEST_BIN)
-	$(TEST_BIN)
+test:
+	@echo "No host tests: firmware only drives the boot reset pulse."
 
 size: $(FIRMWARE_HEX)
 	@ls -lh "$(BUILD_DIR)"

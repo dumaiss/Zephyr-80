@@ -5,39 +5,37 @@
 ; CP/M-style BIOS console ABI; the BIOS owns SIO initialization and hardware
 ; polling.
 
-; Initialize the BIOS console.
-; Input: none.
-; Output: BIOS BOOT has initialized SIO channel B.
-; Clobbers: AF.
-sio_init:
-	call BIOS_BOOT
-	ret
-
 ; Write A through BIOS CONOUT.
 ; Input: A = byte to transmit.
 ; Output: byte written to the BIOS console.
 ; Preserves: BC, DE, HL, IX, IY. Clobbers: AF.
 sio_putc:
 	push bc
+	push hl
 	ld c,a
-	call BIOS_CONOUT
+	call BCOUT
+	pop hl
 	pop bc
 	ret
 
 ; Read one byte through BIOS CONIN.
 ; Input: none.
 ; Output: A = received byte.
-; Clobbers: AF.
+; Preserves: BC, DE, HL, IX, IY. Clobbers: AF.
 sio_getc:
-	call BIOS_CONIN
+	push hl
+	call BCIN
+	pop hl
 	ret
 
 ; Query BIOS CONST.
 ; Input: none.
 ; Output: A = 00h if no character is pending, FFh if one is available.
-; Clobbers: AF.
+; Preserves: BC, DE, HL, IX, IY. Clobbers: AF.
 sio_const:
-	call BIOS_CONST
+	push hl
+	call BCNST
+	pop hl
 	ret
 
 ; Wait silently until the operator presses Enter once.

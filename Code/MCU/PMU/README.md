@@ -76,6 +76,15 @@ make fuses
 
 See `docs/pinout.md` for the full pinout and signal behavior.
 
+## IO Controller Bypass
+
+Set `PMU_IGNORE_IO_CONTROLLER_SIGNALS` to `1` in `include/config.h`, or pass it
+as a compiler define, to build the PMU without the IO Controller handshake. In
+that mode the PMU ignores `PWR_OFF_RQ` and leaves `PWR_STATE` as a high
+impedance input instead of driving reset/run state toward the IO Controller.
+The 5 second force-off button hold remains available when the handshake is
+disabled.
+
 ## Power-Off Handshake
 
 When the system is already powered and the enclosure power switch is pressed,

@@ -1,29 +1,23 @@
-TARGET := monitor
+TARGET := zephyr80_monitor
 
 BUILD_DIR := build
 SRC_DIR := src
-TOOLS_DIR := tools
 
 SDASZ80 ?= sdasz80
 SDLDZ80 ?= sdldz80
 MAKEBIN ?= makebin
-PYTHON ?= python3
+DD ?= dd
 
-# The monitor intentionally places the reset vector at 0000h and the runtime in
-# the high safe/common ROM window at E000h, so build a full 64 KiB image.
-ROM_SIZE ?= 65536
 ASFLAGS ?= -o -l -s
 LDFLAGS ?= -i
+LOAD_OFFSET ?= 256
 
 SRC := $(SRC_DIR)/monitor/zephyr80_monitor.asm
 INC := $(wildcard $(SRC_DIR)/monitor/*.inc)
 REL := $(BUILD_DIR)/$(TARGET).rel
 IHX := $(BUILD_DIR)/$(TARGET).ihx
-RAW_BIN := $(BUILD_DIR)/$(TARGET).raw.bin
+PADDED_BIN := $(BUILD_DIR)/$(TARGET).padded.bin
 BIN := $(BUILD_DIR)/$(TARGET).bin
-SWAPBITS := $(TOOLS_DIR)/swapbits.py
-
-MAKEBIN_FLAGS := -s $(ROM_SIZE)
 
 .PHONY: all clean
 
@@ -38,11 +32,11 @@ $(REL): $(SRC) $(INC) | $(BUILD_DIR)
 $(IHX): $(REL)
 	$(SDLDZ80) $(LDFLAGS) $@ $<
 
-$(RAW_BIN): $(IHX)
-	$(MAKEBIN) $(MAKEBIN_FLAGS) $< $@
+$(PADDED_BIN): $(IHX)
+	$(MAKEBIN) $< $@
 
-$(BIN): $(RAW_BIN) $(SWAPBITS)
-	$(PYTHON) $(SWAPBITS) $< $@
+$(BIN): $(PADDED_BIN)
+	$(DD) if=$< of=$@ bs=$(LOAD_OFFSET) skip=1 status=none
 
 clean:
 	rm -rf "$(BUILD_DIR)"/*

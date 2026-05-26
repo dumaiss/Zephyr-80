@@ -52,6 +52,16 @@ cmd_registers:
 	call sio_puts
 	jp monitor_loop
 
+; D or DB
+; Dispatch D to the normal memory dump command and DB to the bank-aware dump
+; command. HL enters just after the command's leading D.
+cmd_droute:
+	ld a,(hl)
+	call to_upper_a
+	cp #0x42		; B
+	jp z,cmd_dbank
+	jp cmd_dump
+
 ; D addr len
 ; Parse a start address and byte count, then call dump_memory to emit 16-byte
 ; rows. Bad arguments print ERR: ARG.
@@ -65,10 +75,28 @@ cmd_dump:
 	call dump_memory
 	jp monitor_loop
 
+; DB bank addr len
+; Copy each formatted row from the selected source bank into DBUF through the
+; resident BIOS XMOVE/MOVE pair, then dump DBUF with the original bank address.
+cmd_dbank:
+	inc hl
+	call parse_hex_byte
+	jp c,cmd_error_args
+	ld (DBANK_NUM),a
+	and #0xf8
+	jp nz,cmd_error_args
+	call parse_hex_word
+	jp c,cmd_error_args
+	ld (DUMP_ADDR),de
+	call parse_hex_word
+	jp c,cmd_error_args
+	ld (DUMP_LEN),de
+	call dump_bank_memory
+	jp monitor_loop
+
 ; M addr value
-; Parse an address and byte value, store the byte, and report OK. The monitor
-; disables ROM during startup, so formerly ROM-visible addresses now read and
-; write SRAM.
+; Parse an address and byte value, store the byte, and report OK. Monitor runs
+; in the CP/M application bank and does not change memory mapping.
 cmd_memory_set:
 	call parse_hex_word
 	jp c,cmd_error_args
@@ -121,6 +149,30 @@ cmd_port_out:
 	call sio_puts
 	jp monitor_loop
 
+; APP n
+; Launch an application page/bank through the resident BIOS LAUNCH entry. The
+; BIOS selects the bank, prepares page zero, and jumps to 0100h. This command
+; accepts bank numbers 0-7.
+cmd_app:
+	ld a,(hl)
+	call to_upper_a
+	cp #0x50		; P
+	jp nz,cmd_error_command
+	inc hl
+	ld a,(hl)
+	call to_upper_a
+	cp #0x50		; P
+	jp nz,cmd_error_command
+	inc hl
+	call parse_hex_byte
+	jp c,cmd_error_args
+	ld (TEMP_BYTE),a
+	and #0xf8
+	jp nz,cmd_error_args
+	ld a,(TEMP_BYTE)
+	call BLAUNCH
+	jp monitor_loop
+
 ; G addr
 ; Parse a 16-bit address and transfer control to it. The monitor pushes
 ; go_return first, so user code can return with RET to resume monitor_loop.
@@ -163,6 +215,11 @@ cmd_hex_dump:
 
 	call emit_ihex_range
 	jp monitor_loop
+
+cmd_quit:
+	ld sp,(MONITOR_EXIT_SP)
+	ret
+
 
 ; H or ?
 ; Print the static command help text.

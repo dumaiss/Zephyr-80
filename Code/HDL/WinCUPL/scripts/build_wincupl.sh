@@ -14,6 +14,8 @@ if [ ! -f "$SOURCE" ]; then
     exit 1
 fi
 
+#wine /home/kitamura/.wine/drive_c/WinCUPL/Shared/cupl.exe -j -u /home/kitamura/.wine/drive_c/WinCUPL/Shared/cupl.dl src/MEM_DECODER.pl
+
 CUPL_BIN=${CUPL:-cupl}
 CUPL_FLAGS=${CUPLFLAGS:-}
 SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$SOURCE")" && pwd)

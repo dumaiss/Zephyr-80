@@ -86,17 +86,23 @@ msg_help:
 	.db CR,LF
 	.ascii /D addr len    dump memory/
 	.db CR,LF
+	.ascii /DB bank addr len dump bank/
+	.db CR,LF
 	.ascii /M addr value  set memory byte/
 	.db CR,LF
 	.ascii /I port        input port/
 	.db CR,LF
 	.ascii /O port value  output port/
 	.db CR,LF
+	.ascii /APP n         run app bank/
+	.db CR,LF
 	.ascii /L             load Intel HEX/
 	.db CR,LF
 	.ascii /G addr        call code/
 	.db CR,LF
 	.ascii /X addr len    export Intel HEX/
+	.db CR,LF
+	.ascii /Q             quit/
 	.db CR,LF
 	.ascii /H or ?        help/
 	.db CR,LF,0

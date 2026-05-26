@@ -1,419 +1,261 @@
-
 # Zephyr-80 Computer Memory Management
 
-**Memory & I/O Architecture Reference Manual**
+Memory and I/O architecture reference derived from the current WinCUPL equation
+files:
 
-## 1. Architecture Overview
+- `Code/HDL/WinCUPL/src/MEM_DECODER.pld`
+- `Code/HDL/WinCUPL/src/IO_DECODER.pld`
 
-This system is a Z80-based computer designed for flexibility, supporting both classic "ColecoVision-style" fixed memory maps and a modern "All-RAM" banked architecture suitable for CP/M or complex homebrew software.
+This document intentionally follows the equations in those PLD files. If older
+software notes disagree with this file, treat the PLD equations as the source of
+truth.
 
-### Core Specifications
+## 1. Hardware Overview
 
-- **CPU:** Z80 @ 10MHz (or up to 20MHz depending on parts).    
-- **RAM:** 512KB Static RAM (Banked).    
-- **ROM:** 512KB Flash/EEPROM (Banked).    
-- **Memory Controller:** Hybrid design using a **74HC273 Latch** for state storage and a **ATF22V10** for address decoding and logic injection.
-   
+- CPU: Z80
+- RAM: 512 KiB SRAM, arranged as eight 64 KiB banks
+- ROM: 512 KiB ROM/Flash, arranged as eight 64 KiB pages
+- Memory banking latch: I/O port `00h`
+- Memory decoder: ATF22V10 / WinCUPL design `Z80_MEM_DECODE`
+- I/O decoder: ATF22V10 / WinCUPL design `Z80_IO_DECODE`
 
----
+The current memory model reserves the top 16 KiB of the CPU address space as a
+fixed/common area in RAM-only and shadow/copy modes:
 
-## 2. Memory Management
+- `0000h-BFFFh`: selected bank/page area
+- `C000h-FFFFh`: fixed/common SRAM bank 0 area
 
-The memory management system is designed with a **safe power-on default**. At power-on, the banking latch initializes to $00, placing the system in **Standard Boot Mode** - a ColecoVision-compatible configuration requiring no initialization. The system boots directly into ROM BIOS and is immediately functional. Advanced features (bank switching, All-RAM mode, CP/M) are accessed by writing to the Banking Latch at I/O Port $00.
+This is the model used by the Zephyr CP/M/BBC BASIC work: CP/M page zero and
+TPA live in the selected low bank, while the common runtime, BDOS/BIOS support,
+bank helpers, and firmware stack can live in the protected high region.
 
-## 2.1 Usage Patterns
+## 2. Banking Latch at Port 00h
 
-### Pattern A: Simple/ColecoVision Mode (Default - No Setup Required)
+The memory banking latch is selected by the I/O decoder on ports `00h-0Fh`.
+Writes clock the latch, and reads enable the latch readback buffer.
 
-**Power-on state provides:**
-- ROM BIOS at $0000-$5FFF
-- Work RAM at $6000-$7FFF  
-- Cartridge or upper RAM at $8000-$FFFF
+| Bit | Name | Meaning |
+| --- | --- | --- |
+| D0-D2 | RAM bank | Selected SRAM bank number, `0-7`, for the banked area. |
+| D3 | RAM shadow | Enables shadow/copy mode when ROM is still enabled. |
+| D4 | ROM disable | Disables ROM and selects RAM-only operation. |
+| D5-D7 | ROM page | Selected ROM page number, `0-7`, for ROM-read copy/boot paths. |
 
-**No MMU configuration needed** - system is immediately ready. This mode is 
-compatible with ColecoVision software and simple applications that don't 
-require bank switching.
+Common latch values:
 
----
+| Value | Meaning |
+| --- | --- |
+| `00h` | Reset/default: ROM enabled, shadow off, RAM bank 0, ROM page 0. |
+| `08h` | Shadow/copy mode for ROM page 0 / RAM bank 0. |
+| `10h` | RAM-only mode, shadow off, RAM bank 0. |
+| `10h | n` | RAM-only mode, selected RAM bank `n`. |
+| `(n << 5) | 08h | n` | Shadow/copy mode for ROM page `n` into RAM bank `n`. |
 
-### Pattern B: CP/M / Advanced Mode (Requires Initialization)
+The MEM decoder equations directly use the RAM bank bits, `RAM_SHADOW`, and
+`ROM_DIS`. The ROM page bits are part of the same latch scheme but are not
+decoded inside `MEM_DECODER.pld` itself.
 
-For CP/M or applications requiring full 512KB RAM access:
+## 3. Memory Decoder Equations
 
-1. **Power-on**: System starts in Boot Mode (ROM_DIS=0)
-2. **ROM BIOS executes** from $0000
-3. **Enable Shadow Mode**: `OUT ($00), $08` 
-4. **Copy BIOS to RAM**: Use `LDIR` to copy $0000-$5FFF to RAM
-5. **Switch to All-RAM**: `OUT ($00), $10`
-6. **Result**: 
-   - Full 512KB RAM accessible via bank switching
-   - Common area at $0000-$1FFF always mapped to Bank 0 (for interrupt safety)
-   - $2000-$FFFF can access any of 8 banks
+The current `MEM_DECODER.pld` defines these regions:
 
-See Section 4 for detailed code examples.
-
-### Configuration Port ($00)
-
-The memory is managed by writing to the **Banking Latch** at I/O Port **`$00`**.
-
-| **Bit**   | **Name**        | **Function**                                                                                                                                                            |
-| --------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **D0-D2** | **RAM Bank**    | Selects the active 64KB RAM Bank (`0-7`) for the swappable area.                                                                                                        |
-| **D3**    | **Shadow**      | **0** = Normal Operation.<br><br>  <br><br>**1** = **Shadow Mode**. Writes to ROM addresses are redirected to RAM. Reads still come from ROM. Used to copy BIOS to RAM. |
-| **D4**    | **ROM Disable** | **0** = ROM Enabled (Boot/Standard Mode).<br><br>  <br><br>**1** = ROM Disabled (All-RAM Mode).                                                                         |
-| **D5-D7** | **ROM Page**    | Selects the active 64KB ROM Page (`0-7`) mapped into the BIOS area.                                                                                                     |
-
-### Operational Modes
-
-#### A. Standard Boot Mode (Default)
-
-- **Condition:** `ROM_DIS = 0`.    
-- **Layout:**
-    
-    - **$0000 - $5FFF:** ROM (BIOS).        
-    - **$6000 - $7FFF:** RAM (Fixed window).        
-    - **$8000 - $FFFF:** Cartridge ROM (if present) OR Upper RAM.
-        
-- **Behavior:** The system behaves like a standard console. Vectors at `$0000` are served from ROM.
-    
-
-#### B. All-RAM Mode (CP/M Mode)
-
-- **Condition:** `ROM_DIS = 1` AND `No Cartridge`.    
-- **Layout:**
-    
-    - **$0000 - $1FFF:** **Common RAM (Forced Bank 0)**.        
-    - **$2000 - $FFFF:** Swappable RAM (Selected by `D0-D2`).
-        
-- **Safety Feature:** The "Common Area" logic in the GAL ensures that the bottom 8KB (`$0000-$1FFF`) **always points to Physical Bank 0**, regardless of the Bank Select bits. This prevents system crashes during interrupts (Vectors at `$0066`/`$0038` stay accessible).
-   
-
----
-
-## 3. Memory Maps
-
-### Boot Mode (Standard)
-
-|**Address**|**Size**|**Description**|**Physical Source**|
-|---|---|---|---|
-|**$0000 - $5FFF**|24KB|BIOS ROM|ROM Page `D5-D7`|
-|**$6000 - $7FFF**|8KB|Work RAM|RAM Bank `D0-D2`|
-|**$8000 - $FFFF**|32KB|Cartridge / RAM|Cartridge OR RAM Bank `D0-D2`|
-
-**Note:** In Standard Boot Mode, the full 24KB ROM is accessible. When transitioning to All-RAM mode, the Common Area safety feature restricts the bottom 8KB to Bank 0.
-
-### All-RAM Mode (ROM Disabled)
-
-|**Address**|**Size**|**Description**|**Physical Source**|
-|---|---|---|---|
-|**$0000 - $1FFF**|8KB|**Common RAM**|**RAM Bank 0** (Hardware Forced)|
-|**$2000 - $FFFF**|56KB|Swappable RAM|RAM Bank `D0-D2`|
-
-> **Note:** In All-RAM Mode, if you select Bank 1 (`D0-D2 = 1`), you access Bank 1's memory from `$2000` upwards. The bottom 8KB of Bank 1 is effectively "hidden" behind the Common Area.
-
-### External Programming (PROG Signal)
-The PROG signal enables in-system programming of the Flash ROM via an external 
-programmer. When PROG is asserted:
-- The external programmer takes control via CPU bus mastering signals (BUSREQ/BUSACK)
-- ROM_CS is enabled, SRAM_CS and CART_CS are disabled
-- This allows direct Flash programming without removing the chip
-
-**Note:** PROG is intended for development/manufacturing use only.
-
-### Cartridge Detection
-The CART_DETECT signal (active HIGH) indicates when a physical cartridge is 
-inserted. This signal:
-- Is pulled HIGH when a cartridge with the detection pin is inserted
-- Modifies memory mapping in Standard Boot Mode to enable cartridge ROM at $8000-$FFFF
-- Should be tied LOW (via pull-down) if no cartridge slot is implemented
-
----
-
-## 4. Programming Model
-
-### Example: Copying BIOS to RAM (Shadowing)
-
-To boot CP/M, you must copy the ROM code into RAM and then switch the ROM off.
-
-Code snippet
-
-```
-    ; 1. Enable Shadow Mode (Bit 3 = 1)
-    ;    Keep ROM enabled (Bit 4 = 0)
-    LD  A, %00001000   ; D3=1
-    OUT ($00), A
-
-    ; 2. Copy ROM to RAM
-    ;    Reads come from ROM, Writes go to RAM (because of Shadow bit)
-    LD  HL, $0000      ; Source
-    LD  DE, $0000      ; Destination
-    LD  BC, $6000      ; Copy 24KB
-    LDIR
-
-    ; 3. Disable ROM and Shadow Mode (Switch to All-RAM)
-    ;    Bit 4 = 1 (Disable ROM), Bit 3 = 0 (Shadow Off)
-    LD  A, %00010000   ; D4=1
-    OUT ($00), A
-
-    ; System is now running purely from RAM Bank 0.
+```text
+BIOS_RANGE = !A15 & (!A14 # !A13)    -> 0000h-5FFFh
+RAM_ONLY   = !A15 & A14 & A13        -> 6000h-7FFFh
+UPPER_32K  = A15                     -> 8000h-FFFFh
+SAFE_RAM   = A15 & A14               -> C000h-FFFFh
+COPY_AREA  = !SAFE_RAM               -> 0000h-BFFFh
+BOOT_ROM   = BIOS_RANGE # SAFE_RAM   -> 0000h-5FFFh and C000h-FFFFh
 ```
 
-### Example: Switching Banks in All-RAM Mode
+The forced-bank rule is:
 
-When running in All-RAM mode, code in the **Common Area** (`$0000-$1FFF`) can safely switch banks without crashing.
-
-Code snippet
-
-```
-    ORG $1000          ; Code located in Common Area
-
-SWITCH_TO_BANK1:
-    LD  A, %00010001   ; D4=1 (Keep ROM Off), D0=1 (Select Bank 1)
-    OUT ($00), A
-    
-    ; Now, memory from $2000-$FFFF belongs to Bank 1.
-    ; Memory from $0000-$1FFF is STILL Bank 0.
-    RET
+```text
+FORCE_BANK0 = SAFE_RAM & (ROM_DIS # RAM_SHADOW)
 ```
 
----
+So SRAM address lines `A16-A18` are forced to bank 0 only for `C000h-FFFFh`
+while either RAM-only mode or shadow/copy mode is active. Otherwise the SRAM
+bank address lines follow the latch bits `D0-D2`.
 
-## 5. I/O Map
+## 4. Runtime Memory Modes
 
-| **Port Range** | **R/W** | **Function**                         |
-| -------------- | ------- | ------------------------------------ |
-| $00 - $0F      | R/W     | Memory Banking Latch (See Section 2) |
-| $10 - $1F      | --      | Unused                               |
-| $20 - $2F      | R/W     | Console / User Port (SIO0)           |
-| $30 - $3F      | R/W     | SD Card / USB (SIO1)                 |
-| $40 - $4F      | R/W     | CTC (Counter/Timer)                  |
-| $50 - $5F      | --      | Unused                               |
-| $60 - $6F      | R/W     | Cartridge I/O Expansion              |
-| $70 - $7F      | --      | Unused                               |
-| $80 - $8F      | R/W     | RESERVED (Coleco Compat)             |
-| $90 - $9F      | R/W     | RESERVED (Coleco Compat)             |
-| $A0 - $AF      | R/W     | Video VDP (TMS9928)                  |
-| $B0 - $BF      | R/W     | Video VDP (TMS9928)                  |
-| $C0 - $CF      | R/W     | RESERVED (Coleco Compat)             |
-| $D0 - $DF      | R/W     | RESERVED (Coleco Compat)             |
-| $E0 - $EF      | R       | Controller                           |
-| $E0 - $EF      | W       | Sound Generators (SN76489 x2)        |
-| $F0 - $FF      | R       | Controller                           |
-| $F0 - $FF      | W       | Sound Generators (SN76489 x2)        |
+### 4.1 Normal ROM Mode
 
----
+Condition:
 
-## 6. Hardware Logic Definitions (WinCUPL)
-
-These are the final logic definitions matching the architecture described above.
-
-### A. Memory Decoder (`Z80_MEM_DECODE`)
-
-_Implements the Banking, Shadowing, and "Common Area" safety logic._
-
-Code snippet
-
-```
-Name     Z80_MEM_DECODE;
-Partno   008;
-Date     2026-01-17;
-Revision 08;
-Designer HomeBrew;
-Company  Z80 Project;
-Assembly Memory Board;
-Location U_MEM_GAL;
-Device   g22v10;
-
-/* Inputs */
-Pin 1  = A15;
-Pin 2  = A14;
-Pin 3  = A13;
-Pin 4  = MREQ;        /* Active Low */
-Pin 5  = RAM_SHADOW;  /* 1 = Shadow Mode */
-Pin 6  = ROM_DIS;     /* 1 = Disable ROM */
-Pin 7  = CART_DETECT; /* 1 = Cartridge Present */
-Pin 8  = PROG;        /* 1 = Programming Mode */
-Pin 9  = RD;          /* Active Low */
-Pin 10 = WR;          /* Active Low */
-
-/* Banking Latch Inputs (Reassigned to free pins) */
-Pin 11 = BANK_Q0;
-Pin 13 = BANK_Q1;
-Pin 14 = BANK_Q2;
-
-/* Outputs */
-Pin 23 = !SRAM_CS;
-Pin 22 = !ROM_CS;
-Pin 21 = !CART_CS;
-
-/* RAM Banking Address Lines (To RAM A16-A18) */
-Pin 15 = RAM_A16;
-Pin 16 = RAM_A17;
-Pin 17 = RAM_A18;
-
-/* Address Definitions */
-BIOS_RANGE = !A15 & (!A14 # !A13);    /* $0000 - $5FFF */
-COMMON_RAM = !A15 & !A14 & !A13;      /* $0000 - $1FFF (Bottom 8K) */
-UPPER_32K  = A15;                     /* $8000 - $FFFF */
-RAM_ONLY   = !A15 & A14 & A13;        /* $6000 - $7FFF */
-
-/* Logic Conditions */
-ALL_RAM_MODE = ROM_DIS & !CART_DETECT;
-FORCE_BANK0  = COMMON_RAM & ALL_RAM_MODE;
-
-/* Equations */
-/* Force RAM Address to 0 in Common Area, otherwise pass Latch */
-RAM_A16 = BANK_Q0 & !FORCE_BANK0;
-RAM_A17 = BANK_Q1 & !FORCE_BANK0;
-RAM_A18 = BANK_Q2 & !FORCE_BANK0;
-
-ROM_CS = !MREQ & (PROG # (RD & !ROM_DIS & (RAM_SHADOW # BIOS_RANGE)));
-
-CART_CS = !MREQ & !PROG & UPPER_32K & CART_DETECT & !RAM_SHADOW;
-
-SRAM_CS = !MREQ & !PROG & (
-            (RAM_SHADOW & WR) 
-          # (!RAM_SHADOW & (
-               (BIOS_RANGE & (WR # ROM_DIS))
-             # RAM_ONLY
-             # (UPPER_32K & !CART_DETECT)
-            ))
-          );
+```text
+ROM_DIS = 0
+RAM_SHADOW = 0
 ```
 
-### B. I/O Decoder (`Z80_IO_DECODE`)
+Read map:
 
-_Implements the I/O Map and Sound/Controller split._
+| Address range | Read source |
+| --- | --- |
+| `0000h-5FFFh` | selected ROM page |
+| `6000h-BFFFh` | selected SRAM bank |
+| `C000h-FFFFh` | selected ROM page |
 
-_Correction:_ `RESET` logic updated to active-low input but active-high internal check.
+Write map:
 
-Code snippet
+| Address range | Write target |
+| --- | --- |
+| `0000h-FFFFh` | selected SRAM bank |
 
+Normal mode therefore allows ROM to be visible for boot, while writes still
+plant bytes into SRAM underneath the ROM-visible addresses. On reset the latch
+is expected to be `00h`, so these hidden writes go to SRAM bank 0.
+
+### 4.2 Shadow/Copy Mode
+
+Condition:
+
+```text
+ROM_DIS = 0
+RAM_SHADOW = 1
 ```
-Name     Z80_IO_DECODE;
-Partno   006;
-Date     2026-01-18;
-Revision 03;
-Designer HomeBrew;
-Company  Z80 Project;
-Assembly IO Board;
-Location U_IO_GAL;
-Device   g22v10;
 
-/* ----------------------------------------------------------- */
-/* Inputs */
-/* ----------------------------------------------------------- */
-Pin 1  = A7;
-Pin 2  = A6;
-Pin 3  = A5;
-Pin 4  = A4;
+Read map:
 
-/* Control Signals (Active Low on Bus) */
-Pin 5  = !IORQ;
-Pin 6  = !M1;
-Pin 7  = !RD;
-Pin 8  = !WR;
+| Address range | Read source |
+| --- | --- |
+| `0000h-BFFFh` | selected ROM page |
+| `C000h-FFFFh` | SRAM bank 0 |
 
-/* RESET Logic:
-   The Z80 /RESET pin is Active Low.
-   Pin 8 = !RESET means the variable 'RESET' is TRUE when Pin 8 is LOW.
-*/
-Pin 9  = !RESET;
+Write map:
 
+| Address range | Write target |
+| --- | --- |
+| `0000h-BFFFh` | selected SRAM bank |
+| `C000h-FFFFh` | SRAM bank 0 |
 
-/* ----------------------------------------------------------- */
-/* Outputs (Active Low Chip Selects) */
-/* ----------------------------------------------------------- */
+This is the ROM-to-RAM copy mode. Code running from `C000h-FFFFh` is safe
+because that range reads and writes SRAM bank 0 while the lower 48 KiB reads
+from the selected ROM page and writes to the selected SRAM bank.
 
-/* Memory Banking Latch Control */
-Pin 23 = !CS_MEMBANK_WR; /* Write: Clocks the 74HC273 (Rising Edge) */
-Pin 22 = !CS_MEMBANK_RD; /* Read:  Enables the 74HC244 (Active Low Level) */
+### 4.3 RAM-Only Mode
 
-/* New Outputs for 74LS138 */
-Pin [17, 18, 19] = [SEL2..0];  /* Grouping pins 18, 17, and 15 */
-Pin 16 = !IO_EN;               /* Global Enable */
+Condition:
 
-/* Define the bit field */
-FIELD IO_ADDR = [SEL2..0];
-
-/* Vector Generator & Daisy Chain */
-Pin 14 = D1;         /* Data Bus Bit 1 (Output) */
-Pin 15 = IEO;        /* Interrupt Enable Out (Active High) */
-
-/* Interrupt Signals */
-Pin 10 = !INT_VDP;   /* Video Interrupt Request (Active Low) */
-Pin 11 = IEI;        /* Interrupt Enable In (Active High) */
-
-/* ----------------------------------------------------------- */
-/* Logic Equations */
-/* ----------------------------------------------------------- */
-
-/* --- Address Decoding Blocks --- */
-Block_00 = !A7 & !A6 & !A5 & !A4; /* $00-$0F */
-Block_10 = !A7 & !A6 & !A5 & A4;  /* $10-$1F */
-Block_20 = !A7 & !A6 &  A5 & !A4; /* $20-$2F */
-Block_30 = !A7 & !A6 &  A5 & A4;  /* $30-$3F */
-Block_40 = !A7 &  A6 & !A5 & !A4; /* $40-$4F */
-Block_50 = !A7 &  A6 & !A5 & A4;  /* $50-$5F */
-Block_60 = !A7 &  A6 &  A5 & !A4; /* $60-$6F */
-Block_70 = !A7 &  A6 &  A5 & A4;  /* $70-$7F */
-Block_80 =  A7 & !A6 & !A5 & !A4; /* $80-$8F */
-Block_90 =  A7 & !A6 & !A5 & A4;  /* $90-$9F */
-Block_A0 =  A7 & !A6 &  A5 & !A4; /* $A0-$AF */
-Block_B0 =  A7 & !A6 &  A5 & A4;  /* $B0-$BF */
-Block_C0 =  A7 &  A6 & !A5 & !A4; /* $C0-$CF */
-Block_D0 =  A7 &  A6 & !A5 & A4;  /* $D0-$DF */
-Block_E0 =  A7 &  A6 &  A5 & !A4; /* $E0-$EF */
-Block_F0 =  A7 &  A6 &  A5 & A4;  /* $F0-$FF */
-
-/* --- Cycle Definitions --- */
-
-/* Standard IO Cycle: IORQ Low, M1 High, RESET High */
-StdIO_Cycle = IORQ & !M1 & !RESET;
-
-/* Interrupt Acknowledge Cycle: IORQ Low, M1 Low (Active), RESET High */
-IntAck_Cycle = IORQ & M1 & !RESET;
-
-/* --- 1. Daisy Chain Logic (IEO) --- */
-/* Pass 'High' to the next device ONLY if:
-   1. We have priority (IEI is High)
-   2. The VDP is NOT requesting an interrupt (!INT_VDP is High/Inactive) 
-      Note: !INT_VDP in logic means "Pin 10 is High"
-*/
-IEO = IEI & !INT_VDP;
-
-/* --- 2. VDP "Smart" Vector Generation (D1) --- */
-/* We pull D1 Low to turn default 0xFF into 0xFD.
-   Conditions:
-   a. Interrupt Acknowledge Cycle (IORQ & M1 Active)
-   b. VDP is interrupting (INT_VDP variable is True/Active)
-   c. We have Priority (IEI is High)
-*/
-
-D1 = 'b'0;  /* Always drive logical 0 when enabled */
-
-/* Enable Output ONLY during valid vector generation event */
-D1.oe = IntAck_Cycle & INT_VDP & IEI;
-
-/* --- 2. Memory Banking ($00-$1F) --- */
-/* Write: ValidIO + Block00 + Write Strobe */
-CS_MEMBANK_WR = StdIO_Cycle & Block_00 & WR;
-
-/* Read: ValidIO + Block00 + Read Strobe */
-CS_MEMBANK_RD = StdIO_Cycle & Block_00 & RD;
-
-/* --- 3. Standard Peripherals --- */
-
-/* Logic Equations */
-IO_EN = StdIO_Cycle & (Block_20 # Block_30 # Block_40 # Block_60 # 
-                      Block_A0 # Block_B0 # Block_E0 # Block_F0);
-
-/* Assign values to the field based on the active Block */
-IO_ADDR =  StdIO_Cycle & 'b'000 & Block_20                    /* SIO0 */  
-         # StdIO_Cycle & 'b'001 & Block_30                    /* SIO1 */         
-         # StdIO_Cycle & 'b'010 & Block_40                    /* CTC */
-         # StdIO_Cycle & 'b'011 & Block_60                    /* CART_IO */
-         # StdIO_Cycle & 'b'100 & (Block_A0 # Block_B0)       /* VDP */
-         # StdIO_Cycle & 'b'101 & (Block_E0 # Block_F0) & WR  /* SOUND */
-         # StdIO_Cycle & 'b'110 & (Block_E0 # Block_F0) & RD; /* CTRL */
+```text
+ROM_DIS = 1
 ```
+
+Read/write map:
+
+| Address range | Read/write target |
+| --- | --- |
+| `0000h-BFFFh` | selected SRAM bank |
+| `C000h-FFFFh` | SRAM bank 0 |
+
+In RAM-only mode ROM is never selected. The top 16 KiB is fixed/common SRAM
+bank 0, and the lower 48 KiB is the selected application/TPA bank.
+
+## 5. ROM-to-RAM Boot Copy Model
+
+The current high-common boot model is:
+
+1. Reset starts at `0000h` in ROM page 0.
+2. The reset vector jumps to high ROM code in `C000h-FFFFh`.
+3. While still in normal ROM mode, copy `C000h-FFFFh` from ROM page 0 into
+   SRAM bank 0. Reads come from ROM and writes go to hidden SRAM bank 0.
+4. Enable shadow/copy mode for page/bank 0 with latch value `08h`.
+5. Copy `0000h-BFFFh` from ROM page 0 into RAM bank 0.
+6. For pages `1-7`, write `(n << 5) | 08h | n` to the latch and copy
+   `0000h-BFFFh` from ROM page `n` into RAM bank `n`.
+7. Disable ROM and select RAM bank 0 with latch value `10h`.
+8. Continue execution from common RAM bank 0.
+
+Only the lower 48 KiB of each page is copied per app bank. The top 16 KiB of
+the CPU address space is common SRAM bank 0 in RAM-only mode, so the top 16 KiB
+of RAM banks 1-7 is intentionally not visible in the normal runtime model.
+
+## 6. CP/M-Oriented Layout
+
+With the current 16 KiB common model, the intended CP/M-style runtime layout is:
+
+| Address range | Purpose |
+| --- | --- |
+| `0000h-00FFh` | bank-local CP/M page zero |
+| `0100h-BFFFh` | bank-local TPA/application area |
+| `C000h-C3FFh` | Zephyr common ABI, bank helpers, buffers, debug state |
+| `C400h-CBFFh` | CP/M CCP area for `MEM=56` |
+| `CC00h-DFFFh` | CP/M BDOS area for `MEM=56` |
+| `E000h-FFFFh` | Zephyr BIOS, hardware services, work area, firmware stack |
+
+Because `C000h-FFFFh` is common/protected RAM bank 0, CCP, BDOS, and BIOS can
+be common across application banks. Application payloads must fit below
+`C000h`.
+
+## 7. I/O Decoder
+
+The current `IO_DECODER.pld` decodes I/O space using address bits `A7-A4`.
+Each decoded block is therefore 16 ports wide. Lower address bits are passed to
+the selected peripheral.
+
+The valid standard I/O cycle is:
+
+```text
+StdIO_Cycle = IORQ & !M1 & !RESET
+```
+
+In WinCUPL terms for this file, `IORQ` is true when `/IORQ` is low, `M1` is
+true when `/M1` is low, and `RESET` is true when `/RESET` is low. So standard
+I/O cycles are decoded only when `/IORQ` is asserted, `/M1` is not asserted,
+and the system is not in reset.
+
+### 7.1 Banking Latch Decode
+
+| Port range | Access | Signal |
+| --- | --- | --- |
+| `00h-0Fh` | write | `CS_MEMBANK_WR` |
+| `00h-0Fh` | read | `CS_MEMBANK_RD` |
+
+Although an older comment says `$00-$1F`, the actual equation uses `Block_00`,
+which is only `00h-0Fh`.
+
+### 7.2 Peripheral Decode
+
+The decoder drives `SEL2..0` for a downstream `74LS138` or equivalent decode
+stage. Current selector assignments are:
+
+| Port range | Selector | Function |
+| --- | --- | --- |
+| `20h-2Fh` | `001b` | SIO0 |
+| `30h-3Fh` | `010b` | SIO1 |
+| `40h-4Fh` | `011b` | CTC |
+| `60h-6Fh` | `100b` | cartridge I/O expansion |
+| `A0h-AFh` | `101b` | VDP |
+| `B0h-BFh` | `101b` | VDP |
+| `E0h-EFh` write | `110b` | sound |
+| `F0h-FFh` write | `110b` | sound |
+| `E0h-EFh` read | `111b` | controller |
+| `F0h-FFh` read | `111b` | controller |
+
+These blocks are not selected by the current `IO_EN` equation:
+
+| Port range | Current PLD status |
+| --- | --- |
+| `10h-1Fh` | unused |
+| `50h-5Fh` | unused |
+| `70h-7Fh` | unused |
+| `80h-8Fh` | unused/reserved |
+| `90h-9Fh` | unused/reserved |
+| `C0h-CFh` | unused/reserved |
+| `D0h-DFh` | unused/reserved |
+
+The current `IO_DECODER.pld` defines `IntAck_Cycle`, but the file no longer
+contains the older VDP vector-generation or daisy-chain output equations.
+
+## 8. Notes from the Current PLD Files
+
+- `MEM_DECODER.pld` revision 09 is the active source for the 16 KiB common
+  memory model.
+- `SAFE_RAM` is `C000h-FFFFh`, not the older `E000h-FFFFh` or bottom-8K model.
+- The comments inside `MEM_DECODER.pld` still contain a couple of old
+  `$E000-$FFFF` and "high safe 8K" phrases, but the equations implement
+  `C000h-FFFFh`.
+- `CART_CS` is declared as an output in `MEM_DECODER.pld`, but the current
+  equation file does not assign an active cartridge select equation.
+- `IO_DECODER.pld` revision 03 is the active source for the I/O block map above.

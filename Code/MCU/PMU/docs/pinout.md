@@ -13,6 +13,8 @@ Power-control firmware pin assignments.
 
 ## Firmware Behavior
 
+- If `PMU_IGNORE_IO_CONTROLLER_SIGNALS` is set to `1`, the PMU does not sample
+  `PWR_OFF_RQ` and leaves `PWR_STATE` as a high impedance input.
 - `PWR_OFF_RQ` and `PWR_SW` use the PMU internal pull-ups.
 - `PWR_OK` is treated as an externally driven ATX status signal.
 - PB0 controls the `PS_ON#` MOSFET gate. PB0 high turns the MOSFET on and pulls

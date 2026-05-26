@@ -6,6 +6,15 @@
 #include "power_controller.h"
 
 /*
+ * Set to 1 to run the PMU without participating in the IO Controller
+ * handshake. In that mode the firmware ignores PWR_OFF_RQ and does not drive
+ * PWR_STATE.
+ */
+#ifndef PMU_IGNORE_IO_CONTROLLER_SIGNALS
+#define PMU_IGNORE_IO_CONTROLLER_SIGNALS 1
+#endif
+
+/*
  * PMU power-controller pin map.
  *
  * Each signal defines the data-direction register, output/input register, and

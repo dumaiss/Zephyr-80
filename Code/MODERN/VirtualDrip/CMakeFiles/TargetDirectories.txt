@@ -1,0 +1,3 @@
+/home/kitamura/Documents/Z80HomeBrew/Code/MODERN/VirtualDrip/CMakeFiles/virtual-vdp.dir
+/home/kitamura/Documents/Z80HomeBrew/Code/MODERN/VirtualDrip/CMakeFiles/edit_cache.dir
+/home/kitamura/Documents/Z80HomeBrew/Code/MODERN/VirtualDrip/CMakeFiles/rebuild_cache.dir

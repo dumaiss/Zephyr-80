@@ -64,6 +64,13 @@ The SIO topology test for `zephyr_siotop` uses the default 8 KiB ROM size:
 make TARGET=siotop bin
 ```
 
+The Phase 10 serial/COFFEE-IO bring-up test for `zephyr80` also uses the default 8 KiB
+ROM size:
+
+```bash
+make TARGET=zephyr80 bin
+```
+
 ## Requirements
 
 - SDCC (Small Device C Compiler) installed with Z80 support
@@ -90,6 +97,7 @@ The source filename determines the build target name:
 - `src/banktest.s` is built with `make TARGET=banktest ROM_SIZE=0x10000 bin`
 - `src/banktest_irq.s` is built with `make TARGET=banktest_irq ROM_SIZE=0x10000 bin`
 - `src/siotop.s` is built with `make TARGET=siotop bin`
+- `src/zephyr80.s` is built with `make TARGET=zephyr80 bin`
 - `src/diagnostics.s` would be built with `make TARGET=diagnostics`
 
 The code starts at address 0x0000.
