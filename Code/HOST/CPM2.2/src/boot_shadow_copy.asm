@@ -36,8 +36,6 @@ shadow_copy_high_loop:
 	ldir
 
 	; Copy pages/banks 1 through 7. The upper 16 KiB remains common bank 0.
-	; Do not install page-zero or NMI vectors while walking these banks:
-	; banks 2-7 are RAM-disk storage, and 0066h is CP/M default FCB space.
 	ld a,#0x01
 	ld (SHADOW_COPY_BANK_VAR),a
 

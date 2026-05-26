@@ -13,7 +13,7 @@
 	.org 0x0100
 monitor_tpa_start:
 	ld (MONITOR_EXIT_SP),sp
-	ld sp,(MONITOR_STACK_TOP)
+	ld sp,#MONITOR_STACK_TOP
 	xor a
 	ld (EOL_CR_FLAG),a
 	ld (HISTORY_LEN),a

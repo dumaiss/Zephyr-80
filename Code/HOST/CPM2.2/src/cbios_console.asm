@@ -1,88 +1,83 @@
-; Local Zephyr-80 CP/M console BIOS services.
+; Local Zephyr-80 CP/M console BIOS facade.
 ;
-; SIO initialization is owned by boot/runtime setup. These entries only poll
-; and transfer bytes through the configured console channel.
+; CP/M entry labels stay stable while the active console backend is selected
+; through a small driver table. The default backend is SIO channel B.
 
 	.globl const,conin,conout,list,punch,reader,listst
+	.globl console_init,console_set_driver
+	.globl sio_console_driver,sio_console_init
 	.globl CONSOLE_CODE_START,CONSOLE_CODE_END
 	.globl CONSOLE_STATE_START,CONSOLE_STATE_END
-
-CONSOLE_DATA_PORT	= SIOB_DATA
-CONSOLE_CTRL_PORT	= SIOB_CTRL
-CONSOLE_RX_READY	= RR0_RX_AVAILABLE
-CONSOLE_TX_READY	= RR0_TX_EMPTY
-CONSOLE_EOF		= 0x1a
-CONSOLE_READY		= 0xff
+	.globl CONSOLE_DRIVER
+	.globl CONIN_SOFT_COUNT,CONOUT_SOFT_COUNT
+	.globl NMI_OLD_SP,NMI_SAVED_STACK,NMI_STACK_DUMP_PTR
+	.globl NMI_STACK_DUMP_REMAIN,NMI_STACK_DUMP_COLUMN,NMI_DEBOUNCE_ACTIVE
 
 	.area CODE (ABS)
 	.org CBIOS_CONSOLE_CODE_BASE
 
 CONSOLE_CODE_START:
 
-; CONST
-; Returns A = 0xff when a console character is available, A = 0x00 otherwise.
-; Does not consume pending input. Clobbers AF.
+; Initialize the default console backend. Clobbers AF, HL.
+console_init:
+	ld hl,#sio_console_driver
+	ld (CONSOLE_DRIVER),hl
+	jp sio_console_init
+
+; Install a different console driver table.
+; Input: HL = table containing const, conin, conout, list, punch, reader, listst.
+console_set_driver:
+	ld (CONSOLE_DRIVER),hl
+	ret
+
 const:
-	in a,(CONSOLE_CTRL_PORT)
-	and #CONSOLE_RX_READY
-	jr z,CONST_NONE
-	ld a,#CONST_HAS_CHAR
-	ret
-CONST_NONE:
-	ld a,#CONST_NO_CHAR
-	ret
+	ld a,#0x00
+	jr CONSOLE_DISPATCH
 
-; CONIN
-; Blocks until a console character is available, then returns it in A.
-; Clobbers AF
 conin:
-	in a,(CONSOLE_CTRL_PORT)
-	and #CONSOLE_RX_READY
-	jr nz,CONIN_READY
-	nop
-	nop	
-	nop
-	nop
-	jr conin
-CONIN_READY:
-	in a,(CONSOLE_DATA_PORT)
-	ret
+	ld a,#0x02
+	jr CONSOLE_DISPATCH
 
-; CONOUT
-; Blocks until transmit is ready, then writes C exactly as supplied.
-; Clobbers AF
 conout:
-	in a,(CONSOLE_CTRL_PORT)
-	and #CONSOLE_TX_READY
-	jr nz,CONOUT_READY
-	nop
-	nop
-	nop
-	nop
-	jr conout
-CONOUT_READY:
-	ld a,c
-	out (CONSOLE_DATA_PORT),a
-	ret
+	ld a,#0x04
+	jr CONSOLE_DISPATCH
 
-; LIST and PUNCH have no backing devices in this stage.
 list:
-	jr CONSOLE_RET
+	ld a,#0x06
+	jr CONSOLE_DISPATCH
 
 punch:
-	jr CONSOLE_RET
+	ld a,#0x08
+	jr CONSOLE_DISPATCH
 
-; READER returns CP/M EOF because no reader device exists.
 reader:
-	ld a,#CONSOLE_EOF
-	ret
+	ld a,#0x0a
+	jr CONSOLE_DISPATCH
 
-; LISTST reports ready because LIST is a no-op sink.
 listst:
-	ld a,#CONSOLE_READY
+	ld a,#0x0c
+
+CONSOLE_DISPATCH:
+	push de
+	push hl
+	ld e,a
+	ld d,#0x00
+	ld hl,(CONSOLE_DRIVER)
+	add hl,de
+	ld e,(hl)
+	inc hl
+	ld d,(hl)
+	ex de,hl
+	call CONSOLE_CALL_HL
+	pop hl
+	pop de
 	ret
 
-CONSOLE_RET:
+CONSOLE_CALL_HL:
+	ld de,#CONSOLE_CALL_RETURN
+	push de
+	jp (hl)
+CONSOLE_CALL_RETURN:
 	ret
 
 CONSOLE_CODE_END:
@@ -90,8 +85,9 @@ CONSOLE_CODE_END:
 	.area WORK (ABS)
 	.org CBIOS_CONSOLE_WORK_AREA
 CONSOLE_STATE_START:
+CONSOLE_DRIVER:
 CONIN_SOFT_COUNT:
-	.dw 0x0000
+	.dw sio_console_driver
 CONOUT_SOFT_COUNT:
 	.dw 0x0000
 NMI_OLD_SP:

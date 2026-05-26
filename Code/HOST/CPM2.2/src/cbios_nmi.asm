@@ -81,9 +81,6 @@ patch_nmi_vector:
 	; banks 2-7 hold RAM-disk storage, and 0066h is CP/M default FCB space.
 	ret
 
-; ---------------------------------------------------------------------------
-; Printing helpers
-
 NMI_DEBOUNCE_DELAY:
 	push bc
 	ld bc,#NMI_DEBOUNCE_DELAY_COUNT
@@ -147,40 +144,40 @@ NMI_PRINT_SNAPSHOT:
 	ld hl,#AF_BC_DE_HL_LABEL
 	call NMI_PRINT_STRING
 	ld bc,#18
-	call NMI_PRINT_SAVED_WORD   ; AF
+	call NMI_PRINT_SAVED_WORD
 	call NMI_PRINT_CHAR_SPACE
 	ld bc,#16
-	call NMI_PRINT_SAVED_WORD   ; BC
+	call NMI_PRINT_SAVED_WORD
 	call NMI_PRINT_CHAR_SPACE
 	ld bc,#14
-	call NMI_PRINT_SAVED_WORD   ; DE
+	call NMI_PRINT_SAVED_WORD
 	call NMI_PRINT_CHAR_SPACE
 	ld bc,#12
-	call NMI_PRINT_SAVED_WORD   ; HL
+	call NMI_PRINT_SAVED_WORD
 	call NMI_PRINT_CRLF
 
 	ld hl,#IX_IY_LABEL
 	call NMI_PRINT_STRING
 	ld bc,#10
-	call NMI_PRINT_SAVED_WORD   ; IX
+	call NMI_PRINT_SAVED_WORD
 	call NMI_PRINT_CHAR_SPACE
 	ld bc,#8
-	call NMI_PRINT_SAVED_WORD    ; IY
+	call NMI_PRINT_SAVED_WORD
 	call NMI_PRINT_CRLF
 
 	ld hl,#AFP_BCP_DEP_HLP_LABEL
 	call NMI_PRINT_STRING
 	ld bc,#0
-	call NMI_PRINT_SAVED_WORD    ; AF'
+	call NMI_PRINT_SAVED_WORD
 	call NMI_PRINT_CHAR_SPACE
 	ld bc,#2
-	call NMI_PRINT_SAVED_WORD    ; BC'
+	call NMI_PRINT_SAVED_WORD
 	call NMI_PRINT_CHAR_SPACE
 	ld bc,#4
-	call NMI_PRINT_SAVED_WORD    ; DE'
+	call NMI_PRINT_SAVED_WORD
 	call NMI_PRINT_CHAR_SPACE
 	ld bc,#6
-	call NMI_PRINT_SAVED_WORD    ; HL'
+	call NMI_PRINT_SAVED_WORD
 	call NMI_PRINT_CRLF
 
 	ld hl,#BANK_LABEL
@@ -300,9 +297,6 @@ NMI_PRINT_CRLF:
 	ld c,#LF
 	call conout
 	ret
-
-; ---------------------------------------------------------------------------
-; String data
 
 NMI_SNAPSHOT_STRING:
 	.ascii /NMI snapshot/

@@ -11,7 +11,6 @@
 	.globl MOVE_BUFFER,APP_LAUNCH_BANK
 	.globl CURRENT_BANK,cbios_dma_addr
 	.globl WBOOT,FBASE
-	.globl NMI_HANDLER
 
 	.area CODE (ABS)
 	.org CBIOS_BANKING_CODE_BASE
@@ -164,9 +163,6 @@ LAUNCH:
 	ld (PZBDOS),a
 	ld hl,#FBASE
 	ld (PZBDOS + 1),hl
-	; Do not install an NMI vector in CP/M page zero. Address 0066h sits inside
-	; the default FCB at 005Ch-007Fh, so patching it during normal CP/M operation
-	; corrupts application-visible state.
 
 	xor a
 	ld hl,#DEFAULT_DMA

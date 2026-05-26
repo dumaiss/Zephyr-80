@@ -24,6 +24,7 @@ RUNTIME_SRCS ?= \
 	$(SRC_DIR)/boot_shadow_copy.asm \
 	$(SRC_DIR)/cbios_boot.asm \
 	$(SRC_DIR)/cbios_console.asm \
+	$(SRC_DIR)/cbios_console_sio.asm \
 	$(SRC_DIR)/cbios_nmi.asm \
 	$(SRC_DIR)/cbios_storage_stub.asm \
 	$(SRC_DIR)/cbios_ramdisk.asm \

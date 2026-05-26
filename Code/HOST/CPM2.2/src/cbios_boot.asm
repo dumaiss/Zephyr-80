@@ -10,10 +10,12 @@
 	.globl restore_ccp_from_rom
 	.globl runtime_set_default_dma
 	.globl runtime_clear_default_dma
+	.globl console_init
+	.globl sio_console_enable_interrupts
 	.globl WBOOT_RESIDENT_START,WBOOT_RESIDENT_END
 	.globl RUNTIME_WORK_AREA_START,RUNTIME_WORK_AREA_END
 	.globl CURRENT_BANK,cbios_dma_addr
-	.globl NMI_DEBOUNCE_ACTIVE
+	
 
 ; BOOT
 ; Cold boot entry after ROM has been copied to RAM. Runtime setup hands control
@@ -24,17 +26,20 @@ boot:
 	call select_ram_bank0
 	call ctc_disable_interrupts
 	call sio_init
+	call console_init
 	call boot_print_banner
 	call prepare_runnable_bank
 	xor a
 	ld (IOBYTE),a
 	ld (TDRIVE),a
 	ld (DMA_BANK), a
+	call sio_console_enable_interrupts
 	
 	ld sp,#APP_STACK_TOP
 	ld hl,#WBOOT
 	push hl
 
+	xor a
 	ld c,a
 	jp CCP_CLEARBUF_ENTRY
 
@@ -57,8 +62,11 @@ wboot_resident:
 	; Protected stack handoff happens immediately after bank 0 selection.
 	ld sp,#CBIOS_STACK_TOP
 	call ctc_disable_interrupts
+	call sio_init
+	call console_init
 	call restore_ccp_from_rom
 	call prepare_runnable_bank
+	call sio_console_enable_interrupts
 	ld a,(TDRIVE)
 	ld c,a
 	jp CCP_CLEARBUF_ENTRY
@@ -112,8 +120,6 @@ prepare_runnable_bank:
 ; Install page-zero vectors in the selected low RAM bank:
 ;   0000h: JP WBOOT
 ;   0005h: JP FBASE. Programs inspect 0006h as the BDOS/top-of-memory marker.
-; Do not patch the NMI vector at 0066h here. CP/M uses 005Ch-007Fh as the
-; default FCB area, and writing 0066h during normal operation corrupts it.
 init_page_zero:
 	ld a,#0xc3
 	ld (PZWBOOT),a

@@ -1,13 +1,13 @@
-; Boot-time SIO channel B initialization.
+; Boot-time SIO channel B base initialization.
 ;
-; UOW-002 owns only this initialization routine. Console BIOS entry points are
-; implemented by UOW-004.
+; UOW-002 owns the serial format reset only. Console backends own any later
+; buffering, vector, or interrupt policy.
 
 	.globl sio_init
 
-; Initialize SIO channel B for 115200 8N1 with interrupts disabled.
+; Initialize SIO channel B for 115200 8N1 and leave SIO interrupts disabled.
 ; Input: none.
-; Output: SIO channel B configured for polled console I/O.
+; Output: SIO channel B configured with SIO interrupts disabled.
 ; Clobbers: AF.
 sio_init:
 	; WR0: channel reset.
@@ -32,7 +32,7 @@ sio_init:
 	ld a,#0xea
 	out (SIOB_CTRL),a
 
-	; WR1: interrupts disabled.
+	; WR1: interrupts disabled until the console backend is ready.
 	ld a,#0x01
 	out (SIOB_CTRL),a
 	xor a

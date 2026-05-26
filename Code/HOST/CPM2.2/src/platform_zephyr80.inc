@@ -3,6 +3,8 @@
 ; This file defines hardware ports and bit fields only. Service behavior lives
 ; in the CBIOS/runtime modules that include these constants.
 
+SIOA_DATA		= 0x20
+SIOA_CTRL		= 0x21
 SIOB_DATA		= 0x22
 SIOB_CTRL		= 0x23
 
@@ -15,6 +17,11 @@ CTC3_CTRL		= 0x43
 
 RR0_RX_AVAILABLE	= 0x01
 RR0_TX_EMPTY		= 0x04
+SIO_WR0_RESET_HIGHEST_IUS	= 0x38
+SIO_WR1_RX_INT_ALL	= 0x10
+SIO_WR1_TX_INT_ENABLE	= 0x02
+SIO_WR1_RX_TX_INT	= SIO_WR1_RX_INT_ALL | SIO_WR1_TX_INT_ENABLE
+SIO_WR9_MIE		= 0x08
 CTC_RESET_DISABLE	= 0x03
 
 RAM_BANK_MASK		= 0x07

@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 24301 bytes |
+| Firmware symbol map | `build/firmware.map` | 26602 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 524288 bytes |
 | Final burnable image | `build/zephyr80.bin` | 524288 bytes |
 | Layout manifest | `build/layout.manifest` | 882 bytes |
@@ -79,25 +79,27 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `BANK_HELPERS_END` | `DAA7h` | Low-level bank helper code end. |
 | `sio_init` | `DAA7h` | Boot-time SIO channel B initialization. |
 | `boot` | `DACBh` | Cold boot implementation; starts the CP/M CCP. |
-| `wboot` | `DAF3h` | Warm boot trampoline. |
-| `wboot_resident` | `DAF6h` | Protected warm boot implementation; returns to the CP/M CCP. |
-| `WBOOT_RESIDENT_START` | `DAF6h` | Resident warm boot body start. |
-| `WBOOT_RESIDENT_END` | `DB15h` | Resident warm boot body end. |
-| `restore_ccp_from_rom` | `DB15h` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
-| `ctc_disable_interrupts` | `DB2Dh` | CTC interrupt disable helper. |
-| `prepare_runnable_bank` | `DB38h` | Page-zero and DMA preparation helper. |
-| `init_page_zero` | `DB45h` | Installs `JP WBOOT` and `JP FBASE`. |
-| `runtime_set_default_dma` | `DB5Ah` | Sets default DMA to `0080h`. |
-| `runtime_clear_default_dma` | `DB68h` | Clears command tail/default DMA area. |
-| `CONSOLE_CODE_START` | `DB80h` | Console BIOS implementation start. |
-| `const` | `DB80h` | Console status implementation. |
-| `conin` | `DB8Ch` | Blocking console input implementation. |
-| `conout` | `DB9Bh` | Blocking console output implementation. |
-| `list` | `DBABh` | No-op list implementation. |
-| `punch` | `DBADh` | No-op punch implementation. |
-| `reader` | `DBAFh` | EOF reader implementation. |
-| `listst` | `DBB2h` | Ready list-status implementation. |
-| `CONSOLE_CODE_END` | `DBB6h` | Console BIOS implementation end. |
+| `wboot` | `DAFAh` | Warm boot trampoline. |
+| `wboot_resident` | `DAFDh` | Protected warm boot implementation; returns to the CP/M CCP. |
+| `WBOOT_RESIDENT_START` | `DAFDh` | Resident warm boot body start. |
+| `WBOOT_RESIDENT_END` | `DB25h` | Resident warm boot body end. |
+| `restore_ccp_from_rom` | `DB25h` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
+| `ctc_disable_interrupts` | `DB3Dh` | CTC interrupt disable helper. |
+| `prepare_runnable_bank` | `DB48h` | Page-zero and DMA preparation helper. |
+| `init_page_zero` | `DB55h` | Installs `JP WBOOT` and `JP FBASE`. |
+| `runtime_set_default_dma` | `DB6Ah` | Sets default DMA to `0080h`. |
+| `runtime_clear_default_dma` | `DB78h` | Clears command tail/default DMA area. |
+| `CONSOLE_CODE_START` | `DB80h` | Console BIOS facade start. |
+| `console_init` | `DB80h` | Installs and initializes the default console driver. |
+| `console_set_driver` | `DB89h` | Installs an alternate console driver table. |
+| `const` | `DB8Dh` | Console status facade. |
+| `conin` | `DB91h` | Blocking console input facade. |
+| `conout` | `DB95h` | Blocking console output facade. |
+| `list` | `DB99h` | No-op list implementation. |
+| `punch` | `DB9Dh` | No-op punch implementation. |
+| `reader` | `DBA1h` | EOF reader implementation. |
+| `listst` | `DBA5h` | Ready list-status implementation. |
+| `CONSOLE_CODE_END` | `DBC0h` | Console BIOS facade end. |
 | `STORAGE_STUB_CODE_START` | `DC00h` | Storage BIOS facade start. |
 | `home` | `DC00h` | Storage HOME facade; routes to RAM disk backend. |
 | `settrk` | `DC06h` | Storage SETTRK facade; records selected track. |
@@ -108,9 +110,6 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `write` | `DC24h` | Storage WRITE facade; transfers to RAM disk. |
 | `sectran` | `DC2Eh` | Returns untranslated 0-based logical sector for no-skew media. |
 | `STORAGE_STUB_CODE_END` | `DC31h` | Storage BIOS facade end. |
-| `NMI_CODE_START` | `DD00h` | NMI support code start. |
-| `NMI_HANDLER` | `DD00h` | Common high-memory NMI handler. |
-| `NMI_CODE_END` | `DF47h` | NMI support code end. |
 | `RAMDISK_CODE_START` | `E200h` | RAM disk backend code start. |
 | `ramdisk_seldsk` | `E211h` | Selects CP/M drive A and returns its DPH. |
 | `ramdisk_read` | `E225h` | Reads one 128-byte record from RAM disk storage. |
@@ -118,14 +117,23 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `RAMDISK_DPH` | `E2F1h` | Drive A disk parameter header. |
 | `RAMDISK_DPB` | `E301h` | Drive A disk parameter block. |
 | `RAMDISK_CODE_END` | `E310h` | RAM disk backend code end. |
-| `BANKING_CODE_START` | `E600h` | Banking extension implementation start. |
-| `SELMEM` | `E600h` | Select RAM bank. |
-| `SETBNK` | `E60Ah` | Record future DMA bank. |
-| `XMOVE` | `E610h` | Set source/destination banks for next `MOVE`. |
-| `MOVE` | `E622h` | Same-bank or cross-bank memory move. |
-| `LAUNCH` | `E6AEh` | Launch application bank from high memory. |
-| `BANKING_CODE_END` | `E705h` | Banking extension implementation end. |
-| `BIOS_CODE_END` | `E705h` | End of generated BIOS code. |
+| `CONSOLE_IM2_VECTOR_TABLE_START` | `E500h` | Console IM2 vector table start. |
+| `CONSOLE_IM2_VECTOR_TABLE_END` | `E601h` | Console IM2 vector table end. |
+| `CONSOLE_DRIVER_CODE_START` | `E340h` | Default SIO console driver code start. |
+| `sio_console_driver` | `E340h` | Default console driver dispatch table. |
+| `sio_console_init` | `E34Eh` | Default SIO console driver initialization. |
+| `sio_console_enable_interrupts` | `E36Ch` | Enables the SIO/IM2 console interrupt path after boot. |
+| `sio_console_disable_interrupts` | `E497h` | Disables SIO console interrupts. |
+| `sio_console_isr` | `E3F5h` | SIO console interrupt service routine. |
+| `CONSOLE_DRIVER_CODE_END` | `E4E7h` | Default SIO console driver code end. |
+| `BANKING_CODE_START` | `E700h` | Banking extension implementation start. |
+| `SELMEM` | `E700h` | Select RAM bank. |
+| `SETBNK` | `E70Ah` | Record future DMA bank. |
+| `XMOVE` | `E710h` | Set source/destination banks for next `MOVE`. |
+| `MOVE` | `E722h` | Same-bank or cross-bank memory move. |
+| `LAUNCH` | `E7AEh` | Launch application bank from high memory. |
+| `BANKING_CODE_END` | `E805h` | Banking extension implementation end. |
+| `BIOS_CODE_END` | `E805h` | End of generated BIOS code. |
 
 ## Runtime State Symbols
 
@@ -136,8 +144,8 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `cbios_dma_addr` | `F901h` | Current DMA address. |
 | `RUNTIME_WORK_AREA_END` | `F903h` | Runtime work area end. |
 | `CONSOLE_STATE_START` | `F904h` | Console state start. |
-| `CONIN_SOFT_COUNT` | `F904h` | Input polling soft counter. |
-| `CONOUT_SOFT_COUNT` | `F906h` | Output polling soft counter. |
+| `CONSOLE_DRIVER` | `F904h` | Active console driver table pointer. |
+| `CONOUT_SOFT_COUNT` | `F906h` | Reserved console facade word. |
 | `CONSOLE_STATE_END` | `F911h` | Console state end. |
 | `BANKING_STATE_START` | `F920h` | Banking state start. |
 | `SAVED_BANK` | `F920h` | Saved active bank for cross-bank moves. |
@@ -158,3 +166,16 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `RAMDISK_CSV` | `F949h` | RAM disk check vector. |
 | `RAMDISK_ALV` | `F959h` | RAM disk allocation vector. |
 | `STORAGE_STATE_END` | `F96Bh` | Storage state end. |
+| `CONSOLE_DRIVER_STATE_START` | `F970h` | Console driver state start. |
+| `CONSOLE_RX_HEAD` | `F970h` | Receive buffer head index. |
+| `CONSOLE_RX_TAIL` | `F971h` | Receive buffer tail index. |
+| `CONSOLE_RX_COUNT` | `F972h` | Receive buffer byte count. |
+| `CONSOLE_TX_HEAD` | `F973h` | Transmit buffer head index. |
+| `CONSOLE_TX_TAIL` | `F974h` | Transmit buffer tail index. |
+| `CONSOLE_TX_COUNT` | `F975h` | Transmit buffer byte count. |
+| `CONSOLE_TX_ACTIVE` | `F976h` | Transmit byte active flag. |
+| `CONSOLE_IRQ_ENABLED` | `F977h` | SIO console IRQ mode flag. |
+| `CONSOLE_IRQ_COUNT` | `F978h` | SIO ISR entry counter. |
+| `CONSOLE_RX_BUFFER` | `F97Ah` | Receive ring buffer. |
+| `CONSOLE_TX_BUFFER` | `F98Ah` | Transmit ring buffer. |
+| `CONSOLE_DRIVER_STATE_END` | `F99Ah` | Console driver state end. |
