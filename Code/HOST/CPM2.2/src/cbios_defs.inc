@@ -98,7 +98,7 @@ BANK_MASK                       = RAM_BANK_MASK ; Requires external definition
 ; window remains application-owned even though it is common across banks; the
 ; BIOS must not claim it for persistent state, scratch, vectors, or drivers.
 PROTECTED_TPA_START             = 0xc000
-PROTECTED_TPA_END               = 0xcfff
+PROTECTED_TPA_END               = 0xc3ff
 
 ; ------------------------------------------------------------------------------
 ; CBIOS Memory Layout
@@ -223,15 +223,15 @@ CBIOS_SCRATCH_LIMIT             = 0xf800
 CBIOS_SCRATCH_END               = CBIOS_SCRATCH_LIMIT - 1
 
 MOVE_BUFFER                     = CBIOS_SCRATCH_BASE
-MOVE_BUFFER_SIZE                = 0x0080
+MOVE_BUFFER_SIZE                = 0x0100
 
 RAMDISK_DIRBUF                  = CBIOS_SCRATCH_BASE + 0x0100
+RAMDISK_DIRBUF_SIZE             = 0x0080
 
 ; Optional named free scratch windows.
-CBIOS_SCRATCH_FREE0             = 0xf680
-CBIOS_SCRATCH_FREE0_LIMIT       = 0xf700
-CBIOS_SCRATCH_FREE1             = 0xf780
-CBIOS_SCRATCH_FREE1_LIMIT       = 0xf800
+CBIOS_SCRATCH_FREE0             = 0xf780
+CBIOS_SCRATCH_FREE0_LIMIT       = 0xf800
+CBIOS_SCRATCH_FREE0_SIZE        = CBIOS_SCRATCH_FREE0_LIMIT - CBIOS_SCRATCH_FREE0
 
 ; ------------------------------------------------------------------------------
 ; IM2 Interrupt Vectors

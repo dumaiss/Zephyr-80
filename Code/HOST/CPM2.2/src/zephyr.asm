@@ -98,6 +98,6 @@ bdos_entry_shim:
 	.include "cbios_boot.asm"
 	.include "cbios_console.asm"
 	.include "cbios_console_sio.asm"
-	.include "cbios_storage_stub.asm"
+	.include "cbios_storage.asm"
 	.include "cbios_ramdisk.asm"
 	.include "cbios_bank.asm"
