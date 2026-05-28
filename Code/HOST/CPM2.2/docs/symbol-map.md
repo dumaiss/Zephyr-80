@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 27522 bytes |
+| Firmware symbol map | `build/firmware.map` | 29437 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 524288 bytes |
 | Final burnable image | `build/zephyr80.bin` | 524288 bytes |
 | Layout manifest | `build/layout.manifest` | 882 bytes |
@@ -19,7 +19,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Symbol | Address | Notes |
 |---|---:|---|
 | `reset_vector` | `0000h` | ROM reset entry. |
-| `bdos_entry_shim` | `DA42h` | High BIOS BDOS compatibility shim; jumps to stock BDOS. |
+| `bdos_entry_shim` | `DA45h` | High BIOS BDOS compatibility shim; jumps to stock BDOS. |
 | `CBASE` | `C400h` | CP/M CCP base for the configured memory size. |
 | `FBASE` | `CC06h` | CP/M BDOS entry in this assembled image. |
 | `CCP_ENTRY` | `C400h` | CCP command processor entry alias for `CBASE`. |
@@ -65,30 +65,31 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `ZBIOS_EXT_BASE + 06h` | `DA39h` | `SELMEM` |
 | `ZBIOS_EXT_BASE + 09h` | `DA3Ch` | `SETBNK` |
 | `ZBIOS_EXT_BASE + 0Ch` | `DA3Fh` | `LAUNCH` |
+| `ZBIOS_EXT_BASE + 0Fh` | `DA42h` | `IOCALL` |
 
 ## BIOS Implementation Symbols
 
 | Symbol | Address | Notes |
 |---|---:|---|
-| `cpm_rom_entry_high` / `shadow_copy_rom_to_ram` | `DA45h` | Reset copy routine in high firmware memory. |
-| `shadow_copy_rom_to_ram_done` | `DA90h` | Shadow-copy completion branch point. |
-| `cbios_boot_after_rom_copy` | `DA93h` | Stack setup and cold boot handoff. |
-| `BANK_HELPERS_START` | `DA99h` | Low-level bank helper code start. |
-| `bank_select_internal` | `DA99h` | Selects RAM bank and records current bank. |
-| `select_ram_bank0` | `DAA3h` | Selects RAM bank 0. |
-| `BANK_HELPERS_END` | `DAA7h` | Low-level bank helper code end. |
+| `cpm_rom_entry_high` / `shadow_copy_rom_to_ram` | `DA48h` | Reset copy routine in high firmware memory. |
+| `shadow_copy_rom_to_ram_done` | `DA93h` | Shadow-copy completion branch point. |
+| `cbios_boot_after_rom_copy` | `DA96h` | Stack setup and cold boot handoff. |
+| `BANK_HELPERS_START` | `DA9Ch` | Low-level bank helper code start. |
+| `bank_select_internal` | `DA9Ch` | Selects RAM bank and records current bank. |
+| `select_ram_bank0` | `DAA6h` | Selects RAM bank 0. |
+| `BANK_HELPERS_END` | `DAAAh` | Low-level bank helper code end. |
 | `sio_init` | `E200h` | Compatibility entry that jumps to `sio_core_init`. |
-| `boot` | `DAA7h` | Cold boot implementation; starts the CP/M CCP. |
-| `wboot` | `DAD6h` | Warm boot trampoline. |
-| `wboot_resident` | `DAD9h` | Protected warm boot implementation; returns to the CP/M CCP. |
-| `WBOOT_RESIDENT_START` | `DAD9h` | Resident warm boot body start. |
-| `WBOOT_RESIDENT_END` | `DB01h` | Resident warm boot body end. |
-| `restore_ccp_from_rom` | `DB01h` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
-| `ctc_disable_interrupts` | `DB19h` | CTC interrupt disable helper. |
-| `prepare_runnable_bank` | `DB24h` | Page-zero and DMA preparation helper. |
-| `init_page_zero` | `DB2Eh` | Installs `JP WBOOT` and `JP FBASE`. |
-| `runtime_set_default_dma` | `DB43h` | Sets default DMA to `0080h`. |
-| `runtime_clear_default_dma` | `DB51h` | Clears command tail/default DMA area. |
+| `boot` | `DAAAh` | Cold boot implementation; starts the CP/M CCP. |
+| `wboot` | `DAD9h` | Warm boot trampoline. |
+| `wboot_resident` | `DADCh` | Protected warm boot implementation; returns to the CP/M CCP. |
+| `WBOOT_RESIDENT_START` | `DADCh` | Resident warm boot body start. |
+| `WBOOT_RESIDENT_END` | `DB04h` | Resident warm boot body end. |
+| `restore_ccp_from_rom` | `DB04h` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
+| `ctc_disable_interrupts` | `DB1Ch` | CTC interrupt disable helper. |
+| `prepare_runnable_bank` | `DB27h` | Page-zero and DMA preparation helper. |
+| `init_page_zero` | `DB31h` | Installs `JP WBOOT` and `JP FBASE`. |
+| `runtime_set_default_dma` | `DB46h` | Sets default DMA to `0080h`. |
+| `runtime_clear_default_dma` | `DB54h` | Clears command tail/default DMA area. |
 | `CONSOLE_CODE_START` | `DB80h` | Console BIOS facade start. |
 | `console_init` | `DB80h` | Installs and initializes the default console driver. |
 | `console_set_driver` | `DB89h` | Installs an alternate console driver table. |
@@ -118,25 +119,34 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `RAMDISK_DPB` | `DF01h` | Drive A disk parameter block. |
 | `RAMDISK_CODE_END` | `DF10h` | RAM disk backend code end. |
 | `SIO_CORE_CODE_START` | `E200h` | BIOS-owned SIO core code start in transitional slot 1. |
-| `sio_core_init` | `E203h` | Initializes BIOS-owned SIO services and SIO0/B async mode. |
-| `sio_core_enable_interrupts` | `E239h` | Enables BIOS-owned SIO/IM2 interrupts. |
-| `sio_core_disable_interrupts` | `E26Bh` | Disables BIOS-owned SIO interrupts. |
-| `sio_register_rx_sink` | `E27Eh` | Registers one RX byte sink for a BIOS-owned SIO channel. |
-| `sio_send_byte` | `E293h` | Blocking send-byte API for BIOS-owned SIO channels. |
-| `sio_rx_kick` | `E2A5h` | Foreground RX poll/dispatch helper. |
-| `sio_core_isr` | `E2DCh` | BIOS-owned SIO interrupt service routine. |
-| `sio_console_isr` | `E32Ah` | Compatibility label that jumps to `sio_core_isr`. |
-| `SIO_CORE_CODE_END` | `E32Dh` | BIOS-owned SIO core code end before the IM2 trampoline. |
+| `sio_core_init` | `E203h` | Initializes BIOS-owned SIO services, SIO0/B async mode, and SIO1/A sync mode. |
+| `sio1_ioc_init` | `E232h` | Initializes SIO1/A synchronous external-clock/external-sync IO Controller mode. |
+| `sio_core_enable_interrupts` | `E276h` | Enables BIOS-owned SIO/IM2 interrupts. |
+| `sio_core_disable_interrupts` | `E2A8h` | Disables BIOS-owned SIO interrupts. |
+| `sio_register_rx_sink` | `E2C9h` | Registers one RX byte sink for a BIOS-owned SIO channel. |
+| `sio_send_byte` | `E2DEh` | Blocking send-byte API for BIOS-owned SIO channels. |
+| `sio_recv_byte` | `E30Ah` | Polling receive-byte API for BIOS-owned SIO channels. |
+| `sio1_ioc_rts_assert` | `E327h` | Asserts SIO1/A RTS as an IO Controller service request. |
+| `sio1_ioc_rts_release` | `E331h` | Releases SIO1/A RTS after an IO Controller transaction. |
+| `sio1_ioc_put_byte` | `E33Bh` | SIO1/A IO Controller byte transmit helper. |
+| `sio1_ioc_get_byte` | `E340h` | SIO1/A IO Controller byte receive helper. |
+| `sio_rx_kick` | `E345h` | Foreground RX poll/dispatch helper. |
+| `sio_core_isr` | `E37Ch` | BIOS-owned SIO interrupt service routine. |
+| `sio_console_isr` | `E3CAh` | Compatibility label that jumps to `sio_core_isr`. |
+| `SIO_CORE_CODE_END` | `E3CDh` | BIOS-owned SIO core code end before the IM2 trampoline. |
+| `IOCTRL_CODE_START` | `E600h` | IOCALL transaction code start. |
+| `IOCALL` | `E600h` | Zephyr extended BIOS IO Controller transaction call. |
+| `IOCTRL_CODE_END` | `E6DCh` | IOCALL transaction code end. |
 | `CONSOLE_IM2_VECTOR_ENTRY` | `E4E4h` | SIO core IM2 trampoline address. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `E500h` | SIO core IM2 vector table start. |
 | `CONSOLE_IM2_VECTOR_TABLE_END` | `E600h` | SIO core IM2 vector table end. |
-| `CONSOLE_DRIVER_CODE_START` | `E380h` | Legacy SIO console client driver code start. |
-| `sio_console_driver` | `E380h` | Legacy console driver dispatch table. |
-| `sio_console_init` | `E38Eh` | Legacy console initialization and SIO RX sink registration. |
-| `legacy_console_rx_sink` | `E402h` | Registered SIO_CH_CONSOLE RX byte sink. |
-| `sio_console_enable_interrupts` | `E233h` | Compatibility alias for `sio_core_enable_interrupts`. |
-| `sio_console_disable_interrupts` | `E236h` | Compatibility alias for `sio_core_disable_interrupts`. |
-| `CONSOLE_DRIVER_CODE_END` | `E427h` | Legacy SIO console client driver code end. |
+| `CONSOLE_DRIVER_CODE_START` | `E420h` | Legacy SIO console client driver code start. |
+| `sio_console_driver` | `E420h` | Legacy console driver dispatch table. |
+| `sio_console_init` | `E42Eh` | Legacy console initialization and SIO RX sink registration. |
+| `legacy_console_rx_sink` | `E4A2h` | Registered SIO_CH_CONSOLE RX byte sink. |
+| `sio_console_enable_interrupts` | `E270h` | Compatibility alias for `sio_core_enable_interrupts`. |
+| `sio_console_disable_interrupts` | `E273h` | Compatibility alias for `sio_core_disable_interrupts`. |
+| `CONSOLE_DRIVER_CODE_END` | `E4C7h` | Legacy SIO console client driver code end. |
 | `BANKING_CODE_START` | `DC80h` | Banking extension implementation start. |
 | `SELMEM` | `DC80h` | Select RAM bank. |
 | `SETBNK` | `DC8Ah` | Record future DMA bank. |
@@ -178,10 +188,18 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `STORAGE_STATE_END` | `F96Bh` | Storage state end. |
 | `SIO_CORE_STATE_START` | `F970h` | BIOS-owned SIO core state start. |
 | `SIO0B_RX_SINK` | `F970h` | Registered RX byte sink for SIO_CH_CONSOLE / SIO0/B. |
-| `SIO1_RX_SINK` | `F972h` | Reserved RX byte sink for future SIO_CH_IOCTRL / SIO1. |
+| `SIO1_RX_SINK` | `F972h` | Registered RX byte sink slot for SIO_CH_IOCTRL / SIO1/A. |
 | `SIO_CORE_IRQ_ENABLED` / `CONSOLE_IRQ_ENABLED` | `F974h` | BIOS-owned SIO IRQ mode flag; legacy alias retained. |
 | `SIO_CORE_IRQ_COUNT` / `CONSOLE_IRQ_COUNT` | `F975h` | BIOS-owned SIO ISR entry counter; legacy alias retained. |
 | `SIO_CORE_STATE_END` | `F977h` | BIOS-owned SIO core state end. |
+| `IOCTRL_STATE_START` | `F9B0h` | IOCALL transaction state start. |
+| `IOCALL_REQ_PTR_STATE` | `F9B0h` | Current caller-owned IOCALL request block pointer. |
+| `IOCALL_TX_PTR_STATE` | `F9B2h` | Current caller-owned IOCALL TX payload pointer. |
+| `IOCALL_RX_PTR_STATE` | `F9B4h` | Current caller-owned IOCALL RX payload pointer. |
+| `IOCALL_TX_LEN_STATE` | `F9B6h` | Current IOCALL TX payload length. |
+| `IOCALL_RX_MAX_STATE` | `F9B7h` | Current IOCALL RX payload capacity. |
+| `IOCALL_RX_LEN_STATE` | `F9B8h` | Current IOCALL RX payload length while receiving. |
+| `IOCTRL_STATE_END` | `F9B9h` | IOCALL transaction state end. |
 | `CONSOLE_DRIVER_STATE_START` | `F980h` | Console driver state start. |
 | `CONSOLE_RX_HEAD` | `F980h` | Receive buffer head index. |
 | `CONSOLE_RX_TAIL` | `F981h` | Receive buffer tail index. |

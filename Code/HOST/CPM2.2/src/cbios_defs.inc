@@ -34,12 +34,12 @@
 ;   EA00h │ Driver slot 3 start                          │
 ;         │                                              │
 ;   E9FFh │ Driver slot 2 end                            │
-;   E600h │ Driver slot 2 start                          │
+;   E600h │ Driver slot 2 start: IOCALL transport         │
 ;         │                                              │
 ;   E5FFh │ Driver slot 1 end                            │
 ;   E500h │   SIO core IM2 repeated-byte table, 256 bytes│
 ;   E4E4h │   SIO core IM2 trampoline: JP sio_core_isr   │
-;   E380h │   legacy SIO console driver                  │
+;   E420h │   legacy SIO console driver                  │
 ;   E200h │ Driver slot 1 start: SIO core                │
 ;         │                                              │
 ;   E1FFh │ Driver slot 0 end                            │
@@ -71,6 +71,10 @@
 ; ------------------------------------------------------------------------------
 BIOS_OK                         = 0x00
 BIOS_ERR                        = 0x01
+BIOS_ERR_BAD_LEN                = 0x01
+BIOS_ERR_TIMEOUT                = 0x02
+BIOS_ERR_IO                     = 0x03
+BIOS_ERR_BAD_REPLY              = 0x04
 CONST_NO_CHAR                   = 0x00
 CONST_HAS_CHAR                  = 0xff
 CR                              = 0x0d
@@ -79,10 +83,29 @@ LF                              = 0x0a
 ; BIOS-owned SIO service channels.
 ;
 ; SIO_CH_CONSOLE is SIO0/B and backs the legacy CP/M serial console.
-; SIO_CH_IOCTRL is reserved for the future SIO1 synchronous IO Controller link.
-; The future IO Controller path is not configured or spoken by this build.
+; SIO_CH_IOCTRL is SIO1/A and backs the BIOS-owned synchronous IO Controller
+; link. SIO0/A and the CTC remain application-owned.
 SIO_CH_CONSOLE                  = 0x00
 SIO_CH_IOCTRL                   = 0x01
+
+; IOCALL caller-provided request block offsets.
+IOCALL_CHAN                     = 0x00
+IOCALL_CMD                      = 0x01
+IOCALL_TX_LEN                   = 0x02
+IOCALL_RX_MAX                   = 0x03
+IOCALL_TX_PTR                   = 0x04
+IOCALL_RX_PTR                   = 0x06
+IOCALL_STATUS                   = 0x08
+IOCALL_RX_LEN                   = 0x09
+IOCALL_SIZE                     = 0x0a
+IOCALL_MAX_LEN                  = 0x80
+
+; Optional IO Controller response status values.
+IOC_STATUS_OK                   = 0x00
+IOC_STATUS_BAD_CHAN             = 0x01
+IOC_STATUS_BAD_CMD              = 0x02
+IOC_STATUS_BAD_LEN              = 0x03
+IOC_STATUS_BUSY                 = 0x04
 
 ; ------------------------------------------------------------------------------
 ; CP/M Page Zero & Environment Setup
@@ -204,15 +227,19 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ;
 ;   Slot 1:
 ;     E200h... SIO core
-;     E380h... current legacy SIO console driver
+;     E420h... current legacy SIO console driver
 ;     E4E4h... SIO core IM2 trampoline
 ;     E500h... SIO core IM2 repeated-byte table, 256 bytes
+;
+;   Slot 2:
+;     E600h... SIO1/A IO Controller IOCALL transaction transport
 ;
 ; These names are kept so existing source can still ORG against them.
 
 CBIOS_RAMDISK_CODE_BASE         = CBIOS_DRIVER_SLOT0_BASE              ; DE00h
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_DRIVER_SLOT1_BASE              ; E200h
-CBIOS_CONSOLE_DRIVER_CODE_BASE  = CBIOS_DRIVER_SLOT1_BASE + 0x0180     ; E380h
+CBIOS_CONSOLE_DRIVER_CODE_BASE  = CBIOS_DRIVER_SLOT1_BASE + 0x0220     ; E420h
+CBIOS_IOCTRL_CODE_BASE          = CBIOS_DRIVER_SLOT2_BASE              ; E600h
 
 ; Resident code region ends before scratch.
 ; LIMIT is one byte past the end.
@@ -294,6 +321,7 @@ CBIOS_BANK_WORK_AREA            = CBIOS_WORK_AREA + 0x0020
 CBIOS_STORAGE_WORK_AREA         = CBIOS_WORK_AREA + 0x0040
 CBIOS_SIO_CORE_WORK_AREA        = CBIOS_WORK_AREA + 0x0070
 CBIOS_CONSOLE_DRIVER_WORK_AREA  = CBIOS_WORK_AREA + 0x0080
+CBIOS_IOCTRL_WORK_AREA          = CBIOS_WORK_AREA + 0x00b0
 
 ; Optional clearer aliases for docs / validation.
 CBIOS_RUNTIME_STATE_BASE        = CBIOS_WORK_AREA
@@ -388,7 +416,8 @@ RESERVED_RUNTIME_STATE_END      = CBIOS_RUNTIME_STATE_END
 ;   and trampoline. Logical ownership of SIO hardware, IM2, and ISR now belongs
 ;   to the SIO core; the legacy console is a client in the same transitional
 ;   slot.
-;   Slots 2-5 are available for future drivers.
+;   Slot 2 contains the SIO1/A IO Controller IOCALL transaction transport.
+;   Slots 3-5 are available for future drivers.
 
 LEGACY_RAMDISK_SLOT_FIRST       = 0
 LEGACY_RAMDISK_SLOT_LAST        = 0

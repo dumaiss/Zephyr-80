@@ -3,28 +3,29 @@
 ; SIO is platform plumbing. Console, storage, and future protocols are clients.
 ; This module owns the BIOS-facing SIO hardware boundary:
 ;   - SIO0/B async setup for the legacy serial console path,
+;   - SIO1/A synchronous setup for the IO Controller transaction link,
 ;   - SIO interrupt enable/disable,
 ;   - IM2 table/trampoline/ISR for the current SIO-only build,
 ;   - one RX byte sink per BIOS-owned SIO channel,
-;   - blocking send-byte service used by client drivers.
+;   - blocking byte I/O services used by client drivers.
 ;
 ; Ownership rules:
-;   BIOS owns SIO0/B and the future SIO1 IO Controller transport.
+;   BIOS owns SIO0/B and the SIO1/A IO Controller transport.
 ;   Applications own SIO0/A. This code does not configure SIO0/A as a channel.
 ;   The SIO WR9 master interrupt bit is still reached through the SIO0/A
 ;   control port, which is a hardware limitation of the Z80 SIO.
 ;   CTC remains application-owned and is not required by this module.
 ;
-; Future SIO1 plan:
-;   SIO_CH_IOCTRL is reserved for an IO Controller MCU link. That future link
-;   will use SIO1 in synchronous mode with the MCU as synchronous master and
-;   will carry command/event packets for IOCALL, Virtual Drip console/storage,
-;   HID/keyboard, and reset/status control. No packet protocol or SIO1 sync
-;   setup is implemented here yet.
+; SIO1 IO Controller link:
+;   SIO_CH_IOCTRL uses SIO1/A in synchronous external-clock/external-sync mode.
+;   The IO Controller MCU owns the clock and framing. RTS from the Z80 side is
+;   a service-request signal and starts inactive.
 
 	.globl sio_init
 	.globl sio_core_init,sio_core_enable_interrupts,sio_core_disable_interrupts
-	.globl sio_register_rx_sink,sio_send_byte,sio_rx_kick
+	.globl sio_register_rx_sink,sio_send_byte,sio_recv_byte,sio_rx_kick
+	.globl sio1_ioc_init,sio1_ioc_rts_assert,sio1_ioc_rts_release
+	.globl sio1_ioc_put_byte,sio1_ioc_get_byte
 	.globl sio_core_rx_lock,sio_core_rx_unlock,sio_core_isr,sio_console_isr
 	.globl CONIRQ,sio_console_enable_interrupts,sio_console_disable_interrupts
 	.globl SIO_CORE_CODE_START,SIO_CORE_CODE_END
@@ -37,9 +38,16 @@
 
 SIO0B_DATA_PORT		= SIOB_DATA
 SIO0B_CTRL_PORT		= SIOB_CTRL
+SIO1_IOC_DATA_PORT	= SIO1A_DATA
+SIO1_IOC_CTRL_PORT	= SIO1A_CTRL
 SIO_MASTER_CTRL_PORT	= SIOA_CTRL
 SIO_RX_READY		= RR0_RX_AVAILABLE
 SIO_TX_READY		= RR0_TX_EMPTY
+SIO_IOCTRL_TIMEOUT	= 0xffff
+SIO_WR4_IOCTRL_SYNC	= 0x30
+SIO_WR3_IOCTRL_RX	= 0xd1
+SIO_WR5_IOCTRL_RTS_OFF	= 0xe8
+SIO_WR5_IOCTRL_RTS_ON	= 0xea
 
 	.area CODE (ABS)
 	.org CBIOS_IM2_VECTOR_TABLE
@@ -135,11 +143,14 @@ sio_init:
 
 ; Initialize BIOS-owned SIO services.
 ; Purpose:
-;   Set up SIO0/B for the existing async console path, clear registered sinks,
-;   and leave BIOS-owned SIO interrupts disabled.
+;   Set up SIO0/B for the existing async console path, set up SIO1/A for the
+;   synchronous IO Controller link, clear registered sinks, and leave
+;   BIOS-owned SIO interrupts disabled.
 ; Inputs: none.
 ; Outputs:
-;   SIO0/B is configured 115200 8N1 with WR1 interrupts disabled.
+;   SIO0/B is configured 115200 8N1 with WR1 interrupts disabled. SIO1/A is
+;   configured synchronous 8-bit, external clock/sync, no parity/CRC, no IRQs,
+;   and RTS inactive.
 ; Clobbers: AF.
 ; Important invariants:
 ;   This does not configure application-owned SIO0/A as a channel and does not
@@ -173,7 +184,61 @@ sio_core_init:
 	ld a,#0xea
 	out (SIO0B_CTRL_PORT),a
 
+	call sio1_ioc_init
 	jp sio_core_disable_interrupts
+
+; Initialize SIO1/A for the BIOS-owned IO Controller link.
+; Purpose:
+;   Configure synchronous external-clock/external-sync operation. The MCU
+;   provides clocks only during an active transaction, and RTS is held inactive
+;   until IOCALL asserts it.
+; Outputs: A = BIOS_OK.
+; Clobbers: AF.
+sio1_ioc_init:
+	; WR0: channel reset.
+	ld a,#0x18
+	out (SIO1_IOC_CTRL_PORT),a
+
+	; WR1: no interrupts or wait/DMA.
+	ld a,#0x01
+	out (SIO1_IOC_CTRL_PORT),a
+	xor a
+	out (SIO1_IOC_CTRL_PORT),a
+	; WR9: SIO1 master interrupts disabled.
+	ld a,#0x09
+	out (SIO1_IOC_CTRL_PORT),a
+	xor a
+	out (SIO1_IOC_CTRL_PORT),a
+
+	; WR4: synchronous external sync, x1 clock, no parity.
+	ld a,#0x04
+	out (SIO1_IOC_CTRL_PORT),a
+	ld a,#SIO_WR4_IOCTRL_SYNC
+	out (SIO1_IOC_CTRL_PORT),a
+
+	; WR6/WR7 are unused in external-sync mode; clear sync/CRC bytes.
+	ld a,#0x06
+	out (SIO1_IOC_CTRL_PORT),a
+	xor a
+	out (SIO1_IOC_CTRL_PORT),a
+	ld a,#0x07
+	out (SIO1_IOC_CTRL_PORT),a
+	xor a
+	out (SIO1_IOC_CTRL_PORT),a
+
+	; WR3: 8-bit RX, receiver enabled, enter hunt for external SYNC.
+	ld a,#0x03
+	out (SIO1_IOC_CTRL_PORT),a
+	ld a,#SIO_WR3_IOCTRL_RX
+	out (SIO1_IOC_CTRL_PORT),a
+
+	; WR5: 8-bit TX enabled, CRC/parity disabled, RTS inactive.
+	ld a,#0x05
+	out (SIO1_IOC_CTRL_PORT),a
+	ld a,#SIO_WR5_IOCTRL_RTS_OFF
+	out (SIO1_IOC_CTRL_PORT),a
+	xor a
+	ret
 
 CONIRQ:
 	or a
@@ -224,8 +289,9 @@ sio_core_enable_interrupts:
 
 ; Disable BIOS-owned SIO interrupts.
 ; Purpose:
-;   Clear SIO0/B WR1 interrupt enables, clear SIO master interrupt enable, and
-;   mark SIO IRQ mode inactive for foreground ring-buffer lock helpers.
+;   Clear SIO0/B and SIO1/A WR1 interrupt enables, clear SIO master interrupt
+;   enable, and mark SIO IRQ mode inactive for foreground ring-buffer lock
+;   helpers.
 ; Outputs:
 ;   SIO_CORE_IRQ_ENABLED = 0, A = BIOS_OK.
 ; Clobbers: AF.
@@ -235,6 +301,14 @@ sio_core_disable_interrupts:
 	out (SIO0B_CTRL_PORT),a
 	xor a
 	out (SIO0B_CTRL_PORT),a
+	ld a,#0x01
+	out (SIO1_IOC_CTRL_PORT),a
+	xor a
+	out (SIO1_IOC_CTRL_PORT),a
+	ld a,#0x09
+	out (SIO1_IOC_CTRL_PORT),a
+	xor a
+	out (SIO1_IOC_CTRL_PORT),a
 	ld a,#0x09
 	out (SIO_MASTER_CTRL_PORT),a
 	xor a
@@ -276,15 +350,17 @@ SIO_REGISTER_IOCTRL:
 
 ; Send one byte on a BIOS-owned SIO channel.
 ; In:  A = SIO channel id, C = byte to send.
-; Out: A = BIOS_OK / BIOS_ERR.
+; Out: A = BIOS_OK / BIOS_ERR_*.
 ; Current behavior:
-;   SIO_CH_CONSOLE performs the same blocking/polled SIO0/B transmit that the
-;   legacy console used before this split. SIO_CH_IOCTRL is reserved and returns
-;   BIOS_ERR until SIO1 sync mode exists.
+;   SIO_CH_CONSOLE preserves the existing blocking/polled SIO0/B transmit path.
+;   SIO_CH_IOCTRL polls SIO1/A with a finite timeout because the MCU only
+;   clocks the synchronous link during an active transaction.
 sio_send_byte:
 	cp #SIO_CH_CONSOLE
 	jr z,SIO_SEND_CONSOLE
-	ld a,#BIOS_ERR
+	cp #SIO_CH_IOCTRL
+	jr z,SIO_SEND_IOCTRL
+	ld a,#BIOS_ERR_IO
 	ret
 SIO_SEND_CONSOLE:
 	in a,(SIO0B_CTRL_PORT)
@@ -294,6 +370,76 @@ SIO_SEND_CONSOLE:
 	out (SIO0B_DATA_PORT),a
 	xor a
 	ret
+SIO_SEND_IOCTRL:
+	ld de,#SIO_IOCTRL_TIMEOUT
+SIO_SEND_IOCTRL_WAIT:
+	in a,(SIO1_IOC_CTRL_PORT)
+	and #SIO_TX_READY
+	jr nz,SIO_SEND_IOCTRL_READY
+	dec de
+	ld a,d
+	or e
+	jr nz,SIO_SEND_IOCTRL_WAIT
+	ld a,#BIOS_ERR_TIMEOUT
+	ret
+SIO_SEND_IOCTRL_READY:
+	ld a,c
+	out (SIO1_IOC_DATA_PORT),a
+	xor a
+	ret
+
+; Receive one byte from a BIOS-owned SIO channel.
+; In:  A = SIO channel id.
+; Out: A = BIOS_OK / BIOS_ERR_*, C = byte when A = BIOS_OK.
+sio_recv_byte:
+	cp #SIO_CH_IOCTRL
+	jr z,SIO_RECV_IOCTRL
+	ld a,#BIOS_ERR_IO
+	ret
+SIO_RECV_IOCTRL:
+	ld de,#SIO_IOCTRL_TIMEOUT
+SIO_RECV_IOCTRL_WAIT:
+	in a,(SIO1_IOC_CTRL_PORT)
+	and #SIO_RX_READY
+	jr nz,SIO_RECV_IOCTRL_READY
+	dec de
+	ld a,d
+	or e
+	jr nz,SIO_RECV_IOCTRL_WAIT
+	ld a,#BIOS_ERR_TIMEOUT
+	ret
+SIO_RECV_IOCTRL_READY:
+	in a,(SIO1_IOC_DATA_PORT)
+	ld c,a
+	xor a
+	ret
+
+; SIO1 IO Controller low-level helpers. These are intentionally thin wrappers
+; over the generic SIO channel APIs so protocol code does not touch console
+; routines or SIO hardware ports directly.
+sio1_ioc_rts_assert:
+	ld a,#0x05
+	out (SIO1_IOC_CTRL_PORT),a
+	ld a,#SIO_WR5_IOCTRL_RTS_ON
+	out (SIO1_IOC_CTRL_PORT),a
+	xor a
+	ret
+
+sio1_ioc_rts_release:
+	ld a,#0x05
+	out (SIO1_IOC_CTRL_PORT),a
+	ld a,#SIO_WR5_IOCTRL_RTS_OFF
+	out (SIO1_IOC_CTRL_PORT),a
+	xor a
+	ret
+
+sio1_ioc_put_byte:
+	ld a,#SIO_CH_IOCTRL
+	jp sio_send_byte
+
+sio1_ioc_get_byte:
+	ld a,#SIO_CH_IOCTRL
+	jp sio_recv_byte
 
 ; Optional foreground RX kick.
 ; In:  A = SIO channel id.

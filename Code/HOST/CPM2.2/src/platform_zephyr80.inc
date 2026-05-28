@@ -12,6 +12,10 @@ SIOA_DATA                   = 0x20
 SIOA_CTRL                   = 0x21
 SIOB_DATA                   = 0x22
 SIOB_CTRL                   = 0x23
+SIO1A_DATA                  = 0x24
+SIO1A_CTRL                  = 0x25
+SIO1B_DATA                  = 0x26
+SIO1B_CTRL                  = 0x27
 
 CTC0_CTRL                   = 0x40
 CTC1_CTRL                   = 0x41

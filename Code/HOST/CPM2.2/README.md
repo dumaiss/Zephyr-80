@@ -22,6 +22,9 @@ Implemented now:
 - A BIOS-owned SIO core exists in driver slot 1 for SIO0/B plumbing.
 - The legacy SIO console backend is now a client of the SIO core.
 - SIO0/B receive uses maskable interrupts and a console RX sink/buffer.
+- SIO1/A is initialized as a BIOS-owned synchronous IO Controller link.
+- `IOCALL` is exposed as a Zephyr extended BIOS call for simple IO Controller
+  command/reply transactions.
 - `CONST` checks buffered input, and `CONIN` consumes from the buffer.
 - `CONOUT` remains a blocking/polled transmit path.
 - The old NMI/debug path has been removed.
@@ -34,8 +37,6 @@ Planned later:
   build.
 - Real video-card interrupt handling may need a different IM2 ownership model
   or table layout.
-- SIO1 is reserved for a future synchronous IO Controller link; the sync mode
-  and packet protocol are not implemented yet.
 - Additional drivers may occupy one or more whole fixed slots.
 
 ## Architecture Summary
@@ -100,12 +101,12 @@ EDFFh | Driver slot 3 end                            |
 EA00h | Driver slot 3 start                          |
       |                                              |
 E9FFh | Driver slot 2 end                            |
-E600h | Driver slot 2 start                          |
+E600h | Driver slot 2 start: IO Controller transport  |
       |                                              |
 E5FFh | Driver slot 1 end                            |
 E500h |   SIO core IM2 repeated-byte table, 256 bytes|
 E4E4h |   SIO core IM2 trampoline: JP sio_core_isr   |
-E380h |   legacy SIO console client                  |
+E420h |   legacy SIO console client                  |
 E200h | Driver slot 1 start: SIO core                |
       |                                              |
 E1FFh | Driver slot 0 end                            |
@@ -145,7 +146,8 @@ Current transitional allocation:
 |---:|---:|---|
 | 0 | `DE00h-E1FFh` | RAM disk backend |
 | 1 | `E200h-E5FFh` | SIO core plus legacy SIO console client |
-| 2-5 | `E600h-F5FFh` | available |
+| 2 | `E600h-E9FFh` | IO Controller transport |
+| 3-5 | `EA00h-F5FFh` | available |
 
 At a high level, adding a driver means:
 
@@ -188,6 +190,18 @@ Because this build only uses the SIO0/B interrupt source, the table is a
 compact 256-byte repeated-byte table inside slot 1. A future real video-card,
 SIO1, or other interrupting hardware may need global IM2 ownership or a
 257-byte FF-safe table.
+
+SIO1/A is initialized separately for the BIOS-owned IO Controller link:
+
+- synchronous mode, 8-bit RX/TX
+- external clock and external sync from the IO Controller MCU
+- no parity, no CRC, no SIO1 interrupts
+- RTS starts inactive and is asserted only around an `IOCALL` transaction
+
+`IOCALL` lives at `ZBIOS_EXT_BASE + 0Fh`. The caller passes `DE` pointing to a
+caller-owned request block in currently visible application memory; the BIOS
+reads TX bytes from the caller's TX pointer and writes reply bytes to the
+caller's RX pointer.
 
 ## Build
 
