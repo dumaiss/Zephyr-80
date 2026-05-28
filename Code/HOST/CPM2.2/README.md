@@ -19,8 +19,9 @@ Implemented now:
 - The CBIOS uses a cleaned-up fixed memory map with a core BIOS area and six
   fixed 1 KiB driver slots.
 - Drive A is backed by a RAM disk stored across RAM banks 2-7.
-- A legacy SIO console backend exists in driver slot 1.
-- SIO console receive now uses maskable interrupts and a BIOS RX buffer.
+- A BIOS-owned SIO core exists in driver slot 1 for SIO0/B plumbing.
+- The legacy SIO console backend is now a client of the SIO core.
+- SIO0/B receive uses maskable interrupts and a console RX sink/buffer.
 - `CONST` checks buffered input, and `CONIN` consumes from the buffer.
 - `CONOUT` remains a blocking/polled transmit path.
 - The old NMI/debug path has been removed.
@@ -33,6 +34,8 @@ Planned later:
   build.
 - Real video-card interrupt handling may need a different IM2 ownership model
   or table layout.
+- SIO1 is reserved for a future synchronous IO Controller link; the sync mode
+  and packet protocol are not implemented yet.
 - Additional drivers may occupy one or more whole fixed slots.
 
 ## Architecture Summary
@@ -79,12 +82,12 @@ F9FFh | Runtime state end                            |
 F900h | Runtime state start                          |
       |   CURRENT_BANK / DMA / XMOVE                 |
       |   storage state                              |
+      |   SIO core state                             |
       |   console driver state                       |
       +----------------------------------------------+
 F7FFh | Scratch / staging end                        |
 F780h |   free scratch window                        |
 F700h |   RAMDISK_DIRBUF                             |
-F680h |   free scratch window                        |
 F600h |   MOVE_BUFFER                                |
       +----------------------------------------------+
 F5FFh | Driver slot 5 end                            |
@@ -100,9 +103,10 @@ E9FFh | Driver slot 2 end                            |
 E600h | Driver slot 2 start                          |
       |                                              |
 E5FFh | Driver slot 1 end                            |
-E500h |   SIO IM2 repeated-byte table, 256 bytes     |
-E4E4h |   SIO IM2 trampoline: JP sio_console_isr     |
-E200h | Driver slot 1 start: legacy SIO console      |
+E500h |   SIO core IM2 repeated-byte table, 256 bytes|
+E4E4h |   SIO core IM2 trampoline: JP sio_core_isr   |
+E380h |   legacy SIO console client                  |
+E200h | Driver slot 1 start: SIO core                |
       |                                              |
 E1FFh | Driver slot 0 end                            |
 DE00h | Driver slot 0 start: RAM disk backend        |
@@ -131,7 +135,8 @@ BFFFh | banked TPA end                               |
 The BIOS presents stable CP/M entry points and dispatches through facades:
 
 - `src/cbios_console.asm` owns the console facade.
-- `src/cbios_storage_stub.asm` owns the storage facade.
+- `src/cbios_storage.asm` owns the storage facade.
+- `src/sio_core.asm` owns BIOS SIO hardware plumbing.
 - Driver backends provide tables or entry points behind those facades.
 
 Current transitional allocation:
@@ -139,7 +144,7 @@ Current transitional allocation:
 | Slot | Range | Current owner |
 |---:|---:|---|
 | 0 | `DE00h-E1FFh` | RAM disk backend |
-| 1 | `E200h-E5FFh` | legacy SIO console backend, including IM2 trampoline/table |
+| 1 | `E200h-E5FFh` | SIO core plus legacy SIO console client |
 | 2-5 | `E600h-F5FFh` | available |
 
 At a high level, adding a driver means:
@@ -158,15 +163,18 @@ instead of letting later drivers slide upward unpredictably.
 
 ## Interrupt Model
 
-The current console backend uses SIO channel B with Z80 maskable interrupts:
+The SIO core uses SIO0/B with Z80 maskable interrupts for the current console
+transport:
 
-- Boot and warm boot initialize the SIO, install runtime state, and then enable
-  the console interrupt path.
-- SIO RX interrupts store received bytes into a foreground-safe BIOS ring
-  buffer.
-- `CONST` checks the BIOS RX buffer.
+- Boot and warm boot initialize BIOS-owned SIO services, install runtime state,
+  register the console RX sink, and then enable the SIO interrupt path.
+- SIO RX interrupts dispatch received bytes to the registered console sink.
+- The legacy console sink stores received bytes in its foreground-safe terminal
+  RX buffer.
+- `CONST` checks the console RX buffer.
 - `CONIN` blocks until a buffered byte is available, then consumes it.
-- `CONOUT` still performs blocking/polled transmit for now.
+- `CONOUT` calls the SIO core send-byte API, which remains blocking/polled for
+  now.
 
 The current IM2 setup is transitional and SIO-only:
 
@@ -174,12 +182,12 @@ The current IM2 setup is transitional and SIO-only:
 - SIO WR2 vector byte is `00h`
 - the IM2 table lives at `E500h-E5FFh`
 - table bytes are `E4h`, so the CPU vectors to `E4E4h`
-- `E4E4h` contains `JP sio_console_isr`
+- `E4E4h` contains `JP sio_core_isr`
 
-Because this build only uses the SIO interrupt source, the table is a compact
-256-byte repeated-byte table inside slot 1. A future real video-card driver or
-other interrupting hardware may need global IM2 ownership or a 257-byte FF-safe
-table.
+Because this build only uses the SIO0/B interrupt source, the table is a
+compact 256-byte repeated-byte table inside slot 1. A future real video-card,
+SIO1, or other interrupting hardware may need global IM2 ownership or a
+257-byte FF-safe table.
 
 ## Build
 

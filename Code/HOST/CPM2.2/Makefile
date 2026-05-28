@@ -24,10 +24,10 @@ RUNTIME_SRCS ?= \
 	$(SRC_DIR)/boot_shadow_copy.asm \
 	$(SRC_DIR)/cbios_boot.asm \
 	$(SRC_DIR)/cbios_console.asm \
+	$(SRC_DIR)/sio_core.asm \
 	$(SRC_DIR)/cbios_console_sio.asm \
 	$(SRC_DIR)/cbios_storage.asm \
 	$(SRC_DIR)/cbios_ramdisk.asm \
-	$(SRC_DIR)/cbios_sio_init.asm \
 	$(SRC_DIR)/cbios_bank_select.asm \
 	$(SRC_DIR)/cbios_bank.asm
 

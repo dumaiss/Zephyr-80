@@ -94,9 +94,9 @@ bdos_entry_shim:
 
 	.include "boot_shadow_copy.asm"
 	.include "cbios_bank_select.asm"
-	.include "cbios_sio_init.asm"
 	.include "cbios_boot.asm"
 	.include "cbios_console.asm"
+	.include "sio_core.asm"
 	.include "cbios_console_sio.asm"
 	.include "cbios_storage.asm"
 	.include "cbios_ramdisk.asm"

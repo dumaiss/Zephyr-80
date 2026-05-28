@@ -11,7 +11,7 @@
 	.globl runtime_set_default_dma
 	.globl runtime_clear_default_dma
 	.globl console_init
-	.globl sio_console_enable_interrupts
+	.globl sio_core_init,sio_core_enable_interrupts
 	.globl WBOOT_RESIDENT_START,WBOOT_RESIDENT_END
 	.globl RUNTIME_WORK_AREA_START,RUNTIME_WORK_AREA_END
 	.globl CURRENT_BANK,cbios_dma_addr
@@ -36,7 +36,7 @@ boot:
 	ld sp,#CBIOS_STACK_TOP
 	call select_ram_bank0
 	call ctc_disable_interrupts
-	call sio_init
+	call sio_core_init
 	call console_init
 	call boot_print_banner
 	call prepare_runnable_bank
@@ -44,7 +44,7 @@ boot:
 	ld (IOBYTE),a
 	ld (TDRIVE),a
 	ld (DMA_BANK), a
-	call sio_console_enable_interrupts
+	call sio_core_enable_interrupts
 	
 	ld sp,#APP_STACK_TOP
 	ld hl,#WBOOT
@@ -94,11 +94,11 @@ wboot_resident:
 	; Protected stack handoff happens immediately after bank 0 selection.
 	ld sp,#CBIOS_STACK_TOP
 	call ctc_disable_interrupts
-	call sio_init
+	call sio_core_init
 	call console_init
 	call restore_ccp_from_rom
 	call prepare_runnable_bank
-	call sio_console_enable_interrupts
+	call sio_core_enable_interrupts
 	ld a,(TDRIVE)
 	ld c,a
 	jp CCP_CLEARBUF_ENTRY

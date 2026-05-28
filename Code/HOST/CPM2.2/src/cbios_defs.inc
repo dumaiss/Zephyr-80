@@ -16,11 +16,12 @@
 ;   F900h │ Runtime state start                          │
 ;         │   CURRENT_BANK / DMA / XMOVE                 │
 ;         │   storage state                              │
+;         │   SIO core state                             │
 ;         │   console driver state                       │
 ;         ├──────────────────────────────────────────────┤
 ;   F7FFh │ Scratch / staging end                        │
+;   F780h │   free scratch window                        │
 ;   F700h │   RAMDISK_DIRBUF                             │
-;   F680h │   free scratch window                        │
 ;   F600h │   MOVE_BUFFER                                │
 ;         ├──────────────────────────────────────────────┤
 ;   F5FFh │ Driver slot 5 end                            │
@@ -36,9 +37,10 @@
 ;   E600h │ Driver slot 2 start                          │
 ;         │                                              │
 ;   E5FFh │ Driver slot 1 end                            │
-;   E500h │   SIO IM2 repeated-byte table, 256 bytes     │
-;   E4E4h │   SIO IM2 trampoline: JP sio_console_isr     │
-;   E200h │ Driver slot 1 start: legacy SIO console      │
+;   E500h │   SIO core IM2 repeated-byte table, 256 bytes│
+;   E4E4h │   SIO core IM2 trampoline: JP sio_core_isr   │
+;   E380h │   legacy SIO console driver                  │
+;   E200h │ Driver slot 1 start: SIO core                │
 ;         │                                              │
 ;   E1FFh │ Driver slot 0 end                            │
 ;   DE00h │ Driver slot 0 start: RAM disk backend        │
@@ -60,7 +62,7 @@
 ;   CPU reads word at   = E500h/E501h
 ;   Table bytes there   = E4h/E4h
 ;   CPU jumps to        = E4E4h
-;   E4E4h contains      = JP sio_console_isr
+;   E4E4h contains      = JP sio_core_isr
 ;
 ; ------------------------------------------------------------------------------
 
@@ -73,6 +75,14 @@ CONST_NO_CHAR                   = 0x00
 CONST_HAS_CHAR                  = 0xff
 CR                              = 0x0d
 LF                              = 0x0a
+
+; BIOS-owned SIO service channels.
+;
+; SIO_CH_CONSOLE is SIO0/B and backs the legacy CP/M serial console.
+; SIO_CH_IOCTRL is reserved for the future SIO1 synchronous IO Controller link.
+; The future IO Controller path is not configured or spoken by this build.
+SIO_CH_CONSOLE                  = 0x00
+SIO_CH_IOCTRL                   = 0x01
 
 ; ------------------------------------------------------------------------------
 ; CP/M Page Zero & Environment Setup
@@ -193,14 +203,16 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ;     DE00h... current RAM disk backend
 ;
 ;   Slot 1:
-;     E200h... current legacy SIO console driver
-;     E4E4h... SIO IM2 trampoline
-;     E500h... SIO IM2 repeated-byte table, 256 bytes
+;     E200h... SIO core
+;     E380h... current legacy SIO console driver
+;     E4E4h... SIO core IM2 trampoline
+;     E500h... SIO core IM2 repeated-byte table, 256 bytes
 ;
 ; These names are kept so existing source can still ORG against them.
 
 CBIOS_RAMDISK_CODE_BASE         = CBIOS_DRIVER_SLOT0_BASE              ; DE00h
-CBIOS_CONSOLE_DRIVER_CODE_BASE  = CBIOS_DRIVER_SLOT1_BASE              ; E200h
+CBIOS_SIO_CORE_CODE_BASE        = CBIOS_DRIVER_SLOT1_BASE              ; E200h
+CBIOS_CONSOLE_DRIVER_CODE_BASE  = CBIOS_DRIVER_SLOT1_BASE + 0x0180     ; E380h
 
 ; Resident code region ends before scratch.
 ; LIMIT is one byte past the end.
@@ -236,11 +248,13 @@ CBIOS_SCRATCH_FREE0_SIZE        = CBIOS_SCRATCH_FREE0_LIMIT - CBIOS_SCRATCH_FREE
 ; ------------------------------------------------------------------------------
 ; IM2 Interrupt Vectors
 ; ------------------------------------------------------------------------------
-; E500h-E5FFh = SIO-owned IM2 repeated-byte table.
+; E500h-E5FFh = SIO-core-owned IM2 repeated-byte table.
 ;
-; This is deliberately inside Driver Slot 1 with the legacy SIO console driver.
+; This is deliberately inside Driver Slot 1 for the transitional SIO-only build.
+; The SIO core owns the symbols logically even though the bytes remain in the
+; same fixed slot as the legacy console client for now.
 ;
-; The current SIO console backend must emit exactly 256 bytes at
+; The current SIO core must emit exactly 256 bytes at
 ; CBIOS_IM2_VECTOR_TABLE. If it emits 257 bytes, it will overflow slot 1.
 
 CBIOS_IM2_VECTOR_TABLE          = 0xe500
@@ -251,8 +265,8 @@ CBIOS_IM2_VECTOR_PAGE           = 0xe5
 CBIOS_IM2_VECTOR_BYTE           = 0xe4
 
 ; Actual ISR trampoline address.
-; The console backend does ".org CBIOS_IM2_VECTOR_ENTRY" and emits:
-;   JP sio_console_isr
+; The SIO core does ".org CBIOS_IM2_VECTOR_ENTRY" and emits:
+;   JP sio_core_isr
 CBIOS_IM2_VECTOR_ENTRY          = 0xe4e4
 
 ; Byte written to SIO WR2.
@@ -278,7 +292,8 @@ CBIOS_WORK_AREA_END             = CBIOS_WORK_AREA_LIMIT - 1
 CBIOS_CONSOLE_WORK_AREA         = CBIOS_WORK_AREA + 0x0004
 CBIOS_BANK_WORK_AREA            = CBIOS_WORK_AREA + 0x0020
 CBIOS_STORAGE_WORK_AREA         = CBIOS_WORK_AREA + 0x0040
-CBIOS_CONSOLE_DRIVER_WORK_AREA  = CBIOS_WORK_AREA + 0x0070
+CBIOS_SIO_CORE_WORK_AREA        = CBIOS_WORK_AREA + 0x0070
+CBIOS_CONSOLE_DRIVER_WORK_AREA  = CBIOS_WORK_AREA + 0x0080
 
 ; Optional clearer aliases for docs / validation.
 CBIOS_RUNTIME_STATE_BASE        = CBIOS_WORK_AREA
@@ -370,7 +385,9 @@ RESERVED_RUNTIME_STATE_END      = CBIOS_RUNTIME_STATE_END
 ; Before Virtual Drip:
 ;   Slot 0 contains current RAM disk backend.
 ;   Slot 1 contains current legacy SIO console driver, including its IM2 table
-;   and trampoline.
+;   and trampoline. Logical ownership of SIO hardware, IM2, and ISR now belongs
+;   to the SIO core; the legacy console is a client in the same transitional
+;   slot.
 ;   Slots 2-5 are available for future drivers.
 
 LEGACY_RAMDISK_SLOT_FIRST       = 0
