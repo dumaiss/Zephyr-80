@@ -91,7 +91,7 @@ F980h |   free scratch window                        |
 F900h |   RAMDISK_DIRBUF                             |
 F800h |   MOVE_BUFFER                                |
       +----------------------------------------------+
-F5FFh | Driver slot 5 end                            |
+F7FFh | Driver slot 5 end                            |
 F400h | Driver slot 5 start                          |
       |                                              |
 F3FFh | Driver slot 4 end                            |
@@ -101,7 +101,7 @@ EFFFh | Driver slot 3 end                            |
 EC00h | Driver slot 3 start                          |
       |                                              |
 EBFFh | Driver slot 2 end                            |
-E800h | Driver slot 2 start: IO Controller transport  |
+E800h | Driver slot 2 start                          |
       |                                              |
 E7FFh | Driver slot 1 end                            |
 E400h | Driver slot 1 start: legacy SIO console      |
@@ -110,6 +110,7 @@ E3FFh | Driver slot 0 end                            |
 E000h | Driver slot 0 start: RAM disk backend        |
       +----------------------------------------------+
 DFFFh | Core BIOS end                                |
+DF60h |   IOCALL transaction transport               |
 DD90h |   SIO core + exact IM2 vector entry          |
 DC80h |   banking / XMOVE / LAUNCH                   |
 DC00h |   storage facade                             |
@@ -144,7 +145,7 @@ Current transitional allocation:
 |---:|---:|---|
 | 0 | `E000h-E3FFh` | RAM disk backend |
 | 1 | `E400h-E7FFh` | legacy SIO console client |
-| 2 | `E800h-EBFFh` | IO Controller transport |
+| 2 | `E800h-EBFFh` | available |
 | 3-5 | `EC00h-F7FFh` | available |
 
 At a high level, adding a driver means:
@@ -195,7 +196,8 @@ SIO1/A is initialized separately for the BIOS-owned IO Controller link:
 - no parity, no CRC, no SIO1 interrupts
 - RTS starts inactive and is asserted only around an `IOCALL` transaction
 
-`IOCALL` lives at `ZBIOS_EXT_BASE + 0Fh`. The caller passes `DE` pointing to a
+`IOCALL` lives at `ZBIOS_EXT_BASE + 0Fh`; its transport code is part of core
+BIOS, not a driver slot occupant. The caller passes `DE` pointing to a
 caller-owned request block in currently visible application memory; the BIOS
 reads TX bytes from the caller's TX pointer and writes reply bytes to the
 caller's RX pointer.

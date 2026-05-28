@@ -115,7 +115,7 @@ IMPLEMENTATION_SYMBOLS = [
     (("sio_core_isr",), "BIOS-owned SIO interrupt service routine."),
     (("sio_console_isr",), "Compatibility label that jumps to `sio_core_isr`."),
     (("SIO_CORE_CODE_END",), "BIOS-owned SIO core code end."),
-    (("IOCTRL_CODE_START",), "IOCALL transaction code start."),
+    (("IOCTRL_CODE_START",), "IOCALL transaction code start in core BIOS."),
     (("IOCALL",), "Zephyr extended BIOS IO Controller transaction call."),
     (("IOCTRL_CODE_END",), "IOCALL transaction code end."),
     (("CONSOLE_DRIVER_CODE_START",), "Legacy SIO console client driver code start."),
@@ -158,12 +158,6 @@ RUNTIME_STATE = [
     ("SIO1_RX_SINK", 2),
     ("SIO_CORE_IRQ_ENABLED", 1),
     ("SIO_CORE_IRQ_COUNT", 2),
-    ("IOCALL_REQ_PTR_STATE", 2),
-    ("IOCALL_TX_PTR_STATE", 2),
-    ("IOCALL_RX_PTR_STATE", 2),
-    ("IOCALL_TX_LEN_STATE", 1),
-    ("IOCALL_RX_MAX_STATE", 1),
-    ("IOCALL_RX_LEN_STATE", 1),
     ("CONSOLE_RX_HEAD", 1),
     ("CONSOLE_RX_TAIL", 1),
     ("CONSOLE_RX_COUNT", 1),
@@ -178,7 +172,7 @@ RUNTIME_STATE = [
 DRIVER_SLOT_OWNERS = {
     0: "RAM disk backend",
     1: "legacy SIO console backend",
-    2: "IO Controller transport",
+    2: "available",
     3: "available",
     4: "available",
     5: "available",
@@ -187,7 +181,6 @@ DRIVER_SLOT_OWNERS = {
 DRIVER_DECLARATIONS = [
     ("RAM disk backend", "RAMDISK_CODE_START", "RAMDISK_CODE_END", 0, 0),
     ("legacy SIO console backend", "CONSOLE_DRIVER_CODE_START", "CONSOLE_DRIVER_CODE_END", 1, 1),
-    ("IO Controller transport", "IOCTRL_CODE_START", "IOCTRL_CODE_END", 2, 2),
 ]
 
 CORE_RANGES = [
@@ -196,6 +189,7 @@ CORE_RANGES = [
     ("storage facade", "STORAGE_STUB_CODE_START", "STORAGE_STUB_CODE_END"),
     ("banking/XMOVE/LAUNCH", "BANKING_CODE_START", "BANKING_CODE_END"),
     ("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END"),
+    ("IOCALL transport", "IOCTRL_CODE_START", "IOCTRL_CODE_END"),
 ]
 
 VALIDATION_NOTES = [
@@ -204,7 +198,6 @@ VALIDATION_NOTES = [
     "RAM disk backend must stay inside slot 0.",
     "SIO core and its exact IM2 vector entry must stay inside core BIOS.",
     "Legacy SIO console backend must stay inside slot 1.",
-    "IO Controller transport must stay inside slot 2.",
     "Scratch buffers must not overlap resident code.",
     "Runtime state must not overlap scratch, stack, or the SIO-owned IM2 table.",
     "Stack guard must remain above runtime state.",
@@ -332,7 +325,6 @@ def runtime_range(symbols: dict[str, int]) -> tuple[int, int]:
         require_symbol(symbols, "BANKING_STATE_START"),
         require_symbol(symbols, "STORAGE_STATE_START"),
         require_symbol(symbols, "SIO_CORE_STATE_START"),
-        require_symbol(symbols, "IOCTRL_STATE_START"),
         require_symbol(symbols, "CONSOLE_DRIVER_STATE_START"),
     ]
     ends = [
@@ -341,7 +333,6 @@ def runtime_range(symbols: dict[str, int]) -> tuple[int, int]:
         require_symbol(symbols, "BANKING_STATE_END"),
         require_symbol(symbols, "STORAGE_STATE_END"),
         require_symbol(symbols, "SIO_CORE_STATE_END"),
-        require_symbol(symbols, "IOCTRL_STATE_END"),
         require_symbol(symbols, "CONSOLE_DRIVER_STATE_END"),
     ]
     return min(starts), max(ends) - 1
@@ -732,14 +723,6 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             symbol_row(symbols, ("SIO_CORE_IRQ_ENABLED", "CONSOLE_IRQ_ENABLED"), "BIOS-owned SIO IRQ mode flag; legacy alias retained."),
             symbol_row(symbols, ("SIO_CORE_IRQ_COUNT", "CONSOLE_IRQ_COUNT"), "BIOS-owned SIO ISR entry counter; legacy alias retained."),
             symbol_row(symbols, ("SIO_CORE_STATE_END",), "BIOS-owned SIO core state end."),
-            symbol_row(symbols, ("IOCTRL_STATE_START",), "IOCALL transaction state start."),
-            symbol_row(symbols, ("IOCALL_REQ_PTR_STATE",), "Current caller-owned IOCALL request block pointer."),
-            symbol_row(symbols, ("IOCALL_TX_PTR_STATE",), "Current caller-owned IOCALL TX payload pointer."),
-            symbol_row(symbols, ("IOCALL_RX_PTR_STATE",), "Current caller-owned IOCALL RX payload pointer."),
-            symbol_row(symbols, ("IOCALL_TX_LEN_STATE",), "Current IOCALL TX payload length."),
-            symbol_row(symbols, ("IOCALL_RX_MAX_STATE",), "Current IOCALL RX payload capacity."),
-            symbol_row(symbols, ("IOCALL_RX_LEN_STATE",), "Current IOCALL RX payload length while receiving."),
-            symbol_row(symbols, ("IOCTRL_STATE_END",), "IOCALL transaction state end."),
             symbol_row(symbols, ("CONSOLE_DRIVER_STATE_START",), "Console driver state start."),
             symbol_row(symbols, ("CONSOLE_RX_HEAD",), "Receive buffer head index."),
             symbol_row(symbols, ("CONSOLE_RX_TAIL",), "Receive buffer tail index."),
@@ -795,11 +778,10 @@ def write_memory_map(
         ),
         range_row(span(require_symbol(symbols, "CBASE"), require_symbol(symbols, "CCPSTACK")), "CP/M CCP", f"`CBASE` is `{h4(require_symbol(symbols, 'CBASE'))}`."),
         range_row(span(require_symbol(symbols, "FBASE"), cbios_base - 1), "CP/M BDOS and state", f"`FBASE` is `{h4(require_symbol(symbols, 'FBASE'))}` in the current assembled image."),
-        range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, LAUNCH, and SIO core."),
+        range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, LAUNCH, SIO core, and IOCALL transport."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT0_END")), "Driver slot 0", "Current transitional owner: RAM disk backend."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT1_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT1_END")), "Driver slot 1", "Current transitional owner: legacy SIO console client."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT2_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT2_END")), "Driver slot 2", "Current transitional owner: SIO1/A IO Controller transaction transport."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT3_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slots 3-5", "Available fixed 1 KiB slots for future drivers."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT2_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slots 2-5", "Available fixed 1 KiB slots for future drivers."),
         range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `RAMDISK_DIRBUF` is at `{h4(require_symbol(symbols, 'RAMDISK_DIRBUF'))}`."),
         range_row(span(runtime_start, runtime_end), "BIOS runtime state", "Current bank, DMA address, banking state, storage state, SIO core state, and console driver state."),
         range_row(span(stack_guard, area_end), "Protected firmware stack and work window", f"Stack top is `{h4(stack_top)}`; stack guard is `{h4(stack_guard)}`."),
@@ -820,6 +802,7 @@ def write_memory_map(
         f"| `{span(require_symbol(symbols, 'STORAGE_STUB_CODE_START'), require_symbol(symbols, 'STORAGE_STUB_CODE_END') - 1)}` | Storage BIOS facade. |",
         f"| `{span(require_symbol(symbols, 'BANKING_CODE_START'), require_symbol(symbols, 'BANKING_CODE_END') - 1)}` | Banking and high-memory `LAUNCH` implementation. |",
         f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core and exact IM2 vector entry. |",
+        f"| `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` | IOCALL transaction transport. |",
         "",
         "## Driver Slot Table",
         "",
@@ -833,8 +816,6 @@ def write_memory_map(
             contents = f"`{span(require_symbol(symbols, 'RAMDISK_CODE_START'), require_symbol(symbols, 'RAMDISK_CODE_END') - 1)}` RAM disk backend."
         elif slot == 1:
             contents = f"`{span(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'), require_symbol(symbols, 'CONSOLE_DRIVER_CODE_END') - 1)}` legacy console client."
-        elif slot == 2:
-            contents = f"`{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` IOCALL transaction transport."
         else:
             contents = "Available."
         lines.append(
@@ -859,12 +840,7 @@ def write_memory_map(
             f"| `{span(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'), require_symbol(symbols, 'CONSOLE_DRIVER_CODE_END') - 1)}` | legacy console driver | CP/M console semantics and terminal RX buffer client. |",
             "",
             "SIO_CH_IOCTRL is the BIOS-owned SIO1/A synchronous IO Controller link. SIO1/A uses external clock and external sync from the MCU, with RTS as the service-request signal. SIO1/A interrupts are disabled in this build.",
-            "",
-            "## Slot 2 IO Controller Layout",
-            "",
-            "| Range | Owner | Notes |",
-            "|---|---|---|",
-            f"| `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` | IO Controller transport | IOCALL command/reply transaction code. |",
+            f"`IOCALL` is core BIOS code at `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` and does not occupy driver slot space.",
             "",
         "## BIOS Jump Table Layout",
         "",
@@ -975,7 +951,7 @@ def write_memory_map(
             f"- `CBIOS_BASE` is `{h4(cbios_base)}`; CBIOS layout constants are derived from this base.",
             f"- `CBIOS_CODE_LIMIT` is `{h4(code_limit)}`; no resident code may cross into scratch/staging.",
             f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the legacy console client starts at `{h4(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'))}` in slot 1.",
-            f"- `IOCALL` code starts at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` in slot 2 and uses the BIOS-owned SIO1/A synchronous IO Controller transport.",
+            f"- `IOCALL` code starts at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` inside core BIOS and uses the BIOS-owned SIO1/A synchronous IO Controller transport.",
             f"- `LAUNCH` code resides at `{h4(require_symbol(symbols, 'LAUNCH'))}`, inside protected high BIOS memory.",
             f"- `WBOOT` resident code starts at `{h4(require_symbol(symbols, 'WBOOT_RESIDENT_START'))}`, inside protected high BIOS memory.",
             f"- `ZBIOS_EXT_BASE` is at `{h4(ext_base)}` and exposes `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `LAUNCH`, and `IOCALL`.",

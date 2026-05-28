@@ -24,7 +24,7 @@
 ;   F900h │   RAMDISK_DIRBUF                             │
 ;   F800h │   MOVE_BUFFER                                │
 ;         ├──────────────────────────────────────────────┤
-;   F5FFh │ Driver slot 5 end                            │
+;   F7FFh │ Driver slot 5 end                            │
 ;   F400h │ Driver slot 5 start                          │
 ;         │                                              │
 ;   F3FFh │ Driver slot 4 end                            │
@@ -34,7 +34,7 @@
 ;   EC00h │ Driver slot 3 start                          │
 ;         │                                              │
 ;   EBFFh │ Driver slot 2 end                            │
-;   E800h │ Driver slot 2 start: IOCALL transport         │
+;   E800h │ Driver slot 2 start                          │
 ;         │                                              │
 ;   E7FFh │ Driver slot 1 end                            │
 ;   E400h │ Driver slot 1 start: legacy SIO console      │
@@ -43,6 +43,7 @@
 ;   E000h │ Driver slot 0 start: RAM disk backend        │
 ;         ├──────────────────────────────────────────────┤
 ;   DFFFh │ Core BIOS end                                │
+;   DF60h │   IOCALL transaction transport               │
 ;   DD90h │   SIO core + exact IM2 vector entry          │
 ;   DC80h │   banking / XMOVE / LAUNCH                   │
 ;   DC00h │   storage facade                             │
@@ -224,15 +225,12 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ;   Slot 1:
 ;     E400h... current legacy SIO console driver
 ;
-;   Slot 2:
-;     E800h... SIO1/A IO Controller IOCALL transaction transport
-;
 ; These names are kept so existing source can still ORG against them.
 
 CBIOS_RAMDISK_CODE_BASE         = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0390                  ; DD90h
 CBIOS_CONSOLE_DRIVER_CODE_BASE  = CBIOS_DRIVER_SLOT1_BASE              ; E400h
-CBIOS_IOCTRL_CODE_BASE          = CBIOS_DRIVER_SLOT2_BASE              ; E800h
+CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x0560                  ; DF60h
 
 ; Resident code region ends before scratch.
 ; LIMIT is one byte past the end.
@@ -300,7 +298,6 @@ CBIOS_BANK_WORK_AREA            = CBIOS_WORK_AREA + 0x0020
 CBIOS_STORAGE_WORK_AREA         = CBIOS_WORK_AREA + 0x0040
 CBIOS_SIO_CORE_WORK_AREA        = CBIOS_WORK_AREA + 0x0070
 CBIOS_CONSOLE_DRIVER_WORK_AREA  = CBIOS_WORK_AREA + 0x0080
-CBIOS_IOCTRL_WORK_AREA          = CBIOS_WORK_AREA + 0x00b0
 
 ; Optional clearer aliases for docs / validation.
 CBIOS_RUNTIME_STATE_BASE        = CBIOS_WORK_AREA
@@ -396,8 +393,8 @@ RESERVED_RUNTIME_STATE_END      = CBIOS_RUNTIME_STATE_END
 ;   to the SIO core; the legacy console is a client in the same transitional
 ;   slot.
 ;   SIO core is part of core BIOS, not a driver slot occupant.
-;   Slot 2 contains the SIO1/A IO Controller IOCALL transaction transport.
-;   Slots 3-5 are available for future drivers.
+;   IOCALL is part of core BIOS, not a driver slot occupant.
+;   Slots 2-5 are available for future drivers.
 
 LEGACY_RAMDISK_SLOT_FIRST       = 0
 LEGACY_RAMDISK_SLOT_LAST        = 0

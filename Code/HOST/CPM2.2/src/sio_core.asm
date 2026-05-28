@@ -28,7 +28,7 @@
 	.globl sio1_ioc_put_byte,sio1_ioc_get_byte
 	.globl sio_core_rx_lock,sio_core_rx_unlock,sio_core_isr,sio_console_isr
 	.globl CONIRQ,sio_console_enable_interrupts,sio_console_disable_interrupts
-	.globl SIO_CORE_CODE_START,SIO_CORE_CODE_END,BIOS_CODE_END
+	.globl SIO_CORE_CODE_START,SIO_CORE_CODE_END
 	.globl SIO_CORE_STATE_START,SIO_CORE_STATE_END
 	.globl SIO0B_RX_SINK,SIO1_RX_SINK
 	.globl SIO_CORE_IRQ_ENABLED,SIO_CORE_IRQ_COUNT
@@ -507,7 +507,6 @@ sio_console_isr:
 	jp sio_core_isr
 
 SIO_CORE_CODE_END:
-BIOS_CODE_END:
 
 	.area WORK (ABS)
 	.org CBIOS_SIO_CORE_WORK_AREA

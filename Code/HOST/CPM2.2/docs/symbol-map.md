@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 29315 bytes |
+| Firmware symbol map | `build/firmware.map` | 29011 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 524288 bytes |
 | Final burnable image | `build/zephyr80.bin` | 524288 bytes |
 | Layout manifest | `build/layout.manifest` | 882 bytes |
@@ -137,9 +137,9 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `sio_core_isr` | `DF0Eh` | BIOS-owned SIO interrupt service routine. |
 | `sio_console_isr` | `DF5Ch` | Compatibility label that jumps to `sio_core_isr`. |
 | `SIO_CORE_CODE_END` | `DF5Fh` | BIOS-owned SIO core code end. |
-| `IOCTRL_CODE_START` | `E800h` | IOCALL transaction code start. |
-| `IOCALL` | `E800h` | Zephyr extended BIOS IO Controller transaction call. |
-| `IOCTRL_CODE_END` | `E8DCh` | IOCALL transaction code end. |
+| `IOCTRL_CODE_START` | `DF60h` | IOCALL transaction code start in core BIOS. |
+| `IOCALL` | `DF60h` | Zephyr extended BIOS IO Controller transaction call. |
+| `IOCTRL_CODE_END` | `DFF6h` | IOCALL transaction code end. |
 | `CONSOLE_DRIVER_CODE_START` | `E400h` | Legacy SIO console client driver code start. |
 | `sio_console_driver` | `E400h` | Legacy console driver dispatch table. |
 | `sio_console_init` | `E40Eh` | Legacy console initialization and SIO RX sink registration. |
@@ -154,7 +154,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `MOVE` | `DCA2h` | Same-bank or cross-bank memory move. |
 | `LAUNCH` | `DD2Eh` | Launch application bank from high memory. |
 | `BANKING_CODE_END` | `DD85h` | Banking extension implementation end. |
-| `BIOS_CODE_END` | `DF5Fh` | End of generated BIOS code. |
+| `BIOS_CODE_END` | `DFF6h` | End of generated BIOS code. |
 
 ## Runtime State Symbols
 
@@ -192,14 +192,6 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `SIO_CORE_IRQ_ENABLED` / `CONSOLE_IRQ_ENABLED` | `FA74h` | BIOS-owned SIO IRQ mode flag; legacy alias retained. |
 | `SIO_CORE_IRQ_COUNT` / `CONSOLE_IRQ_COUNT` | `FA75h` | BIOS-owned SIO ISR entry counter; legacy alias retained. |
 | `SIO_CORE_STATE_END` | `FA77h` | BIOS-owned SIO core state end. |
-| `IOCTRL_STATE_START` | `FAB0h` | IOCALL transaction state start. |
-| `IOCALL_REQ_PTR_STATE` | `FAB0h` | Current caller-owned IOCALL request block pointer. |
-| `IOCALL_TX_PTR_STATE` | `FAB2h` | Current caller-owned IOCALL TX payload pointer. |
-| `IOCALL_RX_PTR_STATE` | `FAB4h` | Current caller-owned IOCALL RX payload pointer. |
-| `IOCALL_TX_LEN_STATE` | `FAB6h` | Current IOCALL TX payload length. |
-| `IOCALL_RX_MAX_STATE` | `FAB7h` | Current IOCALL RX payload capacity. |
-| `IOCALL_RX_LEN_STATE` | `FAB8h` | Current IOCALL RX payload length while receiving. |
-| `IOCTRL_STATE_END` | `FAB9h` | IOCALL transaction state end. |
 | `CONSOLE_DRIVER_STATE_START` | `FA80h` | Console driver state start. |
 | `CONSOLE_RX_HEAD` | `FA80h` | Receive buffer head index. |
 | `CONSOLE_RX_TAIL` | `FA81h` | Receive buffer tail index. |
