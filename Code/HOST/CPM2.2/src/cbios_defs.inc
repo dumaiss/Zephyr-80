@@ -11,41 +11,39 @@
 ;         │ BIOS stack / reserve                         │
 ;   FFF0h │   CBIOS_STACK_TOP                            │
 ;         │   stack grows downward                       │
-;   FA00h ├──────────────────────────────────────────────┤
-;   F9FFh │ Runtime state end                            │
-;   F900h │ Runtime state start                          │
+;   FB00h ├──────────────────────────────────────────────┤
+;   FAFFh │ Runtime state end                            │
+;   FA00h │ Runtime state start                          │
 ;         │   CURRENT_BANK / DMA / XMOVE                 │
 ;         │   storage state                              │
 ;         │   SIO core state                             │
 ;         │   console driver state                       │
 ;         ├──────────────────────────────────────────────┤
-;   F7FFh │ Scratch / staging end                        │
-;   F780h │   free scratch window                        │
-;   F700h │   RAMDISK_DIRBUF                             │
-;   F600h │   MOVE_BUFFER                                │
+;   F9FFh │ Scratch / staging end                        │
+;   F980h │   free scratch window                        │
+;   F900h │   RAMDISK_DIRBUF                             │
+;   F800h │   MOVE_BUFFER                                │
 ;         ├──────────────────────────────────────────────┤
 ;   F5FFh │ Driver slot 5 end                            │
-;   F200h │ Driver slot 5 start                          │
+;   F400h │ Driver slot 5 start                          │
 ;         │                                              │
-;   F1FFh │ Driver slot 4 end                            │
-;   EE00h │ Driver slot 4 start                          │
+;   F3FFh │ Driver slot 4 end                            │
+;   F000h │ Driver slot 4 start                          │
 ;         │                                              │
-;   EDFFh │ Driver slot 3 end                            │
-;   EA00h │ Driver slot 3 start                          │
+;   EFFFh │ Driver slot 3 end                            │
+;   EC00h │ Driver slot 3 start                          │
 ;         │                                              │
-;   E9FFh │ Driver slot 2 end                            │
-;   E600h │ Driver slot 2 start: IOCALL transport         │
+;   EBFFh │ Driver slot 2 end                            │
+;   E800h │ Driver slot 2 start: IOCALL transport         │
 ;         │                                              │
-;   E5FFh │ Driver slot 1 end                            │
-;   E500h │   SIO core IM2 repeated-byte table, 256 bytes│
-;   E4E4h │   SIO core IM2 trampoline: JP sio_core_isr   │
-;   E420h │   legacy SIO console driver                  │
-;   E200h │ Driver slot 1 start: SIO core                │
+;   E7FFh │ Driver slot 1 end                            │
+;   E400h │ Driver slot 1 start: legacy SIO console      │
 ;         │                                              │
-;   E1FFh │ Driver slot 0 end                            │
-;   DE00h │ Driver slot 0 start: RAM disk backend        │
+;   E3FFh │ Driver slot 0 end                            │
+;   E000h │ Driver slot 0 start: RAM disk backend        │
 ;         ├──────────────────────────────────────────────┤
-;   DDFFh │ Core BIOS end                                │
+;   DFFFh │ Core BIOS end                                │
+;   DD90h │   SIO core + exact IM2 vector entry          │
 ;   DC80h │   banking / XMOVE / LAUNCH                   │
 ;   DC00h │   storage facade                             │
 ;   DB80h │   console facade                             │
@@ -53,16 +51,13 @@
 ;         └──────────────────────────────────────────────┘
 ;
 ; Important IM2 note:
-;   The SIO console backend must emit exactly 256 bytes at CBIOS_IM2_VECTOR_TABLE.
-;   With the table at E500h, 256 bytes occupies E500h-E5FFh exactly.
-;   The old 257-byte table would spill one byte into E600h.
+;   The SIO core emits one exact two-byte IM2 table entry. SIO0/B WR2 is set to
+;   the low byte of that entry, and WR1 status-affects-vector is kept disabled.
 ;
-;   I register          = E5h
-;   SIO WR2 vector      = 00h
-;   CPU reads word at   = E500h/E501h
-;   Table bytes there   = E4h/E4h
-;   CPU jumps to        = E4E4h
-;   E4E4h contains      = JP sio_core_isr
+;   I register          = DDh
+;   SIO WR2 vector      = 90h
+;   CPU reads word at   = DD90h/DD91h
+;   Table word there    = sio_core_isr
 ;
 ; ------------------------------------------------------------------------------
 
@@ -141,7 +136,7 @@ CBIOS_BASE                      = 0xda00
 ; ------------------------------------------------------------------------------
 ; Core BIOS Region
 ; ------------------------------------------------------------------------------
-; DA00h-DDFFh = core BIOS.
+; DA00h-DFFFh = core BIOS.
 ;
 ; This is one contiguous BIOS-owned core region.
 ; Banking / XMOVE / LAUNCH are core BIOS services, not drivers.
@@ -152,9 +147,10 @@ CBIOS_BASE                      = 0xda00
 ;   DB80h  console facade
 ;   DC00h  storage facade
 ;   DC80h  banking / XMOVE / LAUNCH
+;   DD90h  SIO core
 
 CBIOS_CORE_BASE                 = CBIOS_BASE
-CBIOS_CORE_LIMIT                = 0xde00
+CBIOS_CORE_LIMIT                = 0xe000
 CBIOS_CORE_END                  = CBIOS_CORE_LIMIT - 1
 CBIOS_CORE_SIZE                 = CBIOS_CORE_LIMIT - CBIOS_CORE_BASE
 
@@ -170,7 +166,7 @@ CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x0280      ; DC80h
 ; ------------------------------------------------------------------------------
 ; Fixed Driver Slots
 ; ------------------------------------------------------------------------------
-; DE00h-F5FFh = six fixed 1 KiB driver/code slots.
+; E000h-F7FFh = six fixed 1 KiB driver/code slots.
 ;
 ; Drivers may occupy one or more whole slots.
 ; Build-time validation should ensure drivers stay inside declared slots.
@@ -189,27 +185,27 @@ CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x0280      ; DC80h
 
 CBIOS_DRIVER_SLOT_SIZE          = 0x0400
 
-CBIOS_DRIVER_SLOT0_BASE         = 0xde00
+CBIOS_DRIVER_SLOT0_BASE         = 0xe000
 CBIOS_DRIVER_SLOT0_LIMIT        = CBIOS_DRIVER_SLOT0_BASE + CBIOS_DRIVER_SLOT_SIZE
 CBIOS_DRIVER_SLOT0_END          = CBIOS_DRIVER_SLOT0_LIMIT - 1
 
-CBIOS_DRIVER_SLOT1_BASE         = 0xe200
+CBIOS_DRIVER_SLOT1_BASE         = 0xe400
 CBIOS_DRIVER_SLOT1_LIMIT        = CBIOS_DRIVER_SLOT1_BASE + CBIOS_DRIVER_SLOT_SIZE
 CBIOS_DRIVER_SLOT1_END          = CBIOS_DRIVER_SLOT1_LIMIT - 1
 
-CBIOS_DRIVER_SLOT2_BASE         = 0xe600
+CBIOS_DRIVER_SLOT2_BASE         = 0xe800
 CBIOS_DRIVER_SLOT2_LIMIT        = CBIOS_DRIVER_SLOT2_BASE + CBIOS_DRIVER_SLOT_SIZE
 CBIOS_DRIVER_SLOT2_END          = CBIOS_DRIVER_SLOT2_LIMIT - 1
 
-CBIOS_DRIVER_SLOT3_BASE         = 0xea00
+CBIOS_DRIVER_SLOT3_BASE         = 0xec00
 CBIOS_DRIVER_SLOT3_LIMIT        = CBIOS_DRIVER_SLOT3_BASE + CBIOS_DRIVER_SLOT_SIZE
 CBIOS_DRIVER_SLOT3_END          = CBIOS_DRIVER_SLOT3_LIMIT - 1
 
-CBIOS_DRIVER_SLOT4_BASE         = 0xee00
+CBIOS_DRIVER_SLOT4_BASE         = 0xf000
 CBIOS_DRIVER_SLOT4_LIMIT        = CBIOS_DRIVER_SLOT4_BASE + CBIOS_DRIVER_SLOT_SIZE
 CBIOS_DRIVER_SLOT4_END          = CBIOS_DRIVER_SLOT4_LIMIT - 1
 
-CBIOS_DRIVER_SLOT5_BASE         = 0xf200
+CBIOS_DRIVER_SLOT5_BASE         = 0xf400
 CBIOS_DRIVER_SLOT5_LIMIT        = CBIOS_DRIVER_SLOT5_BASE + CBIOS_DRIVER_SLOT_SIZE
 CBIOS_DRIVER_SLOT5_END          = CBIOS_DRIVER_SLOT5_LIMIT - 1
 
@@ -223,42 +219,39 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ; Before Virtual Drip:
 ;
 ;   Slot 0:
-;     DE00h... current RAM disk backend
+;     E000h... current RAM disk backend
 ;
 ;   Slot 1:
-;     E200h... SIO core
-;     E420h... current legacy SIO console driver
-;     E4E4h... SIO core IM2 trampoline
-;     E500h... SIO core IM2 repeated-byte table, 256 bytes
+;     E400h... current legacy SIO console driver
 ;
 ;   Slot 2:
-;     E600h... SIO1/A IO Controller IOCALL transaction transport
+;     E800h... SIO1/A IO Controller IOCALL transaction transport
 ;
 ; These names are kept so existing source can still ORG against them.
 
-CBIOS_RAMDISK_CODE_BASE         = CBIOS_DRIVER_SLOT0_BASE              ; DE00h
-CBIOS_SIO_CORE_CODE_BASE        = CBIOS_DRIVER_SLOT1_BASE              ; E200h
-CBIOS_CONSOLE_DRIVER_CODE_BASE  = CBIOS_DRIVER_SLOT1_BASE + 0x0220     ; E420h
-CBIOS_IOCTRL_CODE_BASE          = CBIOS_DRIVER_SLOT2_BASE              ; E600h
+CBIOS_RAMDISK_CODE_BASE         = CBIOS_DRIVER_SLOT0_BASE              ; E000h
+CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0390                  ; DD90h
+CBIOS_CONSOLE_DRIVER_CODE_BASE  = CBIOS_DRIVER_SLOT1_BASE              ; E400h
+CBIOS_IOCTRL_CODE_BASE          = CBIOS_DRIVER_SLOT2_BASE              ; E800h
 
 ; Resident code region ends before scratch.
 ; LIMIT is one byte past the end.
-CBIOS_CODE_LIMIT                = 0xf600
+CBIOS_CODE_LIMIT                = 0xf800
 CBIOS_CODE_END                  = CBIOS_CODE_LIMIT - 1
 
 ; ------------------------------------------------------------------------------
 ; Scratch Area & Buffers
 ; ------------------------------------------------------------------------------
-; F600h-F7FFh = BIOS scratch / staging.
+; F800h-F9FFh = BIOS scratch / staging.
 ;
 ; Current active buffers:
-;   F600h-F67Fh MOVE_BUFFER
-;   F700h-F77Fh RAMDISK_DIRBUF
+;   F800h-F8FFh MOVE_BUFFER
+;   F900h-F97Fh RAMDISK_DIRBUF
 ;
 ; The remaining gaps are available for later temporary BIOS work buffers.
 
-CBIOS_SCRATCH_BASE              = 0xf600
-CBIOS_SCRATCH_LIMIT             = 0xf800
+CBIOS_SCRATCH_BASE              = 0xf800
+CBIOS_SCRATCH_LIMIT             = 0xfa00
 CBIOS_SCRATCH_END               = CBIOS_SCRATCH_LIMIT - 1
 
 MOVE_BUFFER                     = CBIOS_SCRATCH_BASE
@@ -268,52 +261,38 @@ RAMDISK_DIRBUF                  = CBIOS_SCRATCH_BASE + 0x0100
 RAMDISK_DIRBUF_SIZE             = 0x0080
 
 ; Optional named free scratch windows.
-CBIOS_SCRATCH_FREE0             = 0xf780
-CBIOS_SCRATCH_FREE0_LIMIT       = 0xf800
+CBIOS_SCRATCH_FREE0             = 0xf980
+CBIOS_SCRATCH_FREE0_LIMIT       = 0xfa00
 CBIOS_SCRATCH_FREE0_SIZE        = CBIOS_SCRATCH_FREE0_LIMIT - CBIOS_SCRATCH_FREE0
 
 ; ------------------------------------------------------------------------------
 ; IM2 Interrupt Vectors
 ; ------------------------------------------------------------------------------
-; E500h-E5FFh = SIO-core-owned IM2 repeated-byte table.
+; DD90h-DD91h = SIO-core-owned exact IM2 vector table entry.
 ;
-; This is deliberately inside Driver Slot 1 for the transitional SIO-only build.
-; The SIO core owns the symbols logically even though the bytes remain in the
-; same fixed slot as the legacy console client for now.
-;
-; The current SIO core must emit exactly 256 bytes at
-; CBIOS_IM2_VECTOR_TABLE. If it emits 257 bytes, it will overflow slot 1.
-
-CBIOS_IM2_VECTOR_TABLE          = 0xe500
-CBIOS_IM2_VECTOR_PAGE           = 0xe5
-
-; Repeated byte used inside the IM2 table.
-; E4h/E4h forms address E4E4h.
-CBIOS_IM2_VECTOR_BYTE           = 0xe4
-
-; Actual ISR trampoline address.
-; The SIO core does ".org CBIOS_IM2_VECTOR_ENTRY" and emits:
-;   JP sio_core_isr
-CBIOS_IM2_VECTOR_ENTRY          = 0xe4e4
+; The SIO core emits ".dw sio_core_isr" at this address.
+CBIOS_IM2_VECTOR_TABLE          = CBIOS_SIO_CORE_CODE_BASE
+CBIOS_IM2_VECTOR_PAGE           = 0xdd
+CBIOS_IM2_VECTOR_ENTRY          = CBIOS_IM2_VECTOR_TABLE
 
 ; Byte written to SIO WR2.
-; With I = E5h and vector = 00h, the CPU reads the vector word at E500h.
-CBIOS_SIO_VECTOR                = 0x00
+; With I = DDh and vector = 90h, the CPU reads the vector word at DD90h.
+CBIOS_SIO_VECTOR                = 0x90
 
-; Table is exactly 256 bytes in this layout.
-CBIOS_IM2_VECTOR_SIZE           = 0x0100
+; Table is exactly one IM2 entry in this layout.
+CBIOS_IM2_VECTOR_SIZE           = 0x0002
 CBIOS_IM2_VECTOR_LIMIT          = CBIOS_IM2_VECTOR_TABLE + CBIOS_IM2_VECTOR_SIZE
 CBIOS_IM2_VECTOR_END            = CBIOS_IM2_VECTOR_LIMIT - 1
 
 ; ------------------------------------------------------------------------------
 ; Work Areas / Runtime State
 ; ------------------------------------------------------------------------------
-; F900h-F9FFh = persistent BIOS runtime state.
+; FA00h-FAFFh = persistent BIOS runtime state.
 ;
 ; Keep existing public work-area names so current source keeps assembling.
 
-CBIOS_WORK_AREA                 = 0xf900
-CBIOS_WORK_AREA_LIMIT           = 0xfa00
+CBIOS_WORK_AREA                 = 0xfa00
+CBIOS_WORK_AREA_LIMIT           = 0xfb00
 CBIOS_WORK_AREA_END             = CBIOS_WORK_AREA_LIMIT - 1
 
 CBIOS_CONSOLE_WORK_AREA         = CBIOS_WORK_AREA + 0x0004
@@ -331,12 +310,12 @@ CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 ; ------------------------------------------------------------------------------
 ; Stack & Guard
 ; ------------------------------------------------------------------------------
-; FA00h-FFFFh = BIOS stack / reserve.
+; FB00h-FFFFh = BIOS stack / reserve.
 ;
 ; Stack top remains FFF0h.
-; Stack grows downward and should not cross FA00h.
+; Stack grows downward and should not cross FB00h.
 
-CBIOS_STACK_GUARD               = 0xfa00
+CBIOS_STACK_GUARD               = 0xfb00
 CBIOS_STACK_TOP                 = 0xfff0
 
 CBIOS_AREA_LIMIT                = 0x10000
@@ -416,6 +395,7 @@ RESERVED_RUNTIME_STATE_END      = CBIOS_RUNTIME_STATE_END
 ;   and trampoline. Logical ownership of SIO hardware, IM2, and ISR now belongs
 ;   to the SIO core; the legacy console is a client in the same transitional
 ;   slot.
+;   SIO core is part of core BIOS, not a driver slot occupant.
 ;   Slot 2 contains the SIO1/A IO Controller IOCALL transaction transport.
 ;   Slots 3-5 are available for future drivers.
 

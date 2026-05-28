@@ -19,7 +19,7 @@ Implemented now:
 - The CBIOS uses a cleaned-up fixed memory map with a core BIOS area and six
   fixed 1 KiB driver slots.
 - Drive A is backed by a RAM disk stored across RAM banks 2-7.
-- A BIOS-owned SIO core exists in driver slot 1 for SIO0/B plumbing.
+- A BIOS-owned SIO core exists in core BIOS for SIO0/B and SIO1/A plumbing.
 - The legacy SIO console backend is now a client of the SIO core.
 - SIO0/B receive uses maskable interrupts and a console RX sink/buffer.
 - SIO1/A is initialized as a BIOS-owned synchronous IO Controller link.
@@ -61,8 +61,8 @@ Important runtime areas:
   - BDOS entry is currently `CC06h`
 - CBIOS:
   - BIOS jump table begins at `DA00h`
-  - core BIOS occupies `DA00h-DDFFh`
-  - driver slots occupy `DE00h-F5FFh`
+  - core BIOS occupies `DA00h-DFFFh`
+  - driver slots occupy `E000h-F7FFh`
   - scratch, runtime state, and stack live above the driver slots
 
 Warm boot restores the CCP range from ROM page 0 before returning to the CCP
@@ -78,41 +78,39 @@ FFFFh +----------------------------------------------+
       | BIOS stack / reserve                         |
 FFF0h |   CBIOS_STACK_TOP                            |
       |   stack grows downward                       |
-FA00h +----------------------------------------------+
-F9FFh | Runtime state end                            |
-F900h | Runtime state start                          |
+FB00h +----------------------------------------------+
+FAFFh | Runtime state end                            |
+FA00h | Runtime state start                          |
       |   CURRENT_BANK / DMA / XMOVE                 |
       |   storage state                              |
       |   SIO core state                             |
       |   console driver state                       |
       +----------------------------------------------+
-F7FFh | Scratch / staging end                        |
-F780h |   free scratch window                        |
-F700h |   RAMDISK_DIRBUF                             |
-F600h |   MOVE_BUFFER                                |
+F9FFh | Scratch / staging end                        |
+F980h |   free scratch window                        |
+F900h |   RAMDISK_DIRBUF                             |
+F800h |   MOVE_BUFFER                                |
       +----------------------------------------------+
 F5FFh | Driver slot 5 end                            |
-F200h | Driver slot 5 start                          |
+F400h | Driver slot 5 start                          |
       |                                              |
-F1FFh | Driver slot 4 end                            |
-EE00h | Driver slot 4 start                          |
+F3FFh | Driver slot 4 end                            |
+F000h | Driver slot 4 start                          |
       |                                              |
-EDFFh | Driver slot 3 end                            |
-EA00h | Driver slot 3 start                          |
+EFFFh | Driver slot 3 end                            |
+EC00h | Driver slot 3 start                          |
       |                                              |
-E9FFh | Driver slot 2 end                            |
-E600h | Driver slot 2 start: IO Controller transport  |
+EBFFh | Driver slot 2 end                            |
+E800h | Driver slot 2 start: IO Controller transport  |
       |                                              |
-E5FFh | Driver slot 1 end                            |
-E500h |   SIO core IM2 repeated-byte table, 256 bytes|
-E4E4h |   SIO core IM2 trampoline: JP sio_core_isr   |
-E420h |   legacy SIO console client                  |
-E200h | Driver slot 1 start: SIO core                |
+E7FFh | Driver slot 1 end                            |
+E400h | Driver slot 1 start: legacy SIO console      |
       |                                              |
-E1FFh | Driver slot 0 end                            |
-DE00h | Driver slot 0 start: RAM disk backend        |
+E3FFh | Driver slot 0 end                            |
+E000h | Driver slot 0 start: RAM disk backend        |
       +----------------------------------------------+
-DDFFh | Core BIOS end                                |
+DFFFh | Core BIOS end                                |
+DD90h |   SIO core + exact IM2 vector entry          |
 DC80h |   banking / XMOVE / LAUNCH                   |
 DC00h |   storage facade                             |
 DB80h |   console facade                             |
@@ -144,10 +142,10 @@ Current transitional allocation:
 
 | Slot | Range | Current owner |
 |---:|---:|---|
-| 0 | `DE00h-E1FFh` | RAM disk backend |
-| 1 | `E200h-E5FFh` | SIO core plus legacy SIO console client |
-| 2 | `E600h-E9FFh` | IO Controller transport |
-| 3-5 | `EA00h-F5FFh` | available |
+| 0 | `E000h-E3FFh` | RAM disk backend |
+| 1 | `E400h-E7FFh` | legacy SIO console client |
+| 2 | `E800h-EBFFh` | IO Controller transport |
+| 3-5 | `EC00h-F7FFh` | available |
 
 At a high level, adding a driver means:
 
@@ -178,18 +176,17 @@ transport:
 - `CONOUT` calls the SIO core send-byte API, which remains blocking/polled for
   now.
 
-The current IM2 setup is transitional and SIO-only:
+The current IM2 setup is SIO-only and uses an exact two-byte table entry:
 
-- `I = E5h`
-- SIO WR2 vector byte is `00h`
-- the IM2 table lives at `E500h-E5FFh`
-- table bytes are `E4h`, so the CPU vectors to `E4E4h`
-- `E4E4h` contains `JP sio_core_isr`
+- `I = DDh`
+- SIO0/B WR2 vector byte is `90h`
+- the IM2 table entry lives at `DD90h-DD91h`, inside the SIO core
+- the table word points directly at `sio_core_isr`
 
-Because this build only uses the SIO0/B interrupt source, the table is a
-compact 256-byte repeated-byte table inside slot 1. A future real video-card,
-SIO1, or other interrupting hardware may need global IM2 ownership or a
-257-byte FF-safe table.
+SIO0/B WR1 keeps status-affects-vector disabled, so the SIO emits the exact
+WR2 vector byte and the BIOS no longer needs a 256-byte repeated IM2 table.
+Future devices that use IM2 should allocate explicit table entries and program
+their vector bytes directly.
 
 SIO1/A is initialized separately for the BIOS-owned IO Controller link:
 

@@ -96,7 +96,10 @@ IMPLEMENTATION_SYMBOLS = [
     (("RAMDISK_DPH",), "Drive A disk parameter header."),
     (("RAMDISK_DPB",), "Drive A disk parameter block."),
     (("RAMDISK_CODE_END",), "RAM disk backend code end."),
-    (("SIO_CORE_CODE_START",), "BIOS-owned SIO core code start in transitional slot 1."),
+    (("SIO_CORE_CODE_START",), "BIOS-owned SIO core code start in core BIOS."),
+    (("CONSOLE_IM2_VECTOR_ENTRY",), "SIO core exact IM2 vector table entry address."),
+    (("CONSOLE_IM2_VECTOR_TABLE_START",), "SIO core exact IM2 vector table start."),
+    (("CONSOLE_IM2_VECTOR_TABLE_END",), "SIO core exact IM2 vector table end."),
     (("sio_core_init",), "Initializes BIOS-owned SIO services, SIO0/B async mode, and SIO1/A sync mode."),
     (("sio1_ioc_init",), "Initializes SIO1/A synchronous external-clock/external-sync IO Controller mode."),
     (("sio_core_enable_interrupts",), "Enables BIOS-owned SIO/IM2 interrupts."),
@@ -111,13 +114,10 @@ IMPLEMENTATION_SYMBOLS = [
     (("sio_rx_kick",), "Foreground RX poll/dispatch helper."),
     (("sio_core_isr",), "BIOS-owned SIO interrupt service routine."),
     (("sio_console_isr",), "Compatibility label that jumps to `sio_core_isr`."),
-    (("SIO_CORE_CODE_END",), "BIOS-owned SIO core code end before the IM2 trampoline."),
+    (("SIO_CORE_CODE_END",), "BIOS-owned SIO core code end."),
     (("IOCTRL_CODE_START",), "IOCALL transaction code start."),
     (("IOCALL",), "Zephyr extended BIOS IO Controller transaction call."),
     (("IOCTRL_CODE_END",), "IOCALL transaction code end."),
-    (("CONSOLE_IM2_VECTOR_ENTRY",), "SIO core IM2 trampoline address."),
-    (("CONSOLE_IM2_VECTOR_TABLE_START",), "SIO core IM2 vector table start."),
-    (("CONSOLE_IM2_VECTOR_TABLE_END",), "SIO core IM2 vector table end."),
     (("CONSOLE_DRIVER_CODE_START",), "Legacy SIO console client driver code start."),
     (("sio_console_driver",), "Legacy console driver dispatch table."),
     (("sio_console_init",), "Legacy console initialization and SIO RX sink registration."),
@@ -177,7 +177,7 @@ RUNTIME_STATE = [
 
 DRIVER_SLOT_OWNERS = {
     0: "RAM disk backend",
-    1: "SIO core + legacy SIO console backend",
+    1: "legacy SIO console backend",
     2: "IO Controller transport",
     3: "available",
     4: "available",
@@ -186,9 +186,7 @@ DRIVER_SLOT_OWNERS = {
 
 DRIVER_DECLARATIONS = [
     ("RAM disk backend", "RAMDISK_CODE_START", "RAMDISK_CODE_END", 0, 0),
-    ("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END", 1, 1),
     ("legacy SIO console backend", "CONSOLE_DRIVER_CODE_START", "CONSOLE_DRIVER_CODE_END", 1, 1),
-    ("SIO core IM2 table", "CONSOLE_IM2_VECTOR_TABLE_START", "CONSOLE_IM2_VECTOR_TABLE_END", 1, 1),
     ("IO Controller transport", "IOCTRL_CODE_START", "IOCTRL_CODE_END", 2, 2),
 ]
 
@@ -197,13 +195,15 @@ CORE_RANGES = [
     ("console facade", "CONSOLE_CODE_START", "CONSOLE_CODE_END"),
     ("storage facade", "STORAGE_STUB_CODE_START", "STORAGE_STUB_CODE_END"),
     ("banking/XMOVE/LAUNCH", "BANKING_CODE_START", "BANKING_CODE_END"),
+    ("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END"),
 ]
 
 VALIDATION_NOTES = [
     "BIOS core must stay inside CBIOS_CORE_BASE-CBIOS_CORE_END.",
     "Each declared driver must stay inside its declared fixed slot range.",
     "RAM disk backend must stay inside slot 0.",
-    "SIO core, legacy SIO console backend, and the SIO IM2 table must stay inside slot 1.",
+    "SIO core and its exact IM2 vector entry must stay inside core BIOS.",
+    "Legacy SIO console backend must stay inside slot 1.",
     "IO Controller transport must stay inside slot 2.",
     "Scratch buffers must not overlap resident code.",
     "Runtime state must not overlap scratch, stack, or the SIO-owned IM2 table.",
@@ -470,36 +470,27 @@ def validate_layout(symbols: dict[str, int]) -> list[str]:
                     )
                 )
 
+    sio_core_start = require_symbol(symbols, "SIO_CORE_CODE_START")
     sio_core_end = require_symbol(symbols, "SIO_CORE_CODE_END")
-    console_start = require_symbol(symbols, "CONSOLE_DRIVER_CODE_START")
-    if sio_core_end > console_start:
-        errors.append(
-            validation_error(
-                f"SIO_CORE_CODE_END = {h4(sio_core_end)} exceeds CONSOLE_DRIVER_CODE_START = {h4(console_start)}"
-            )
-        )
-    console_end = require_symbol(symbols, "CONSOLE_DRIVER_CODE_END")
     im2_entry = require_symbol(symbols, "CONSOLE_IM2_VECTOR_ENTRY")
-    if console_end > im2_entry:
+    if im2_start < sio_core_start or im2_limit > sio_core_end:
         errors.append(
             validation_error(
-                f"CONSOLE_DRIVER_CODE_END = {h4(console_end)} exceeds SIO IM2 trampoline at {h4(im2_entry)}"
+                f"IM2 table {exclusive_span(im2_start, im2_limit)} is outside SIO core "
+                f"({exclusive_span(sio_core_start, sio_core_end)})"
             )
         )
-
-    slot1_start, slot1_limit = slot_range(symbols, 1)
-    if im2_start < slot1_start or im2_limit > slot1_limit:
+    if im2_start < cbios_core_base or im2_limit > cbios_core_limit:
         errors.append(
             validation_error(
-                f"IM2 table {exclusive_span(im2_start, im2_limit)} exceeds slot 1 "
-                f"({exclusive_span(slot1_start, slot1_limit)})"
+                f"IM2 table {exclusive_span(im2_start, im2_limit)} exceeds CBIOS core "
+                f"({exclusive_span(cbios_core_base, cbios_core_limit)})"
             )
         )
-    if im2_entry < slot1_start or im2_entry + 3 > slot1_limit:
+    if im2_entry != im2_start:
         errors.append(
             validation_error(
-                f"IM2 trampoline {exclusive_span(im2_entry, im2_entry + 3)} exceeds slot 1 "
-                f"({exclusive_span(slot1_start, slot1_limit)})"
+                f"CONSOLE_IM2_VECTOR_ENTRY = {h4(im2_entry)} must match CBIOS_IM2_VECTOR_TABLE = {h4(im2_start)}"
             )
         )
 
@@ -804,9 +795,9 @@ def write_memory_map(
         ),
         range_row(span(require_symbol(symbols, "CBASE"), require_symbol(symbols, "CCPSTACK")), "CP/M CCP", f"`CBASE` is `{h4(require_symbol(symbols, 'CBASE'))}`."),
         range_row(span(require_symbol(symbols, "FBASE"), cbios_base - 1), "CP/M BDOS and state", f"`FBASE` is `{h4(require_symbol(symbols, 'FBASE'))}` in the current assembled image."),
-        range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, and LAUNCH."),
+        range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, LAUNCH, and SIO core."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT0_END")), "Driver slot 0", "Current transitional owner: RAM disk backend."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT1_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT1_END")), "Driver slot 1", "Current transitional owner: BIOS-owned SIO core plus legacy SIO console client."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT1_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT1_END")), "Driver slot 1", "Current transitional owner: legacy SIO console client."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT2_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT2_END")), "Driver slot 2", "Current transitional owner: SIO1/A IO Controller transaction transport."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT3_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slots 3-5", "Available fixed 1 KiB slots for future drivers."),
         range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `RAMDISK_DIRBUF` is at `{h4(require_symbol(symbols, 'RAMDISK_DIRBUF'))}`."),
@@ -827,7 +818,8 @@ def write_memory_map(
         f"| `{span(require_symbol(symbols, 'boot'), require_symbol(symbols, 'CONSOLE_CODE_START') - 1)}` | Cold boot, warm boot, CCP restore, page-zero, DMA, CTC helpers, and alignment gap. |",
         f"| `{span(require_symbol(symbols, 'CONSOLE_CODE_START'), require_symbol(symbols, 'CONSOLE_CODE_END') - 1)}` | Console BIOS facade. |",
         f"| `{span(require_symbol(symbols, 'STORAGE_STUB_CODE_START'), require_symbol(symbols, 'STORAGE_STUB_CODE_END') - 1)}` | Storage BIOS facade. |",
-        f"| `{span(require_symbol(symbols, 'BANKING_CODE_START'), bios_code_end - 1)}` | Banking and high-memory `LAUNCH` implementation. |",
+        f"| `{span(require_symbol(symbols, 'BANKING_CODE_START'), require_symbol(symbols, 'BANKING_CODE_END') - 1)}` | Banking and high-memory `LAUNCH` implementation. |",
+        f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core and exact IM2 vector entry. |",
         "",
         "## Driver Slot Table",
         "",
@@ -840,16 +832,7 @@ def write_memory_map(
         if slot == 0:
             contents = f"`{span(require_symbol(symbols, 'RAMDISK_CODE_START'), require_symbol(symbols, 'RAMDISK_CODE_END') - 1)}` RAM disk backend."
         elif slot == 1:
-            contents = (
-                f"`{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` "
-                "SIO core; "
-                f"`{span(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'), require_symbol(symbols, 'CONSOLE_DRIVER_CODE_END') - 1)}` "
-                "legacy console client; "
-                f"`{h4(require_symbol(symbols, 'CONSOLE_IM2_VECTOR_ENTRY'))}` "
-                "SIO core trampoline; "
-                f"`{span(require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_START'), require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_END') - 1)}` "
-                "SIO core IM2 table."
-            )
+            contents = f"`{span(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'), require_symbol(symbols, 'CONSOLE_DRIVER_CODE_END') - 1)}` legacy console client."
         elif slot == 2:
             contents = f"`{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` IOCALL transaction transport."
         else:
@@ -862,14 +845,18 @@ def write_memory_map(
     lines.extend(
         [
             "",
-            "## Slot 1 SIO Layout",
+            "## Core SIO Layout",
             "",
             "| Range | Owner | Notes |",
             "|---|---|---|",
             f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core | BIOS-owned SIO0/B async setup, SIO1/A sync setup, SIO IRQ control, RX sink registration, byte I/O APIs, IO Controller RTS helpers, RX kick, ISR, and compatibility labels. |",
+            f"| `{span(require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_START'), require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_END') - 1)}` | SIO core | Exact two-byte IM2 vector table entry. |",
+            "",
+            "## Slot 1 Console Layout",
+            "",
+            "| Range | Owner | Notes |",
+            "|---|---|---|",
             f"| `{span(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'), require_symbol(symbols, 'CONSOLE_DRIVER_CODE_END') - 1)}` | legacy console driver | CP/M console semantics and terminal RX buffer client. |",
-            f"| `{span(require_symbol(symbols, 'CONSOLE_IM2_VECTOR_ENTRY'), require_symbol(symbols, 'CONSOLE_IM2_VECTOR_ENTRY') + 2)}` | SIO core | IM2 trampoline: `JP sio_core_isr`. |",
-            f"| `{span(require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_START'), require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_END') - 1)}` | SIO core | Compact 256-byte SIO-only repeated-byte IM2 table. |",
             "",
             "SIO_CH_IOCTRL is the BIOS-owned SIO1/A synchronous IO Controller link. SIO1/A uses external clock and external sync from the MCU, with RTS as the service-request signal. SIO1/A interrupts are disabled in this build.",
             "",
@@ -929,15 +916,14 @@ def write_memory_map(
             "",
             "| Field | Value | Notes |",
             "|---|---:|---|",
-            f"| Table base | `{h4(im2_table)}` | Start of the repeated-byte table. |",
+            f"| Table base | `{h4(im2_table)}` | Start of the exact IM2 vector table entry. |",
             f"| Table range | `{exclusive_span(im2_table, im2_limit)}` | Exactly {im2_limit - im2_table} bytes; `CONSOLE_IM2_VECTOR_TABLE_END` is the exclusive end label. |",
             f"| Vector page | `{h2(require_symbol(symbols, 'CBIOS_IM2_VECTOR_PAGE'))}` | Loaded into the Z80 I register. |",
-            f"| Vector byte | `{h2(require_symbol(symbols, 'CBIOS_IM2_VECTOR_BYTE'))}` | Repeated table byte; E4h/E4h forms the trampoline address. |",
-            f"| SIO0/B WR2 vector byte | `{h2(require_symbol(symbols, 'CBIOS_SIO_VECTOR'))}` | Current BIOS-owned console channel vector byte. |",
-            f"| Trampoline address | `{h4(im2_entry)}` | Contains `JP sio_core_isr`. |",
-            f"| Owner | SIO core | Transitional SIO-only build; IM2 table still lives in driver slot 1. |",
+            f"| SIO0/B WR2 vector byte | `{h2(require_symbol(symbols, 'CBIOS_SIO_VECTOR'))}` | Selects the exact two-byte table entry. |",
+            f"| Entry address | `{h4(im2_entry)}` | Contains the little-endian word `sio_core_isr`. |",
+            f"| Owner | SIO core | The IM2 entry lives inside core BIOS with the SIO core. |",
             "",
-            "Future real video-card, SIO1, or storage interrupts may require global IM2 handling or a 257-byte FF-safe table. Devices that emit FFh vectors cannot rely on this compact SIO-only table without revisiting ownership and slot sizing.",
+            "Future devices that need additional IM2 vectors should allocate explicit table entries and program their vector bytes directly; this build no longer emits a 256-byte repeated table.",
         ]
     )
 
@@ -988,7 +974,7 @@ def write_memory_map(
             f"- WBOOT restores the CCP range `{span(require_symbol(symbols, 'CBASE'), require_symbol(symbols, 'FBASE') - 1)}` from ROM page 0 using `ROM_VISIBLE_BANK0` (`{h2(require_symbol(symbols, 'ROM_VISIBLE_BANK0'))}`) before returning to `CCP_CLEARBUF_ENTRY`.",
             f"- `CBIOS_BASE` is `{h4(cbios_base)}`; CBIOS layout constants are derived from this base.",
             f"- `CBIOS_CODE_LIMIT` is `{h4(code_limit)}`; no resident code may cross into scratch/staging.",
-            f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` in slot 1; the legacy console client starts at `{h4(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'))}`.",
+            f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the legacy console client starts at `{h4(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'))}` in slot 1.",
             f"- `IOCALL` code starts at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` in slot 2 and uses the BIOS-owned SIO1/A synchronous IO Controller transport.",
             f"- `LAUNCH` code resides at `{h4(require_symbol(symbols, 'LAUNCH'))}`, inside protected high BIOS memory.",
             f"- `WBOOT` resident code starts at `{h4(require_symbol(symbols, 'WBOOT_RESIDENT_START'))}`, inside protected high BIOS memory.",
