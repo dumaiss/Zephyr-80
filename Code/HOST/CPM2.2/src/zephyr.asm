@@ -13,7 +13,7 @@
 	.globl bdos_entry_shim
 	.globl const,conin,conout,list,punch,reader,listst
 	.globl home,seldsk,settrk,setsec,setdma,read,write,sectran
-	.globl MOVE,XMOVE,SELMEM,SETBNK,LAUNCH
+	.globl MOVE,XMOVE,SELMEM,SETBNK,LAUNCH,IOCALL
 	.globl ZBIOS_EXT_BASE
 
 	.area RESET (ABS)
@@ -41,6 +41,7 @@ cpm:
 ;   XMOVE                 set source/destination banks for the next MOVE
 ;   SELMEM/SETBNK         select execution bank / record disk DMA bank
 ;   LAUNCH                restore and enter an application bank
+;   IOCALL                perform a BIOS-owned SIO1 IO Controller transaction
 ;
 ; Banking, XMOVE, and LAUNCH live in the core BIOS range because they define
 ; how CP/M itself crosses banks. They are not replaceable card drivers.
@@ -89,6 +90,7 @@ ZBIOS_EXT_BASE:
 	jp SELMEM
 	jp SETBNK
 	jp LAUNCH
+	jp IOCALL
 bdos_entry_shim:
 	jp FBASE
 
@@ -97,6 +99,7 @@ bdos_entry_shim:
 	.include "cbios_boot.asm"
 	.include "cbios_console.asm"
 	.include "sio_core.asm"
+	.include "cbios_iocall.asm"
 	.include "cbios_console_sio.asm"
 	.include "cbios_storage.asm"
 	.include "cbios_ramdisk.asm"
