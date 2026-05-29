@@ -63,6 +63,13 @@ SPRITE_Y_STEP		= 0x08
 SPRITE_COLOR_NORMAL	= 0x0a
 SPRITE_COLOR_RX		= 0x0e
 
+; Parser diagnostic colors.
+; These are only sprite color values, not VDP tile colors.
+SPRITE_COLOR_SYNC	= 0x0f	; white: saw A5 5A
+SPRITE_COLOR_BODY	= 0x09	; red: LEN body completed
+SPRITE_COLOR_CRC_FAIL	= 0x04	; dark blue: CRC failed
+SPRITE_COLOR_CRC_OK	= 0x0b	; light yellow: CRC passed
+
 VDRIP_RX_WAIT_SYNC0	= 0x00
 VDRIP_RX_WAIT_SYNC1	= 0x01
 VDRIP_RX_LEN		= 0x02
@@ -95,6 +102,17 @@ VDRIP_RX_RTS_LOW_WATER	= 0x10
 STARTUP_DELAY_UNITS	= 0x34
 VDRIP_RX_KICK_SPINS	= 0x10
 
+DEBUG_PACKET_MAX	= 0x10
+
+DBG_TILE_07		= 0x08
+DBG_TILE_05		= 0x10
+DBG_TILE_06		= 0x18
+DBG_TILE_73		= 0x20
+DBG_TILE_77		= 0x28
+DBG_TILE_00		= 0x30
+DBG_TILE_A6		= 0x38
+DBG_TILE_OTHER		= 0x40
+
 start:
 	di
 
@@ -124,6 +142,7 @@ start:
 	ld (sprite_x),a
 
 	call send_full_state
+	call debug_force_body_test
 	jp animation_loop
 
 vdrip_rx_init:
@@ -137,6 +156,10 @@ vdrip_rx_init:
 	ld (vdrip_parse_payload_index),a
 	ld (vdrip_rx_seen_flag),a
 	ld (vdrip_rx_rts_released),a
+	ld (vdrip_crc_computed),a
+	ld (vdrip_crc_received),a	
+	ld (debug_body_count),a
+	ld (debug_body_dirty),a
 	ret
 
 
@@ -248,7 +271,8 @@ vdrip_move_smiley_down:
 animation_loop:
 	call vdrip_rx_kick_pending
 	call vdrip_poll_rx
-	call vdrip_handle_rx_seen
+	call debug_draw_packet_body
+	;call vdrip_handle_rx_seen
 	call update_sprite_position
 	call vdrip_send_frame_mark
 	call delay_frame
@@ -293,6 +317,35 @@ vdrip_handle_rx_seen:
 vdrip_handle_rx_seen_normal:
 	ld a,#SPRITE_COLOR_NORMAL
 	ld (sprite_color),a
+	ret
+
+debug_force_body_test:
+	; Draw fixed legend on row 0:
+	;   07 05 05 73 00 00 A6
+	ld hl,#NAME_TABLE
+	call vdp_set_vram_write_addr
+
+	ld a,#DBG_TILE_07
+	call vdp_write_data_byte
+
+	ld a,#DBG_TILE_05
+	call vdp_write_data_byte
+
+	ld a,#DBG_TILE_05
+	call vdp_write_data_byte
+
+	ld a,#DBG_TILE_73
+	call vdp_write_data_byte
+
+	ld a,#DBG_TILE_00
+	call vdp_write_data_byte
+
+	ld a,#DBG_TILE_00
+	call vdp_write_data_byte
+
+	ld a,#DBG_TILE_A6
+	call vdp_write_data_byte
+
 	ret
 
 ; ---------------------------------------------------------------------------
@@ -383,6 +436,12 @@ vdrip_parse_wait_sync_keep:
 	ret
 
 vdrip_parse_wait_sync_have:
+	; DEBUG:
+	; We recognized the full sync header A5 5A.
+	; If keypresses reach this point, the face changes to SYNC color.
+	ld a,#SPRITE_COLOR_SYNC
+	ld (sprite_color),a
+
 	ld a,#VDRIP_RX_LEN
 	ld (vdrip_parse_state),a
 	ret
@@ -432,12 +491,32 @@ vdrip_parse_body:
 
 
 vdrip_parse_body_done:
-	; Full LEN-described body is buffered. Validate CRC before interpreting.
-	call vdrip_packet_crc_valid
-	jr nz,vdrip_parse_reset
-	call vdrip_parse_apply_key_event
-	jr vdrip_parse_reset
+	; Full LEN-described body was buffered.
+	call vdrip_debug_capture_body
 
+	ld a,#SPRITE_COLOR_BODY
+	ld (sprite_color),a
+
+	call vdrip_packet_crc_valid
+	jr nz,vdrip_parse_crc_failed
+
+	ld a,#SPRITE_COLOR_CRC_OK
+	ld (sprite_color),a
+
+	ld a,#0x01
+	ld (vdrip_rx_seen_flag),a
+
+	call vdrip_parse_apply_key_event
+	jp vdrip_parse_reset
+
+
+vdrip_parse_crc_failed:
+	; DEBUG:
+	; We got a full LEN-sized body, but the CRC did not match.
+	ld a,#SPRITE_COLOR_CRC_FAIL
+	ld (sprite_color),a
+
+	jp vdrip_parse_reset
 
 vdrip_packet_crc_valid:
 	ld c,#0x00
@@ -445,6 +524,7 @@ vdrip_packet_crc_valid:
 	ld a,(vdrip_parse_len_store)
 	dec a
 	ld b,a
+
 vdrip_packet_crc_loop:
 	ld a,(hl)
 	call crc8_update
@@ -452,35 +532,95 @@ vdrip_packet_crc_loop:
 	djnz vdrip_packet_crc_loop
 
 	; HL now points at the received CRC byte.
+	; Store both sides for monitor/debug inspection.
+	ld a,c
+	ld (vdrip_crc_computed),a
+
 	ld a,(hl)
+	ld (vdrip_crc_received),a
+
 	cp c
 	ret
 
 
+; ---------------------------------------------------------------------------
+; vdrip_parse_apply_key_event
+;
+; Diagnostic version.
+;
+; Called only after a full LEN-described body was buffered.
+; During CRC-fail testing, this may also be called from the CRC-fail path.
+;
+; Expected body for:
+;   A5 5A 07 05 05 73 00 00 A6
+;
+;   body[0] = 07   ; LEN
+;   body[1] = 05   ; TYPE = keyboard event
+;   body[2] = 05   ; FLAGS
+;   body[3] = 73   ; ASCII
+;   body[4] = 00   ; SPECIAL
+;   body[5] = 00   ; MODIFIERS
+;   body[6] = A6   ; CRC
+; ---------------------------------------------------------------------------
+
 vdrip_parse_apply_key_event:
+	; Mark: semantic parser entered.
+	ld a,#0x0d
+	ld (sprite_color),a
+
+	; Check LEN.
 	ld a,(vdrip_packet_body)
 	cp #KEY_EVENT_LEN + VDRIP_WIRE_OVERHEAD
-	ret nz
+	jr z,vdrip_key_len_ok
 
+	; LEN reject.
+	ld a,#0x06
+	ld (sprite_color),a
+	ret
+
+vdrip_key_len_ok:
 	ld a,(vdrip_packet_body + 1)
 	cp #PACKET_KEYBOARD_EVENT
-	ret nz
+	jr z,vdrip_key_type_ok
 
-	ld a,(vdrip_packet_body + 2)
-	and #KEY_EVENT_FLAG_DOWN
-	cp #KEY_EVENT_FLAG_DOWN
-	ret nz
+	; DEBUG:
+	; TYPE reject. Show the unexpected TYPE byte as sprite_y.
+	; This tells us what body[1] actually contains.
+	ld a,(vdrip_packet_body + 1)
+	and #0x7f
+	ld (sprite_y),a
 
-	; Complete KEY_EVENT packet received. Toggle the face only for key
-	; packets, not for unrelated packets or possible echoed outbound traffic.
+	ld a,#0x05		; light blue = TYPE reject
+	ld (sprite_color),a
+	ret
+
+vdrip_key_type_ok:
+	; Mark: valid keyboard event body shape.
+	ld a,#0x0b
+	ld (sprite_color),a
+
+	; For visibility, prove we recognized a keyboard packet body.
 	ld a,#0x01
 	ld (vdrip_rx_seen_flag),a
 
-	; Accept movement from either the ASCII field or the special-key field.
+	; Only move on key-down.
+	ld a,(vdrip_packet_body + 2)
+	and #KEY_EVENT_FLAG_DOWN
+	cp #KEY_EVENT_FLAG_DOWN
+	jr z,vdrip_key_down_ok
+
+	; Valid keyboard packet, but not key-down.
+	ld a,#0x0e
+	ld (sprite_color),a
+	ret
+
+vdrip_key_down_ok:
+	; Check ASCII candidate.
 	ld a,(vdrip_packet_body + 3)
 	call vdrip_apply_key_candidate
 	ret z
 
+	; Check special-key candidate.
 	ld a,(vdrip_packet_body + 4)
 	cp #KEY_SPECIAL_UP
 	jp z,vdrip_apply_key_up
@@ -488,6 +628,9 @@ vdrip_parse_apply_key_event:
 	cp #KEY_SPECIAL_DOWN
 	jp z,vdrip_apply_key_down
 
+	; Key-down packet, but not W/S and not special up/down.
+	ld a,#0x08
+	ld (sprite_color),a
 	ret
 
 
@@ -621,6 +764,90 @@ vdrip_send_packet_send_crc:
 	pop de
 	pop bc
 	ret
+
+vdrip_debug_classify_body_byte:
+	cp #0x07
+	jr z,vdrip_debug_byte_07
+
+	cp #0x05
+	jr z,vdrip_debug_byte_05
+
+	cp #0x06
+	jr z,vdrip_debug_byte_06
+
+	cp #KEY_ASCII_S
+	jr z,vdrip_debug_byte_73
+
+	cp #KEY_ASCII_W
+	jr z,vdrip_debug_byte_77
+
+	cp #0x00
+	jr z,vdrip_debug_byte_00
+
+	cp #0xa6
+	jr z,vdrip_debug_byte_a6
+
+	ld a,#DBG_TILE_OTHER
+	ret
+
+vdrip_debug_byte_07:
+	ld a,#DBG_TILE_07
+	ret
+
+vdrip_debug_byte_05:
+	ld a,#DBG_TILE_05
+	ret
+
+vdrip_debug_byte_06:
+	ld a,#DBG_TILE_06
+	ret
+
+vdrip_debug_byte_73:
+	ld a,#DBG_TILE_73
+	ret
+
+vdrip_debug_byte_77:
+	ld a,#DBG_TILE_77
+	ret
+
+vdrip_debug_byte_00:
+	ld a,#DBG_TILE_00
+	ret
+
+vdrip_debug_byte_a6:
+	ld a,#DBG_TILE_A6
+	ret	
+
+vdrip_debug_capture_body:
+	ld a,(vdrip_parse_len_store)
+	cp #DEBUG_PACKET_MAX + 1
+	jr c,vdrip_debug_capture_len_ok
+	ld a,#DEBUG_PACKET_MAX
+
+vdrip_debug_capture_len_ok:
+	ld (debug_body_count),a
+
+	ld b,a
+	ld hl,#vdrip_packet_body
+	ld de,#debug_body_tiles
+
+vdrip_debug_capture_loop:
+	ld a,b
+	or a
+	jr z,vdrip_debug_capture_done
+
+	ld a,(hl)
+	call vdrip_debug_classify_body_byte
+	ld (de),a
+
+	inc hl
+	inc de
+	djnz vdrip_debug_capture_loop
+
+vdrip_debug_capture_done:
+	ld a,#0x01
+	ld (debug_body_dirty),a
+	ret	
 
 ; ---------------------------------------------------------------------------
 ; vdrip_rts_assert_raw
@@ -811,6 +1038,117 @@ send_full_state:
 	call vdrip_send_frame_mark
 	ret
 
+debug_draw_packet_body:
+	ld a,(debug_body_dirty)
+	or a
+	ret z
+
+	xor a
+	ld (debug_body_dirty),a
+
+	; Clear second row.
+	ld hl,#NAME_TABLE + 0x20
+	call vdp_set_vram_write_addr
+
+	ld b,#0x20
+debug_packet_clear_loop:
+	xor a
+	call vdp_write_data_byte
+	djnz debug_packet_clear_loop
+
+	; Draw captured body byte classes on second row.
+	ld a,(debug_body_count)
+	or a
+	ret z
+
+	ld b,a
+	ld hl,#NAME_TABLE + 0x20
+	call vdp_set_vram_write_addr
+	ld hl,#debug_body_tiles
+
+debug_packet_draw_loop:
+	ld a,(hl)
+	call vdp_write_data_byte
+	inc hl
+	djnz debug_packet_draw_loop
+
+	ret
+
+debug_write_solid_tile:
+	; Input: A = tile id
+	ld h,#0x00
+	ld l,a
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	call vdp_set_vram_write_addr
+
+	ld b,#0x08
+debug_write_solid_tile_loop:
+	ld a,#0xff
+	call vdp_write_data_byte
+	djnz debug_write_solid_tile_loop
+	ret
+
+
+debug_init_tiles:
+	ld a,#DBG_TILE_07
+	call debug_write_solid_tile
+	ld a,#DBG_TILE_05
+	call debug_write_solid_tile
+	ld a,#DBG_TILE_06
+	call debug_write_solid_tile
+	ld a,#DBG_TILE_73
+	call debug_write_solid_tile
+	ld a,#DBG_TILE_77
+	call debug_write_solid_tile
+	ld a,#DBG_TILE_00
+	call debug_write_solid_tile
+	ld a,#DBG_TILE_A6
+	call debug_write_solid_tile
+	ld a,#DBG_TILE_OTHER
+	call debug_write_solid_tile
+	ret
+
+debug_init_colors:
+	ld hl,#COLOR_TABLE + 1
+	call vdp_set_vram_write_addr
+
+	; group 1: DBG_TILE_07
+	ld a,#0xf4
+	call vdp_write_data_byte
+
+	; group 2: DBG_TILE_05
+	ld a,#0xe4
+	call vdp_write_data_byte
+
+	; group 3: DBG_TILE_06
+	ld a,#0xa4
+	call vdp_write_data_byte
+
+	; group 4: DBG_TILE_73
+	ld a,#0x24
+	call vdp_write_data_byte
+
+	; group 5: DBG_TILE_77
+	ld a,#0xc4
+	call vdp_write_data_byte
+
+	; group 6: DBG_TILE_00
+	ld a,#0x84
+	call vdp_write_data_byte
+
+	; group 7: DBG_TILE_A6
+	ld a,#0xb4
+	call vdp_write_data_byte
+
+	; group 8: DBG_TILE_OTHER
+	ld a,#0x64
+	call vdp_write_data_byte
+
+	ret	
+
+
 ; Graphics I, display on, 16 KiB VRAM, 8x8 sprites.
 init_vdp_graphics1:
 	ld b,#0x00
@@ -860,6 +1198,10 @@ init_pattern1_loop:
 	ld e,a
 	djnz init_pattern1_loop
 
+	; Debug tile patterns.
+	; IMPORTANT: this changes the VRAM write address.
+	call debug_init_tiles
+
 	; Color table default.
 	ld hl,#COLOR_TABLE
 	call vdp_set_vram_write_addr
@@ -868,6 +1210,10 @@ init_color_loop:
 	ld a,#0xf4
 	call vdp_write_data_byte
 	djnz init_color_loop
+
+	; Debug tile color groups.
+	; IMPORTANT: this also changes the VRAM write address.
+	call debug_init_colors
 
 	; Name table.
 	ld hl,#NAME_TABLE
@@ -942,7 +1288,7 @@ delay_before_start_loop:
 	ret
 
 delay_frame:
-	ld b,#0x01
+	ld b,#0x03
 delay_frame_loop:
 	call delay_unit
 	djnz delay_frame_loop
@@ -1016,3 +1362,17 @@ vdrip_packet_body:
 
 vdrip_rx_rts_released:
 	.db 0x00
+vdrip_crc_computed:
+	.db 0x00
+
+vdrip_crc_received:
+	.db 0x00
+
+debug_body_count:
+	.db 0x00
+
+debug_body_dirty:
+	.db 0x00
+
+debug_body_tiles:
+	.ds DEBUG_PACKET_MAX

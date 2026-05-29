@@ -14,7 +14,7 @@ HEX_ORIGIN ?= 8000h
 SWAPBITS := $(TOOLS_DIR)/swapbits.py
 LISTING_TO_IHEX := $(TOOLS_DIR)/listing_to_ihex.py
 
-ASXXXX_TARGETS := vdrip_checkerboard vdrip_smiley shadow_copy_test shadow_copy_low
+ASXXXX_TARGETS := vdrip_checkerboard vdrip_smiley shadow_copy_test shadow_copy_low vdrip_text_mode_test
 ASXXXX_SRCS := $(addprefix $(SRC_DIR)/,$(addsuffix .asm,$(ASXXXX_TARGETS)))
 ASXXXX_INCS := $(wildcard $(SRC_DIR)/*.inc)
 ASM_SRCS := $(filter-out $(ASXXXX_SRCS),$(wildcard $(SRC_DIR)/*.asm))

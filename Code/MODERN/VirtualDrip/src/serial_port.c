@@ -12,6 +12,7 @@
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
+#include <poll.h>
 
 /*
  * This module owns all POSIX serial details. The rest of the proxy deals in a
@@ -91,40 +92,75 @@ static bool configure_serial_port(int fd, int baud_rate)
     return true;
 }
 
+static bool wait_serial_writable(int fd, int timeout_ms)
+{
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLOUT;
+    pfd.revents = 0;
+
+    for (;;) {
+        int rc = poll(&pfd, 1, timeout_ms);
+        if (rc > 0) {
+            if (pfd.revents & POLLOUT) {
+                return true;
+            }
+            if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                return false;
+            }
+            continue;
+        }
+
+        if (rc == 0) {
+            fprintf(stderr, "serial write timeout waiting for CTS/writable\n");
+            return false;
+        }
+
+        if (errno == EINTR) {
+            continue;
+        }
+
+        perror("poll");
+        return false;
+    }
+}
+
 static bool write_all(int fd, const void *buffer, size_t length)
 {
     const uint8_t *cursor = (const uint8_t *)buffer;
 
     while (length > 0) {
         ssize_t written = write(fd, cursor, length);
-        if (written < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            return false;
-        }
-        if (written == 0) {
-            return false;
+
+        if (written > 0) {
+            cursor += written;
+            length -= (size_t)written;
+            continue;
         }
 
-        cursor += written;
-        length -= (size_t)written;
+        if (written == 0) {
+            if (!wait_serial_writable(fd, 1000)) {
+                return false;
+            }
+            continue;
+        }
+
+        if (errno == EINTR) {
+            continue;
+        }
+
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            if (!wait_serial_writable(fd, 1000)) {
+                return false;
+            }
+            continue;
+        }
+
+        perror("write");
+        return false;
     }
 
     return true;
-}
-
-static bool drain_serial_tx(int fd)
-{
-    for (;;) {
-        if (tcdrain(fd) == 0) {
-            return true;
-        }
-        if (errno != EINTR) {
-            perror("tcdrain");
-            return false;
-        }
-    }
 }
 
 SerialPort *serial_port_open(const char *path, int baud_rate)
@@ -227,9 +263,6 @@ bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payl
      */
     pthread_mutex_lock(&port->tx_mutex);
     bool sent = write_all(port->fd, bytes, byte_count);
-    if (sent) {
-        sent = drain_serial_tx(port->fd);
-    }
     pthread_mutex_unlock(&port->tx_mutex);
 
     return sent;
