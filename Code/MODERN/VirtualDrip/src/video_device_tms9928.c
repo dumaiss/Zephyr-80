@@ -114,7 +114,7 @@ static bool tms9928_handle_packet(VideoDevice *device, const Packet *packet, Vid
         video_device_update_mark_full(device, update);
         return true;
     default:
-        /* PING, FRAME_MARK, KEY_EVENT, and read requests are no-ops here today. */
+        /* PING, FRAME_MARK, TERMINAL_INPUT, and read requests are no-ops here today. */
         printf("  VDP no-op for %s\n", packet_type_name(packet->type));
         return true;
     }

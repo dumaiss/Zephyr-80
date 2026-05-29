@@ -20,7 +20,7 @@ void print_usage(const char *program_name)
     fprintf(stderr, "  --vnc-port: VNC TCP port, default %d\n", DEFAULT_VNC_PORT);
     fprintf(stderr, "  --no-vnc, --headless: disable VNC output\n");
     fprintf(stderr, "  --video-backend: video backend, default %s (available: tms9928)\n", DEFAULT_VIDEO_BACKEND);
-    fprintf(stderr, "  --log-keys: log RFB key events, mappings, and serial KEY_EVENT packets\n");
+    fprintf(stderr, "  --log-keys: log RFB key events, mappings, and serial terminal input packets\n");
     fprintf(stderr, "  --no-keyboard: disable VNC keyboard capture\n");
 }
 

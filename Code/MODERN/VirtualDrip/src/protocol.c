@@ -45,8 +45,8 @@ const char *packet_type_name(uint8_t type)
         return "VDP_STATUS_READ";
     case PACKET_VDP_DATA_READ:
         return "VDP_DATA_READ";
-    case PACKET_KEY_EVENT:
-        return "KEY_EVENT";
+    case PACKET_TERMINAL_INPUT:
+        return "TERMINAL_INPUT";
     case PACKET_RESET:
         return "RESET";
     case PACKET_PING:

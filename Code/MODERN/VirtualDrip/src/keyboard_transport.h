@@ -27,6 +27,12 @@ typedef struct {
 } QueuedPacket;
 
 typedef struct {
+    uint64_t terminal_events_seen;
+    uint64_t terminal_packets_queued;
+    uint64_t terminal_bytes_queued;
+    uint64_t terminal_packets_sent;
+    uint64_t terminal_packets_dropped;
+    uint64_t unsupported_key_count;
     uint64_t keyboard_events_seen;
     uint64_t keyboard_packets_queued;
     uint64_t keyboard_packets_sent;
@@ -55,6 +61,7 @@ bool keyboard_transport_enqueue(
     uint8_t length);
 
 void keyboard_transport_note_keyboard_event(KeyboardTransport *transport);
+void keyboard_transport_note_unsupported_key(KeyboardTransport *transport);
 void keyboard_transport_note_incoming_packet(KeyboardTransport *transport, const Packet *packet);
 void keyboard_transport_get_stats(KeyboardTransport *transport, KeyboardTransportStats *stats);
 

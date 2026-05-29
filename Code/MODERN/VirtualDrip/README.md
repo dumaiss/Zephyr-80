@@ -59,7 +59,7 @@ VNC Client (viewer)
   * VDP data writes
   * (optional) reads
 * Receives:
-  * keyboard input events as structured `KEY_EVENT` packets
+  * terminal input bytes as `TERMINAL_INPUT` packets
 
 ❗ Zephyr does **NOT**:
 
@@ -132,10 +132,11 @@ Virtual Drip uses a **packetized serial protocol** carrying VDP semantics.
 | 0x02  | `VDP_DATA_WRITE`  | Write to VDP data port               |
 | 0x03  | `VDP_STATUS_READ` | Read VDP status register             |
 | 0x04  | `VDP_DATA_READ`   | Read from VRAM                       |
-| 0x05  | `KEY_EVENT`       | Key input forwarded to Zephyr        |
+| 0x05  | `TERMINAL_INPUT`  | Terminal input bytes forwarded to Zephyr |
 | 0x06  | `RESET`           | Reset VDP state                      |
 | 0x07  | `PING`            | Debug / keepalive                    |
 | 0x08  | `FRAME_MARK`      | Frame boundary marker (replay pacing)|
+| 0x09  | `CURSOR_COMMAND`  | Proxy-side text cursor overlay command |
 
 👉 Important design choice:
 
@@ -143,16 +144,21 @@ Virtual Drip uses a **packetized serial protocol** carrying VDP semantics.
 The protocol transports VDP operations, NOT pixels.
 ```
 
-### `KEY_EVENT` payload (4 bytes)
+### `TERMINAL_INPUT` payload
 
-| Byte | Meaning                                                       |
-| ---- | ------------------------------------------------------------- |
-| 0    | Flags: bit 0 = down, bit 1 = up, bit 2 = has ASCII, bit 3 = has special |
-| 1    | ASCII value (printable 0x20–0x7E, or control: Enter=0x0D, Backspace=0x08, Tab=0x09, Escape=0x1B), or 0 |
-| 2    | Special key code (arrows, F1–F12, Insert, Delete, Home, End, Page Up/Down), or 0 |
-| 3    | Modifier bitfield: bit 0 = Shift, bit 1 = Ctrl, bit 2 = Alt, bit 3 = Meta/Super |
+Payload is 1..N raw terminal input bytes. Key-up events generate no packet.
 
-Modifier keysyms (Shift, Ctrl, Alt, Meta) update an internal state and are also emitted as `KEY_EVENT` packets so the host can observe modifier-only presses and releases.
+Minimal key mapping:
+
+| Key | Bytes |
+| --- | ----- |
+| Printable ASCII | `20`..`7E` |
+| Enter | `0D` |
+| Backspace | `08` |
+| Tab | `09` |
+| Escape | `1B` |
+| Up / Down / Right / Left | `1B 5B 41` / `1B 5B 42` / `1B 5B 43` / `1B 5B 44` |
+| Home / End / Delete | `1B 5B 48` / `1B 5B 46` / `1B 5B 33 7E` |
 
 ### Packet input sources
 
@@ -183,14 +189,15 @@ Supported baud rates: **9600, 19200, 38400, 57600, 115200, 230400**.
 ## ⌨️ Input Model
 
 ```text
-VNC Client → LibVNCServer callback → Keyboard mapper → KEY_EVENT packet → Serial → Zephyr
+VNC Client → LibVNCServer callback → Keyboard mapper → TERMINAL_INPUT packet → Keyboard queue/writer → Serial → Zephyr
 ```
 
 * Immediate key events (no block mode)
-* Printable ASCII sent directly
-* Special keys and modifiers use structured fields
+* Key-down events become terminal input bytes
+* Key-up events do not generate packets
+* Arrow keys use minimal ANSI CSI sequences
 * Enable/disable with `--no-keyboard`
-* Debug with `--log-keys` (logs keysym, mapping, and encoded packet bytes)
+* Debug with `--log-keys` (logs terminal packet payload bytes)
 
 ---
 
@@ -299,7 +306,7 @@ Code/MODERN/VirtualDrip/
 │   ├── app_config.c / .h         # CLI argument parsing
 │   ├── app_runtime.c / .h        # Signal handling, process lifetime
 │   ├── display_libvncserver.c / .h  # LibVNCServer RFB display backend
-│   ├── input_keyboard.c / .h     # Keysym → KEY_EVENT packet mapper
+│   ├── input_keyboard.c / .h     # Keysym → terminal input packet mapper
 │   ├── main.c                    # Orchestration
 │   ├── packet_dispatch.c / .h    # Route packets to VideoDevice
 │   ├── packet_parser.c / .h      # Streaming CRC-validated packet decoder

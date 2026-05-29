@@ -3,7 +3,7 @@
 
 /**
  * @file protocol_debug.h
- * Debug formatting helpers for decoded packets and keyboard codes.
+ * Debug formatting helpers for decoded packets.
  *
  * These functions are for human-readable logs only. They do not participate in
  * packet validation, dispatch, or protocol decisions.
@@ -25,8 +25,5 @@ void print_packet(size_t packet_index, size_t offset, const Packet *packet);
 
 /** Print already-encoded packet bytes as uppercase hex. */
 void print_packet_bytes(const uint8_t *bytes, size_t length);
-
-/** Return a debug name for a KeySpecialCode value. */
-const char *key_special_name(KeySpecialCode special);
 
 #endif

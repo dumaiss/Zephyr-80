@@ -7,22 +7,18 @@
 #include <stdio.h>
 
 /*
- * LibVNCServer supplies X11-style keysyms. This module maps the subset Virtual
- * Drip currently exposes into KEY_EVENT packets and leaves host-side text
- * editing, escape-sequence policy, and keyboard layout semantics to Zephyr.
+ * LibVNCServer supplies X11-style keysyms. This module maps a deliberately
+ * small subset to terminal input bytes. It never writes serial directly; the
+ * display callback only enqueues packets for KeyboardTransport's writer thread.
  */
 
-/** Mapping result for one display keysym. */
 typedef struct {
-    /* false when the keysym is neither supported nor a tracked modifier. */
     bool mapped;
-    /* Printable/control ASCII value for KEY_EVENT byte 1, or 0. */
-    uint8_t ascii;
-    /* Non-ASCII key code for KEY_EVENT byte 2, or KEY_SPECIAL_NONE. */
-    KeySpecialCode special;
-} KeyMapping;
+    uint8_t bytes[4];
+    uint8_t length;
+} TerminalMapping;
 
-/* Modifier keysyms are tracked even though they do not carry ASCII/special codes. */
+/* Modifier keysyms are tracked but do not generate terminal input bytes. */
 typedef enum {
     DISPLAY_KEY_SHIFT_L = 0xFFE1,
     DISPLAY_KEY_SHIFT_R = 0xFFE2,
@@ -37,6 +33,11 @@ typedef enum {
     DISPLAY_KEY_MODE_SWITCH = 0xFF7E,
     DISPLAY_KEY_ISO_LEVEL3_SHIFT = 0xFE03,
 } DisplayModifierKeySymbol;
+
+#define KEY_MODIFIER_SHIFT (1u << 0)
+#define KEY_MODIFIER_CTRL  (1u << 1)
+#define KEY_MODIFIER_ALT   (1u << 2)
+#define KEY_MODIFIER_META  (1u << 3)
 
 static uint8_t modifier_bit_for_keysym(uint32_t keysym)
 {
@@ -75,71 +76,57 @@ static void update_modifier_state(InputKeyboardContext *ctx, bool down, uint8_t 
     }
 }
 
-static KeyMapping map_display_keysym(uint32_t keysym)
+static TerminalMapping terminal_mapping_bytes(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3, uint8_t length)
 {
-    KeyMapping mapping = {
+    TerminalMapping mapping = {
         .mapped = true,
-        .ascii = 0,
-        .special = KEY_SPECIAL_NONE,
+        .bytes = { b0, b1, b2, b3 },
+        .length = length,
     };
+    return mapping;
+}
 
-    /* Printable keysyms are already ASCII in the common RFB/X11 range. */
+static TerminalMapping map_display_keysym_to_terminal(uint32_t keysym)
+{
+    TerminalMapping unmapped = { 0 };
+
     if (keysym >= 0x20 && keysym <= 0x7E) {
-        mapping.ascii = (uint8_t)keysym;
-        return mapping;
+        return terminal_mapping_bytes((uint8_t)keysym, 0, 0, 0, 1);
     }
 
     switch (keysym) {
     case DISPLAY_KEY_RETURN:
-        mapping.ascii = 0x0D;
-        return mapping;
+        return terminal_mapping_bytes(0x0D, 0, 0, 0, 1);
     case DISPLAY_KEY_BACKSPACE:
-        mapping.ascii = 0x08;
-        return mapping;
+        return terminal_mapping_bytes(0x08, 0, 0, 0, 1);
     case DISPLAY_KEY_TAB:
-        mapping.ascii = 0x09;
-        return mapping;
+        return terminal_mapping_bytes(0x09, 0, 0, 0, 1);
     case DISPLAY_KEY_ESCAPE:
-        mapping.ascii = 0x1B;
-        return mapping;
-    case DISPLAY_KEY_LEFT:
-        mapping.special = KEY_SPECIAL_LEFT;
-        return mapping;
-    case DISPLAY_KEY_RIGHT:
-        mapping.special = KEY_SPECIAL_RIGHT;
-        return mapping;
+        return terminal_mapping_bytes(0x1B, 0, 0, 0, 1);
     case DISPLAY_KEY_UP:
-        mapping.special = KEY_SPECIAL_UP;
-        return mapping;
+        return terminal_mapping_bytes(0x1B, 0x5B, 0x41, 0, 3);
     case DISPLAY_KEY_DOWN:
-        mapping.special = KEY_SPECIAL_DOWN;
-        return mapping;
+        return terminal_mapping_bytes(0x1B, 0x5B, 0x42, 0, 3);
+    case DISPLAY_KEY_RIGHT:
+        return terminal_mapping_bytes(0x1B, 0x5B, 0x43, 0, 3);
+    case DISPLAY_KEY_LEFT:
+        return terminal_mapping_bytes(0x1B, 0x5B, 0x44, 0, 3);
     case DISPLAY_KEY_HOME:
-        mapping.special = KEY_SPECIAL_HOME;
-        return mapping;
+        return terminal_mapping_bytes(0x1B, 0x5B, 0x48, 0, 3);
     case DISPLAY_KEY_END:
-        mapping.special = KEY_SPECIAL_END;
-        return mapping;
-    case DISPLAY_KEY_PAGE_UP:
-        mapping.special = KEY_SPECIAL_PAGE_UP;
-        return mapping;
-    case DISPLAY_KEY_PAGE_DOWN:
-        mapping.special = KEY_SPECIAL_PAGE_DOWN;
-        return mapping;
+        return terminal_mapping_bytes(0x1B, 0x5B, 0x46, 0, 3);
     case DISPLAY_KEY_DELETE:
-        mapping.special = KEY_SPECIAL_DELETE;
-        return mapping;
-    case DISPLAY_KEY_INSERT:
-        mapping.special = KEY_SPECIAL_INSERT;
-        return mapping;
+        return terminal_mapping_bytes(0x1B, 0x5B, 0x33, 0x7E, 4);
     default:
-        if (keysym >= DISPLAY_KEY_F1 && keysym <= DISPLAY_KEY_F12) {
-            mapping.special = (KeySpecialCode)(KEY_SPECIAL_F1 + (keysym - DISPLAY_KEY_F1));
-            return mapping;
-        }
-        mapping.mapped = false;
-        return mapping;
+        return unmapped;
     }
+}
+
+static void log_terminal_payload(const char *prefix, const uint8_t *payload, uint8_t length)
+{
+    printf("%s", prefix);
+    print_payload_hex(payload, length);
+    printf("\n");
 }
 
 void input_keyboard_init(
@@ -156,7 +143,8 @@ void input_keyboard_init(
 
 void input_keyboard_handle_display_key(InputKeyboardContext *ctx, bool down, uint32_t keysym)
 {
-    keyboard_transport_note_keyboard_event(ctx->keyboard_transport);
+    uint8_t modifier_bit = modifier_bit_for_keysym(keysym);
+    update_modifier_state(ctx, down, modifier_bit);
 
     if (!ctx->enabled) {
         if (ctx->log_keys) {
@@ -165,80 +153,44 @@ void input_keyboard_handle_display_key(InputKeyboardContext *ctx, bool down, uin
         return;
     }
 
-    uint8_t modifier_bit = modifier_bit_for_keysym(keysym);
-    update_modifier_state(ctx, down, modifier_bit);
-
-    KeyMapping mapping = map_display_keysym(keysym);
-    if (!mapping.mapped) {
-        if (ctx->log_keys && modifier_bit == 0) {
-            printf("Keyboard event ignored: unmapped keysym=0x%08X %s\n", keysym, down ? "down" : "up");
-        }
-        if (modifier_bit == 0) {
-            return;
-        }
-    }
-
-    uint8_t flags = down ? KEY_EVENT_FLAG_DOWN : KEY_EVENT_FLAG_UP;
-    if (mapping.mapped && mapping.ascii != 0) {
-        flags |= KEY_EVENT_FLAG_HAS_ASCII;
-    }
-    if (mapping.mapped && mapping.special != KEY_SPECIAL_NONE) {
-        flags |= KEY_EVENT_FLAG_HAS_SPECIAL;
-    }
-
-    uint8_t payload[] = {
-        flags,
-        mapping.mapped ? mapping.ascii : 0,
-        mapping.mapped ? (uint8_t)mapping.special : 0,
-        ctx->modifiers,
-    };
-
-    if (ctx->log_keys) {
-        printf(
-            "Keyboard event: %s keysym=0x%08X ascii=0x%02X special=%s(0x%02X) modifiers=0x%02X\n",
-            down ? "down" : "up",
-            keysym,
-            payload[1],
-            key_special_name((KeySpecialCode)payload[2]),
-            payload[2],
-            payload[3]);
-    }
-
-    if (ctx->keyboard_transport == NULL) {
+    if (!down) {
         if (ctx->log_keys) {
-            printf("Keyboard packet not queued: no keyboard transport is open\n");
+            printf("Keyboard key-up ignored: keysym=0x%08X\n", keysym);
         }
         return;
     }
 
-    /*
-     * The VNC callback must not block on serial I/O. It only queues the packet;
-     * the keyboard writer thread owns serial_port_send_packet().
-     */
-    bool queued = keyboard_transport_enqueue(ctx->keyboard_transport, PACKET_KEY_EVENT, payload, sizeof(payload));
+    keyboard_transport_note_keyboard_event(ctx->keyboard_transport);
+
+    TerminalMapping mapping = map_display_keysym_to_terminal(keysym);
+    if (!mapping.mapped || mapping.length == 0) {
+        if (modifier_bit == 0) {
+            keyboard_transport_note_unsupported_key(ctx->keyboard_transport);
+            if (ctx->log_keys) {
+                printf("Keyboard terminal input ignored: unsupported keysym=0x%08X\n", keysym);
+            }
+        }
+        return;
+    }
+
+    if (ctx->keyboard_transport == NULL) {
+        if (ctx->log_keys) {
+            log_terminal_payload("Keyboard terminal packet not queued: no transport bytes=", mapping.bytes, mapping.length);
+        }
+        return;
+    }
+
+    bool queued = keyboard_transport_enqueue(
+        ctx->keyboard_transport,
+        PACKET_TERMINAL_INPUT,
+        mapping.bytes,
+        mapping.length);
+
     if (ctx->log_keys) {
-        Packet packet;
-        packet.length = sizeof(payload);
-        packet.type = PACKET_KEY_EVENT;
-        for (uint8_t index = 0; index < packet.length; ++index) {
-            packet.payload[index] = payload[index];
-        }
-        packet.crc = packet_crc8(&packet);
-        uint8_t wire_length = packet_wire_length(&packet);
-
-        uint8_t bytes[PACKET_SYNC_SIZE + 255];
-        bytes[0] = PACKET_SYNC0;
-        bytes[1] = PACKET_SYNC1;
-        bytes[2] = wire_length;
-        bytes[3] = packet.type;
-        for (uint8_t index = 0; index < packet.length; ++index) {
-            bytes[4 + index] = packet.payload[index];
-        }
-        bytes[4 + packet.length] = packet.crc;
-
-        printf("Keyboard packet %s: ", queued ? "queued" : "queue dropped");
-        print_packet_bytes(bytes, (size_t)wire_length + PACKET_SYNC_SIZE);
-        printf("\n");
+        log_terminal_payload(
+            queued ? "Keyboard terminal packet queued: " : "Keyboard terminal packet queue dropped: ",
+            mapping.bytes,
+            mapping.length);
     }
 }
 

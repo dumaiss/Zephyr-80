@@ -35,7 +35,7 @@
  * Packet type values shared by file replay, serial input, and serial output.
  *
  * VDP_* packets flow from Zephyr or replay files into the video backend.
- * KEY_EVENT flows from the VNC/display side back to Zephyr over serial.
+ * TERMINAL_INPUT flows from the VNC/display side back to Zephyr over serial.
  * RESET and PING are Virtual Drip control packets, not TMS9928A port writes.
  * FRAME_MARK is a replay/pacing marker for animation tests; it is not a
  * hardware VBlank signal.
@@ -45,7 +45,8 @@ typedef enum {
     PACKET_VDP_DATA_WRITE = 0x02,
     PACKET_VDP_STATUS_READ = 0x03,
     PACKET_VDP_DATA_READ = 0x04,
-    PACKET_KEY_EVENT = 0x05,
+    PACKET_TERMINAL_INPUT = 0x05,
+    PACKET_KEYBOARD_INPUT = PACKET_TERMINAL_INPUT,
     PACKET_RESET = 0x06,
     PACKET_PING = 0x07,
     PACKET_FRAME_MARK = 0x08,
@@ -71,61 +72,6 @@ typedef enum {
     CURSOR_STYLE_UNDERLINE = 1,
     CURSOR_STYLE_LEFT_BAR = 2,
 } CursorStyle;
-
-/**
- * KEY_EVENT payload byte 0 flags.
- *
- * The minimal KEY_EVENT payload is four bytes:
- *   byte 0: these flags
- *   byte 1: ASCII value, or 0
- *   byte 2: KeySpecialCode value, or 0
- *   byte 3: KeyModifierFlags bitfield
- */
-typedef enum {
-    KEY_EVENT_FLAG_DOWN = 1 << 0,
-    KEY_EVENT_FLAG_UP = 1 << 1,
-    KEY_EVENT_FLAG_HAS_ASCII = 1 << 2,
-    KEY_EVENT_FLAG_HAS_SPECIAL = 1 << 3,
-} KeyEventFlags;
-
-/** KEY_EVENT payload byte 3 modifier bits. */
-typedef enum {
-    KEY_MODIFIER_SHIFT = 1 << 0,
-    KEY_MODIFIER_CTRL = 1 << 1,
-    KEY_MODIFIER_ALT = 1 << 2,
-    KEY_MODIFIER_META = 1 << 3,
-} KeyModifierFlags;
-
-/** Non-ASCII key codes carried in KEY_EVENT payload byte 2. */
-typedef enum {
-    KEY_SPECIAL_NONE = 0,
-    KEY_SPECIAL_ENTER,
-    KEY_SPECIAL_BACKSPACE,
-    KEY_SPECIAL_TAB,
-    KEY_SPECIAL_ESCAPE,
-    KEY_SPECIAL_LEFT,
-    KEY_SPECIAL_RIGHT,
-    KEY_SPECIAL_UP,
-    KEY_SPECIAL_DOWN,
-    KEY_SPECIAL_HOME,
-    KEY_SPECIAL_END,
-    KEY_SPECIAL_PAGE_UP,
-    KEY_SPECIAL_PAGE_DOWN,
-    KEY_SPECIAL_DELETE,
-    KEY_SPECIAL_INSERT,
-    KEY_SPECIAL_F1,
-    KEY_SPECIAL_F2,
-    KEY_SPECIAL_F3,
-    KEY_SPECIAL_F4,
-    KEY_SPECIAL_F5,
-    KEY_SPECIAL_F6,
-    KEY_SPECIAL_F7,
-    KEY_SPECIAL_F8,
-    KEY_SPECIAL_F9,
-    KEY_SPECIAL_F10,
-    KEY_SPECIAL_F11,
-    KEY_SPECIAL_F12,
-} KeySpecialCode;
 
 /**
  * Decoded packet representation.

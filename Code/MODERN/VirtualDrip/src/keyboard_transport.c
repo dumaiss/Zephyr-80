@@ -18,7 +18,9 @@ typedef struct {
     size_t count;
     uint64_t events_seen;
     uint64_t packets_queued;
+    uint64_t bytes_queued;
     uint64_t packets_dropped;
+    uint64_t unsupported_key_count;
     size_t high_water;
     pthread_mutex_t mutex;
     pthread_cond_t cond;
@@ -111,6 +113,7 @@ static bool keyboard_queue_push(KeyboardQueue *queue, const QueuedPacket *packet
         queue->head = (queue->head + 1) % KEYBOARD_QUEUE_SIZE;
         queue->count++;
         queue->packets_queued++;
+        queue->bytes_queued += packet->length;
         if (queue->count > queue->high_water) {
             queue->high_water = queue->count;
         }
@@ -214,6 +217,11 @@ static void keyboard_transport_copy_stats(KeyboardTransport *transport, Keyboard
     memset(stats, 0, sizeof(*stats));
 
     pthread_mutex_lock(&transport->queue.mutex);
+    stats->terminal_events_seen = transport->queue.events_seen;
+    stats->terminal_packets_queued = transport->queue.packets_queued;
+    stats->terminal_bytes_queued = transport->queue.bytes_queued;
+    stats->terminal_packets_dropped = transport->queue.packets_dropped;
+    stats->unsupported_key_count = transport->queue.unsupported_key_count;
     stats->keyboard_events_seen = transport->queue.events_seen;
     stats->keyboard_packets_queued = transport->queue.packets_queued;
     stats->keyboard_queue_dropped = transport->queue.packets_dropped;
@@ -221,6 +229,7 @@ static void keyboard_transport_copy_stats(KeyboardTransport *transport, Keyboard
     pthread_mutex_unlock(&transport->queue.mutex);
 
     pthread_mutex_lock(&transport->stats_mutex);
+    stats->terminal_packets_sent = transport->keyboard_packets_sent;
     stats->keyboard_packets_sent = transport->keyboard_packets_sent;
     stats->keyboard_packets_failed = transport->keyboard_packets_failed;
     pthread_mutex_unlock(&transport->stats_mutex);
@@ -257,12 +266,14 @@ static void keyboard_transport_log_stats(KeyboardTransport *transport, bool forc
         return;
     }
 
-    printf("kbd: seen=%llu queued=%llu sent=%llu fail=%llu drop=%llu qmax=%zu held=%llu\n",
-        (unsigned long long)stats.keyboard_events_seen,
-        (unsigned long long)stats.keyboard_packets_queued,
-        (unsigned long long)stats.keyboard_packets_sent,
+    printf("term: events=%llu queued=%llu bytes=%llu sent=%llu fail=%llu drop=%llu unsupported=%llu qmax=%zu held=%llu\n",
+        (unsigned long long)stats.terminal_events_seen,
+        (unsigned long long)stats.terminal_packets_queued,
+        (unsigned long long)stats.terminal_bytes_queued,
+        (unsigned long long)stats.terminal_packets_sent,
         (unsigned long long)stats.keyboard_packets_failed,
-        (unsigned long long)stats.keyboard_queue_dropped,
+        (unsigned long long)stats.terminal_packets_dropped,
+        (unsigned long long)stats.unsupported_key_count,
         stats.keyboard_queue_high_water,
         (unsigned long long)stats.keyboard_held_due_to_vdp);
     printf("gate: mode=%s vdp=%llu frame=%llu timeout=%llu\n",
@@ -409,6 +420,17 @@ void keyboard_transport_note_keyboard_event(KeyboardTransport *transport)
 
     pthread_mutex_lock(&transport->queue.mutex);
     transport->queue.events_seen++;
+    pthread_mutex_unlock(&transport->queue.mutex);
+}
+
+void keyboard_transport_note_unsupported_key(KeyboardTransport *transport)
+{
+    if (transport == NULL) {
+        return;
+    }
+
+    pthread_mutex_lock(&transport->queue.mutex);
+    transport->queue.unsupported_key_count++;
     pthread_mutex_unlock(&transport->queue.mutex);
 }
 

@@ -38,7 +38,7 @@ typedef struct {
     int vnc_port;
     /** Disable VNC output and run headless. */
     bool no_vnc;
-    /** Enable LibVNCServer keyboard capture and serial KEY_EVENT output. */
+    /** Enable LibVNCServer keyboard capture and serial terminal input output. */
     bool keyboard_enabled;
     /** Print key mapping and packet bytes for debugging. */
     bool log_keys;

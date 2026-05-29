@@ -6,7 +6,7 @@
  * POSIX serial port ownership and packet transmit helpers.
  *
  * Virtual Drip opens serial devices read/write: VDP operation packets arrive
- * from Zephyr, while KEY_EVENT packets are sent back over the same link. The
+ * from Zephyr, while TERMINAL_INPUT packets are sent back over the same link. The
  * implementation configures raw mode and protects writes with a mutex because
  * keyboard callbacks may transmit while the serial reader thread is active.
  */

@@ -3,11 +3,10 @@
 
 /**
  * @file input_keyboard.h
- * Map display key events into structured Virtual Drip KEY_EVENT packets.
+ * Map display key events into Virtual Drip terminal input packets.
  *
- * This module is intentionally not a terminal emulator. It does not translate
- * keys into VT escape sequences as the primary interface; it emits structured
- * key up/down events with ASCII, special-key, and modifier fields.
+ * This is a minimal terminal-input mapper, not a VT100 emulator. Key-down
+ * events become raw input bytes; key-up events do not generate packets.
  */
 
 #include "keyboard_transport.h"
@@ -21,6 +20,8 @@
  * keyboard_transport is borrowed and may be NULL in file replay/no-serial
  * modes. When enabled is false events are ignored. modifiers tracks currently
  * held Shift, Ctrl, Alt, and Meta/Super keysyms as seen from LibVNCServer.
+ * Modifiers are tracked only so standalone modifier keys are not counted as
+ * unsupported terminal input.
  */
 typedef struct {
     KeyboardTransport *keyboard_transport;
