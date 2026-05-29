@@ -65,17 +65,20 @@ STARTUP_DELAY_UNITS = 0x30
 VDRIP_TX_PACE_DELAY = 0x0020
 
 ; TMS9928A layout.
-PATTERN_TABLE	= 0x0000
-NAME_TABLE		= 0x3800
-TEXT_COLUMNS	= 40
-TEXT_ROWS		= 24
-TEXT_CELLS		= 960		; 40 * 24
+PATTERN_TABLE	    = 0x0000
+NAME_TABLE	    = 0x3800
+TEXT_PHYS_COLUMNS   = 40
+TEXT_LOG_COLUMNS    = 80
+TEXT_ROWS	    = 24
+TEXT_PHYS_CELLS     = TEXT_PHYS_COLUMNS * TEXT_ROWS	; 960
+TEXT_VIEW_COLUMNS   = TEXT_PHYS_COLUMNS
+TEXT_VIEW_MAX_COL   = TEXT_LOG_COLUMNS - TEXT_PHYS_COLUMNS	; 40
 
-; Text scrolling constants.
+; Text scrolling / shadow constants.
 TEXT_SCROLL_TOP		= 0
 TEXT_SCROLL_BOTTOM	= TEXT_ROWS - 1
 TEXT_SCROLL_ROWS	= TEXT_ROWS
-TEXT_SHADOW_SIZE	= TEXT_COLUMNS * TEXT_ROWS
+TEXT_SHADOW_SIZE	= TEXT_LOG_COLUMNS * TEXT_ROWS	; 1920
 
 ; Font assumptions: 96 chars, ASCII 20h-7Fh, 8 bytes each.
 FONT_FIRST_CHAR	= 0x20
@@ -194,6 +197,7 @@ vdrip_console_init:
 	xor a
 	ld (text_col),a
 	ld (text_row),a
+	ld (text_view_col),a
 
 	call vdrip_cursor_init
 	call vdrip_send_frame_mark
@@ -404,6 +408,7 @@ vdrip_rx_init:
 	ld (vdrip_proxy_ready_flag),a
 	ld (proxy_ready_count),a
 	ld (esc_press_count),a
+	ld (text_view_col),a
 	ret
 
 
@@ -781,10 +786,10 @@ term_process_byte:
 	pop af
 
 	cp #0x08
-	jr z,term_backspace
+	jp z,term_backspace
 
 	cp #0x09
-	jr z,term_tab
+	jp z,term_tab
 
 	; Enter sends CR. LF is tolerated as a newline.
 	cp #0x0d
@@ -821,6 +826,12 @@ term_process_esc:
 	cp #0x1b
 	jr z,term_enter_esc
 
+	; Non-ESC byte while in ESC state — reset the triple-Esc counter.
+	push af
+	xor a
+	ld (esc_press_count),a
+	pop af
+
 	cp #'[
 	ret nz
 
@@ -831,6 +842,12 @@ term_process_esc:
 term_process_csi:
 	xor a
 	ld (term_state),a
+
+	; Any CSI-terminating byte resets the triple-Esc counter.
+	push af
+	xor a
+	ld (esc_press_count),a
+	pop af
 
 	ld a,c
 	cp #'A
@@ -858,6 +875,7 @@ text_put_printable:
 	; Input: A = printable ASCII
 	call text_put_char_at_cursor
 	call text_advance_cursor
+	call text_ensure_cursor_visible
 	call vdrip_cursor_set_position_current
 	ret
 
@@ -874,18 +892,20 @@ term_backspace:
 	dec a
 	ld (text_col),a
 
+	call text_ensure_cursor_visible
 	ld a,#0x20
 	call text_put_char_at_cursor
 	call vdrip_cursor_set_position_current
 	ret
 
 term_tab:
-	; Minimal tab: move to the next 4-column stop, wrapping if needed.
+	; Advance to next 4-column tab stop in logical columns.
 	call text_advance_cursor
 	ld a,(text_col)
 	and #0x03
 	jr nz,term_tab
 
+	call text_ensure_cursor_visible
 	call vdrip_cursor_set_position_current
 	ret
 
@@ -916,31 +936,36 @@ term_cursor_left:
 
 	dec a
 	ld (text_col),a
+	call text_ensure_cursor_visible
 	call vdrip_cursor_set_position_current
 	ret
 
 term_cursor_right:
 	ld a,(text_col)
-	cp #(TEXT_COLUMNS - 1)
+	cp #(TEXT_LOG_COLUMNS - 1)
 	ret nc
 
 	inc a
 	ld (text_col),a
+	call text_ensure_cursor_visible
 	call vdrip_cursor_set_position_current
 	ret
 
 term_cursor_home:
-	; Home goes to row 0, col 0 (full-screen scrolling).
+	; Home to row 0, col 0.  Let ensure_cursor_visible handle the
+	; viewport reset and redraw.
 	xor a
 	ld (text_col),a
 	ld (text_row),a
+	call text_ensure_cursor_visible
 	call vdrip_cursor_set_position_current
 	ret
 
 term_cursor_end:
-	; Minimal end: end of the current editable line.
-	ld a,#(TEXT_COLUMNS - 1)
+	; End of logical line.
+	ld a,#(TEXT_LOG_COLUMNS - 1)
 	ld (text_col),a
+	call text_ensure_cursor_visible
 	call vdrip_cursor_set_position_current
 	ret
 
@@ -1002,17 +1027,21 @@ textq_full:
 text_advance_cursor:
 	ld a,(text_col)
 	inc a
-	cp #TEXT_COLUMNS
+	cp #TEXT_LOG_COLUMNS
 	jr c,text_advance_store_col
 
 	xor a
 	ld (text_col),a
+	; Reset viewport to column 0 on wrap.
+	xor a
+	ld (text_view_col),a
 	jr text_newline_from_wrap
 
 
 text_newline:
 	xor a
 	ld (text_col),a
+	ld (text_view_col),a
 
 text_newline_from_wrap:
 	ld a,(text_row)
@@ -1040,14 +1069,19 @@ text_cursor_to_vram:
 	jr z,text_cursor_rows_done
 
 	ld b,a
-	ld de,#TEXT_COLUMNS
+	ld de,#TEXT_PHYS_COLUMNS
 
 text_cursor_row_loop:
 	add hl,de
 	djnz text_cursor_row_loop
 
 text_cursor_rows_done:
+	; Compute physical column: logical_col - view_col.
 	ld a,(text_col)
+	ld e,a
+	ld a,(text_view_col)
+	sub e
+	neg
 	ld e,a
 	ld d,#0x00
 	add hl,de
@@ -1100,7 +1134,7 @@ text_shadow_addr_current:
 	or a
 	jr z,text_shadow_row_done
 	ld b,a
-	ld de,#TEXT_COLUMNS
+	ld de,#TEXT_LOG_COLUMNS
 
 text_shadow_row_loop:
 	add hl,de
@@ -1133,41 +1167,156 @@ text_shadow_put_current:
 ; ---------------------------------------------------------------------------
 ; text_put_char_at_cursor
 ;
-; Write character A at current cursor position in both shadow buffer and VDP.
+; Write character A at current cursor position in both shadow buffer and,
+; if the cursor falls within the visible viewport, the VDP name table.
 ; ---------------------------------------------------------------------------
 
 text_put_char_at_cursor:
 	push af
 	call text_shadow_put_current
+	; Compute physical column = text_col - text_view_col.
+	; If 0 <= physical_col < TEXT_PHYS_COLUMNS, write to VDP.
+	ld a,(text_col)
+	ld e,a
+	ld a,(text_view_col)
+	sub e
+	neg			; A = physical column
+	cp #TEXT_PHYS_COLUMNS
+	jr nc,text_put_char_at_cursor_done
+
+	; Visible — write to VDP.
 	call text_cursor_to_vram
 	pop af
 	call vdp_write_data_byte
 	ret
 
+text_put_char_at_cursor_done:
+	pop af
+	ret
+
 
 ; ---------------------------------------------------------------------------
-; text_redraw_all_rows
+; text_ensure_cursor_visible
 ;
-; Write every row of the shadow buffer (rows 0..23) to the VDP name table,
-; with inter-byte pacing so the proxy can keep up.
+; Pan the viewport so the logical cursor column becomes visible.
+; If text_col < text_view_col, shift left.
+; If text_col >= text_view_col + TEXT_PHYS_COLUMNS, shift right.
+; Redraws the viewport only when the view changes.
 ; ---------------------------------------------------------------------------
 
-text_redraw_all_rows:
+text_ensure_cursor_visible:
+	ld a,(text_col)
+	ld e,a
+	ld a,(text_view_col)
+	cp e
+	jr c,text_ensure_check_right	; view_col < text_col
+	jr z,text_ensure_done		; view_col == text_col, already visible
+
+	; text_col < text_view_col — shift left.
+	ld a,e
+	ld (text_view_col),a
+	jr text_ensure_redraw
+
+text_ensure_check_right:
+	ld a,e
+	ld e,a
+	ld a,(text_view_col)
+	add a,#TEXT_PHYS_COLUMNS
+	cp e
+	ret nc			; text_col < view_col + 40, already visible
+
+	; text_col >= text_view_col + 40 — shift right.
+	ld a,e
+	sub #(TEXT_PHYS_COLUMNS - 1)
+	jr nc,text_ensure_clamp
+	xor a
+
+text_ensure_clamp:
+	cp #TEXT_VIEW_MAX_COL
+	jr c,text_ensure_store
+	ld a,#TEXT_VIEW_MAX_COL
+
+text_ensure_store:
+	ld (text_view_col),a
+	; fall through to redraw
+
+text_ensure_redraw:
+	call vdrip_rts_release_raw
+	ld a,#0x01
+	ld (vdrip_rx_rts_released),a
+	call text_redraw_view
+	jp app_maybe_resume_rts
+
+text_ensure_done:
+	ret
+
+
+; ---------------------------------------------------------------------------
+; text_redraw_view
+;
+; Redraw all visible rows (rows 0..23) from the 80-column shadow buffer
+; into the 40-column VDP viewport, using the current text_view_col.
+;
+; RTS must be released before calling this (caller's responsibility).
+; Sends one FRAME_MARK after the redraw completes.
+; ---------------------------------------------------------------------------
+
+text_redraw_view:
+	; Write each visible row from shadow to VDP.
+	ld a,#0
+	push af		; row counter on stack
+
+text_redraw_view_row_loop:
+	pop af
+	push af
+
+	; Compute VDP write address = NAME_TABLE + row * 40
 	ld hl,#NAME_TABLE
+	ld b,a
+	or a
+	jr z,text_redraw_view_vdp_row_done
+	ld de,#TEXT_PHYS_COLUMNS
+text_redraw_view_vdp_row_loop:
+	add hl,de
+	djnz text_redraw_view_vdp_row_loop
+text_redraw_view_vdp_row_done:
 	call vdp_set_vram_write_addr
 
+	; Compute shadow source = text_shadow + row * 80 + view_col
+	pop af
+	push af
 	ld hl,#text_shadow
-	ld bc,#TEXT_SHADOW_SIZE
+	ld b,a
+	or a
+	jr z,text_redraw_view_shadow_row_done
+	ld de,#TEXT_LOG_COLUMNS
+text_redraw_view_shadow_row_loop:
+	add hl,de
+	djnz text_redraw_view_shadow_row_loop
+text_redraw_view_shadow_row_done:
+	ld a,(text_view_col)
+	ld e,a
+	ld d,#0
+	add hl,de
 
-text_redraw_all_loop:
+	; Write 40 bytes from shadow to VDP with pacing.
+	ld b,#TEXT_PHYS_COLUMNS
+text_redraw_view_byte_loop:
 	ld a,(hl)
 	call vdp_write_data_byte
 	call vdrip_tx_pace
 	inc hl
-	dec bc
-	ld a,b
-	or c
-	jr nz,text_redraw_all_loop
+	djnz text_redraw_view_byte_loop
+
+	; Next row.
+	pop af
+	inc a
+	push af
+	cp #TEXT_ROWS
+	jr nz,text_redraw_view_row_loop
+
+	pop af			; discard saved row counter
+	call vdrip_send_frame_mark
 	ret
 
 
@@ -1187,14 +1336,14 @@ text_scroll_up:
 	ld (vdrip_rx_rts_released),a
 
 	; Shift rows TEXT_SCROLL_TOP+1..TEXT_SCROLL_BOTTOM up by one in the
-	; shadow buffer.  Source = rows 1..23 → Dest = rows 0..22.
+	; shadow buffer.  Each row is TEXT_LOG_COLUMNS bytes wide.
 	push bc
 	push de
 	push hl
 
-	ld hl,#(text_shadow + TEXT_COLUMNS)
+	ld hl,#(text_shadow + TEXT_LOG_COLUMNS)
 	ld de,#text_shadow
-	ld bc,#(TEXT_CELLS - TEXT_COLUMNS)
+	ld bc,#(TEXT_SHADOW_SIZE - TEXT_LOG_COLUMNS)
 
 text_scroll_copy_loop:
 	ld a,(hl)
@@ -1206,9 +1355,9 @@ text_scroll_copy_loop:
 	or c
 	jr nz,text_scroll_copy_loop
 
-	; Blank the bottom row in the shadow buffer.
-	ld hl,#(text_shadow + (TEXT_ROWS - 1) * TEXT_COLUMNS)
-	ld bc,#TEXT_COLUMNS
+	; Blank the full 80-column bottom row in the shadow buffer.
+	ld hl,#(text_shadow + (TEXT_ROWS - 1) * TEXT_LOG_COLUMNS)
+	ld bc,#TEXT_LOG_COLUMNS
 
 text_scroll_blank_loop:
 	ld (hl),#0x20
@@ -1222,13 +1371,14 @@ text_scroll_blank_loop:
 	pop de
 	pop bc
 
-	; Redraw ALL rows from the shadow buffer to VDP so the scrolled
-	; content is visible.  Inter-byte pacing prevents proxy overload.
-	call text_redraw_all_rows
+	; Redraw the 40-column viewport from the 80-column shadow.
+	; text_view_col is reset to 0 after scroll.
+	call text_redraw_view
 
 	; Cursor to bottom row, col 0.
 	xor a
 	ld (text_col),a
+	ld (text_view_col),a
 	ld a,#(TEXT_SCROLL_BOTTOM)
 	ld (text_row),a
 
@@ -1267,6 +1417,7 @@ vdrip_reset_display:
 	xor a
 	ld (text_col),a
 	ld (text_row),a
+	ld (text_view_col),a
 
 	call vdrip_cursor_init
 	call vdrip_send_frame_mark
@@ -1340,11 +1491,11 @@ text_load_font:
 ; ---------------------------------------------------------------------------
 
 text_clear_screen:
-	; Clear VDP name table.
+	; Clear VDP name table (40x24).
 	ld hl,#NAME_TABLE
 	call vdp_set_vram_write_addr
 
-	ld bc,#TEXT_CELLS
+	ld bc,#TEXT_PHYS_CELLS
 text_clear_vdp_loop:
 	ld a,#0x20
 	call vdp_write_data_byte
@@ -1353,7 +1504,7 @@ text_clear_vdp_loop:
 	or c
 	jr nz,text_clear_vdp_loop
 
-	; Clear shadow buffer.
+	; Clear 80-column shadow buffer.
 	ld hl,#text_shadow
 	ld bc,#TEXT_SHADOW_SIZE
 text_clear_shadow_loop:
@@ -1511,11 +1662,16 @@ vdrip_cursor_show:
 
 
 vdrip_cursor_set_position_current:
+	; Send physical cursor column (logical_col - view_col).
 	ld hl,#packet_payload0
 	ld (hl),#CURSOR_SET_POSITION
 	inc hl
 	ld a,(text_col)
-	ld (hl),a
+	ld e,a
+	ld a,(text_view_col)
+	sub e
+	neg
+	ld (hl),a		; physical column
 	inc hl
 	ld a,(text_row)
 	ld (hl),a
@@ -1793,6 +1949,10 @@ text_col:
 	.db 0x00
 
 text_row:
+	.db 0x00
+
+; Horizontal viewport offset into the 80-column logical buffer.
+text_view_col:
 	.db 0x00
 
 textq_head:
