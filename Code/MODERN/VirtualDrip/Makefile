@@ -225,6 +225,30 @@ src/input_keyboard.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/input_keyboard.c.s
 .PHONY : src/input_keyboard.c.s
 
+src/keyboard_transport.o: src/keyboard_transport.c.o
+.PHONY : src/keyboard_transport.o
+
+# target to build an object file
+src/keyboard_transport.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/keyboard_transport.c.o
+.PHONY : src/keyboard_transport.c.o
+
+src/keyboard_transport.i: src/keyboard_transport.c.i
+.PHONY : src/keyboard_transport.i
+
+# target to preprocess a source file
+src/keyboard_transport.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/keyboard_transport.c.i
+.PHONY : src/keyboard_transport.c.i
+
+src/keyboard_transport.s: src/keyboard_transport.c.s
+.PHONY : src/keyboard_transport.s
+
+# target to generate assembly for a file
+src/keyboard_transport.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/keyboard_transport.c.s
+.PHONY : src/keyboard_transport.c.s
+
 src/main.o: src/main.c.o
 .PHONY : src/main.o
 
@@ -486,6 +510,9 @@ help:
 	@echo "... src/input_keyboard.o"
 	@echo "... src/input_keyboard.i"
 	@echo "... src/input_keyboard.s"
+	@echo "... src/keyboard_transport.o"
+	@echo "... src/keyboard_transport.i"
+	@echo "... src/keyboard_transport.s"
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"

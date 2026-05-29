@@ -85,12 +85,12 @@ clean: CMakeFiles/virtual-vdp.dir/clean
 CMakeFiles/virtual-vdp.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/kitamura/Documents/Z80HomeBrew/Code/MODERN/VirtualDrip/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 "Built target virtual-vdp"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/kitamura/Documents/Z80HomeBrew/Code/MODERN/VirtualDrip/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 "Built target virtual-vdp"
 .PHONY : CMakeFiles/virtual-vdp.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/virtual-vdp.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/kitamura/Documents/Z80HomeBrew/Code/MODERN/VirtualDrip/CMakeFiles 15
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/kitamura/Documents/Z80HomeBrew/Code/MODERN/VirtualDrip/CMakeFiles 16
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/virtual-vdp.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/kitamura/Documents/Z80HomeBrew/Code/MODERN/VirtualDrip/CMakeFiles 0
 .PHONY : CMakeFiles/virtual-vdp.dir/rule
@@ -102,7 +102,7 @@ virtual-vdp: CMakeFiles/virtual-vdp.dir/rule
 # codegen rule for target.
 CMakeFiles/virtual-vdp.dir/codegen:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/kitamura/Documents/Z80HomeBrew/Code/MODERN/VirtualDrip/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 "Finished codegen for target virtual-vdp"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/kitamura/Documents/Z80HomeBrew/Code/MODERN/VirtualDrip/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 "Finished codegen for target virtual-vdp"
 .PHONY : CMakeFiles/virtual-vdp.dir/codegen
 
 # clean rule for target.

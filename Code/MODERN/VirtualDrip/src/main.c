@@ -8,8 +8,8 @@
  *   4. Packet callbacks dispatch into the VideoDevice; dirty updates cause a
  *      framebuffer render and VNC dirty notification.
  *   5. LibVNCServer serves the framebuffer and reports keyboard events upward.
- *   6. Keyboard events are serialized as KEY_EVENT packets over serial when a
- *      serial port is open.
+ *   6. Keyboard events are queued from the VNC callback and serialized by a
+ *      dedicated writer thread when the VDP transport gate is interactive.
  *   7. Shutdown stops event loops and releases resources in reverse order.
  */
 
@@ -17,6 +17,7 @@
 #include "app_runtime.h"
 #include "display_libvncserver.h"
 #include "input_keyboard.h"
+#include "keyboard_transport.h"
 #include "packet_dispatch.h"
 #include "serial_port.h"
 #include "serial_reader.h"
@@ -79,6 +80,7 @@ int main(int argc, char **argv)
     /* Keyboard can be initialized before serial; no-serial modes just log/drop sends. */
     SerialPort *serial_port = NULL;
     SerialReader *serial_reader = NULL;
+    KeyboardTransport *keyboard_transport = NULL;
     InputKeyboardContext keyboard;
     input_keyboard_init(&keyboard, NULL, config.keyboard_enabled, config.log_keys);
 
@@ -99,7 +101,16 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        input_keyboard_init(&keyboard, serial_port, config.keyboard_enabled, config.log_keys);
+        keyboard_transport = keyboard_transport_create(serial_port);
+        if (keyboard_transport == NULL || !keyboard_transport_start(keyboard_transport)) {
+            keyboard_transport_destroy(keyboard_transport);
+            serial_port_close(serial_port);
+            free(framebuffer);
+            video_device_destroy(video_device);
+            return 1;
+        }
+        packet_dispatch_set_keyboard_transport(&dispatch, keyboard_transport);
+        input_keyboard_init(&keyboard, keyboard_transport, config.keyboard_enabled, config.log_keys);
 
         SerialReaderConfig reader_config = {
             .port = serial_port,
@@ -111,6 +122,7 @@ int main(int argc, char **argv)
         /* Serial callbacks run on the reader thread and enter PacketDispatch. */
         serial_reader = serial_reader_start(&reader_config);
         if (serial_reader == NULL) {
+            keyboard_transport_destroy(keyboard_transport);
             serial_port_close(serial_port);
             free(framebuffer);
             video_device_destroy(video_device);
@@ -135,6 +147,7 @@ int main(int argc, char **argv)
         if (display == NULL) {
             app_runtime_request_stop();
             serial_reader_join(serial_reader);
+            keyboard_transport_destroy(keyboard_transport);
             serial_port_close(serial_port);
             free(framebuffer);
             video_device_destroy(video_device);
@@ -161,8 +174,9 @@ int main(int argc, char **argv)
 
     app_runtime_request_stop();
     serial_reader_join(serial_reader);
-    serial_port_close(serial_port);
     display_libvncserver_destroy(display);
+    keyboard_transport_destroy(keyboard_transport);
+    serial_port_close(serial_port);
     free(framebuffer);
     video_device_destroy(video_device);
     return server_status != 0 ? server_status : input_status;

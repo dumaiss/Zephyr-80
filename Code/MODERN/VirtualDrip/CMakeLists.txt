@@ -47,6 +47,7 @@ add_executable(virtual-vdp
     src/main.c
     src/display_libvncserver.c
     src/input_keyboard.c
+    src/keyboard_transport.c
     src/packet_dispatch.c
     src/packet_parser.c
     src/packet_replay.c

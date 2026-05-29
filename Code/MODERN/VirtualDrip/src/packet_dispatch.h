@@ -12,6 +12,7 @@
 
 #include "protocol.h"
 #include "video_device.h"
+#include "keyboard_transport.h"
 
 #include <pthread.h>
 #include <stddef.h>
@@ -29,6 +30,7 @@ typedef struct {
     pthread_mutex_t *framebuffer_mutex;
     FrameChangedCallback frame_changed;
     void *frame_changed_userdata;
+    KeyboardTransport *keyboard_transport;
     size_t packet_count;
 } PacketDispatch;
 
@@ -46,6 +48,9 @@ void packet_dispatch_set_frame_changed_callback(
     PacketDispatch *dispatch,
     FrameChangedCallback callback,
     void *userdata);
+
+/** Register optional keyboard transport gate updates for incoming serial packets. */
+void packet_dispatch_set_keyboard_transport(PacketDispatch *dispatch, KeyboardTransport *keyboard_transport);
 
 /** Render the backend's current state into the framebuffer under the mutex. */
 void packet_dispatch_render(PacketDispatch *dispatch);

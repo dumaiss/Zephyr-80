@@ -27,7 +27,7 @@ struct SerialPort {
     char *path;
     /* Configured baud rate accepted by baud_to_speed(). */
     int baud_rate;
-    /* Protects encoded packet writes against concurrent keyboard callbacks. */
+    /* Protects encoded packet writes against concurrent transmit paths. */
     pthread_mutex_t tx_mutex;
 };
 
@@ -258,8 +258,8 @@ bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payl
     size_t byte_count = (size_t)wire_length + PACKET_SYNC_SIZE;
 
     /*
-     * Keyboard events can be sent from the VNC event path while the serial
-     * reader thread is running, so keep each encoded packet contiguous.
+     * Keep each encoded packet contiguous even if future transmit paths share
+     * this port with the keyboard writer thread.
      */
     pthread_mutex_lock(&port->tx_mutex);
     bool sent = write_all(port->fd, bytes, byte_count);

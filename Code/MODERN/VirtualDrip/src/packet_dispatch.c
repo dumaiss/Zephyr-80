@@ -27,6 +27,7 @@ void packet_dispatch_init(
     dispatch->framebuffer_mutex = framebuffer_mutex;
     dispatch->frame_changed = NULL;
     dispatch->frame_changed_userdata = NULL;
+    dispatch->keyboard_transport = NULL;
     dispatch->packet_count = 0;
 }
 
@@ -37,6 +38,11 @@ void packet_dispatch_set_frame_changed_callback(
 {
     dispatch->frame_changed = callback;
     dispatch->frame_changed_userdata = userdata;
+}
+
+void packet_dispatch_set_keyboard_transport(PacketDispatch *dispatch, KeyboardTransport *keyboard_transport)
+{
+    dispatch->keyboard_transport = keyboard_transport;
 }
 
 void packet_dispatch_render(PacketDispatch *dispatch)
@@ -59,6 +65,7 @@ void packet_dispatch_handle_packet(const Packet *packet, size_t offset, void *us
     PacketDispatch *dispatch = (PacketDispatch *)userdata;
     VideoDeviceUpdate update;
 
+    keyboard_transport_note_incoming_packet(dispatch->keyboard_transport, packet);
     print_packet(++dispatch->packet_count, offset, packet);
     (void)video_device_handle_packet(dispatch->video_device, packet, &update);
     if (update.framebuffer_dirty) {

@@ -6,8 +6,13 @@
 ;   L
 ;   G 8000
 ;
-; This test only transmits Virtual Drip VDP packets.
-; No RX, no keyboard parser, no animation.
+; This test receives Virtual Drip KEYBOARD_EVENT packets and echoes printable
+; text through the TMS9928A text name table.
+;
+; The Z80 owns VDP sequencing because it is single-threaded: foreground code
+; queues received text and emits VDP packets in controlled bursts. The proxy
+; owns asynchronous keyboard gating because VNC keyboard events can arrive at
+; any time while these VDP bursts are in progress.
 
 	.module vdrip_text_hello
 	.area CODE (ABS)
@@ -142,6 +147,7 @@ main_loop:
 	call vdrip_rx_kick_pending
 	call vdrip_poll_rx
 	call textq_render_one
+	call debug_maybe_print_stats
 	jr main_loop
 
 delay_before_start:
@@ -576,7 +582,7 @@ vdrip_parse_body:
 
 vdrip_parse_body_done:
 	call vdrip_packet_crc_valid
-	jr nz,vdrip_parse_reset
+	jp nz,vdrip_parse_crc_failed
 
 	ld a,(packet_ok_count)
 	inc a
@@ -657,33 +663,6 @@ vdrip_key_enqueue:
 	inc a
 	ld (key_echo_count),a    
   
-	ret
-
-text_put_ascii:
-	; Input: A = printable ASCII
-	;
-	; Rendering one character is slow because it sends several
-	; Virtual Drip packets. During paste, pause host->Zephyr traffic
-	; while we do that work.
-
-	push af
-
-	call vdrip_rts_release_raw
-	ld a,#0x01
-	ld (vdrip_rx_rts_released),a
-
-	call text_cursor_to_vram
-
-	pop af
-	call vdp_write_data_byte
-
-	call text_advance_cursor
-
-	; Only frame after a real printed character.
-	call vdrip_send_frame_mark
-
-	; Resume host input only if RX ring has drained below low watermark.
-	call vdrip_rx_maybe_assert_rts
 	ret
 
 ; ---------------------------------------------------------------------------

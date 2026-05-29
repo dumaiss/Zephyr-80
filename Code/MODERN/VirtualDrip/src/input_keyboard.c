@@ -142,9 +142,13 @@ static KeyMapping map_display_keysym(uint32_t keysym)
     }
 }
 
-void input_keyboard_init(InputKeyboardContext *ctx, SerialPort *serial_port, bool enabled, bool log_keys)
+void input_keyboard_init(
+    InputKeyboardContext *ctx,
+    KeyboardTransport *keyboard_transport,
+    bool enabled,
+    bool log_keys)
 {
-    ctx->serial_port = serial_port;
+    ctx->keyboard_transport = keyboard_transport;
     ctx->enabled = enabled;
     ctx->log_keys = log_keys;
     ctx->modifiers = 0;
@@ -152,6 +156,8 @@ void input_keyboard_init(InputKeyboardContext *ctx, SerialPort *serial_port, boo
 
 void input_keyboard_handle_display_key(InputKeyboardContext *ctx, bool down, uint32_t keysym)
 {
+    keyboard_transport_note_keyboard_event(ctx->keyboard_transport);
+
     if (!ctx->enabled) {
         if (ctx->log_keys) {
             printf("Keyboard event ignored: capture disabled keysym=0x%08X %s\n", keysym, down ? "down" : "up");
@@ -198,15 +204,18 @@ void input_keyboard_handle_display_key(InputKeyboardContext *ctx, bool down, uin
             payload[3]);
     }
 
-    if (ctx->serial_port == NULL) {
+    if (ctx->keyboard_transport == NULL) {
         if (ctx->log_keys) {
-            printf("Keyboard packet not sent: no serial transmit port is open\n");
+            printf("Keyboard packet not queued: no keyboard transport is open\n");
         }
         return;
     }
 
-    /* SerialPort owns framing, CRC, and TX locking for the outbound packet. */
-    bool sent = serial_port_send_packet(ctx->serial_port, PACKET_KEY_EVENT, payload, sizeof(payload));
+    /*
+     * The VNC callback must not block on serial I/O. It only queues the packet;
+     * the keyboard writer thread owns serial_port_send_packet().
+     */
+    bool queued = keyboard_transport_enqueue(ctx->keyboard_transport, PACKET_KEY_EVENT, payload, sizeof(payload));
     if (ctx->log_keys) {
         Packet packet;
         packet.length = sizeof(payload);
@@ -227,7 +236,7 @@ void input_keyboard_handle_display_key(InputKeyboardContext *ctx, bool down, uin
         }
         bytes[4 + packet.length] = packet.crc;
 
-        printf("Keyboard packet %s: ", sent ? "sent" : "send failed");
+        printf("Keyboard packet %s: ", queued ? "queued" : "queue dropped");
         print_packet_bytes(bytes, (size_t)wire_length + PACKET_SYNC_SIZE);
         printf("\n");
     }

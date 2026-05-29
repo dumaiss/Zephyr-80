@@ -10,7 +10,7 @@
  * key up/down events with ASCII, special-key, and modifier fields.
  */
 
-#include "serial_port.h"
+#include "keyboard_transport.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -18,24 +18,28 @@
 /**
  * Keyboard mapper state.
  *
- * serial_port is borrowed and may be NULL in file replay/no-serial modes. When
- * enabled is false events are ignored. modifiers tracks currently held Shift,
- * Ctrl, Alt, and Meta/Super keysyms as seen from LibVNCServer.
+ * keyboard_transport is borrowed and may be NULL in file replay/no-serial
+ * modes. When enabled is false events are ignored. modifiers tracks currently
+ * held Shift, Ctrl, Alt, and Meta/Super keysyms as seen from LibVNCServer.
  */
 typedef struct {
-    SerialPort *serial_port;
+    KeyboardTransport *keyboard_transport;
     bool enabled;
     bool log_keys;
     uint8_t modifiers;
 } InputKeyboardContext;
 
-/** Initialize mapper state with a borrowed optional serial port. */
-void input_keyboard_init(InputKeyboardContext *ctx, SerialPort *serial_port, bool enabled, bool log_keys);
+/** Initialize mapper state with a borrowed optional keyboard transport. */
+void input_keyboard_init(
+    InputKeyboardContext *ctx,
+    KeyboardTransport *keyboard_transport,
+    bool enabled,
+    bool log_keys);
 
 /**
  * Handle one display keysym event.
  *
- * If serial_port is NULL, mapping/logging still occurs but no packet is sent.
+ * If keyboard_transport is NULL, mapping/logging still occurs but no packet is queued.
  */
 void input_keyboard_handle_display_key(InputKeyboardContext *ctx, bool down, uint32_t keysym);
 
