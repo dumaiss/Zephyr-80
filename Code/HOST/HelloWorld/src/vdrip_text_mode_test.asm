@@ -61,12 +61,21 @@ VDRIP_WIRE_OVERHEAD	= 0x03
 
 STARTUP_DELAY_UNITS = 0x30
 
+; Inter-byte pacing for scroll redraw (~1 ms at 4 MHz).
+VDRIP_TX_PACE_DELAY = 0x0020
+
 ; TMS9928A layout.
 PATTERN_TABLE	= 0x0000
 NAME_TABLE		= 0x3800
 TEXT_COLUMNS	= 40
 TEXT_ROWS		= 24
 TEXT_CELLS		= 960		; 40 * 24
+
+; Text scrolling constants.
+TEXT_SCROLL_TOP		= 0
+TEXT_SCROLL_BOTTOM	= TEXT_ROWS - 1
+TEXT_SCROLL_ROWS	= TEXT_ROWS
+TEXT_SHADOW_SIZE	= TEXT_COLUMNS * TEXT_ROWS
 
 ; Font assumptions: 96 chars, ASCII 20h-7Fh, 8 bytes each.
 FONT_FIRST_CHAR	= 0x20
@@ -181,10 +190,9 @@ vdrip_console_init:
 	call text_load_font
 	call text_clear_screen
 
-	; Cursor starts at row 1, col 0.
+	; Cursor starts at row 0, col 0 (full-screen scrolling).
 	xor a
 	ld (text_col),a
-	ld a,#0x01
 	ld (text_row),a
 
 	call vdrip_cursor_init
@@ -324,6 +332,26 @@ delay_unit_loop:
 	ret
 
 
+; ---------------------------------------------------------------------------
+; vdrip_tx_pace — small inter-byte delay for scroll VDP redraw pacing.
+;
+; Prevents the VDP data write burst from reaching the proxy too fast
+; before the FRAME_MARK.  Adjust VDRIP_TX_PACE_DELAY if needed.
+; ---------------------------------------------------------------------------
+
+vdrip_tx_pace:
+	push bc
+	ld bc,#VDRIP_TX_PACE_DELAY
+
+vdrip_tx_pace_loop:
+	dec bc
+	ld a,b
+	or c
+	jr nz,vdrip_tx_pace_loop
+	pop bc
+	ret
+
+
 ; ===========================================================================
 ; Proxy readiness handshake
 ; ===========================================================================
@@ -375,6 +403,7 @@ vdrip_rx_init:
 	ld (rts_assert_count),a
 	ld (vdrip_proxy_ready_flag),a
 	ld (proxy_ready_count),a
+	ld (esc_press_count),a
 	ret
 
 
@@ -745,6 +774,12 @@ term_process_byte:
 	cp #0x1b
 	jr z,term_enter_esc
 
+	; Non-Esc byte resets the triple-Esc counter.
+	push af
+	xor a
+	ld (esc_press_count),a
+	pop af
+
 	cp #0x08
 	jr z,term_backspace
 
@@ -766,6 +801,13 @@ term_process_byte:
 	jr text_put_printable
 
 term_enter_esc:
+	; Increment the triple-Esc counter.
+	ld a,(esc_press_count)
+	inc a
+	ld (esc_press_count),a
+	cp #3
+	jp z,vdrip_reset_display
+
 	ld a,#TERM_STATE_ESC
 	ld (term_state),a
 	ret
@@ -774,7 +816,11 @@ term_process_esc:
 	xor a
 	ld (term_state),a
 
+	; If this is another Esc (while in ESC state), count it.
 	ld a,c
+	cp #0x1b
+	jr z,term_enter_esc
+
 	cp #'[
 	ret nz
 
@@ -809,16 +855,8 @@ term_process_csi:
 	ret
 
 text_put_printable:
-	; Input:
-	;   A = printable ASCII
-
-	push af
-
-	call text_cursor_to_vram
-
-	pop af
-	call vdp_write_data_byte
-
+	; Input: A = printable ASCII
+	call text_put_char_at_cursor
 	call text_advance_cursor
 	call vdrip_cursor_set_position_current
 	ret
@@ -836,9 +874,8 @@ term_backspace:
 	dec a
 	ld (text_col),a
 
-	call text_cursor_to_vram
 	ld a,#0x20
-	call vdp_write_data_byte
+	call text_put_char_at_cursor
 	call vdrip_cursor_set_position_current
 	ret
 
@@ -854,7 +891,7 @@ term_tab:
 
 term_cursor_up:
 	ld a,(text_row)
-	cp #0x01
+	or a
 	ret z
 
 	dec a
@@ -893,10 +930,9 @@ term_cursor_right:
 	ret
 
 term_cursor_home:
-	; Home goes to row 1, col 0 (row 0 is reserved).
+	; Home goes to row 0, col 0 (full-screen scrolling).
 	xor a
 	ld (text_col),a
-	ld a,#0x01
 	ld (text_row),a
 	call vdrip_cursor_set_position_current
 	ret
@@ -960,9 +996,7 @@ textq_full:
 ; ---------------------------------------------------------------------------
 ; text_newline — move cursor to column 0 of the next row
 ;
-; TODO(scrolling): when scrolling support is added, this function should
-;   shift rows 1..23 up in a RAM text shadow buffer and redraw, rather
-;   than wrapping to row 1.
+; Full-screen scrolling: rows 0..23, scrolls up when at bottom.
 ; ---------------------------------------------------------------------------
 
 text_advance_cursor:
@@ -986,8 +1020,9 @@ text_newline_from_wrap:
 	cp #TEXT_ROWS
 	jr c,text_newline_store_row
 
-	; Wrap to row 1 so row 0 stays reserved.
-	ld a,#0x01
+	; Bottom of screen — scroll up.
+	call text_scroll_up
+	ret
 
 text_newline_store_row:
 	ld (text_row),a
@@ -1042,6 +1077,202 @@ app_maybe_resume_rts:
 
 	call vdrip_rts_assert_raw
 
+	xor a
+	ld (vdrip_rx_rts_released),a
+	ret
+
+
+; ===========================================================================
+; Shadow buffer and scroll routines
+; ===========================================================================
+
+; ---------------------------------------------------------------------------
+; text_shadow_addr_current
+;
+; Input:  text_row, text_col
+; Output: HL = address inside text_shadow for current cursor cell
+; ---------------------------------------------------------------------------
+
+text_shadow_addr_current:
+	push de
+	ld hl,#text_shadow
+	ld a,(text_row)
+	or a
+	jr z,text_shadow_row_done
+	ld b,a
+	ld de,#TEXT_COLUMNS
+
+text_shadow_row_loop:
+	add hl,de
+	djnz text_shadow_row_loop
+
+text_shadow_row_done:
+	ld a,(text_col)
+	ld e,a
+	ld d,#0
+	add hl,de
+	pop de
+	ret
+
+
+; ---------------------------------------------------------------------------
+; text_shadow_put_current
+;
+; Store A into text_shadow at current row/col.
+; Preserves the character while calculating the shadow address.
+; ---------------------------------------------------------------------------
+
+text_shadow_put_current:
+	push af
+	call text_shadow_addr_current
+	pop af
+	ld (hl),a
+	ret
+
+
+; ---------------------------------------------------------------------------
+; text_put_char_at_cursor
+;
+; Write character A at current cursor position in both shadow buffer and VDP.
+; ---------------------------------------------------------------------------
+
+text_put_char_at_cursor:
+	push af
+	call text_shadow_put_current
+	call text_cursor_to_vram
+	pop af
+	call vdp_write_data_byte
+	ret
+
+
+; ---------------------------------------------------------------------------
+; text_redraw_all_rows
+;
+; Write every row of the shadow buffer (rows 0..23) to the VDP name table,
+; with inter-byte pacing so the proxy can keep up.
+; ---------------------------------------------------------------------------
+
+text_redraw_all_rows:
+	ld hl,#NAME_TABLE
+	call vdp_set_vram_write_addr
+
+	ld hl,#text_shadow
+	ld bc,#TEXT_SHADOW_SIZE
+
+text_redraw_all_loop:
+	ld a,(hl)
+	call vdp_write_data_byte
+	call vdrip_tx_pace
+	inc hl
+	dec bc
+	ld a,b
+	or c
+	jr nz,text_redraw_all_loop
+	ret
+
+
+; ---------------------------------------------------------------------------
+; text_scroll_up
+;
+; Scroll the entire visible area up by one row in the shadow buffer.
+; Blank the bottom row. Redraw all rows to VDP. Cursor to bottom, col 0.
+;
+; RTS is released during the redraw burst; reasserted after FRAME_MARK.
+; ---------------------------------------------------------------------------
+
+text_scroll_up:
+	; Release RTS — we will be chatty.
+	call vdrip_rts_release_raw
+	ld a,#0x01
+	ld (vdrip_rx_rts_released),a
+
+	; Shift rows TEXT_SCROLL_TOP+1..TEXT_SCROLL_BOTTOM up by one in the
+	; shadow buffer.  Source = rows 1..23 → Dest = rows 0..22.
+	push bc
+	push de
+	push hl
+
+	ld hl,#(text_shadow + TEXT_COLUMNS)
+	ld de,#text_shadow
+	ld bc,#(TEXT_CELLS - TEXT_COLUMNS)
+
+text_scroll_copy_loop:
+	ld a,(hl)
+	ld (de),a
+	inc hl
+	inc de
+	dec bc
+	ld a,b
+	or c
+	jr nz,text_scroll_copy_loop
+
+	; Blank the bottom row in the shadow buffer.
+	ld hl,#(text_shadow + (TEXT_ROWS - 1) * TEXT_COLUMNS)
+	ld bc,#TEXT_COLUMNS
+
+text_scroll_blank_loop:
+	ld (hl),#0x20
+	inc hl
+	dec bc
+	ld a,b
+	or c
+	jr nz,text_scroll_blank_loop
+
+	pop hl
+	pop de
+	pop bc
+
+	; Redraw ALL rows from the shadow buffer to VDP so the scrolled
+	; content is visible.  Inter-byte pacing prevents proxy overload.
+	call text_redraw_all_rows
+
+	; Cursor to bottom row, col 0.
+	xor a
+	ld (text_col),a
+	ld a,#(TEXT_SCROLL_BOTTOM)
+	ld (text_row),a
+
+	; Send one FRAME_MARK after the scroll completes.
+	call vdrip_send_frame_mark
+
+	; Reassert RTS if both queues are drained.
+	call app_maybe_resume_rts
+	ret
+
+
+; ===========================================================================
+; VDP reset (triple-Esc)
+; ===========================================================================
+;
+; Called when the user presses Esc three times rapidly.
+; Re-initialises the VDP text mode, font, and virtual cursor.
+
+vdrip_reset_display:
+	; Reset the Esc counter.
+	xor a
+	ld (esc_press_count),a
+
+	; Release RTS while we re-init the display.
+	call vdrip_rts_release_raw
+	ld a,#0x01
+	ld (vdrip_rx_rts_released),a
+
+	call vdrip_send_reset
+	call vdrip_send_ping
+	call text_init_vdp
+	call text_load_font
+	call text_clear_screen
+
+	; Cursor to row 0, col 0.
+	xor a
+	ld (text_col),a
+	ld (text_row),a
+
+	call vdrip_cursor_init
+	call vdrip_send_frame_mark
+
+	; Reassert RTS.
+	call vdrip_rts_assert_raw
 	xor a
 	ld (vdrip_rx_rts_released),a
 	ret
@@ -1105,22 +1336,33 @@ text_load_font:
 
 
 ; ---------------------------------------------------------------------------
-; Clear 40x24 text screen to ASCII space.
+; Clear 40x24 text screen to ASCII space — clears both VDP and shadow buffer.
 ; ---------------------------------------------------------------------------
 
 text_clear_screen:
+	; Clear VDP name table.
 	ld hl,#NAME_TABLE
 	call vdp_set_vram_write_addr
 
 	ld bc,#TEXT_CELLS
-text_clear_loop:
+text_clear_vdp_loop:
 	ld a,#0x20
 	call vdp_write_data_byte
-
 	dec bc
 	ld a,b
 	or c
-	jr nz,text_clear_loop
+	jr nz,text_clear_vdp_loop
+
+	; Clear shadow buffer.
+	ld hl,#text_shadow
+	ld bc,#TEXT_SHADOW_SIZE
+text_clear_shadow_loop:
+	ld (hl),#0x20
+	inc hl
+	dec bc
+	ld a,b
+	or c
+	jr nz,text_clear_shadow_loop
 
 	ret
 
@@ -1565,6 +1807,11 @@ textq_count:
 textq_buffer:
 	.ds TEXTQ_SIZE
 
+; Text shadow buffer — source of truth for visible text.
+; Updated on every character write; redrawn to VDP on scroll.
+text_shadow:
+	.ds TEXT_SHADOW_SIZE
+
 term_state:
 	.db TERM_STATE_NORMAL
 
@@ -1599,6 +1846,10 @@ rts_assert_count:
 vdrip_proxy_ready_flag:
 	.db 0x00
 proxy_ready_count:
+	.db 0x00
+
+; Triple-Esc VDP reset counter.
+esc_press_count:
 	.db 0x00    
 ; ---------------------------------------------------------------------------
 ; Font include.
