@@ -5,6 +5,8 @@
 ;   - CONST reports buffered terminal input,
 ;   - CONIN consumes buffered terminal input,
 ;   - CONOUT sends one byte through the SIO core blocking send-byte API,
+;   - RTS is driven from RX ring high/low watermarks for host-to-Zephyr
+;     backpressure,
 ;   - list/punch/reader/listst keep the existing deterministic behavior.
 ;
 ; The driver subscribes to SIO_CH_CONSOLE RX bytes during initialization. Its
@@ -14,18 +16,27 @@
 	.globl sio_console_driver,sio_console_init,legacy_console_rx_sink
 	.globl CONSOLE_DRIVER_CODE_START,CONSOLE_DRIVER_CODE_END
 	.globl CONSOLE_RX_HEAD,CONSOLE_RX_TAIL,CONSOLE_RX_COUNT
+	.globl CONSOLE_RX_RTS_RELEASED,CONSOLE_RX_DROPPED_COUNT
+	.globl CONSOLE_RX_MAX_COUNT
+	.globl CONSOLE_RX_RTS_RELEASE_COUNT,CONSOLE_RX_RTS_ASSERT_COUNT
 	.globl CONSOLE_TX_HEAD,CONSOLE_TX_TAIL,CONSOLE_TX_COUNT
 	.globl CONSOLE_TX_ACTIVE
 	.globl CONSOLE_RX_BUFFER,CONSOLE_TX_BUFFER
 	.globl sio_register_rx_sink,sio_send_byte,sio_rx_kick
+	.globl sio0b_rts_assert,sio0b_rts_release
 	.globl sio_core_rx_lock,sio_core_rx_unlock
 
 CONSOLE_EOF		= 0x1a
 CONSOLE_READY		= 0xff
-CONSOLE_RX_BUFFER_SIZE	= 0x10
+CONSOLE_RX_BUFFER_SIZE	= 0x60
 CONSOLE_TX_BUFFER_SIZE	= 0x10
-CONSOLE_RX_BUFFER_MASK	= CONSOLE_RX_BUFFER_SIZE - 1
 CONSOLE_TX_BUFFER_MASK	= CONSOLE_TX_BUFFER_SIZE - 1
+; Release RTS at 32/96 bytes so the host/USB-serial path has substantial room
+; for bytes already in flight after CTS changes. Reassert at 16/96 bytes to add
+; hysteresis and avoid WR5 churn.
+CONSOLE_RX_RTS_HIGH_WATER	= 0x20
+CONSOLE_RX_RTS_LOW_WATER	= 0x10
+CONSOLE_RX_RTS_LOW_REASSERT	= CONSOLE_RX_RTS_LOW_WATER + 1
 
 	.area CODE (ABS)
 	.org CBIOS_CONSOLE_DRIVER_CODE_BASE
@@ -61,10 +72,16 @@ sio_console_init:
 	ld (CONSOLE_TX_TAIL),a
 	ld (CONSOLE_TX_COUNT),a
 	ld (CONSOLE_TX_ACTIVE),a
+	ld (CONSOLE_RX_RTS_RELEASED),a
+	ld (CONSOLE_RX_DROPPED_COUNT),a
+	ld (CONSOLE_RX_MAX_COUNT),a
+	ld (CONSOLE_RX_RTS_RELEASE_COUNT),a
+	ld (CONSOLE_RX_RTS_ASSERT_COUNT),a
 
 	ld a,#SIO_CH_CONSOLE
 	ld hl,#legacy_console_rx_sink
-	jp sio_register_rx_sink
+	call sio_register_rx_sink
+	jp console_rx_assert_rts_init
 
 ; CONST backend.
 ; Purpose:
@@ -115,11 +132,15 @@ SIO_CONSOLE_CONIN_HAVE_CHAR:
 	push af
 	ld a,(CONSOLE_RX_TAIL)
 	inc a
-	and #CONSOLE_RX_BUFFER_MASK
+	cp #CONSOLE_RX_BUFFER_SIZE
+	jr c,SIO_CONSOLE_CONIN_TAIL_OK
+	xor a
+SIO_CONSOLE_CONIN_TAIL_OK:
 	ld (CONSOLE_RX_TAIL),a
 	ld a,(CONSOLE_RX_COUNT)
 	dec a
 	ld (CONSOLE_RX_COUNT),a
+	call console_rx_maybe_assert_rts
 	call sio_core_rx_unlock
 	pop af
 	pop hl
@@ -164,7 +185,8 @@ sio_console_listst:
 ;   return quickly, never call BDOS, never block, and never perform disk I/O.
 ; Behavior:
 ;   Enqueue C into the console-owned terminal RX ring. If the ring is full, the
-;   new byte is dropped, preserving the old bounded ISR behavior.
+;   new byte is dropped, preserving the old bounded ISR behavior, and RTS is
+;   released so the host stops sending.
 ; Clobbers:
 ;   AF, DE, HL.
 legacy_console_rx_sink:
@@ -172,7 +194,7 @@ legacy_console_rx_sink:
 	ret nz
 	ld a,(CONSOLE_RX_COUNT)
 	cp #CONSOLE_RX_BUFFER_SIZE
-	ret nc
+	jr nc,LEGACY_CONSOLE_RX_FULL
 	ld hl,#CONSOLE_RX_BUFFER
 	ld a,(CONSOLE_RX_HEAD)
 	ld e,a
@@ -181,11 +203,77 @@ legacy_console_rx_sink:
 	ld (hl),c
 	ld a,(CONSOLE_RX_HEAD)
 	inc a
-	and #CONSOLE_RX_BUFFER_MASK
+	cp #CONSOLE_RX_BUFFER_SIZE
+	jr c,LEGACY_CONSOLE_RX_HEAD_OK
+	xor a
+LEGACY_CONSOLE_RX_HEAD_OK:
 	ld (CONSOLE_RX_HEAD),a
 	ld a,(CONSOLE_RX_COUNT)
 	inc a
 	ld (CONSOLE_RX_COUNT),a
+	call console_rx_record_max_count
+	call console_rx_maybe_release_rts
+	ret
+LEGACY_CONSOLE_RX_FULL:
+	ld a,(CONSOLE_RX_DROPPED_COUNT)
+	inc a
+	ld (CONSOLE_RX_DROPPED_COUNT),a
+	call console_rx_maybe_release_rts
+	ret
+
+; Assert RTS at RX initialization so the host may send.
+; Out: A = BIOS_OK from the SIO core helper.
+console_rx_assert_rts_init:
+	xor a
+	ld (CONSOLE_RX_RTS_RELEASED),a
+	jp sio0b_rts_assert
+
+; Release SIO0/B RTS when the RX ring reaches the high watermark.
+; Called from the RX sink, so keep this ISR-safe: no BDOS, no blocking, no
+; scanning. Clobbers AF only.
+console_rx_maybe_release_rts:
+	ld a,(CONSOLE_RX_RTS_RELEASED)
+	or a
+	ret nz
+	ld a,(CONSOLE_RX_COUNT)
+	cp #CONSOLE_RX_RTS_HIGH_WATER
+	ret c
+	call sio0b_rts_release
+	ld a,#0x01
+	ld (CONSOLE_RX_RTS_RELEASED),a
+	ld a,(CONSOLE_RX_RTS_RELEASE_COUNT)
+	inc a
+	ld (CONSOLE_RX_RTS_RELEASE_COUNT),a
+	ret
+
+; Reassert SIO0/B RTS after foreground CONIN drains the RX ring to the low
+; watermark. This is called while the foreground holds the existing RX lock.
+; Clobbers AF only.
+console_rx_maybe_assert_rts:
+	ld a,(CONSOLE_RX_RTS_RELEASED)
+	or a
+	ret z
+	ld a,(CONSOLE_RX_COUNT)
+	cp #CONSOLE_RX_RTS_LOW_REASSERT
+	ret nc
+	call sio0b_rts_assert
+	xor a
+	ld (CONSOLE_RX_RTS_RELEASED),a
+	ld a,(CONSOLE_RX_RTS_ASSERT_COUNT)
+	inc a
+	ld (CONSOLE_RX_RTS_ASSERT_COUNT),a
+	ret
+
+; Track the maximum observed RX ring depth during paste testing.
+; In: A = current CONSOLE_RX_COUNT.
+; Clobbers AF, E.
+console_rx_record_max_count:
+	ld e,a
+	ld a,(CONSOLE_RX_MAX_COUNT)
+	cp e
+	ret nc
+	ld a,e
+	ld (CONSOLE_RX_MAX_COUNT),a
 	ret
 
 CONSOLE_DRIVER_CODE_END:
@@ -198,6 +286,16 @@ CONSOLE_RX_HEAD:
 CONSOLE_RX_TAIL:
 	.db 0x00
 CONSOLE_RX_COUNT:
+	.db 0x00
+CONSOLE_RX_RTS_RELEASED:
+	.db 0x00
+CONSOLE_RX_DROPPED_COUNT:
+	.db 0x00
+CONSOLE_RX_MAX_COUNT:
+	.db 0x00
+CONSOLE_RX_RTS_RELEASE_COUNT:
+	.db 0x00
+CONSOLE_RX_RTS_ASSERT_COUNT:
 	.db 0x00
 
 ; TX ring state is retained for symbol compatibility and future nonblocking

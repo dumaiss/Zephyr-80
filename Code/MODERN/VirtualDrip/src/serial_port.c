@@ -73,9 +73,8 @@ static bool configure_serial_port(int fd, int baud_rate)
     options.c_cflag |= CS8;
     options.c_cflag &= ~PARENB;
     options.c_cflag &= ~CSTOPB;
-#ifdef CRTSCTS
-    options.c_cflag &= ~CRTSCTS;
-#endif
+
+    options.c_cflag |= CRTSCTS;
 
     options.c_iflag &= ~(IXON | IXOFF | IXANY | IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
     options.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
@@ -197,6 +196,10 @@ bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payl
     if (port == NULL || port->fd < 0) {
         return false;
     }
+    if (length > MAX_PACKET_PAYLOAD) {
+        fprintf(stderr, "Packet payload too large: %u bytes\n", length);
+        return false;
+    }
 
     Packet packet;
     packet.length = length;
@@ -205,16 +208,18 @@ bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payl
         memcpy(packet.payload, payload, length);
     }
     packet.crc = packet_crc8(&packet);
+    uint8_t wire_length = packet_wire_length(&packet);
 
-    uint8_t bytes[4 + MAX_PACKET_PAYLOAD];
-    bytes[0] = PACKET_SYNC;
-    bytes[1] = packet.length;
-    bytes[2] = packet.type;
+    uint8_t bytes[PACKET_SYNC_SIZE + 255];
+    bytes[0] = PACKET_SYNC0;
+    bytes[1] = PACKET_SYNC1;
+    bytes[2] = wire_length;
+    bytes[3] = packet.type;
     if (length > 0 && payload != NULL) {
-        memcpy(&bytes[3], packet.payload, length);
+        memcpy(&bytes[4], packet.payload, length);
     }
-    bytes[3 + length] = packet.crc;
-    size_t byte_count = (size_t)length + 4;
+    bytes[4 + length] = packet.crc;
+    size_t byte_count = (size_t)wire_length + PACKET_SYNC_SIZE;
 
     /*
      * Keyboard events can be sent from the VNC event path while the serial

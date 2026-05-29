@@ -17,8 +17,16 @@ VDRIP_DATA		= 0x22
 VDRIP_CTRL		= 0x23
 SIO_RR0_TX_EMPTY	= 0x04
 
+; Current BIOS helper entry points used by this monitor-loaded test app.
+; Keep in sync with CPM2.2 build/firmware.map or docs/symbol-map.md.
+BIOS_SIO_CORE_ENABLE_INTERRUPTS = 0xdd91
+BIOS_SIO_REGISTER_RX_SINK = 0xdde4
+BIOS_SIO_RX_KICK	= 0xde6d
+SIO_CH_CONSOLE		= 0x00
+
 ; Virtual Drip packet constants.
-PACKET_SYNC		= 0xa5
+PACKET_SYNC0		= 0xa5
+PACKET_SYNC1		= 0x5a
 PACKET_VDP_CTRL_WRITE	= 0x01
 PACKET_VDP_DATA_WRITE	= 0x02
 PACKET_RESET		= 0x06
@@ -36,15 +44,211 @@ SPRITE_Y		= 0x58
 SPRITE_STEP		= 0x04
 SPRITE_WRAP_X		= 0xf8
 
+PACKET_KEYBOARD_EVENT	= 0x05
+KEY_EVENT_LEN		= 0x04
+
+KEY_EVENT_FLAG_DOWN	= 0x01
+
+KEY_ASCII_W		= 0x77
+KEY_ASCII_S		= 0x73
+KEY_ASCII_UPPER_W	= 0x57
+KEY_ASCII_UPPER_S	= 0x53
+KEY_SPECIAL_UP		= 0x05
+KEY_SPECIAL_DOWN	= 0x06
+
+SPRITE_Y_START		= 0x58
+SPRITE_Y_MIN		= 0x08
+SPRITE_Y_MAX		= 0xb8
+SPRITE_Y_STEP		= 0x08
+SPRITE_COLOR_NORMAL	= 0x0a
+SPRITE_COLOR_RX		= 0x0e
+
+VDRIP_RX_WAIT_SYNC0	= 0x00
+VDRIP_RX_WAIT_SYNC1	= 0x01
+VDRIP_RX_LEN		= 0x02
+VDRIP_RX_BODY		= 0x03
+VDRIP_WIRE_OVERHEAD	= 0x03
+VDRIP_PACKET_PAYLOAD_MAX = 0x10
+VDRIP_PACKET_BODY_MAX	= VDRIP_PACKET_PAYLOAD_MAX + VDRIP_WIRE_OVERHEAD
+
+VDRIP_RX_BUFFER_SIZE = 0x40
+VDRIP_RX_BUFFER_MASK = VDRIP_RX_BUFFER_SIZE - 1
+
+; SIO0/B RTS control.
+; Same WR5 values used by the BIOS helper:
+;   0xea = TX enable, 8-bit TX, DTR, RTS asserted
+;   0xe8 = TX enable, 8-bit TX, DTR, RTS released
+;
+; DTR is not used by the hardware, but this preserves the existing WR5 pattern.
+SIO0B_WR5_RTS_OFF	= 0xe8
+SIO0B_WR5_RTS_ON	= 0xea
+
+; Virtual Drip RX flow-control watermarks.
+; Buffer is 64 bytes, so:
+;   release RTS at 48 bytes used
+;   assert RTS again at 16 bytes used
+VDRIP_RX_RTS_HIGH_WATER	= 0x30
+VDRIP_RX_RTS_LOW_WATER	= 0x10
+
+; Give the operator time to switch from the monitor console to the proxy
+; before this program starts sending Virtual Drip traffic.
+STARTUP_DELAY_UNITS	= 0x34
+VDRIP_RX_KICK_SPINS	= 0x10
+
 start:
 	di
-	call sio_init_vdrip
+
+	; Stop host while we take ownership of SIO0/B RX.
+	call vdrip_rts_release_raw
+
+	call vdrip_rx_init
+	call vdrip_register_rx_sink
+
+	; Ensure the BIOS-owned SIO0/B interrupt path is active for our RX sink.
+	call #BIOS_SIO_CORE_ENABLE_INTERRUPTS
+
+	; Give the operator time to switch to the proxy before output starts.
 	call delay_before_start
+
+	; Now ready to receive host-to-Zephyr packets.
+	call vdrip_rts_assert_raw
+	xor a
+	ld (vdrip_rx_rts_released),a
+
+	ld a,#SPRITE_Y_START
+	ld (sprite_y),a
+	ld a,#SPRITE_COLOR_NORMAL
+	ld (sprite_color),a
+
 	xor a
 	ld (sprite_x),a
+
 	call send_full_state
+	jp animation_loop
+
+vdrip_rx_init:
+	xor a
+	ld (vdrip_rx_head),a
+	ld (vdrip_rx_tail),a
+	ld (vdrip_rx_count),a
+	ld (vdrip_parse_state),a
+	ld (vdrip_parse_len_store),a
+	ld (vdrip_parse_remaining),a
+	ld (vdrip_parse_payload_index),a
+	ld (vdrip_rx_seen_flag),a
+	ld (vdrip_rx_rts_released),a
+	ret
+
+
+vdrip_register_rx_sink:
+	di                         ; atomic-ish pointer replacement
+	ld a,#SIO_CH_CONSOLE
+	ld hl,#vdrip_rx_sink
+	call #BIOS_SIO_REGISTER_RX_SINK
+	ei
+	ret
+
+vdrip_rx_sink:
+	cp #0x00
+	ret nz
+
+	ld a,(vdrip_rx_count)
+	cp #VDRIP_RX_BUFFER_SIZE
+	jr nc,vdrip_rx_sink_full
+
+	ld hl,#vdrip_rx_buffer
+	ld a,(vdrip_rx_head)
+	ld e,a
+	ld d,#0x00
+	add hl,de
+
+	ld (hl),c
+
+	ld a,(vdrip_rx_head)
+	inc a
+	and #VDRIP_RX_BUFFER_MASK
+	ld (vdrip_rx_head),a
+
+	ld a,(vdrip_rx_count)
+	inc a
+	ld (vdrip_rx_count),a
+
+	call vdrip_rx_maybe_release_rts
+	ret
+
+
+vdrip_rx_sink_full:
+	; We are already full. Tell host to stop if not already stopped.
+	call vdrip_rts_release_raw
+	ld a,#0x01
+	ld (vdrip_rx_rts_released),a
+
+	; Drop byte for now.
+	ret
+
+vdrip_rx_get_byte:
+	di                         ; protect ring against ISR update
+
+	ld a,(vdrip_rx_count)
+	or a
+	jr nz,vdrip_rx_get_have_byte
+
+	ei
+	ld a,#0x01                 ; no byte available
+	ret
+
+vdrip_rx_get_have_byte:
+	ld hl,#vdrip_rx_buffer
+	ld a,(vdrip_rx_tail)
+	ld e,a
+	ld d,#0x00
+	add hl,de
+
+	ld c,(hl)
+
+	ld a,(vdrip_rx_tail)
+	inc a
+	and #VDRIP_RX_BUFFER_MASK
+	ld (vdrip_rx_tail),a
+
+	ld a,(vdrip_rx_count)
+	dec a
+	ld (vdrip_rx_count),a
+
+	; We just made room in the RX ring.
+	; If we had released RTS because the buffer was getting full,
+	; assert RTS again once we are below the low watermark.
+	call vdrip_rx_maybe_assert_rts
+
+	ei
+	xor a                      ; success
+	ret
+
+vdrip_move_smiley_up:
+	ld a,(sprite_y)
+	cp #SPRITE_Y_MIN
+	ret z
+	ret c
+
+	sub #SPRITE_Y_STEP
+	ld (sprite_y),a
+	ret
+
+
+vdrip_move_smiley_down:
+	ld a,(sprite_y)
+	cp #SPRITE_Y_MAX
+	ret z
+	ret nc
+
+	add a,#SPRITE_Y_STEP
+	ld (sprite_y),a
+	ret
 
 animation_loop:
+	call vdrip_rx_kick_pending
+	call vdrip_poll_rx
+	call vdrip_handle_rx_seen
 	call update_sprite_position
 	call vdrip_send_frame_mark
 	call delay_frame
@@ -54,53 +258,279 @@ animation_loop:
 	jr c,animation_store_x
 	xor a
 	ld (sprite_x),a
-	call send_full_state
 	jr animation_loop
 
 animation_store_x:
 	ld (sprite_x),a
 	jr animation_loop
 
-; Initialize SIO channel B for 115200 8N1 using x16 async clocking.
-; WR3 keeps Auto Enables off for the FT230X /DCDB wiring on this board.
-sio_init_vdrip:
-	; WR0: channel reset
-	ld a,#0x18
-	out (VDRIP_CTRL),a
 
-	; WR4: x16 clock, 1 stop bit, no parity
-	ld a,#0x04
-	out (VDRIP_CTRL),a
-	ld a,#0x44
-	out (VDRIP_CTRL),a
-
-	; WR3: RX enable, 8-bit RX, Auto Enables off
-	ld a,#0x03
-	out (VDRIP_CTRL),a
-	ld a,#0xc1
-	out (VDRIP_CTRL),a
-
-	; WR5: DTR, TX 8-bit, TX enable, RTS
-	ld a,#0x05
-	out (VDRIP_CTRL),a
-	ld a,#0xea
-	out (VDRIP_CTRL),a
-
-	; WR1: interrupts disabled
-	ld a,#0x01
-	out (VDRIP_CTRL),a
-	xor a
-	out (VDRIP_CTRL),a
+vdrip_rx_kick_pending:
+	ld b,#VDRIP_RX_KICK_SPINS
+vdrip_rx_kick_pending_loop:
+	ld a,#SIO_CH_CONSOLE
+	call #BIOS_SIO_RX_KICK
+	djnz vdrip_rx_kick_pending_loop
 	ret
 
-; Write A to SIOB after RR0 Tx Buffer Empty is set.
-; Preserves: BC, DE, HL.
-sio_putc_vdrip:
+
+vdrip_handle_rx_seen:
+	ld a,(vdrip_rx_seen_flag)
+	or a
+	ret z
+
+	xor a
+	ld (vdrip_rx_seen_flag),a
+
+	ld a,(sprite_color)
+	cp #SPRITE_COLOR_RX
+	jr z,vdrip_handle_rx_seen_normal
+
+	ld a,#SPRITE_COLOR_RX
+	ld (sprite_color),a
+	ret
+
+vdrip_handle_rx_seen_normal:
+	ld a,#SPRITE_COLOR_NORMAL
+	ld (sprite_color),a
+	ret
+
+; ---------------------------------------------------------------------------
+; Foreground RX packet poller.
+;
+; Drains bytes from vdrip_rx_buffer and looks for:
+;
+;   A5 5A 07 05 FLAGS ASCII SPECIAL MODIFIERS CRC
+;
+; Meaning:
+;   SYNC
+;   LEN = 7, the complete body after SYNC: LEN, TYPE, PAYLOAD, CRC
+;   TYPE = PACKET_KEYBOARD_EVENT
+;   payload[0] = key flags, for example 0x05 for DOWN|HAS_ASCII
+;   payload[1] = ASCII
+;   payload[2] = special
+;   payload[3] = modifiers
+;   CRC ignored for bring-up
+; ---------------------------------------------------------------------------
+
+vdrip_poll_rx:
+	call vdrip_rx_get_byte
+	or a
+	ret nz                  ; no more bytes
+
+	ld a,c
+	call vdrip_parse_rx_byte
+	jr vdrip_poll_rx
+
+
+; ---------------------------------------------------------------------------
+; Parse one incoming byte.
+;
+; Input:
+;   A = next received byte
+;
+; Clobbers:
+;   AF
+; ---------------------------------------------------------------------------
+
+vdrip_parse_rx_byte:
+	ld c,a
+
+	ld a,(vdrip_parse_state)
+	cp #VDRIP_RX_WAIT_SYNC0
+	jr z,vdrip_parse_wait_sync0
+
+	cp #VDRIP_RX_WAIT_SYNC1
+	jr z,vdrip_parse_wait_sync1
+
+	cp #VDRIP_RX_LEN
+	jr z,vdrip_parse_len
+
+	cp #VDRIP_RX_BODY
+	jr z,vdrip_parse_body
+
+	; Bad state: reset parser.
+	xor a
+	ld (vdrip_parse_state),a
+	ret
+
+
+vdrip_parse_wait_sync0:
+	ld a,c
+	cp #PACKET_SYNC0
+	ret nz
+
+	ld a,#VDRIP_RX_WAIT_SYNC1
+	ld (vdrip_parse_state),a
+	ret
+
+
+vdrip_parse_wait_sync1:
+	ld a,c
+	cp #PACKET_SYNC1
+	jr z,vdrip_parse_wait_sync_have
+
+	cp #PACKET_SYNC0
+	jr z,vdrip_parse_wait_sync_keep
+
+	xor a
+	ld (vdrip_parse_state),a
+	ret
+
+vdrip_parse_wait_sync_keep:
+	ld a,#VDRIP_RX_WAIT_SYNC1
+	ld (vdrip_parse_state),a
+	ret
+
+vdrip_parse_wait_sync_have:
+	ld a,#VDRIP_RX_LEN
+	ld (vdrip_parse_state),a
+	ret
+
+
+vdrip_parse_len:
+	ld a,c
+	cp #VDRIP_WIRE_OVERHEAD
+	jp c,vdrip_parse_reset
+
+	cp #VDRIP_PACKET_BODY_MAX + 1
+	jp nc,vdrip_parse_reset
+
+	ld hl,#vdrip_packet_body
+	ld (hl),c
+
+	ld (vdrip_parse_len_store),a
+	dec a
+	ld (vdrip_parse_remaining),a
+
+	ld a,#0x01
+	ld (vdrip_parse_payload_index),a
+
+	ld a,#VDRIP_RX_BODY
+	ld (vdrip_parse_state),a
+	ret
+
+
+vdrip_parse_body:
+	; Store body byte N, where body[0] is LEN and body[LEN-1] is CRC.
+	ld hl,#vdrip_packet_body
+	ld a,(vdrip_parse_payload_index)
+	ld e,a
+	ld d,#0x00
+	add hl,de
+	ld (hl),c
+
+	ld a,(vdrip_parse_payload_index)
+	inc a
+	ld (vdrip_parse_payload_index),a
+
+	ld a,(vdrip_parse_remaining)
+	dec a
+	ld (vdrip_parse_remaining),a
+	jr z,vdrip_parse_body_done
+	ret
+
+
+vdrip_parse_body_done:
+	; Full LEN-described body is buffered. Validate CRC before interpreting.
+	call vdrip_packet_crc_valid
+	jr nz,vdrip_parse_reset
+	call vdrip_parse_apply_key_event
+	jr vdrip_parse_reset
+
+
+vdrip_packet_crc_valid:
+	ld c,#0x00
+	ld hl,#vdrip_packet_body
+	ld a,(vdrip_parse_len_store)
+	dec a
+	ld b,a
+vdrip_packet_crc_loop:
+	ld a,(hl)
+	call crc8_update
+	inc hl
+	djnz vdrip_packet_crc_loop
+
+	; HL now points at the received CRC byte.
+	ld a,(hl)
+	cp c
+	ret
+
+
+vdrip_parse_apply_key_event:
+	ld a,(vdrip_packet_body)
+	cp #KEY_EVENT_LEN + VDRIP_WIRE_OVERHEAD
+	ret nz
+
+	ld a,(vdrip_packet_body + 1)
+	cp #PACKET_KEYBOARD_EVENT
+	ret nz
+
+	ld a,(vdrip_packet_body + 2)
+	and #KEY_EVENT_FLAG_DOWN
+	cp #KEY_EVENT_FLAG_DOWN
+	ret nz
+
+	; Complete KEY_EVENT packet received. Toggle the face only for key
+	; packets, not for unrelated packets or possible echoed outbound traffic.
+	ld a,#0x01
+	ld (vdrip_rx_seen_flag),a
+
+	; Accept movement from either the ASCII field or the special-key field.
+	ld a,(vdrip_packet_body + 3)
+	call vdrip_apply_key_candidate
+	ret z
+
+	ld a,(vdrip_packet_body + 4)
+	cp #KEY_SPECIAL_UP
+	jp z,vdrip_apply_key_up
+
+	cp #KEY_SPECIAL_DOWN
+	jp z,vdrip_apply_key_down
+
+	ret
+
+
+vdrip_apply_key_candidate:
+	cp #KEY_ASCII_W
+	jr z,vdrip_apply_key_up
+
+	cp #KEY_ASCII_UPPER_W
+	jr z,vdrip_apply_key_up
+
+	cp #KEY_ASCII_S
+	jr z,vdrip_apply_key_down
+
+	cp #KEY_ASCII_UPPER_S
+	jr z,vdrip_apply_key_down
+
+	or #0xff
+	ret
+
+vdrip_apply_key_up:
+	call vdrip_move_smiley_up
+	xor a
+	ret
+
+vdrip_apply_key_down:
+	call vdrip_move_smiley_down
+	xor a
+	ret
+
+
+vdrip_parse_reset:
+	xor a
+	ld (vdrip_parse_state),a
+	ret
+
+vdrip_transport_putc:
 	push af
-sio_putc_vdrip_wait:
+
+vdrip_transport_wait_tx:
 	in a,(VDRIP_CTRL)
 	and #SIO_RR0_TX_EMPTY
-	jr z,sio_putc_vdrip_wait
+	jr z,vdrip_transport_wait_tx
+
 	pop af
 	out (VDRIP_DATA),a
 	ret
@@ -136,13 +566,15 @@ vdrip_send_packet:
 	ld (packet_type_store),a
 	ld a,b
 	ld (packet_len_store),a
+	add a,#VDRIP_WIRE_OVERHEAD
+	ld (packet_wire_len_store),a
 	ld (packet_ptr_store),hl
 	push bc
 	push de
 	push hl
 
 	ld c,#0x00
-	ld a,(packet_len_store)
+	ld a,(packet_wire_len_store)
 	call crc8_update
 	ld a,(packet_type_store)
 	call crc8_update
@@ -161,12 +593,14 @@ vdrip_send_packet_crc_done:
 	ld a,c
 	ld (packet_crc_store),a
 
-	ld a,#PACKET_SYNC
-	call sio_putc_vdrip
-	ld a,(packet_len_store)
-	call sio_putc_vdrip
+	ld a,#PACKET_SYNC0
+	call vdrip_transport_putc
+	ld a,#PACKET_SYNC1
+	call vdrip_transport_putc
+	ld a,(packet_wire_len_store)
+	call vdrip_transport_putc
 	ld a,(packet_type_store)
-	call sio_putc_vdrip
+	call vdrip_transport_putc
 
 	ld hl,(packet_ptr_store)
 	ld a,(packet_len_store)
@@ -175,18 +609,50 @@ vdrip_send_packet_crc_done:
 	ld b,a
 vdrip_send_packet_payload_loop:
 	ld a,(hl)
-	call sio_putc_vdrip
+	call vdrip_transport_putc
 	inc hl
 	djnz vdrip_send_packet_payload_loop
 
 vdrip_send_packet_send_crc:
 	ld a,(packet_crc_store)
-	call sio_putc_vdrip
+	call vdrip_transport_putc
 
 	pop hl
 	pop de
 	pop bc
 	ret
+
+; ---------------------------------------------------------------------------
+; vdrip_rts_assert_raw
+;
+; Tell host/proxy that Zephyr is ready to receive more bytes.
+; Direct SIO0/B WR5 access for this monitor-loaded test app.
+; ---------------------------------------------------------------------------
+
+vdrip_rts_assert_raw:
+	ld a,#0x05
+	out (VDRIP_CTRL),a
+	ld a,#SIO0B_WR5_RTS_ON
+	out (VDRIP_CTRL),a
+	xor a
+	ret
+
+
+; ---------------------------------------------------------------------------
+; vdrip_rts_release_raw
+;
+; Tell host/proxy to stop sending bytes.
+; Direct SIO0/B WR5 access for this monitor-loaded test app.
+; ---------------------------------------------------------------------------
+
+vdrip_rts_release_raw:
+	ld a,#0x05
+	out (VDRIP_CTRL),a
+	ld a,#SIO0B_WR5_RTS_OFF
+	out (VDRIP_CTRL),a
+	xor a
+	ret
+
 
 ; Send zero-payload packet type A.
 vdrip_send_packet0:
@@ -290,6 +756,51 @@ vdp_write_data_block_loop:
 	ld (block_count_store),hl
 	jr vdp_write_data_block_loop
 
+; ---------------------------------------------------------------------------
+; vdrip_rx_maybe_release_rts
+;
+; Called after enqueueing RX bytes.
+; If RX ring is near full, deassert RTS so host pauses.
+; ---------------------------------------------------------------------------
+
+vdrip_rx_maybe_release_rts:
+	ld a,(vdrip_rx_rts_released)
+	or a
+	ret nz				; already released
+
+	ld a,(vdrip_rx_count)
+	cp #VDRIP_RX_RTS_HIGH_WATER
+	ret c				; count < high water
+
+	call vdrip_rts_release_raw
+
+	ld a,#0x01
+	ld (vdrip_rx_rts_released),a
+	ret
+
+
+; ---------------------------------------------------------------------------
+; vdrip_rx_maybe_assert_rts
+;
+; Called after foreground drains RX bytes.
+; If RX ring has enough room again, assert RTS so host resumes.
+; ---------------------------------------------------------------------------
+
+vdrip_rx_maybe_assert_rts:
+	ld a,(vdrip_rx_rts_released)
+	or a
+	ret z				; already asserted
+
+	ld a,(vdrip_rx_count)
+	cp #VDRIP_RX_RTS_LOW_WATER + 1
+	ret nc				; count > low water
+
+	call vdrip_rts_assert_raw
+
+	xor a
+	ld (vdrip_rx_rts_released),a
+	ret
+
 send_full_state:
 	call vdrip_send_reset
 	call vdrip_send_ping
@@ -329,14 +840,16 @@ init_vdp_graphics1:
 	ret
 
 init_background:
-	; Pattern 0 is a solid blue tile; pattern 1 is a small blue/white checker.
+	; Pattern 0 and 1.
 	ld hl,#PATTERN_TABLE
 	call vdp_set_vram_write_addr
+
 	ld b,#0x08
 init_pattern0_loop:
 	xor a
 	call vdp_write_data_byte
 	djnz init_pattern0_loop
+
 	ld b,#0x08
 	ld e,#0xaa
 init_pattern1_loop:
@@ -347,7 +860,7 @@ init_pattern1_loop:
 	ld e,a
 	djnz init_pattern1_loop
 
-	; Color table: white foreground on blue background for all pattern groups.
+	; Color table default.
 	ld hl,#COLOR_TABLE
 	call vdp_set_vram_write_addr
 	ld b,#0x20
@@ -356,11 +869,12 @@ init_color_loop:
 	call vdp_write_data_byte
 	djnz init_color_loop
 
-	; Name table: checkerboard of tile IDs 0 and 1.
+	; Name table.
 	ld hl,#NAME_TABLE
 	call vdp_set_vram_write_addr
 	ld b,#0x18
 	ld d,#0x00
+
 init_name_row:
 	ld c,#0x20
 	ld e,d
@@ -398,16 +912,16 @@ update_sprite_position:
 	ld hl,#SPRITE_ATTRIBUTE_TABLE
 	call vdp_set_vram_write_addr
 
-	ld a,#SPRITE_Y
+	ld a,(sprite_y)
 	call vdp_write_data_byte
 	ld a,(sprite_x)
 	call vdp_write_data_byte
 	xor a
 	call vdp_write_data_byte
-	ld a,#0x0a		; yellow
+	ld a,(sprite_color)
 	call vdp_write_data_byte
 
-	ld a,#SPRITE_Y
+	ld a,(sprite_y)
 	call vdp_write_data_byte
 	ld a,(sprite_x)
 	call vdp_write_data_byte
@@ -421,7 +935,7 @@ update_sprite_position:
 	ret
 
 delay_before_start:
-	ld b,#0x14
+	ld b,#STARTUP_DELAY_UNITS
 delay_before_start_loop:
 	call delay_unit
 	djnz delay_before_start_loop
@@ -451,7 +965,13 @@ smiley_sprite_patterns:
 
 sprite_x:
 	.db 0x00
+sprite_y:
+	.db SPRITE_Y_START
+sprite_color:
+	.db SPRITE_COLOR_NORMAL
 packet_len_store:
+	.db 0x00
+packet_wire_len_store:
 	.db 0x00
 packet_type_store:
 	.db 0x00
@@ -465,3 +985,34 @@ block_ptr_store:
 	.dw 0x0000
 block_count_store:
 	.dw 0x0000
+vdrip_rx_head:
+	.db 0x00
+
+vdrip_rx_tail:
+	.db 0x00
+
+vdrip_rx_count:
+	.db 0x00
+
+vdrip_rx_buffer:
+	.ds VDRIP_RX_BUFFER_SIZE
+
+vdrip_rx_seen_flag:
+	.db 0x00
+vdrip_parse_state:
+	.db VDRIP_RX_WAIT_SYNC0
+
+vdrip_parse_len_store:
+	.db 0x00
+
+vdrip_parse_remaining:
+	.db 0x00
+
+vdrip_parse_payload_index:
+	.db 0x00
+
+vdrip_packet_body:
+	.ds VDRIP_PACKET_BODY_MAX
+
+vdrip_rx_rts_released:
+	.db 0x00

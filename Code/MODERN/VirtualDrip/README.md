@@ -119,10 +119,10 @@ Virtual Drip uses a **packetized serial protocol** carrying VDP semantics.
 ### Packet format
 
 ```text
-[SYNC=0xA5][LEN][TYPE][PAYLOAD...][CRC8]
+[SYNC0=0xA5][SYNC1=0x5A][LEN][TYPE][PAYLOAD...][CRC8]
 ```
 
-`LEN` is the payload byte count. `CRC8` is calculated over `LEN`, `TYPE`, and `PAYLOAD` using polynomial `0x07` with initial value `0x00`. The `SYNC` byte is not included in the CRC. Total encoded size is `4 + LEN` bytes.
+`LEN` is the byte count of the complete packet body after the sync bytes, including `LEN`, `TYPE`, `PAYLOAD`, and `CRC8`. `CRC8` is calculated over `LEN`, `TYPE`, and `PAYLOAD` using polynomial `0x07` with initial value `0x00`. The sync bytes are not included in the CRC. Total encoded size is `2 + LEN` bytes.
 
 ### Packet types
 

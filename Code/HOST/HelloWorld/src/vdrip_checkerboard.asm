@@ -18,12 +18,14 @@ VDRIP_CTRL		= 0x23
 SIO_RR0_TX_EMPTY	= 0x04
 
 ; Virtual Drip packet constants.
-PACKET_SYNC		= 0xa5
+PACKET_SYNC0		= 0xa5
+PACKET_SYNC1		= 0x5a
 PACKET_VDP_CTRL_WRITE	= 0x01
 PACKET_VDP_DATA_WRITE	= 0x02
 PACKET_RESET		= 0x06
 PACKET_PING		= 0x07
 PACKET_FRAME_MARK	= 0x08
+PACKET_WIRE_OVERHEAD	= 0x03
 
 ; TMS9928A Graphics I table layout.
 PATTERN_TABLE		= 0x0000
@@ -121,13 +123,15 @@ vdrip_send_packet:
 	ld (packet_type_store),a
 	ld a,b
 	ld (packet_len_store),a
+	add a,#PACKET_WIRE_OVERHEAD
+	ld (packet_wire_len_store),a
 	ld (packet_ptr_store),hl
 	push bc
 	push de
 	push hl
 
 	ld c,#0x00
-	ld a,(packet_len_store)
+	ld a,(packet_wire_len_store)
 	call crc8_update
 	ld a,(packet_type_store)
 	call crc8_update
@@ -146,9 +150,11 @@ vdrip_send_packet_crc_done:
 	ld a,c
 	ld (packet_crc_store),a
 
-	ld a,#PACKET_SYNC
+	ld a,#PACKET_SYNC0
 	call sio_putc_vdrip
-	ld a,(packet_len_store)
+	ld a,#PACKET_SYNC1
+	call sio_putc_vdrip
+	ld a,(packet_wire_len_store)
 	call sio_putc_vdrip
 	ld a,(packet_type_store)
 	call sio_putc_vdrip
@@ -389,6 +395,8 @@ delay_unit_loop:
 	ret
 
 packet_len_store:
+	.db 0x00
+packet_wire_len_store:
 	.db 0x00
 packet_type_store:
 	.db 0x00

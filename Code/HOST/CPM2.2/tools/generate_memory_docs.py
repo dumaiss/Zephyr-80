@@ -107,6 +107,8 @@ IMPLEMENTATION_SYMBOLS = [
     (("sio_register_rx_sink",), "Registers one RX byte sink for a BIOS-owned SIO channel."),
     (("sio_send_byte",), "Blocking send-byte API for BIOS-owned SIO channels."),
     (("sio_recv_byte",), "Polling receive-byte API for BIOS-owned SIO channels."),
+    (("sio0b_rts_assert",), "Asserts SIO0/B RTS for software-managed console RX flow control."),
+    (("sio0b_rts_release",), "Releases SIO0/B RTS for software-managed console RX flow control."),
     (("sio1_ioc_rts_assert",), "Asserts SIO1/A RTS as an IO Controller service request."),
     (("sio1_ioc_rts_release",), "Releases SIO1/A RTS after an IO Controller transaction."),
     (("sio1_ioc_put_byte",), "SIO1/A IO Controller byte transmit helper."),
@@ -158,14 +160,21 @@ RUNTIME_STATE = [
     ("SIO1_RX_SINK", 2),
     ("SIO_CORE_IRQ_ENABLED", 1),
     ("SIO_CORE_IRQ_COUNT", 2),
+    ("SIO0B_LAST_RR1", 1),
+    ("SIO0B_LAST_RX_ERROR", 1),
     ("CONSOLE_RX_HEAD", 1),
     ("CONSOLE_RX_TAIL", 1),
     ("CONSOLE_RX_COUNT", 1),
+    ("CONSOLE_RX_RTS_RELEASED", 1),
+    ("CONSOLE_RX_DROPPED_COUNT", 1),
+    ("CONSOLE_RX_MAX_COUNT", 1),
+    ("CONSOLE_RX_RTS_RELEASE_COUNT", 1),
+    ("CONSOLE_RX_RTS_ASSERT_COUNT", 1),
     ("CONSOLE_TX_HEAD", 1),
     ("CONSOLE_TX_TAIL", 1),
     ("CONSOLE_TX_COUNT", 1),
     ("CONSOLE_TX_ACTIVE", 1),
-    ("CONSOLE_RX_BUFFER", 16),
+    ("CONSOLE_RX_BUFFER", 96),
     ("CONSOLE_TX_BUFFER", 16),
 ]
 
@@ -194,6 +203,7 @@ CORE_RANGES = [
 
 VALIDATION_NOTES = [
     "BIOS core must stay inside CBIOS_CORE_BASE-CBIOS_CORE_END.",
+    "Core BIOS component ranges must not overlap.",
     "Each declared driver must stay inside its declared fixed slot range.",
     "RAM disk backend must stay inside slot 0.",
     "SIO core and its exact IM2 vector entry must stay inside core BIOS.",
@@ -416,8 +426,21 @@ def validate_layout(symbols: dict[str, int]) -> list[str]:
     im2_limit = require_symbol(symbols, "CBIOS_IM2_VECTOR_LIMIT")
 
     # Validate core BIOS ranges against both the core region and overall code limit.
+    core_component_ranges: list[tuple[str, int, int]] = []
     for label, start_sym, limit_sym in CORE_RANGES:
-        validate_within(errors, symbols, label, start_sym, limit_sym, cbios_core_base, cbios_core_limit, "CBIOS core")
+        start, limit = validate_within(
+            errors, symbols, label, start_sym, limit_sym, cbios_core_base, cbios_core_limit, "CBIOS core"
+        )
+        core_component_ranges.append((label, start, limit))
+    for index, (left_label, left_start, left_limit) in enumerate(core_component_ranges):
+        for right_label, right_start, right_limit in core_component_ranges[index + 1 :]:
+            if ranges_overlap(left_start, left_limit, right_start, right_limit):
+                errors.append(
+                    validation_error(
+                        f"{left_label} ({exclusive_span(left_start, left_limit)}) overlaps "
+                        f"{right_label} ({exclusive_span(right_start, right_limit)})"
+                    )
+                )
     bios_code_end = require_symbol(symbols, "BIOS_CODE_END")
     if bios_code_end > cbios_code_limit:
         errors.append(
@@ -722,11 +745,18 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             symbol_row(symbols, ("SIO1_RX_SINK",), "Registered RX byte sink slot for SIO_CH_IOCTRL / SIO1/A."),
             symbol_row(symbols, ("SIO_CORE_IRQ_ENABLED", "CONSOLE_IRQ_ENABLED"), "BIOS-owned SIO IRQ mode flag; legacy alias retained."),
             symbol_row(symbols, ("SIO_CORE_IRQ_COUNT", "CONSOLE_IRQ_COUNT"), "BIOS-owned SIO ISR entry counter; legacy alias retained."),
+            symbol_row(symbols, ("SIO0B_LAST_RR1",), "Last SIO0/B RR1 value sampled after RX data read."),
+            symbol_row(symbols, ("SIO0B_LAST_RX_ERROR",), "Last masked SIO0/B RR1 receive-error bits."),
             symbol_row(symbols, ("SIO_CORE_STATE_END",), "BIOS-owned SIO core state end."),
             symbol_row(symbols, ("CONSOLE_DRIVER_STATE_START",), "Console driver state start."),
             symbol_row(symbols, ("CONSOLE_RX_HEAD",), "Receive buffer head index."),
             symbol_row(symbols, ("CONSOLE_RX_TAIL",), "Receive buffer tail index."),
             symbol_row(symbols, ("CONSOLE_RX_COUNT",), "Receive buffer byte count."),
+            symbol_row(symbols, ("CONSOLE_RX_RTS_RELEASED",), "SIO0/B RTS currently released for console RX backpressure."),
+            symbol_row(symbols, ("CONSOLE_RX_DROPPED_COUNT",), "Legacy console RX bytes dropped because the ring was full, wrapping at 255."),
+            symbol_row(symbols, ("CONSOLE_RX_MAX_COUNT",), "Maximum observed legacy console RX ring depth, wrapping only on reboot/init."),
+            symbol_row(symbols, ("CONSOLE_RX_RTS_RELEASE_COUNT",), "SIO0/B RTS release transition count, wrapping at 255."),
+            symbol_row(symbols, ("CONSOLE_RX_RTS_ASSERT_COUNT",), "SIO0/B RTS assert transition count, wrapping at 255."),
             symbol_row(symbols, ("CONSOLE_TX_HEAD",), "Transmit buffer head index."),
             symbol_row(symbols, ("CONSOLE_TX_TAIL",), "Transmit buffer tail index."),
             symbol_row(symbols, ("CONSOLE_TX_COUNT",), "Transmit buffer byte count."),
@@ -830,8 +860,10 @@ def write_memory_map(
             "",
             "| Range | Owner | Notes |",
             "|---|---|---|",
-            f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core | BIOS-owned SIO0/B async setup, SIO1/A sync setup, SIO IRQ control, RX sink registration, byte I/O APIs, IO Controller RTS helpers, RX kick, ISR, and compatibility labels. |",
+            f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core | BIOS-owned SIO0/B async setup with CTS-polled TX and software-managed RTS helpers, SIO1/A sync setup, SIO IRQ control, RX sink registration, byte I/O APIs, IO Controller RTS helpers, RX diagnostics, RX kick, ISR, and compatibility labels. |",
             f"| `{span(require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_START'), require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_END') - 1)}` | SIO core | Exact two-byte IM2 vector table entry. |",
+            "",
+            "SIO_CH_CONSOLE is the BIOS-owned SIO0/B async console link. It uses RTS/CTS hardware flow control without requiring DTR/DCD. WR3 Auto Enables remain off intentionally to avoid DCD dependence. CTS is checked before console TX; core init holds RTS released and discards stale RX before the legacy console client registers its sink. The legacy console client releases RTS at 32/96 RX bytes and reasserts it at 16/96 RX bytes.",
             "",
             "## Slot 1 Console Layout",
             "",

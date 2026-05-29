@@ -13,7 +13,7 @@
 void packet_parser_init(PacketParser *parser, PacketHandler handler, void *userdata)
 {
     memset(parser, 0, sizeof(*parser));
-    parser->state = PACKET_PARSER_WAIT_SYNC;
+    parser->state = PACKET_PARSER_WAIT_SYNC0;
     parser->handler = handler;
     parser->userdata = userdata;
 }
@@ -23,15 +23,32 @@ void packet_parser_feed(PacketParser *parser, uint8_t value)
     size_t current_offset = parser->offset++;
 
     switch (parser->state) {
-    case PACKET_PARSER_WAIT_SYNC:
-        /* Ignore noise until a framing byte appears. */
-        if (value == PACKET_SYNC) {
+    case PACKET_PARSER_WAIT_SYNC0:
+        /* Ignore noise until the first framing byte appears. */
+        if (value == PACKET_SYNC0) {
             parser->packet_offset = current_offset;
+            parser->state = PACKET_PARSER_WAIT_SYNC1;
+        }
+        break;
+    case PACKET_PARSER_WAIT_SYNC1:
+        if (value == PACKET_SYNC1) {
             parser->state = PACKET_PARSER_READ_LENGTH;
+        } else if (value == PACKET_SYNC0) {
+            parser->packet_offset = current_offset;
+        } else {
+            parser->state = PACKET_PARSER_WAIT_SYNC0;
         }
         break;
     case PACKET_PARSER_READ_LENGTH:
-        parser->packet.length = value;
+        if (value < PACKET_MIN_WIRE_LENGTH) {
+            fprintf(stderr,
+                "Packet length too small at offset %zu: got 0x%02X\n",
+                parser->packet_offset,
+                value);
+            parser->state = PACKET_PARSER_WAIT_SYNC0;
+            break;
+        }
+        parser->packet.length = (uint8_t)(value - PACKET_WIRE_OVERHEAD);
         parser->payload_index = 0;
         parser->state = PACKET_PARSER_READ_TYPE;
         break;
@@ -62,7 +79,7 @@ void packet_parser_feed(PacketParser *parser, uint8_t value)
             }
         }
         /* CRC errors are dropped; the next byte must start a fresh packet. */
-        parser->state = PACKET_PARSER_WAIT_SYNC;
+        parser->state = PACKET_PARSER_WAIT_SYNC0;
         break;
     }
     }
@@ -70,7 +87,7 @@ void packet_parser_feed(PacketParser *parser, uint8_t value)
 
 bool packet_parser_has_partial_packet(const PacketParser *parser)
 {
-    return parser->state != PACKET_PARSER_WAIT_SYNC;
+    return parser->state != PACKET_PARSER_WAIT_SYNC0;
 }
 
 size_t packet_parser_packet_count(const PacketParser *parser)

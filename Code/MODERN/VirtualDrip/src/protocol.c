@@ -20,13 +20,18 @@ uint8_t packet_crc8(const Packet *packet)
 {
     uint8_t crc = 0;
 
-    crc = crc8_update(crc, packet->length);
+    crc = crc8_update(crc, packet_wire_length(packet));
     crc = crc8_update(crc, packet->type);
     for (uint8_t index = 0; index < packet->length; ++index) {
         crc = crc8_update(crc, packet->payload[index]);
     }
 
     return crc;
+}
+
+uint8_t packet_wire_length(const Packet *packet)
+{
+    return (uint8_t)(packet->length + PACKET_WIRE_OVERHEAD);
 }
 
 const char *packet_type_name(uint8_t type)

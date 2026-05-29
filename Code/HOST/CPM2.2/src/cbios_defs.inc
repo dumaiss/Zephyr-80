@@ -43,10 +43,10 @@
 ;   E000h │ Driver slot 0 start: RAM disk backend        │
 ;         ├──────────────────────────────────────────────┤
 ;   DFFFh │ Core BIOS end                                │
-;   DF60h │   IOCALL transaction transport               │
-;   DD90h │   SIO core + exact IM2 vector entry          │
-;   DC80h │   banking / XMOVE / LAUNCH                   │
-;   DC00h │   storage facade                             │
+;   DF50h │   IOCALL transaction transport               │
+;   DD10h │   SIO core + exact IM2 vector entry          │
+;   DC00h │   banking / XMOVE / LAUNCH                   │
+;   DBC0h │   storage facade                             │
 ;   DB80h │   console facade                             │
 ;   DA00h │ CBIOS_BASE / jump table / boot / WBOOT       │
 ;         └──────────────────────────────────────────────┘
@@ -56,8 +56,8 @@
 ;   the low byte of that entry, and WR1 status-affects-vector is kept disabled.
 ;
 ;   I register          = DDh
-;   SIO WR2 vector      = 90h
-;   CPU reads word at   = DD90h/DD91h
+;   SIO WR2 vector      = 10h
+;   CPU reads word at   = DD10h/DD11h
 ;   Table word there    = sio_core_isr
 ;
 ; ------------------------------------------------------------------------------
@@ -146,9 +146,9 @@ CBIOS_BASE                      = 0xda00
 ;   DA00h  BIOS jump table
 ;   DA42h  BDOS shim / boot glue area
 ;   DB80h  console facade
-;   DC00h  storage facade
-;   DC80h  banking / XMOVE / LAUNCH
-;   DD90h  SIO core
+;   DBC0h  storage facade
+;   DC00h  banking / XMOVE / LAUNCH
+;   DD10h  SIO core
 
 CBIOS_CORE_BASE                 = CBIOS_BASE
 CBIOS_CORE_LIMIT                = 0xe000
@@ -158,11 +158,11 @@ CBIOS_CORE_SIZE                 = CBIOS_CORE_LIMIT - CBIOS_CORE_BASE
 ; Existing public symbols kept.
 CBIOS_JUMP_TABLE                = CBIOS_BASE
 CBIOS_CONSOLE_CODE_BASE         = CBIOS_BASE + 0x0180      ; DB80h
-CBIOS_STORAGE_CODE_BASE         = CBIOS_BASE + 0x0200      ; DC00h
+CBIOS_STORAGE_CODE_BASE         = CBIOS_BASE + 0x01c0      ; DBC0h
 
 ; Banking is core BIOS, not a driver.
 ; Existing public symbol name kept, moved into the core BIOS region.
-CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x0280      ; DC80h
+CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x0200      ; DC00h
 
 ; ------------------------------------------------------------------------------
 ; Fixed Driver Slots
@@ -228,9 +228,9 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ; These names are kept so existing source can still ORG against them.
 
 CBIOS_RAMDISK_CODE_BASE         = CBIOS_DRIVER_SLOT0_BASE              ; E000h
-CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0390                  ; DD90h
+CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_CONSOLE_DRIVER_CODE_BASE  = CBIOS_DRIVER_SLOT1_BASE              ; E400h
-CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x0560                  ; DF60h
+CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x0550                  ; DF50h
 
 ; Resident code region ends before scratch.
 ; LIMIT is one byte past the end.
@@ -266,7 +266,7 @@ CBIOS_SCRATCH_FREE0_SIZE        = CBIOS_SCRATCH_FREE0_LIMIT - CBIOS_SCRATCH_FREE
 ; ------------------------------------------------------------------------------
 ; IM2 Interrupt Vectors
 ; ------------------------------------------------------------------------------
-; DD90h-DD91h = SIO-core-owned exact IM2 vector table entry.
+; DD10h-DD11h = SIO-core-owned exact IM2 vector table entry.
 ;
 ; The SIO core emits ".dw sio_core_isr" at this address.
 CBIOS_IM2_VECTOR_TABLE          = CBIOS_SIO_CORE_CODE_BASE
@@ -274,8 +274,8 @@ CBIOS_IM2_VECTOR_PAGE           = 0xdd
 CBIOS_IM2_VECTOR_ENTRY          = CBIOS_IM2_VECTOR_TABLE
 
 ; Byte written to SIO WR2.
-; With I = DDh and vector = 90h, the CPU reads the vector word at DD90h.
-CBIOS_SIO_VECTOR                = 0x90
+; With I = DDh and vector = 10h, the CPU reads the vector word at DD10h.
+CBIOS_SIO_VECTOR                = 0x10
 
 ; Table is exactly one IM2 entry in this layout.
 CBIOS_IM2_VECTOR_SIZE           = 0x0002

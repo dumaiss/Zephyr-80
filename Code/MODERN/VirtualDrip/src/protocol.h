@@ -6,21 +6,30 @@
  * Virtual Drip wire protocol definitions.
  *
  * Packets are encoded as:
- *   [SYNC=0xA5][LEN][TYPE][PAYLOAD...][CRC8]
+ *   [SYNC0=0xA5][SYNC1=0x5A][LEN][TYPE][PAYLOAD...][CRC8]
  *
- * SYNC is a framing byte and is not included in the CRC. LEN is the payload
- * length only, so the total encoded packet size is 4 + LEN bytes. CRC8 covers
- * LEN, TYPE, and PAYLOAD using polynomial 0x07 with initial value 0x00.
+ * The two sync bytes are framing bytes and are not included in the CRC. LEN is
+ * the byte count of the complete packet body after the sync bytes, including
+ * LEN itself, TYPE, PAYLOAD, and CRC8. CRC8 covers LEN, TYPE, and PAYLOAD
+ * using polynomial 0x07 with initial value 0x00.
  */
 
 #include <stddef.h>
 #include <stdint.h>
 
-/** Packet stream framing byte. Not included in the packet CRC. */
-#define PACKET_SYNC 0xA5
+/** Packet stream framing bytes. Not included in the packet CRC. */
+#define PACKET_SYNC0 0xA5
+#define PACKET_SYNC1 0x5A
+#define PACKET_SYNC_SIZE 2
 
-/** Maximum payload representable by the one-byte LEN field. */
-#define MAX_PACKET_PAYLOAD 255
+/** Encoded bytes after SYNC that are not payload: LEN, TYPE, and CRC8. */
+#define PACKET_WIRE_OVERHEAD 3
+
+/** Minimum valid LEN byte: LEN, TYPE, and CRC8 with a zero-byte payload. */
+#define PACKET_MIN_WIRE_LENGTH PACKET_WIRE_OVERHEAD
+
+/** Maximum payload representable by the one-byte whole-body LEN field. */
+#define MAX_PACKET_PAYLOAD (255 - PACKET_WIRE_OVERHEAD)
 
 /**
  * Packet type values shared by file replay, serial input, and serial output.
@@ -100,9 +109,9 @@ typedef enum {
 /**
  * Decoded packet representation.
  *
- * The payload buffer is sized to MAX_PACKET_PAYLOAD because LEN is one byte.
- * The SYNC byte is intentionally not stored here; this struct represents the
- * CRC-covered body plus the received CRC.
+ * length is the decoded payload byte count. The wire LEN byte is derived as
+ * length + PACKET_WIRE_OVERHEAD. The SYNC byte is intentionally not stored
+ * here; this struct represents the CRC-covered body plus the received CRC.
  */
 typedef struct {
     uint8_t length;
@@ -124,6 +133,9 @@ uint8_t crc8_update(uint8_t crc, uint8_t value);
 
 /** Compute CRC8 for LEN, TYPE, and PAYLOAD of a decoded packet. */
 uint8_t packet_crc8(const Packet *packet);
+
+/** Return the encoded LEN byte for a decoded packet. */
+uint8_t packet_wire_length(const Packet *packet);
 
 /** Return a stable debug name for a packet type value. */
 const char *packet_type_name(uint8_t type);

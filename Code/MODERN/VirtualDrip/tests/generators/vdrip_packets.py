@@ -1,8 +1,9 @@
 """Helpers for generating Virtual Drip packet streams.
 
 Packet constants mirror src/protocol.h:
-  [SYNC=0xA5][LEN][TYPE][PAYLOAD...][CRC8]
+  [SYNC0=0xA5][SYNC1=0x5A][LEN][TYPE][PAYLOAD...][CRC8]
 
+LEN counts the complete packet body after the sync bytes: LEN, TYPE, PAYLOAD, and CRC8.
 CRC8 covers LEN, TYPE, and PAYLOAD only.
 
 These helpers generate VDP-visible state changes, not screenshots. The output
@@ -16,7 +17,8 @@ from pathlib import Path
 from typing import Iterable
 
 
-PACKET_SYNC = 0xA5
+PACKET_SYNC0 = 0xA5
+PACKET_SYNC1 = 0x5A
 
 PACKET_VDP_CTRL_WRITE = 0x01
 PACKET_VDP_DATA_WRITE = 0x02
@@ -59,11 +61,12 @@ def packet(packet_type: int, payload: bytes | bytearray | Iterable[int] = b"") -
     """Wrap one packet as SYNC, LEN, TYPE, PAYLOAD, CRC8."""
 
     body_payload = bytes(payload)
-    if len(body_payload) > 255:
-        raise ValueError("Virtual Drip packets support at most 255 payload bytes")
+    if len(body_payload) > 252:
+        raise ValueError("Virtual Drip packets support at most 252 payload bytes")
 
-    body = bytes([len(body_payload), packet_type & 0xFF]) + body_payload
-    return bytes([PACKET_SYNC]) + body + bytes([crc8(body)])
+    wire_length = len(body_payload) + 3
+    body = bytes([wire_length, packet_type & 0xFF]) + body_payload
+    return bytes([PACKET_SYNC0, PACKET_SYNC1]) + body + bytes([crc8(body)])
 
 
 def vdp_ctrl(value: int) -> bytes:

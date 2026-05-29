@@ -22,6 +22,8 @@ Implemented now:
 - A BIOS-owned SIO core exists in core BIOS for SIO0/B and SIO1/A plumbing.
 - The legacy SIO console backend is now a client of the SIO core.
 - SIO0/B receive uses maskable interrupts and a console RX sink/buffer.
+- SIO0/B transmit checks CTS, and SIO0/B RTS is exposed for software-managed
+  RX backpressure by the console client.
 - SIO1/A is initialized as a BIOS-owned synchronous IO Controller link.
 - `IOCALL` is exposed as a Zephyr extended BIOS call for simple IO Controller
   command/reply transactions.
@@ -110,10 +112,10 @@ E3FFh | Driver slot 0 end                            |
 E000h | Driver slot 0 start: RAM disk backend        |
       +----------------------------------------------+
 DFFFh | Core BIOS end                                |
-DF60h |   IOCALL transaction transport               |
-DD90h |   SIO core + exact IM2 vector entry          |
-DC80h |   banking / XMOVE / LAUNCH                   |
-DC00h |   storage facade                             |
+DF50h |   IOCALL transaction transport               |
+DD10h |   SIO core + exact IM2 vector entry          |
+DC00h |   banking / XMOVE / LAUNCH                   |
+DBC0h |   storage facade                             |
 DB80h |   console facade                             |
 DA00h | CBIOS_BASE / jump table / boot / WBOOT       |
       +----------------------------------------------+
@@ -174,14 +176,20 @@ transport:
   RX buffer.
 - `CONST` checks the console RX buffer.
 - `CONIN` blocks until a buffered byte is available, then consumes it.
-- `CONOUT` calls the SIO core send-byte API, which remains blocking/polled for
-  now.
+- `CONOUT` calls the SIO core send-byte API, which polls TX-empty and CTS with
+  a finite timeout.
+- SIO0/B RTS is software-managed by the legacy console RX ring owner: RTS is
+  released at 32/96 buffered bytes and reasserted at 16/96 buffered bytes.
+- During SIO core init, RTS is held released and stale SIO0/B RX bytes are
+  discarded before the console sink is registered.
+- DTR/DCD are not required, and WR3 Auto Enables remain off to avoid depending
+  on DCD.
 
 The current IM2 setup is SIO-only and uses an exact two-byte table entry:
 
 - `I = DDh`
-- SIO0/B WR2 vector byte is `90h`
-- the IM2 table entry lives at `DD90h-DD91h`, inside the SIO core
+- SIO0/B WR2 vector byte is `10h`
+- the IM2 table entry lives at `DD10h-DD11h`, inside the SIO core
 - the table word points directly at `sio_core_isr`
 
 SIO0/B WR1 keeps status-affects-vector disabled, so the SIO emits the exact

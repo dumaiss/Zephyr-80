@@ -215,18 +215,20 @@ void input_keyboard_handle_display_key(InputKeyboardContext *ctx, bool down, uin
             packet.payload[index] = payload[index];
         }
         packet.crc = packet_crc8(&packet);
+        uint8_t wire_length = packet_wire_length(&packet);
 
-        uint8_t bytes[4 + MAX_PACKET_PAYLOAD];
-        bytes[0] = PACKET_SYNC;
-        bytes[1] = packet.length;
-        bytes[2] = packet.type;
+        uint8_t bytes[PACKET_SYNC_SIZE + 255];
+        bytes[0] = PACKET_SYNC0;
+        bytes[1] = PACKET_SYNC1;
+        bytes[2] = wire_length;
+        bytes[3] = packet.type;
         for (uint8_t index = 0; index < packet.length; ++index) {
-            bytes[3 + index] = packet.payload[index];
+            bytes[4 + index] = packet.payload[index];
         }
-        bytes[3 + packet.length] = packet.crc;
+        bytes[4 + packet.length] = packet.crc;
 
         printf("Keyboard packet %s: ", sent ? "sent" : "send failed");
-        print_packet_bytes(bytes, (size_t)packet.length + 4);
+        print_packet_bytes(bytes, (size_t)wire_length + PACKET_SYNC_SIZE);
         printf("\n");
     }
 }

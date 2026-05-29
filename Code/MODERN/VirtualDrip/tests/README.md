@@ -4,7 +4,10 @@ These tests generate Virtual Drip packet streams that exercise VDP-visible
 state changes through the same packet protocol that Zephyr-80 will use:
 
 ```text
-[SYNC=0xA5][LEN][TYPE][PAYLOAD...][CRC8]
+[SYNC0=0xA5][SYNC1=0x5A][LEN][TYPE][PAYLOAD...][CRC8]
+
+`LEN` counts the complete packet body after the sync bytes, including `LEN`,
+`TYPE`, `PAYLOAD`, and `CRC8`.
 ```
 
 The generators write TMS9928A register and VRAM operations using

@@ -40,9 +40,10 @@ int serial_port_baud_rate(const SerialPort *port);
 /**
  * Build and write one Virtual Drip packet under the TX mutex.
  *
- * The packet bytes are SYNC, LEN, TYPE, PAYLOAD, CRC8. The call drains the
- * serial transmitter before returning so keyboard packets are observable during
- * pseudo-terminal tests.
+ * The packet bytes are SYNC0, SYNC1, LEN, TYPE, PAYLOAD, CRC8. LEN counts the
+ * complete packet body after the sync bytes, including LEN itself and CRC8.
+ * The call drains the serial transmitter before returning so keyboard packets
+ * are observable during pseudo-terminal tests.
  */
 bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payload, uint8_t length);
 

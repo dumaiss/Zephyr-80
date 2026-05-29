@@ -6,10 +6,10 @@
  * Streaming byte-oriented Virtual Drip packet decoder.
  *
  * The parser accepts bytes from serial input, file replay, or tests. It finds
- * PACKET_SYNC, reads LEN/TYPE/PAYLOAD/CRC, validates CRC, and emits only
- * complete valid packets through PacketHandler. It owns decoding state only;
- * packet interpretation belongs to higher layers such as packet dispatch and
- * video backends.
+ * PACKET_SYNC0/PACKET_SYNC1, reads the whole-body LEN, TYPE, PAYLOAD, and CRC,
+ * validates CRC, and emits only complete valid packets through PacketHandler.
+ * It owns decoding state only; packet interpretation belongs to higher layers
+ * such as packet dispatch and video backends.
  */
 
 #include "protocol.h"
@@ -21,12 +21,14 @@
 /** Current byte expected by the streaming parser state machine. */
 typedef enum {
     /** Ignore input until PACKET_SYNC is seen. */
-    PACKET_PARSER_WAIT_SYNC,
-    /** Read LEN, the payload byte count. */
+    PACKET_PARSER_WAIT_SYNC0,
+    /** Read the second sync byte. */
+    PACKET_PARSER_WAIT_SYNC1,
+    /** Read LEN, the byte count after SYNC including LEN, TYPE, payload, CRC. */
     PACKET_PARSER_READ_LENGTH,
     /** Read TYPE. */
     PACKET_PARSER_READ_TYPE,
-    /** Read LEN payload bytes. */
+    /** Read the decoded payload byte count derived from LEN. */
     PACKET_PARSER_READ_PAYLOAD,
     /** Read CRC and either emit or drop the packet. */
     PACKET_PARSER_READ_CRC,
@@ -37,8 +39,8 @@ typedef enum {
  *
  * offset tracks all bytes fed to the parser. packet_offset records the SYNC
  * offset of the packet currently being assembled. CRC failures are counted and
- * dropped; the parser then returns to WAIT_SYNC to resynchronize on the next
- * valid framing byte.
+ * dropped; the parser then returns to WAIT_SYNC0 to resynchronize on the next
+ * valid framing sequence.
  */
 typedef struct {
     /** Current point in the packet framing state machine. */

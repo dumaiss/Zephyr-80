@@ -20,10 +20,18 @@
 ;   SIO_CH_IOCTRL uses SIO1/A in synchronous external-clock/external-sync mode.
 ;   The IO Controller MCU owns the clock and framing. RTS from the Z80 side is
 ;   a service-request signal and starts inactive.
+;
+; SIO0/B console / Virtual Drip link:
+;   SIO_CH_CONSOLE uses async 115200 8N1 with RTS/CTS hardware flow control.
+;   DTR/DCD are not required. WR3 Auto Enables stay off intentionally so the
+;   BIOS does not depend on DCD. CTS is polled before TX; RTS is software-
+;   managed by the BIOS/client. Core init holds RTS released until the console
+;   client clears its RX ring, registers its sink, and asserts RTS.
 
 	.globl sio_init
 	.globl sio_core_init,sio_core_enable_interrupts,sio_core_disable_interrupts
 	.globl sio_register_rx_sink,sio_send_byte,sio_recv_byte,sio_rx_kick
+	.globl sio0b_rts_assert,sio0b_rts_release
 	.globl sio1_ioc_init,sio1_ioc_rts_assert,sio1_ioc_rts_release
 	.globl sio1_ioc_put_byte,sio1_ioc_get_byte
 	.globl sio_core_rx_lock,sio_core_rx_unlock,sio_core_isr,sio_console_isr
@@ -31,6 +39,7 @@
 	.globl SIO_CORE_CODE_START,SIO_CORE_CODE_END
 	.globl SIO_CORE_STATE_START,SIO_CORE_STATE_END
 	.globl SIO0B_RX_SINK,SIO1_RX_SINK
+	.globl SIO0B_LAST_RR1,SIO0B_LAST_RX_ERROR
 	.globl SIO_CORE_IRQ_ENABLED,SIO_CORE_IRQ_COUNT
 	.globl CONSOLE_IRQ_ENABLED,CONSOLE_IRQ_COUNT
 	.globl CONSOLE_IM2_VECTOR_ENTRY
@@ -43,7 +52,17 @@ SIO1_IOC_CTRL_PORT	= SIO1A_CTRL
 SIO_MASTER_CTRL_PORT	= SIOA_CTRL
 SIO_RX_READY		= RR0_RX_AVAILABLE
 SIO_TX_READY		= RR0_TX_EMPTY
+; Z80 SIO RR0 bit 5 is CTS. This code treats a set bit as CTS asserted.
+SIO_RR0_CTS		= 0x20
+SIO_CONSOLE_TX_READY	= SIO_TX_READY | SIO_RR0_CTS
+SIO_CONSOLE_TIMEOUT	= 0xffff
 SIO_IOCTRL_TIMEOUT	= 0xffff
+; WR0 command bits 5-3 = 110, Reset Error.
+SIO_WR0_RESET_ERROR	= 0x30
+; RR1 bits 6:4 capture async receive framing/overrun/parity errors.
+SIO_RR1_RX_ERROR_MASK	= 0x70
+SIO0B_WR5_RTS_OFF	= 0xe8
+SIO0B_WR5_RTS_ON	= 0xea
 SIO_WR4_IOCTRL_SYNC	= 0x30
 SIO_WR3_IOCTRL_RX	= 0xd1
 SIO_WR5_IOCTRL_RTS_OFF	= 0xe8
@@ -80,9 +99,11 @@ sio_init:
 ;   BIOS-owned SIO interrupts disabled.
 ; Inputs: none.
 ; Outputs:
-;   SIO0/B is configured 115200 8N1 with WR1 interrupts disabled. SIO1/A is
-;   configured synchronous 8-bit, external clock/sync, no parity/CRC, no IRQs,
-;   and RTS inactive.
+;   SIO0/B is configured 115200 8N1 with WR1 interrupts disabled, CTS-polled
+;   TX, software-managed RTS released until the console client is ready, Auto
+;   Enables off, and no DCD dependency.
+;   SIO1/A is configured synchronous 8-bit, external clock/sync, no parity/CRC,
+;   no IRQs, and RTS inactive.
 ; Clobbers: AF.
 ; Important invariants:
 ;   This does not configure application-owned SIO0/A as a channel and does not
@@ -93,6 +114,8 @@ sio_core_init:
 	ld (SIO0B_RX_SINK + 1),a
 	ld (SIO1_RX_SINK),a
 	ld (SIO1_RX_SINK + 1),a
+	ld (SIO0B_LAST_RR1),a
+	ld (SIO0B_LAST_RX_ERROR),a
 
 	; WR0: channel reset.
 	ld a,#0x18
@@ -105,17 +128,21 @@ sio_core_init:
 	out (SIO0B_CTRL_PORT),a
 
 	; WR3: RX enable, 8-bit RX, Auto Enables off.
+	; Auto Enables are intentionally disabled: DTR/DCD are not wired and SIO0/B
+	; must not enter a mode that depends on DCD.
 	ld a,#0x03
 	out (SIO0B_CTRL_PORT),a
 	ld a,#0xc1
 	out (SIO0B_CTRL_PORT),a
 
-	; WR5: DTR, 8-bit TX, TX enable, RTS.
+	; WR5: preserve the existing DTR/TX-enable/8-bit-TX pattern, but hold
+	; software-managed RTS released until the console RX sink is registered.
 	ld a,#0x05
 	out (SIO0B_CTRL_PORT),a
-	ld a,#0xea
+	ld a,#SIO0B_WR5_RTS_OFF
 	out (SIO0B_CTRL_PORT),a
 
+	call sio0b_discard_rx_pending
 	call sio1_ioc_init
 	jp sio_core_disable_interrupts
 
@@ -284,7 +311,8 @@ SIO_REGISTER_IOCTRL:
 ; In:  A = SIO channel id, C = byte to send.
 ; Out: A = BIOS_OK / BIOS_ERR_*.
 ; Current behavior:
-;   SIO_CH_CONSOLE preserves the existing blocking/polled SIO0/B transmit path.
+;   SIO_CH_CONSOLE polls SIO0/B TX-empty and CTS with a finite timeout. It does
+;   not use DCD or WR3 Auto Enables.
 ;   SIO_CH_IOCTRL polls SIO1/A with a finite timeout because the MCU only
 ;   clocks the synchronous link during an active transaction.
 sio_send_byte:
@@ -295,9 +323,19 @@ sio_send_byte:
 	ld a,#BIOS_ERR_IO
 	ret
 SIO_SEND_CONSOLE:
+	ld de,#SIO_CONSOLE_TIMEOUT
+SIO_SEND_CONSOLE_WAIT:
 	in a,(SIO0B_CTRL_PORT)
-	and #SIO_TX_READY
-	jr z,SIO_SEND_CONSOLE
+	and #SIO_CONSOLE_TX_READY
+	cp #SIO_CONSOLE_TX_READY
+	jr z,SIO_SEND_CONSOLE_READY
+	dec de
+	ld a,d
+	or e
+	jr nz,SIO_SEND_CONSOLE_WAIT
+	ld a,#BIOS_ERR_TIMEOUT
+	ret
+SIO_SEND_CONSOLE_READY:
 	ld a,c
 	out (SIO0B_DATA_PORT),a
 	xor a
@@ -402,6 +440,7 @@ SIO_RX_KICK_CONSOLE:
 	push hl
 	in a,(SIO0B_DATA_PORT)
 	ld c,a
+	call sio0b_record_rx_diag
 	ld a,#SIO_CH_CONSOLE
 	call sio_core_dispatch_rx
 	pop hl
@@ -446,14 +485,20 @@ sio_core_isr:
 	inc hl
 	ld (SIO_CORE_IRQ_COUNT),hl
 
+; fallthrough to the RX loop.
+SIO_CORE_ISR_RX_LOOP:
 	in a,(SIO0B_CTRL_PORT)
-	ld b,a
 	and #SIO_RX_READY
 	jr z,SIO_CORE_ISR_DONE
+
 	in a,(SIO0B_DATA_PORT)
 	ld c,a
+	call sio0b_record_rx_diag
 	ld a,#SIO_CH_CONSOLE
 	call sio_core_dispatch_rx
+
+	jr SIO_CORE_ISR_RX_LOOP
+
 
 SIO_CORE_ISR_DONE:
 	ld a,#SIO_WR0_RESET_HIGHEST_IUS
@@ -463,6 +508,67 @@ SIO_CORE_ISR_DONE:
 	pop bc
 	pop af
 	reti
+
+; SIO0/B console RTS helpers.
+; RTS is software-managed by the BIOS/client. The SIO core does not own a
+; central RX ring, so clients that own the registered RX sink can deassert and
+; assert RTS around their own high/low watermarks. These helpers preserve the
+; current WR5 DTR/TX-enable/8-bit-TX pattern and only change RTS.
+sio0b_rts_assert:
+	ld a,#0x05
+	out (SIO0B_CTRL_PORT),a
+	ld a,#SIO0B_WR5_RTS_ON
+	out (SIO0B_CTRL_PORT),a
+	xor a
+	ret
+
+sio0b_rts_release:
+	ld a,#0x05
+	out (SIO0B_CTRL_PORT),a
+	ld a,#SIO0B_WR5_RTS_OFF
+	out (SIO0B_CTRL_PORT),a
+	xor a
+	ret
+
+; Discard stale SIO0/B RX bytes during core initialization while RTS is held
+; released and no console RX sink is registered yet. This keeps line/reset
+; noise from being delivered later when interrupts are enabled.
+; Clobbers AF, B, C.
+sio0b_discard_rx_pending:
+	ld b,#0x00
+SIO0B_DISCARD_RX_LOOP:
+	in a,(SIO0B_CTRL_PORT)
+	and #SIO_RX_READY
+	jr z,SIO0B_DISCARD_RX_DONE
+	in a,(SIO0B_DATA_PORT)
+	ld c,a
+	call sio0b_record_rx_diag
+	djnz SIO0B_DISCARD_RX_LOOP
+SIO0B_DISCARD_RX_DONE:
+	ld a,#SIO_WR0_RESET_ERROR
+	out (SIO0B_CTRL_PORT),a
+	xor a
+	ld (SIO0B_LAST_RR1),a
+	ld (SIO0B_LAST_RX_ERROR),a
+	ret
+
+; Record minimal SIO0/B RR1 diagnostics after a received byte is read.
+; In: C = received byte to preserve for the RX sink.
+; Out: C preserved, A clobbered.
+sio0b_record_rx_diag:
+	ld a,#0x01
+	out (SIO0B_CTRL_PORT),a
+	in a,(SIO0B_CTRL_PORT)
+	ld (SIO0B_LAST_RR1),a
+	and #SIO_RR1_RX_ERROR_MASK
+	ld (SIO0B_LAST_RX_ERROR),a
+	jr z,SIO0B_RX_DIAG_DONE
+	ld a,#SIO_WR0_RESET_ERROR
+	out (SIO0B_CTRL_PORT),a
+SIO0B_RX_DIAG_DONE:
+	xor a
+	out (SIO0B_CTRL_PORT),a
+	ret
 
 ; Dispatch one received byte to the registered sink.
 ; In: A = SIO channel id, C = received byte.
@@ -521,6 +627,10 @@ CONSOLE_IRQ_ENABLED:
 SIO_CORE_IRQ_COUNT:
 CONSOLE_IRQ_COUNT:
 	.dw 0x0000
+SIO0B_LAST_RR1:
+	.db 0x00
+SIO0B_LAST_RX_ERROR:
+	.db 0x00
 SIO_CORE_STATE_END:
 
 	.area CODE (ABS)
