@@ -25,22 +25,22 @@
 ;   F800h │   MOVE_BUFFER                                │
 ;         ├──────────────────────────────────────────────┤
 ;   F7FFh │ Driver slot 5 end                            │
-;   F400h │ Driver slot 5 start                          │
+;   F400h │ Driver slot 5 start: RAM disk backend        │
 ;         │                                              │
 ;   F3FFh │ Driver slot 4 end                            │
-;   F000h │ Driver slot 4 start                          │
+;   F000h │ Driver slot 4 start (reserved)               │
 ;         │                                              │
 ;   EFFFh │ Driver slot 3 end                            │
-;   EC00h │ Driver slot 3 start                          │
+;   EC00h │ Driver slot 3 start (reserved)               │
 ;         │                                              │
 ;   EBFFh │ Driver slot 2 end                            │
-;   E800h │ Driver slot 2 start                          │
+;   E800h │ Driver slot 2 start (reserved)               │
 ;         │                                              │
 ;   E7FFh │ Driver slot 1 end                            │
 ;   E400h │ Driver slot 1 start: legacy SIO console      │
 ;         │                                              │
 ;   E3FFh │ Driver slot 0 end                            │
-;   E000h │ Driver slot 0 start: RAM disk backend        │
+;   E000h │ Driver slot 0 start (reserved)               │
 ;         ├──────────────────────────────────────────────┤
 ;   DFFFh │ Core BIOS end                                │
 ;   DF50h │   IOCALL transaction transport               │
@@ -219,15 +219,18 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ; ------------------------------------------------------------------------------
 ; Before Virtual Drip:
 ;
-;   Slot 0:
-;     E000h... current RAM disk backend
+;   Slot 5:
+;     F400h... current RAM disk backend
 ;
 ;   Slot 1:
 ;     E400h... current legacy SIO console driver
 ;
+;   Slots 0, 2-4:
+;     Reserved for future Virtual Drip console driver
+;
 ; These names are kept so existing source can still ORG against them.
 
-CBIOS_RAMDISK_CODE_BASE         = CBIOS_DRIVER_SLOT0_BASE              ; E000h
+CBIOS_RAMDISK_CODE_BASE         = CBIOS_DRIVER_SLOT5_BASE              ; F400h
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_CONSOLE_DRIVER_CODE_BASE  = CBIOS_DRIVER_SLOT1_BASE              ; E400h
 CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x0550                  ; DF50h
@@ -387,17 +390,17 @@ RESERVED_RUNTIME_STATE_END      = CBIOS_RUNTIME_STATE_END
 ; These are for external layout validation/documentation.
 ;
 ; Before Virtual Drip:
-;   Slot 0 contains current RAM disk backend.
+;   Slot 5 contains current RAM disk backend.
+;   Slots 0, 2-4 are reserved for the future Virtual Drip console driver.
 ;   Slot 1 contains current legacy SIO console driver, including its IM2 table
 ;   and trampoline. Logical ownership of SIO hardware, IM2, and ISR now belongs
 ;   to the SIO core; the legacy console is a client in the same transitional
 ;   slot.
 ;   SIO core is part of core BIOS, not a driver slot occupant.
 ;   IOCALL is part of core BIOS, not a driver slot occupant.
-;   Slots 2-5 are available for future drivers.
 
-LEGACY_RAMDISK_SLOT_FIRST       = 0
-LEGACY_RAMDISK_SLOT_LAST        = 0
+LEGACY_RAMDISK_SLOT_FIRST       = 5
+LEGACY_RAMDISK_SLOT_LAST        = 5
 
 LEGACY_CONSOLE_SLOT_FIRST       = 1
 LEGACY_CONSOLE_SLOT_LAST        = 1

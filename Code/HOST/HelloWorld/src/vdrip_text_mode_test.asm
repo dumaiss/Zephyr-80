@@ -80,6 +80,10 @@ TEXT_SCROLL_BOTTOM	= TEXT_ROWS - 1
 TEXT_SCROLL_ROWS	= TEXT_ROWS
 TEXT_SHADOW_SIZE	= TEXT_LOG_COLUMNS * TEXT_ROWS	; 1920
 
+; Horizontal pan hysteresis.
+TEXT_PAN_RIGHT_TARGET   = 30
+TEXT_PAN_LEFT_MARGIN    = 8
+
 ; Font assumptions: 96 chars, ASCII 20h-7Fh, 8 bytes each.
 FONT_FIRST_CHAR	= 0x20
 FONT_CHAR_COUNT	= 0x60
@@ -1032,16 +1036,44 @@ text_advance_cursor:
 
 	xor a
 	ld (text_col),a
-	; Reset viewport to column 0 on wrap.
+	; Reset viewport to column 0 on wrap.  Redraw only if it changed.
+	ld a,(text_view_col)
+	or a
+	jr z,text_advance_wrap_no_redraw
+
 	xor a
 	ld (text_view_col),a
+	push af
+	call vdrip_rts_release_raw
+	ld a,#0x01
+	ld (vdrip_rx_rts_released),a
+	call text_redraw_view
+	call app_maybe_resume_rts
+	pop af
+
+text_advance_wrap_no_redraw:
 	jr text_newline_from_wrap
 
 
 text_newline:
+	; If viewport was panned, reset it and redraw.
+	ld a,(text_view_col)
+	or a
+	jr z,text_newline_no_redraw
+
+	xor a
+	ld (text_view_col),a
+	push af
+	call vdrip_rts_release_raw
+	ld a,#0x01
+	ld (vdrip_rx_rts_released),a
+	call text_redraw_view
+	call app_maybe_resume_rts
+	pop af
+
+text_newline_no_redraw:
 	xor a
 	ld (text_col),a
-	ld (text_view_col),a
 
 text_newline_from_wrap:
 	ld a,(text_row)
@@ -1210,33 +1242,47 @@ text_ensure_cursor_visible:
 	ld a,(text_view_col)
 	cp e
 	jr c,text_ensure_check_right	; view_col < text_col
-	jr z,text_ensure_done		; view_col == text_col, already visible
 
-	; text_col < text_view_col — shift left.
+	; text_col <= text_view_col — check left margin.
+	; If text_col >= TEXT_PAN_LEFT_MARGIN, pan so cursor is at margin.
+	; Otherwise pan to column 0.
 	ld a,e
-	ld (text_view_col),a
-	jr text_ensure_redraw
+	cp #TEXT_PAN_LEFT_MARGIN
+	jr c,text_ensure_pan_left_zero
+
+	; Pan to cursor - margin.
+	sub #TEXT_PAN_LEFT_MARGIN
+	jr text_ensure_store_and_redraw
+
+text_ensure_pan_left_zero:
+	xor a
+	jr text_ensure_store_and_redraw
 
 text_ensure_check_right:
-	ld a,e
-	ld e,a
+	; Compute view_col + TEXT_PHYS_COLUMNS to check right edge.
 	ld a,(text_view_col)
 	add a,#TEXT_PHYS_COLUMNS
 	cp e
 	ret nc			; text_col < view_col + 40, already visible
 
-	; text_col >= text_view_col + 40 — shift right.
+	; Pan so cursor is at TEXT_PAN_RIGHT_TARGET.
 	ld a,e
-	sub #(TEXT_PHYS_COLUMNS - 1)
+	sub #TEXT_PAN_RIGHT_TARGET
 	jr nc,text_ensure_clamp
 	xor a
 
 text_ensure_clamp:
 	cp #TEXT_VIEW_MAX_COL
-	jr c,text_ensure_store
+	jr c,text_ensure_store_and_redraw
 	ld a,#TEXT_VIEW_MAX_COL
 
-text_ensure_store:
+text_ensure_store_and_redraw:
+	ld e,a			; save new view_col
+	ld a,(text_view_col)
+	cp e			; compare with current
+	ret z			; skip if view didn't change
+
+	ld a,e
 	ld (text_view_col),a
 	; fall through to redraw
 
@@ -1246,9 +1292,6 @@ text_ensure_redraw:
 	ld (vdrip_rx_rts_released),a
 	call text_redraw_view
 	jp app_maybe_resume_rts
-
-text_ensure_done:
-	ret
 
 
 ; ---------------------------------------------------------------------------
@@ -1381,9 +1424,6 @@ text_scroll_blank_loop:
 	ld (text_view_col),a
 	ld a,#(TEXT_SCROLL_BOTTOM)
 	ld (text_row),a
-
-	; Send one FRAME_MARK after the scroll completes.
-	call vdrip_send_frame_mark
 
 	; Reassert RTS if both queues are drained.
 	call app_maybe_resume_rts
@@ -2010,7 +2050,9 @@ proxy_ready_count:
 
 ; Triple-Esc VDP reset counter.
 esc_press_count:
-	.db 0x00    
+	.db 0x00
+
+    
 ; ---------------------------------------------------------------------------
 ; Font include.
 ;

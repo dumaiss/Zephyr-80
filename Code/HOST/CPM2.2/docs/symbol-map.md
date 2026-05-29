@@ -111,13 +111,13 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `write` | `DBE4h` | Storage WRITE facade; transfers to RAM disk. |
 | `sectran` | `DBEEh` | Returns untranslated 0-based logical sector for no-skew media. |
 | `STORAGE_STUB_CODE_END` | `DBF1h` | Storage BIOS facade end. |
-| `RAMDISK_CODE_START` | `E000h` | RAM disk backend code start. |
-| `ramdisk_seldsk` | `E011h` | Selects CP/M drive A and returns its DPH. |
-| `ramdisk_read` | `E025h` | Reads one 128-byte record from RAM disk storage. |
-| `ramdisk_write` | `E05Ch` | Writes one 128-byte record to RAM disk storage. |
-| `RAMDISK_DPH` | `E0F1h` | Drive A disk parameter header. |
-| `RAMDISK_DPB` | `E101h` | Drive A disk parameter block. |
-| `RAMDISK_CODE_END` | `E110h` | RAM disk backend code end. |
+| `RAMDISK_CODE_START` | `F400h` | RAM disk backend code start. |
+| `ramdisk_seldsk` | `F411h` | Selects CP/M drive A and returns its DPH. |
+| `ramdisk_read` | `F425h` | Reads one 128-byte record from RAM disk storage. |
+| `ramdisk_write` | `F45Ch` | Writes one 128-byte record to RAM disk storage. |
+| `RAMDISK_DPH` | `F4F1h` | Drive A disk parameter header. |
+| `RAMDISK_DPB` | `F501h` | Drive A disk parameter block. |
+| `RAMDISK_CODE_END` | `F510h` | RAM disk backend code end. |
 | `SIO_CORE_CODE_START` | `DD10h` | BIOS-owned SIO core code start in core BIOS. |
 | `CONSOLE_IM2_VECTOR_ENTRY` | `DD10h` | SIO core exact IM2 vector table entry address. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |
