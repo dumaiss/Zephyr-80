@@ -51,6 +51,7 @@ typedef enum {
     PACKET_PING = 0x07,
     PACKET_FRAME_MARK = 0x08,
     PACKET_CURSOR_COMMAND = 0x09,
+    PACKET_PROXY_READY = 0x0a,
 } PacketType;
 
 /** CURSOR_COMMAND payload byte 0 subcommands. */

@@ -1,97 +1,91 @@
-; Zephyr-80 Virtual Drip text mode hello world test.
+; ===========================================================================
+; Zephyr-80 Virtual Drip text console driver (monitor-loaded test version)
+; ===========================================================================
 ; CPU: Z80
 ; Assembler: SDCC sdasz80 / ASxxxx Z80 syntax
+;
+; This file has two sections:
+;
+;   A. Monitor-loaded test harness (top — small, disposable)
+;   B. Virtual Drip console driver code (lower — BIOS-shaped)
 ;
 ; Load with monitor:
 ;   L
 ;   G 8000
 ;
-; This test receives Virtual Drip terminal input packets and echoes minimal
-; ANSI-style text input through the TMS9928A text name table.
+; Driver entry points (public BIOS-shaped):
+;   vdrip_console_init    — Init VDP, font, cursor, SIO transport
+;   vdrip_console_poll    — Kick SIO RX, drain ring, parse packets, enqueue input
+;   vdrip_console_const   — Return A=0xff if input available, A=0x00 if not
+;   vdrip_console_conin   — Return next queued input byte in A (blocks if empty)
+;   vdrip_console_conout  — Output byte in A to the text console
 ;
-; The Z80 owns VDP sequencing because it is single-threaded: foreground code
-; queues received text and emits VDP packets in controlled bursts. The proxy
-; owns asynchronous keyboard gating because VNC keyboard events can arrive at
-; any time while these VDP bursts are in progress.
+; Calling convention for vdrip_console_conout: byte in A.
+; Hardcoded BIOS helper addresses preserved until BIOS build integration.
 
-	.module vdrip_text_hello
+	.module vdrip_text_console
 	.area CODE (ABS)
 	.org 0x8000
 
-; ---------------------------------------------------------------------------
-; SIO0/B, matching monitor / Virtual Drip wiring.
-; ---------------------------------------------------------------------------
+; ===========================================================================
+; Constants
+; ===========================================================================
 
-VDRIP_DATA		= 0x22
-VDRIP_CTRL		= 0x23
+; SIO0/B, matching monitor / Virtual Drip wiring.
+VDRIP_DATA		    = 0x22
+VDRIP_CTRL		    = 0x23
 SIO_RR0_TX_EMPTY	= 0x04
 
-; ---------------------------------------------------------------------------
 ; Virtual Drip packet protocol.
-;
-; Current wire format:
-;   A5 5A LEN TYPE PAYLOAD... CRC
-;
-; LEN = LEN + TYPE + PAYLOAD + CRC
-; Therefore:
-;   zero-payload packet LEN = 3
-;   one-byte payload packet LEN = 4
-; ---------------------------------------------------------------------------
-
-PACKET_SYNC0		= 0xa5
-PACKET_SYNC1		= 0x5a
-
+; Wire format:  A5 5A LEN TYPE PAYLOAD... CRC
+; LEN = LEN + TYPE + PAYLOAD + CRC  (zero-payload LEN = 3)
+PACKET_SYNC0		    = 0xa5
+PACKET_SYNC1		    = 0x5a
 PACKET_VDP_CTRL_WRITE	= 0x01
 PACKET_VDP_DATA_WRITE	= 0x02
 PACKET_TERMINAL_INPUT	= 0x05
-PACKET_RESET		= 0x06
-PACKET_PING		= 0x07
-PACKET_FRAME_MARK	= 0x08
+PACKET_RESET		    = 0x06
+PACKET_PING		        = 0x07
+PACKET_FRAME_MARK	    = 0x08
 PACKET_CURSOR_COMMAND	= 0x09
+PACKET_PROXY_READY	= 0x0a
 
 CURSOR_ENABLE		= 0x01
-CURSOR_SHOW		= 0x02
+CURSOR_SHOW			= 0x02
 CURSOR_SET_POSITION	= 0x04
 CURSOR_SET_STYLE	= 0x06
 CURSOR_SET_BLINK	= 0x07
 CURSOR_SET_COLOR	= 0x08
-
 CURSOR_STYLE_UNDERLINE	= 0x01
-
 VDRIP_WIRE_OVERHEAD	= 0x03
 
-STARTUP_DELAY_UNITS = 0x34
+STARTUP_DELAY_UNITS = 0x30
 
-; ---------------------------------------------------------------------------
 ; TMS9928A layout.
-; ---------------------------------------------------------------------------
-
-PATTERN_TABLE		= 0x0000
+PATTERN_TABLE	= 0x0000
 NAME_TABLE		= 0x3800
-
-TEXT_COLUMNS		= 40
+TEXT_COLUMNS	= 40
 TEXT_ROWS		= 24
 TEXT_CELLS		= 960		; 40 * 24
 
-; Font assumptions.
-; msxfont.inc should provide 96 chars, ASCII 20h-7Fh, 8 bytes each.
-FONT_FIRST_CHAR		= 0x20
-FONT_CHAR_COUNT		= 0x60
+; Font assumptions: 96 chars, ASCII 20h-7Fh, 8 bytes each.
+FONT_FIRST_CHAR	= 0x20
+FONT_CHAR_COUNT	= 0x60
 FONT_BYTES		= FONT_CHAR_COUNT * 8
 
-; BIOS SIO helper entry points.
+; BIOS SIO helper entry points (hardcoded — preserved until BIOS build).
 BIOS_SIO_CORE_ENABLE_INTERRUPTS = 0xdd91
 BIOS_SIO_REGISTER_RX_SINK       = 0xdde4
 BIOS_SIO_RX_KICK                = 0xde6d
 SIO_CH_CONSOLE                  = 0x00
 
-; Parser states.
+; Packet parser states.
 VDRIP_RX_WAIT_SYNC0 = 0x00
 VDRIP_RX_WAIT_SYNC1 = 0x01
 VDRIP_RX_LEN        = 0x02
 VDRIP_RX_BODY       = 0x03
 
-; Minimal terminal parser states.
+; Terminal parser states.
 TERM_STATE_NORMAL   = 0x00
 TERM_STATE_ESC      = 0x01
 TERM_STATE_CSI      = 0x02
@@ -107,59 +101,209 @@ VDRIP_PACKET_BODY_MAX    = VDRIP_PACKET_PAYLOAD_MAX + VDRIP_WIRE_OVERHEAD
 VDRIP_RX_RTS_HIGH_WATER = 0x04
 VDRIP_RX_RTS_LOW_WATER  = 0x00
 
-
-
 ; SIO0/B RTS.
 SIO0B_WR5_RTS_OFF = 0xe8
 SIO0B_WR5_RTS_ON  = 0xea
 
 VDRIP_RX_KICK_SPINS = 0x10
 
-TEXTQ_SIZE		= 0x80
-TEXTQ_MASK		= TEXTQ_SIZE - 1
+; Console input queue.
+TEXTQ_SIZE		    = 0x80
+TEXTQ_MASK		    = TEXTQ_SIZE - 1
 TEXTQ_RTS_HIGH_WATER    = 0x08
 TEXTQ_RTS_LOW_WATER     = 0x00
 
-start:
-	call delay_before_start
+; ===========================================================================
+; Monitor-loaded test harness
+; ===========================================================================
+;
+; Small disposable client that exercises the driver entry points.
+; Waits a few seconds before emitting VDP traffic (proxy startup window),
+; then initialises the console and echoes typed characters.
+;
+; This is the only section that should change when moving to the BIOS build.
 
-	; Hold host input while we initialize the display.
+start:
+	call vdrip_console_init
+
+test_client_loop:
+	call vdrip_console_poll
+	call vdrip_console_const
+	or a
+	jr z,test_client_loop
+
+	call vdrip_console_conin
+	call vdrip_console_conout
+	jr test_client_loop
+
+; ===========================================================================
+; Public Virtual Drip console driver entry points
+; ===========================================================================
+
+; ---------------------------------------------------------------------------
+; vdrip_console_init
+;
+; Initialize Virtual Drip transport, SIO RX, VDP text mode, font, cursor.
+;
+; Startup sequence:
+;   1. Release RTS, init RX, register sink, enable interrupts.
+;   2. Assert RTS and wait for PACKET_PROXY_READY from the proxy.
+;   3. Once ready, release RTS and send RESET/PING/VDP init/font/cursor.
+;   4. Assert RTS and enter normal interactive mode.
+; ---------------------------------------------------------------------------
+
+vdrip_console_init:
+	; Release RTS — we are not ready yet.
 	call vdrip_rts_release_raw
 
-	call vdrip_send_reset
-	call vdrip_send_ping
-
-	call text_init_vdp
-	call text_load_font
-	call text_clear_screen
-
-	ld hl,#hello_msg
-	call text_print_string
-
-	; Echo input starts on row 1.
-	xor a
-	ld (text_col),a
-	ld a,#0x01
-	ld (text_row),a
-	call vdrip_cursor_init
-
-	call vdrip_send_frame_mark
-
-	; Now take over SIO0/B RX.
+	; Initialize RX state and register the sink so we can receive
+	; the proxy READY packet.
 	call vdrip_rx_init
 	call vdrip_register_rx_sink
 	call #BIOS_SIO_CORE_ENABLE_INTERRUPTS
 
-	; Ready for host keyboard packets.
+	; Assert RTS so the proxy knows it can send.
 	call vdrip_rts_assert_raw
 	xor a
 	ld (vdrip_rx_rts_released),a
 
-main_loop:
+	; Wait for the proxy to signal readiness.
+	call vdrip_wait_for_proxy_ready
+
+	; Proxy is ready — release RTS and begin VDP initialization.
+	call vdrip_rts_release_raw
+	ld a,#0x01
+	ld (vdrip_rx_rts_released),a
+
+	call vdrip_send_reset
+	call vdrip_send_ping
+	call text_init_vdp
+	call text_load_font
+	call text_clear_screen
+
+	; Cursor starts at row 1, col 0.
+	xor a
+	ld (text_col),a
+	ld a,#0x01
+	ld (text_row),a
+
+	call vdrip_cursor_init
+	call vdrip_send_frame_mark
+
+	; Ready for interactive mode — assert RTS.
+	call vdrip_rts_assert_raw
+	xor a
+	ld (vdrip_rx_rts_released),a
+	ret
+
+; ---------------------------------------------------------------------------
+; vdrip_console_poll
+;
+; Kick pending SIO RX, drain the RX ring, parse complete Virtual Drip packets,
+; and enqueue terminal input bytes into the console input queue.
+;
+; Does not render diagnostics or block indefinitely.
+; ---------------------------------------------------------------------------
+
+vdrip_console_poll:
 	call vdrip_rx_kick_pending
 	call vdrip_poll_rx
-	call textq_render_one
-	jr main_loop
+	ret
+
+; ---------------------------------------------------------------------------
+; vdrip_console_const
+;
+; Return A = 0xff if at least one input byte is available in the console
+; input queue.
+; Return A = 0x00 if no input byte is available.
+; ---------------------------------------------------------------------------
+
+vdrip_console_const:
+	ld a,(textq_count)
+	or a
+	jr z,vdrip_console_const_empty
+	ld a,#0xff
+	ret
+
+vdrip_console_const_empty:
+	xor a
+	ret
+
+; ---------------------------------------------------------------------------
+; vdrip_console_conin
+;
+; Return the next queued input byte in A.
+; In the monitor-loaded test, blocks by polling until input exists.
+; Keeps BIOS-compatible in spirit (caller may check CONST first).
+; ---------------------------------------------------------------------------
+
+vdrip_console_conin:
+	call vdrip_console_poll
+	ld a,(textq_count)
+	or a
+	jr z,vdrip_console_conin
+
+	; Dequeue one byte from the console input queue.
+	di
+	ld hl,#textq_buffer
+	ld a,(textq_tail)
+	ld e,a
+	ld d,#0x00
+	add hl,de
+	ld a,(hl)
+	push af
+
+	ld a,(textq_tail)
+	inc a
+	and #TEXTQ_MASK
+	ld (textq_tail),a
+
+	ld a,(textq_count)
+	dec a
+	ld (textq_count),a
+
+	call app_maybe_resume_rts
+	ei
+	pop af
+	ret
+
+; ---------------------------------------------------------------------------
+; vdrip_console_conout
+;
+; Output one byte to the Virtual Drip text console.
+;
+; Input:
+;   A = byte to output
+;
+; Handles printable characters, CR/newline, backspace, tab, and minimal
+; ANSI/CSI cursor movement. Updates virtual cursor position when the logical
+; cursor moves.
+;
+; Does not read keyboard packets or call CONIN from CONOUT.
+; ---------------------------------------------------------------------------
+
+vdrip_console_conout:
+	push af
+
+	; Pause host input while rendering.
+	call vdrip_rts_release_raw
+	ld a,#0x01
+	ld (vdrip_rx_rts_released),a
+
+	pop af
+	call term_process_byte
+	call vdrip_send_frame_mark
+	call app_maybe_resume_rts
+	ret
+
+
+; ===========================================================================
+; Startup delay (deprecated — kept as fallback only)
+; ===========================================================================
+;
+; DEPRECATED: The normal startup path now uses vdrip_wait_for_proxy_ready
+; instead of a fixed delay. This routine is retained as a fallback for
+; bring-up when no proxy is connected.
 
 delay_before_start:
 	ld b,#STARTUP_DELAY_UNITS
@@ -177,7 +321,36 @@ delay_unit_loop:
 	ld a,d
 	or e
 	jr nz,delay_unit_loop
-	ret    
+	ret
+
+
+; ===========================================================================
+; Proxy readiness handshake
+; ===========================================================================
+;
+; Poll RX and wait for PACKET_PROXY_READY (0x0a) from the host before
+; allowing any Virtual Drip output traffic.
+;
+; Must be called after RX is initialized, sink registered, interrupts
+; enabled, and RTS asserted so the proxy can send the ready packet.
+
+vdrip_wait_for_proxy_ready:
+	; Clear flag before waiting.
+	xor a
+	ld (vdrip_proxy_ready_flag),a
+
+vdrip_wait_for_proxy_ready_loop:
+	call vdrip_rx_kick_pending
+	call vdrip_poll_rx
+	ld a,(vdrip_proxy_ready_flag)
+	or a
+	jr z,vdrip_wait_for_proxy_ready_loop
+	ret
+
+
+; ===========================================================================
+; SIO RX ring and BIOS helper integration
+; ===========================================================================
 
 vdrip_rx_init:
 	xor a
@@ -191,7 +364,7 @@ vdrip_rx_init:
 	ld (vdrip_rx_rts_released),a
 	ld (textq_head),a
 	ld (textq_tail),a
-	ld (textq_count),a    
+	ld (textq_count),a
 	ld (term_state),a
 	ld (rx_drop_count),a
 	ld (textq_drop_count),a
@@ -200,6 +373,8 @@ vdrip_rx_init:
 	ld (key_echo_count),a
 	ld (rts_release_count),a
 	ld (rts_assert_count),a
+	ld (vdrip_proxy_ready_flag),a
+	ld (proxy_ready_count),a
 	ret
 
 
@@ -342,6 +517,11 @@ vdrip_rx_maybe_release_rts:
 vdrip_rx_maybe_assert_rts:
 	jp app_maybe_resume_rts
 
+
+; ===========================================================================
+; Virtual Drip packet transport — RX parser
+; ===========================================================================
+
 vdrip_poll_rx:
 	call vdrip_rx_get_byte
 	or a
@@ -457,7 +637,23 @@ vdrip_parse_body_done:
 	inc a
 	ld (packet_ok_count),a
 
+	; Check for proxy-ready packet first.
+	ld a,(vdrip_packet_body + 1)
+	cp #PACKET_PROXY_READY
+	jr z,vdrip_handle_proxy_ready
+
+	; Otherwise dispatch as terminal input.
 	call vdrip_parse_apply_terminal_input
+	jr vdrip_parse_reset
+
+
+vdrip_handle_proxy_ready:
+	; Set the ready flag and count. Do NOT enqueue into input queue.
+	ld a,#0x01
+	ld (vdrip_proxy_ready_flag),a
+	ld a,(proxy_ready_count)
+	inc a
+	ld (proxy_ready_count),a
 	jr vdrip_parse_reset
 
 
@@ -483,7 +679,17 @@ vdrip_packet_crc_loop:
 vdrip_parse_reset:
 	xor a
 	ld (vdrip_parse_state),a
-	ret  
+	ret
+
+
+; ===========================================================================
+; Terminal input packet handling
+; ===========================================================================
+;
+; PACKET_TERMINAL_INPUT / keyboard input packets
+;   -> Enqueue payload bytes into the console input queue only.
+;   Does NOT directly move the screen cursor or draw characters.
+;   That is the job of CONOUT after the test harness reads the byte.
 
 vdrip_parse_apply_terminal_input:
 	ld a,(vdrip_packet_body + 1)
@@ -509,7 +715,7 @@ vdrip_terminal_enqueue_loop:
 	call textq_put_ascii
 	ld a,(key_echo_count)
 	inc a
-	ld (key_echo_count),a    
+	ld (key_echo_count),a
 
 	ld a,(terminal_payload_count)
 	dec a
@@ -517,15 +723,13 @@ vdrip_terminal_enqueue_loop:
 	jr nz,vdrip_terminal_enqueue_loop
 	ret
 
-; ---------------------------------------------------------------------------
-; textq_put_ascii
+
+; ===========================================================================
+; CONOUT terminal renderer
+; ===========================================================================
 ;
-; Input:
-;   A = terminal input byte
-;
-; Called from foreground parser, not ISR.
-; Fast: only enqueues into a RAM queue.
-; ---------------------------------------------------------------------------
+; term_process_byte interprets a single byte and renders it to the VDP
+; text display. This is the core of vdrip_console_conout's output handling.
 
 term_process_byte:
 	ld c,a
@@ -689,7 +893,7 @@ term_cursor_right:
 	ret
 
 term_cursor_home:
-	; Row 0 is the static HELLO WORLD header; home goes to row 1, col 0.
+	; Home goes to row 1, col 0 (row 0 is reserved).
 	xor a
 	ld (text_col),a
 	ld a,#0x01
@@ -703,6 +907,11 @@ term_cursor_end:
 	ld (text_col),a
 	call vdrip_cursor_set_position_current
 	ret
+
+
+; ===========================================================================
+; Console input queue
+; ===========================================================================
 
 textq_put_ascii:
 	ld c,a
@@ -749,11 +958,11 @@ textq_full:
 	ret  
 
 ; ---------------------------------------------------------------------------
-; text_newline
+; text_newline — move cursor to column 0 of the next row
 ;
-; Move cursor to column 0 of the next row.
-; Does not send a frame mark; textq_render_one handles frame marks when the
-; render queue drains.
+; TODO(scrolling): when scrolling support is added, this function should
+;   shift rows 1..23 up in a RAM text shadow buffer and redraw, rather
+;   than wrapping to row 1.
 ; ---------------------------------------------------------------------------
 
 text_advance_cursor:
@@ -777,7 +986,7 @@ text_newline_from_wrap:
 	cp #TEXT_ROWS
 	jr c,text_newline_store_row
 
-	; Wrap to row 1 so HELLO WORLD on row 0 stays visible.
+	; Wrap to row 1 so row 0 stays reserved.
 	ld a,#0x01
 
 text_newline_store_row:
@@ -786,76 +995,6 @@ text_newline_store_row:
 
 text_advance_store_col:
 	ld (text_col),a
-	ret    
-
-; ---------------------------------------------------------------------------
-; textq_render_one
-;
-; Render at most one queued character per main-loop pass.
-;
-; This keeps RX service responsive:
-;   main_loop:
-;     RX kick
-;     RX parse
-;     render one char
-;     repeat
-;
-; RTS policy:
-;   - keep host paused while rendering/backlogged
-;   - send one frame mark only when the text queue becomes empty
-;   - resume host only when RX ring and text queue are both empty/low
-; ---------------------------------------------------------------------------
-
-textq_render_one:
-	ld a,(textq_count)
-	or a
-	jr nz,textq_render_have_char
-
-	; Nothing to render. If RTS was released and both queues are now clear,
-	; this may reassert RTS.
-	jp app_maybe_resume_rts
-
-
-textq_render_have_char:
-	; Rendering is slow because it sends Virtual Drip VDP packets.
-	; Pause host input while we consume this queued character.
-	call vdrip_rts_release_raw
-	ld a,#0x01
-	ld (vdrip_rx_rts_released),a
-
-	; C = next queued character.
-	ld hl,#textq_buffer
-	ld a,(textq_tail)
-	ld e,a
-	ld d,#0x00
-	add hl,de
-
-	ld c,(hl)
-
-	; Advance tail.
-	ld a,(textq_tail)
-	inc a
-	and #TEXTQ_MASK
-	ld (textq_tail),a
-
-	; Decrement count.
-	ld a,(textq_count)
-	dec a
-	ld (textq_count),a
-
-	; Interpret one terminal input byte and render any resulting text action.
-	ld a,c
-	call term_process_byte
-
-	; If queue is now empty, emit one frame mark for the whole drained burst.
-	ld a,(textq_count)
-	or a
-	jr nz,textq_render_no_frame
-
-	call vdrip_send_frame_mark
-
-textq_render_no_frame:
-	call app_maybe_resume_rts
 	ret
 
 text_cursor_to_vram:
@@ -879,7 +1018,12 @@ text_cursor_rows_done:
 	add hl,de
 
 	call vdp_set_vram_write_addr
-	ret  
+	ret
+
+
+; ===========================================================================
+; RTS flow control
+; ===========================================================================
 
 app_maybe_resume_rts:
 	ld a,(vdrip_rx_rts_released)
@@ -901,9 +1045,11 @@ app_maybe_resume_rts:
 	xor a
 	ld (vdrip_rx_rts_released),a
 	ret
-; ---------------------------------------------------------------------------
-; VDP text mode init.
-; ---------------------------------------------------------------------------
+
+
+; ===========================================================================
+; VDP text backend
+; ===========================================================================
 
 text_init_vdp:
 	; R0 = 0
@@ -980,32 +1126,9 @@ text_clear_loop:
 
 
 ; ---------------------------------------------------------------------------
-; Print zero-terminated string at current VRAM address.
-;
-; Input:
-;   HL = string pointer
-; ---------------------------------------------------------------------------
-
-text_print_string:
-	; First pass: fixed address, top-left-ish.
-	push hl
-	ld hl,#NAME_TABLE
-	call vdp_set_vram_write_addr
-	pop hl
-
-text_print_string_loop:
-	ld a,(hl)
-	or a
-	ret z
-
-	call vdp_write_data_byte
-	inc hl
-	jr text_print_string_loop
-
-
-; ---------------------------------------------------------------------------
-; VDP helpers over Virtual Drip.
-; ---------------------------------------------------------------------------
+; ===========================================================================
+; VDP helpers over Virtual Drip
+; ===========================================================================
 
 ; Write TMS9928A register B with value A.
 vdp_write_register:
@@ -1060,9 +1183,9 @@ vdp_write_data_block_loop:
 	jr vdp_write_data_block_loop
 
 
-; ---------------------------------------------------------------------------
-; Virtual Drip packet output.
-; ---------------------------------------------------------------------------
+; ===========================================================================
+; Virtual Drip packet output — transport
+; ===========================================================================
 
 vdrip_ctrl_write:
 	push bc
@@ -1108,6 +1231,10 @@ vdrip_send_frame_mark:
 	ld a,#PACKET_FRAME_MARK
 	jp vdrip_send_packet0
 
+
+; ===========================================================================
+; Virtual cursor command helpers
+; ===========================================================================
 
 vdrip_cursor_init:
 	call vdrip_cursor_set_color_yellow
@@ -1330,19 +1457,14 @@ vdrip_parse_crc_failed:
 
 	jp vdrip_parse_reset
 
-; ---------------------------------------------------------------------------
-; CRC-8 poly 07, same as proxy.
+
+; ===========================================================================
+; CRC-8 (polynomial 0x07) — matches proxy
 ;
-; Input:
-;   C = current CRC
-;   A = next byte
-;
-; Output:
-;   C = updated CRC
-;
-; Clobbers:
-;   AF, E
-; ---------------------------------------------------------------------------
+; Input:  C = current CRC, A = next byte
+; Output: C = updated CRC
+; Clobbers: AF, E
+; ===========================================================================
 
 crc8_update:
 	xor c
@@ -1368,13 +1490,9 @@ crc8_update_next:
 	ret
 
 
-; ---------------------------------------------------------------------------
-; Data.
-; ---------------------------------------------------------------------------
-
-hello_msg:
-	.ascii "HELLO WORLD"
-	.db 0x00
+; ===========================================================================
+; Data / buffers / font include
+; ===========================================================================
 
 packet_len_store:
 	.db 0x00
@@ -1475,6 +1593,12 @@ rts_release_count:
 	.db 0x00
 
 rts_assert_count:
+	.db 0x00
+
+; Proxy readiness handshake.
+vdrip_proxy_ready_flag:
+	.db 0x00
+proxy_ready_count:
 	.db 0x00    
 ; ---------------------------------------------------------------------------
 ; Font include.

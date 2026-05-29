@@ -115,6 +115,12 @@ int main(int argc, char **argv)
         packet_dispatch_set_keyboard_transport(&dispatch, keyboard_transport);
         input_keyboard_init(&keyboard, keyboard_transport, config.keyboard_enabled, config.log_keys);
 
+        /* Signal to the Z80 that the proxy is ready to receive VDP traffic. */
+        {
+            bool ready_sent = serial_port_send_packet(serial_port, PACKET_PROXY_READY, NULL, 0);
+            fprintf(stderr, "Proxy ready packet %s\n", ready_sent ? "sent" : "queued");
+        }
+
         SerialReaderConfig reader_config = {
             .port = serial_port,
             .handler = packet_dispatch_handle_packet,
