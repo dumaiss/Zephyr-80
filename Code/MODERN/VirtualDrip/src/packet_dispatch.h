@@ -13,6 +13,7 @@
 #include "protocol.h"
 #include "video_device.h"
 #include "keyboard_transport.h"
+#include "virtual_text_cursor.h"
 
 #include <pthread.h>
 #include <stddef.h>
@@ -31,6 +32,7 @@ typedef struct {
     FrameChangedCallback frame_changed;
     void *frame_changed_userdata;
     KeyboardTransport *keyboard_transport;
+    VirtualTextCursor cursor;
     size_t packet_count;
 } PacketDispatch;
 
@@ -54,6 +56,12 @@ void packet_dispatch_set_keyboard_transport(PacketDispatch *dispatch, KeyboardTr
 
 /** Render the backend's current state into the framebuffer under the mutex. */
 void packet_dispatch_render(PacketDispatch *dispatch);
+
+/** Process local cursor blink and redraw when the blink phase changes. */
+void packet_dispatch_tick(PacketDispatch *dispatch);
+
+/** Release dispatch-owned resources. */
+void packet_dispatch_destroy(PacketDispatch *dispatch);
 
 /** PacketHandler implementation used by file replay and serial input. */
 void packet_dispatch_handle_packet(const Packet *packet, size_t offset, void *userdata);

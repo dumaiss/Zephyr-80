@@ -46,6 +46,16 @@ PACKET_VDP_DATA_WRITE	= 0x02
 PACKET_RESET		= 0x06
 PACKET_PING		= 0x07
 PACKET_FRAME_MARK	= 0x08
+PACKET_CURSOR_COMMAND	= 0x09
+
+CURSOR_ENABLE		= 0x01
+CURSOR_SHOW		= 0x02
+CURSOR_SET_POSITION	= 0x04
+CURSOR_SET_STYLE	= 0x06
+CURSOR_SET_BLINK	= 0x07
+CURSOR_SET_COLOR	= 0x08
+
+CURSOR_STYLE_UNDERLINE	= 0x01
 
 VDRIP_WIRE_OVERHEAD	= 0x03
 
@@ -125,13 +135,14 @@ start:
 	ld hl,#hello_msg
 	call text_print_string
 
-	call vdrip_send_frame_mark
-
 	; Echo input starts on row 1.
 	xor a
 	ld (text_col),a
 	ld a,#0x01
 	ld (text_row),a
+	call vdrip_cursor_init
+
+	call vdrip_send_frame_mark
 
 	; Now take over SIO0/B RX.
 	call vdrip_rx_init
@@ -147,7 +158,6 @@ main_loop:
 	call vdrip_rx_kick_pending
 	call vdrip_poll_rx
 	call textq_render_one
-	call debug_maybe_print_stats
 	jr main_loop
 
 delay_before_start:
@@ -157,145 +167,6 @@ delay_before_start_loop:
 	call delay_unit
 	djnz delay_before_start_loop
 	ret
-
-debug_maybe_print_stats:
-	ld a,(stats_dirty)
-	or a
-	ret z
-
-	ld a,(vdrip_rx_count)
-	or a
-	ret nz
-
-	ld a,(textq_count)
-	or a
-	ret nz
-
-	xor a
-	ld (stats_dirty),a
-
-	call debug_print_stats
-	ret
-
-DEBUG_STATUS_ADDR = NAME_TABLE + (23 * TEXT_COLUMNS)
-
-debug_print_stats:
-	ld hl,#DEBUG_STATUS_ADDR
-	call vdp_set_vram_write_addr
-
-	; Clear bottom row.
-	ld b,#TEXT_COLUMNS
-debug_clear_status_loop:
-	ld a,#0x20
-	call vdp_write_data_byte
-	djnz debug_clear_status_loop
-
-	ld hl,#DEBUG_STATUS_ADDR
-	call vdp_set_vram_write_addr
-
-	ld hl,#debug_label_rxd
-	call debug_write_string
-	ld a,(rx_drop_count)
-	call debug_write_hex8
-
-	ld a,#0x20
-	call vdp_write_data_byte
-
-	ld hl,#debug_label_tqd
-	call debug_write_string
-	ld a,(textq_drop_count)
-	call debug_write_hex8
-
-	ld a,#0x20
-	call vdp_write_data_byte
-
-	ld hl,#debug_label_crc
-	call debug_write_string
-	ld a,(crc_fail_count)
-	call debug_write_hex8
-
-	ld a,#0x20
-	call vdp_write_data_byte
-
-	ld hl,#debug_label_ok
-	call debug_write_string
-	ld a,(packet_ok_count)
-	call debug_write_hex8
-
-	ld a,#0x20
-	call vdp_write_data_byte
-
-	ld hl,#debug_label_key
-	call debug_write_string
-	ld a,(key_echo_count)
-	call debug_write_hex8
-
-	call vdrip_send_frame_mark
-	ret  
-
-debug_write_string:
-	ld a,(hl)
-	or a
-	ret z
-
-	call vdp_write_data_byte
-	inc hl
-	jr debug_write_string
-
-
-debug_write_hex8:
-	; Input: A = byte
-	push af
-
-	; High nibble.
-	and #0xf0
-	rrca
-	rrca
-	rrca
-	rrca
-	call debug_write_hex_nibble
-
-	pop af
-
-	; Low nibble.
-	and #0x0f
-	call debug_write_hex_nibble
-	ret
-
-
-debug_write_hex_nibble:
-	; Input: A = 0..15
-	cp #0x0a
-	jr c,debug_hex_digit
-
-	add a,#('A' - 0x0a)
-	call vdp_write_data_byte
-	ret
-
-debug_hex_digit:
-	add a,#'0'
-	call vdp_write_data_byte
-	ret      
-
-debug_label_rxd:
-	.ascii "RXD="
-	.db 0x00
-
-debug_label_tqd:
-	.ascii "TQD="
-	.db 0x00
-
-debug_label_crc:
-	.ascii "CRC="
-	.db 0x00
-
-debug_label_ok:
-	.ascii "OK="
-	.db 0x00
-
-debug_label_key:
-	.ascii "KEY="
-	.db 0x00    
 
 delay_unit:
 	ld de,#0xffff
@@ -327,7 +198,6 @@ vdrip_rx_init:
 	ld (key_echo_count),a
 	ld (rts_release_count),a
 	ld (rts_assert_count),a
-	ld (stats_dirty),a    
 	ret
 
 
@@ -373,9 +243,6 @@ vdrip_rx_sink_full:
 	ld a,(rx_drop_count)
 	inc a
 	ld (rx_drop_count),a
-
-	ld a,#0x01
-	ld (stats_dirty),a
 
 	call vdrip_rts_release_raw
 	ld a,#0x01
@@ -680,10 +547,10 @@ text_put_ascii_no_rts:
 	;   A = ASCII/control char
 
 	cp #0x0d
-	jr z,text_newline
+	jr z,text_put_newline
 
 	cp #0x0a
-	jr z,text_newline
+	jr z,text_put_newline
 
 	push af
 
@@ -693,6 +560,12 @@ text_put_ascii_no_rts:
 	call vdp_write_data_byte
 
 	call text_advance_cursor
+	call vdrip_cursor_set_position_current
+	ret
+
+text_put_newline:
+	call text_newline
+	call vdrip_cursor_set_position_current
 	ret
 
 textq_put_ascii:
@@ -732,9 +605,6 @@ textq_full:
 	ld a,(textq_drop_count)
 	inc a
 	ld (textq_drop_count),a
-
-	ld a,#0x01
-	ld (stats_dirty),a
 
 	; Output renderer cannot keep up. Stop host.
 	call vdrip_rts_release_raw
@@ -1103,6 +973,98 @@ vdrip_send_frame_mark:
 	jp vdrip_send_packet0
 
 
+vdrip_cursor_init:
+	call vdrip_cursor_set_color_yellow
+	call vdrip_cursor_set_style_underline
+	call vdrip_cursor_set_blink_default
+	call vdrip_cursor_enable
+	call vdrip_cursor_set_position_current
+	call vdrip_cursor_show
+	ret
+
+
+vdrip_cursor_enable:
+	ld hl,#packet_payload0
+	ld (hl),#CURSOR_ENABLE
+	inc hl
+	ld (hl),#0x01
+
+	ld a,#PACKET_CURSOR_COMMAND
+	ld b,#0x02
+	ld hl,#packet_payload0
+	jp vdrip_send_packet
+
+
+vdrip_cursor_show:
+	ld hl,#packet_payload0
+	ld (hl),#CURSOR_SHOW
+
+	ld a,#PACKET_CURSOR_COMMAND
+	ld b,#0x01
+	ld hl,#packet_payload0
+	jp vdrip_send_packet
+
+
+vdrip_cursor_set_position_current:
+	ld hl,#packet_payload0
+	ld (hl),#CURSOR_SET_POSITION
+	inc hl
+	ld a,(text_col)
+	ld (hl),a
+	inc hl
+	ld a,(text_row)
+	ld (hl),a
+
+	ld a,#PACKET_CURSOR_COMMAND
+	ld b,#0x03
+	ld hl,#packet_payload0
+	jp vdrip_send_packet
+
+
+vdrip_cursor_set_style_underline:
+	ld hl,#packet_payload0
+	ld (hl),#CURSOR_SET_STYLE
+	inc hl
+	ld (hl),#CURSOR_STYLE_UNDERLINE
+
+	ld a,#PACKET_CURSOR_COMMAND
+	ld b,#0x02
+	ld hl,#packet_payload0
+	jp vdrip_send_packet
+
+
+vdrip_cursor_set_blink_default:
+	ld hl,#packet_payload0
+	ld (hl),#CURSOR_SET_BLINK
+	inc hl
+	ld (hl),#0x01
+	inc hl
+	ld (hl),#0xf4
+	inc hl
+	ld (hl),#0x01
+
+	ld a,#PACKET_CURSOR_COMMAND
+	ld b,#0x04
+	ld hl,#packet_payload0
+	jp vdrip_send_packet
+
+
+vdrip_cursor_set_color_yellow:
+	ld hl,#packet_payload0
+	ld (hl),#CURSOR_SET_COLOR
+	inc hl
+	ld (hl),#0xff
+	inc hl
+	ld (hl),#0xff
+	inc hl
+	ld (hl),#0x00
+
+	ld a,#PACKET_CURSOR_COMMAND
+	ld b,#0x04
+	ld hl,#packet_payload0
+	jp vdrip_send_packet
+
+
 ; Send zero-payload packet.
 ; Input:
 ;   A = type
@@ -1230,10 +1192,6 @@ vdrip_parse_crc_failed:
 	inc a
 	ld (crc_fail_count),a
 
-
-	ld a,#0x01
-	ld (stats_dirty),a
-
 	jp vdrip_parse_reset
 
 ; ---------------------------------------------------------------------------
@@ -1295,7 +1253,7 @@ packet_crc_store:
 	.db 0x00
 
 packet_payload0:
-	.db 0x00
+	.ds 0x05
 
 packet_ptr_store:
 	.dw 0x0000
@@ -1372,9 +1330,6 @@ rts_release_count:
 	.db 0x00
 
 rts_assert_count:
-	.db 0x00    
-
-stats_dirty:
 	.db 0x00    
 ; ---------------------------------------------------------------------------
 ; Font include.

@@ -28,6 +28,21 @@ PACKET_KEY_EVENT = 0x05
 PACKET_RESET = 0x06
 PACKET_PING = 0x07
 PACKET_FRAME_MARK = 0x08
+PACKET_CURSOR_COMMAND = 0x09
+
+CURSOR_ENABLE = 0x01
+CURSOR_SHOW = 0x02
+CURSOR_HIDE = 0x03
+CURSOR_SET_POSITION = 0x04
+CURSOR_MOVE_RELATIVE = 0x05
+CURSOR_SET_STYLE = 0x06
+CURSOR_SET_BLINK = 0x07
+CURSOR_SET_COLOR = 0x08
+CURSOR_SET_GEOMETRY = 0x09
+
+CURSOR_STYLE_BLOCK = 0x00
+CURSOR_STYLE_UNDERLINE = 0x01
+CURSOR_STYLE_LEFT_BAR = 0x02
 
 PATTERN_TABLE = 0x0000
 SPRITE_PATTERN_TABLE = 0x1800
@@ -124,6 +139,13 @@ def frame_mark() -> bytes:
     """Create a FRAME_MARK pacing packet for animation replay tools."""
 
     return packet(PACKET_FRAME_MARK)
+
+
+def cursor_command(subcommand: int, *args: int) -> bytes:
+    """Create a text cursor overlay command packet."""
+
+    payload = bytes([subcommand & 0xFF] + [arg & 0xFF for arg in args])
+    return packet(PACKET_CURSOR_COMMAND, payload)
 
 
 def write_packet_file(path: str | Path, packets: Iterable[bytes]) -> None:

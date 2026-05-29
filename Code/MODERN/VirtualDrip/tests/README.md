@@ -28,6 +28,7 @@ Outputs are written to `tests/packets/`.
 - `10_set_registers.bin`: small Graphics I register setup using control-port writes only.
 - `20_palette_all_colors_graphics1.bin`: Graphics I screen showing all 16 TMS9918 color indices.
 - `30_text_mode_ascii_grid.bin`: Text mode 40x24 character-grid test for 6x8 rendering and edges.
+- `31_text_mode_cursor_overlay.bin`: Text mode grid with a visible Virtual Drip cursor overlay.
 - `40_g1_name_table_grid.bin`: Graphics I 32x24 tile/name-table indexing and boundary test.
 - `50_g2_three_bands.bin`: Graphics II top/middle/bottom thirds with different pattern and color table data.
 - `60_multicolor_64x48_grid.bin`: Multicolor mode coarse 64x48 color grid.

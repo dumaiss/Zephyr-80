@@ -489,6 +489,30 @@ src/video_device_tms9928.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/video_device_tms9928.c.s
 .PHONY : src/video_device_tms9928.c.s
 
+src/virtual_text_cursor.o: src/virtual_text_cursor.c.o
+.PHONY : src/virtual_text_cursor.o
+
+# target to build an object file
+src/virtual_text_cursor.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/virtual_text_cursor.c.o
+.PHONY : src/virtual_text_cursor.c.o
+
+src/virtual_text_cursor.i: src/virtual_text_cursor.c.i
+.PHONY : src/virtual_text_cursor.i
+
+# target to preprocess a source file
+src/virtual_text_cursor.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/virtual_text_cursor.c.i
+.PHONY : src/virtual_text_cursor.c.i
+
+src/virtual_text_cursor.s: src/virtual_text_cursor.c.s
+.PHONY : src/virtual_text_cursor.s
+
+# target to generate assembly for a file
+src/virtual_text_cursor.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/virtual_text_cursor.c.s
+.PHONY : src/virtual_text_cursor.c.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -543,6 +567,9 @@ help:
 	@echo "... src/video_device_tms9928.o"
 	@echo "... src/video_device_tms9928.i"
 	@echo "... src/video_device_tms9928.s"
+	@echo "... src/virtual_text_cursor.o"
+	@echo "... src/virtual_text_cursor.i"
+	@echo "... src/virtual_text_cursor.s"
 .PHONY : help
 
 

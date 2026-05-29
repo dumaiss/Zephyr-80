@@ -4,6 +4,7 @@ from gen_01_reset import build_packets as build_01
 from gen_10_set_registers import build_packets as build_10
 from gen_20_palette_all_colors_graphics1 import build_packets as build_20
 from gen_30_text_mode_ascii_grid import build_packets as build_30
+from gen_31_text_mode_cursor_overlay import build_packets as build_31
 from gen_40_g1_name_table_grid import build_packets as build_40
 from gen_50_g2_three_bands import build_packets as build_50
 from gen_60_multicolor_64x48_grid import build_packets as build_60
@@ -18,6 +19,7 @@ GENERATORS = [
     ("10_set_registers.bin", build_10),
     ("20_palette_all_colors_graphics1.bin", build_20),
     ("30_text_mode_ascii_grid.bin", build_30),
+    ("31_text_mode_cursor_overlay.bin", build_31),
     ("40_g1_name_table_grid.bin", build_40),
     ("50_g2_three_bands.bin", build_50),
     ("60_multicolor_64x48_grid.bin", build_60),

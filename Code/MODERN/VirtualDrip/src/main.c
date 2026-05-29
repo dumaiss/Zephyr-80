@@ -89,6 +89,7 @@ int main(int argc, char **argv)
         /* File replay runs to completion before entering the VNC event loop. */
         input_status = packet_dispatch_replay_file(&dispatch, config.file_path);
         if (input_status < 0) {
+            packet_dispatch_destroy(&dispatch);
             free(framebuffer);
             video_device_destroy(video_device);
             return 1;
@@ -96,6 +97,7 @@ int main(int argc, char **argv)
     } else if (config.input_mode == INPUT_SERIAL) {
         serial_port = serial_port_open(config.serial_path, config.baud_rate);
         if (serial_port == NULL) {
+            packet_dispatch_destroy(&dispatch);
             free(framebuffer);
             video_device_destroy(video_device);
             return 1;
@@ -105,6 +107,7 @@ int main(int argc, char **argv)
         if (keyboard_transport == NULL || !keyboard_transport_start(keyboard_transport)) {
             keyboard_transport_destroy(keyboard_transport);
             serial_port_close(serial_port);
+            packet_dispatch_destroy(&dispatch);
             free(framebuffer);
             video_device_destroy(video_device);
             return 1;
@@ -124,6 +127,7 @@ int main(int argc, char **argv)
         if (serial_reader == NULL) {
             keyboard_transport_destroy(keyboard_transport);
             serial_port_close(serial_port);
+            packet_dispatch_destroy(&dispatch);
             free(framebuffer);
             video_device_destroy(video_device);
             return 1;
@@ -149,6 +153,7 @@ int main(int argc, char **argv)
             serial_reader_join(serial_reader);
             keyboard_transport_destroy(keyboard_transport);
             serial_port_close(serial_port);
+            packet_dispatch_destroy(&dispatch);
             free(framebuffer);
             video_device_destroy(video_device);
             return 1;
@@ -166,7 +171,17 @@ int main(int argc, char **argv)
             printf("Serving live serial framebuffer; connect to localhost:%d\n", config.vnc_port);
         }
         /* LibVNCServer owns VNC clients and invokes the keyboard callback. */
-        server_status = display_libvncserver_run_loop(display, app_runtime_should_stop, NULL, 10000);
+        while (display_libvncserver_is_active(display)) {
+            if (app_runtime_should_stop(NULL)) {
+                server_status = 0;
+                break;
+            }
+            packet_dispatch_tick(&dispatch);
+            (void)display_libvncserver_process_events(display, 10000);
+        }
+        if (!app_runtime_should_stop(NULL) && !display_libvncserver_is_active(display)) {
+            server_status = 1;
+        }
     } else if (serial_reader != NULL || config.input_mode == INPUT_NONE) {
         printf("Running headless; press Ctrl+C to stop\n");
         app_runtime_run_headless_loop();
@@ -177,6 +192,7 @@ int main(int argc, char **argv)
     display_libvncserver_destroy(display);
     keyboard_transport_destroy(keyboard_transport);
     serial_port_close(serial_port);
+    packet_dispatch_destroy(&dispatch);
     free(framebuffer);
     video_device_destroy(video_device);
     return server_status != 0 ? server_status : input_status;

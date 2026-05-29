@@ -28,6 +28,7 @@ void packet_dispatch_init(
     dispatch->frame_changed = NULL;
     dispatch->frame_changed_userdata = NULL;
     dispatch->keyboard_transport = NULL;
+    virtual_text_cursor_init(&dispatch->cursor);
     dispatch->packet_count = 0;
 }
 
@@ -53,11 +54,33 @@ void packet_dispatch_render(PacketDispatch *dispatch)
         dispatch->framebuffer,
         dispatch->framebuffer_width,
         dispatch->framebuffer_height);
+    virtual_text_cursor_render_overlay(
+        &dispatch->cursor,
+        dispatch->framebuffer,
+        dispatch->framebuffer_width,
+        dispatch->framebuffer_height,
+        video_device_is_text_mode(dispatch->video_device));
     pthread_mutex_unlock(dispatch->framebuffer_mutex);
 
     if (dispatch->frame_changed != NULL) {
         dispatch->frame_changed(dispatch->frame_changed_userdata);
     }
+}
+
+void packet_dispatch_tick(PacketDispatch *dispatch)
+{
+    if (virtual_text_cursor_update_blink(&dispatch->cursor, virtual_text_cursor_now_ms())) {
+        packet_dispatch_render(dispatch);
+    }
+}
+
+void packet_dispatch_destroy(PacketDispatch *dispatch)
+{
+    if (dispatch == NULL) {
+        return;
+    }
+
+    virtual_text_cursor_destroy(&dispatch->cursor);
 }
 
 void packet_dispatch_handle_packet(const Packet *packet, size_t offset, void *userdata)
@@ -67,10 +90,40 @@ void packet_dispatch_handle_packet(const Packet *packet, size_t offset, void *us
 
     keyboard_transport_note_incoming_packet(dispatch->keyboard_transport, packet);
     print_packet(++dispatch->packet_count, offset, packet);
+
+    if (packet->type == PACKET_CURSOR_COMMAND) {
+        bool accepted = virtual_text_cursor_handle_command(
+            &dispatch->cursor,
+            packet->payload,
+            packet->length,
+            virtual_text_cursor_now_ms());
+        if (!accepted) {
+            fprintf(stderr, "  Cursor command ignored: malformed payload\n");
+            return;
+        }
+        packet_dispatch_render(dispatch);
+        return;
+    }
+
+    pthread_mutex_lock(dispatch->framebuffer_mutex);
     (void)video_device_handle_packet(dispatch->video_device, packet, &update);
     if (update.framebuffer_dirty) {
-        /* Current display integration uses whole-frame dirty callbacks. */
-        packet_dispatch_render(dispatch);
+        (void)video_device_render_framebuffer(
+            dispatch->video_device,
+            dispatch->framebuffer,
+            dispatch->framebuffer_width,
+            dispatch->framebuffer_height);
+        virtual_text_cursor_render_overlay(
+            &dispatch->cursor,
+            dispatch->framebuffer,
+            dispatch->framebuffer_width,
+            dispatch->framebuffer_height,
+            video_device_is_text_mode(dispatch->video_device));
+    }
+    pthread_mutex_unlock(dispatch->framebuffer_mutex);
+
+    if (update.framebuffer_dirty && dispatch->frame_changed != NULL) {
+        dispatch->frame_changed(dispatch->frame_changed_userdata);
     }
 }
 

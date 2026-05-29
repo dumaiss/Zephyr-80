@@ -70,6 +70,15 @@ void video_device_tick_frame(VideoDevice *device, VideoDeviceUpdate *update)
     device->ops->tick_frame(device, update);
 }
 
+bool video_device_is_text_mode(VideoDevice *device)
+{
+    if (device == NULL || device->ops == NULL || device->ops->is_text_mode == NULL) {
+        return false;
+    }
+
+    return device->ops->is_text_mode(device);
+}
+
 void video_device_destroy(VideoDevice *device)
 {
     if (device == NULL) {

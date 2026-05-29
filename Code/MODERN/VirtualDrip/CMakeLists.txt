@@ -57,6 +57,7 @@ add_executable(virtual-vdp
     src/serial_reader.c
     src/video_device.c
     src/video_device_tms9928.c
+    src/virtual_text_cursor.c
 )
 
 target_include_directories(virtual-vdp

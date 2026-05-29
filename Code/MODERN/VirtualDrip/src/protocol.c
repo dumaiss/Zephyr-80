@@ -53,6 +53,8 @@ const char *packet_type_name(uint8_t type)
         return "PING";
     case PACKET_FRAME_MARK:
         return "FRAME_MARK";
+    case PACKET_CURSOR_COMMAND:
+        return "CURSOR_COMMAND";
     default:
         return "UNKNOWN";
     }

@@ -149,6 +149,17 @@ static void tms9928_tick_frame(VideoDevice *device, VideoDeviceUpdate *update)
     video_device_update_clear(update);
 }
 
+static bool tms9928_is_text_mode(VideoDevice *device)
+{
+    Tms9928Device *impl = tms9928_impl(device);
+
+    if (impl == NULL || impl->tms9918 == NULL) {
+        return false;
+    }
+
+    return vrEmuTms9918DisplayMode(impl->tms9918) == TMS_MODE_TEXT;
+}
+
 static void tms9928_destroy(VideoDevice *device)
 {
     Tms9928Device *impl = tms9928_impl(device);
@@ -168,6 +179,7 @@ static const VideoDeviceOps tms9928_ops = {
     .handle_packet = tms9928_handle_packet,
     .render_framebuffer = tms9928_render_framebuffer,
     .tick_frame = tms9928_tick_frame,
+    .is_text_mode = tms9928_is_text_mode,
     .destroy = tms9928_destroy,
 };
 

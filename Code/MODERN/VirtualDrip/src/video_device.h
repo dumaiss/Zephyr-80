@@ -60,6 +60,7 @@ typedef struct {
     bool (*handle_packet)(VideoDevice *device, const Packet *packet, VideoDeviceUpdate *update);
     bool (*render_framebuffer)(VideoDevice *device, uint32_t *framebuffer, int width, int height);
     void (*tick_frame)(VideoDevice *device, VideoDeviceUpdate *update);
+    bool (*is_text_mode)(VideoDevice *device);
     void (*destroy)(VideoDevice *device);
 } VideoDeviceOps;
 
@@ -98,6 +99,9 @@ bool video_device_render_framebuffer(VideoDevice *device, uint32_t *framebuffer,
 
 /** Advance one frame for backends that need time-based updates. */
 void video_device_tick_frame(VideoDevice *device, VideoDeviceUpdate *update);
+
+/** Return true when the current backend display mode is text. */
+bool video_device_is_text_mode(VideoDevice *device);
 
 /** Destroy a backend instance created by a concrete factory. */
 void video_device_destroy(VideoDevice *device);

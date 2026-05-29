@@ -49,7 +49,28 @@ typedef enum {
     PACKET_RESET = 0x06,
     PACKET_PING = 0x07,
     PACKET_FRAME_MARK = 0x08,
+    PACKET_CURSOR_COMMAND = 0x09,
 } PacketType;
+
+/** CURSOR_COMMAND payload byte 0 subcommands. */
+typedef enum {
+    CURSOR_ENABLE = 1,
+    CURSOR_SHOW = 2,
+    CURSOR_HIDE = 3,
+    CURSOR_SET_POSITION = 4,
+    CURSOR_MOVE_RELATIVE = 5,
+    CURSOR_SET_STYLE = 6,
+    CURSOR_SET_BLINK = 7,
+    CURSOR_SET_COLOR = 8,
+    CURSOR_SET_GEOMETRY = 9,
+} CursorCommand;
+
+/** Text cursor overlay styles. */
+typedef enum {
+    CURSOR_STYLE_BLOCK = 0,
+    CURSOR_STYLE_UNDERLINE = 1,
+    CURSOR_STYLE_LEFT_BAR = 2,
+} CursorStyle;
 
 /**
  * KEY_EVENT payload byte 0 flags.
