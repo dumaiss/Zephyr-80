@@ -6,8 +6,8 @@
 ;   L
 ;   G 8000
 ;
-; This test receives Virtual Drip KEYBOARD_EVENT packets and echoes printable
-; text through the TMS9928A text name table.
+; This test receives Virtual Drip terminal input packets and echoes minimal
+; ANSI-style text input through the TMS9928A text name table.
 ;
 ; The Z80 owns VDP sequencing because it is single-threaded: foreground code
 ; queues received text and emits VDP packets in controlled bursts. The proxy
@@ -43,6 +43,7 @@ PACKET_SYNC1		= 0x5a
 
 PACKET_VDP_CTRL_WRITE	= 0x01
 PACKET_VDP_DATA_WRITE	= 0x02
+PACKET_TERMINAL_INPUT	= 0x05
 PACKET_RESET		= 0x06
 PACKET_PING		= 0x07
 PACKET_FRAME_MARK	= 0x08
@@ -84,16 +85,16 @@ BIOS_SIO_REGISTER_RX_SINK       = 0xdde4
 BIOS_SIO_RX_KICK                = 0xde6d
 SIO_CH_CONSOLE                  = 0x00
 
-; Keyboard packet.
-PACKET_KEYBOARD_EVENT = 0x05
-KEY_EVENT_LEN         = 0x04
-KEY_EVENT_FLAG_DOWN   = 0x01
-
 ; Parser states.
 VDRIP_RX_WAIT_SYNC0 = 0x00
 VDRIP_RX_WAIT_SYNC1 = 0x01
 VDRIP_RX_LEN        = 0x02
 VDRIP_RX_BODY       = 0x03
+
+; Minimal terminal parser states.
+TERM_STATE_NORMAL   = 0x00
+TERM_STATE_ESC      = 0x01
+TERM_STATE_CSI      = 0x02
 
 ; Receive ring.
 VDRIP_RX_BUFFER_SIZE = 0x40
@@ -191,6 +192,7 @@ vdrip_rx_init:
 	ld (textq_head),a
 	ld (textq_tail),a
 	ld (textq_count),a    
+	ld (term_state),a
 	ld (rx_drop_count),a
 	ld (textq_drop_count),a
 	ld (crc_fail_count),a
@@ -455,7 +457,7 @@ vdrip_parse_body_done:
 	inc a
 	ld (packet_ok_count),a
 
-	call vdrip_parse_apply_key_event
+	call vdrip_parse_apply_terminal_input
 	jr vdrip_parse_reset
 
 
@@ -483,74 +485,128 @@ vdrip_parse_reset:
 	ld (vdrip_parse_state),a
 	ret  
 
-vdrip_parse_apply_key_event:
-	; Expected body:
-	;   body[0] = LEN = 07
-	;   body[1] = TYPE = 05
-	;   body[2] = FLAGS
-	;   body[3] = ASCII
-	;   body[4] = SPECIAL
-	;   body[5] = MODIFIERS
-	;   body[6] = CRC
-
-	ld a,(vdrip_packet_body)
-	cp #KEY_EVENT_LEN + VDRIP_WIRE_OVERHEAD
-	ret nz
-
+vdrip_parse_apply_terminal_input:
 	ld a,(vdrip_packet_body + 1)
-	cp #PACKET_KEYBOARD_EVENT
+	cp #PACKET_TERMINAL_INPUT
 	ret nz
 
-	; Only echo key-down, not key-up.
-	ld a,(vdrip_packet_body + 2)
-	and #KEY_EVENT_FLAG_DOWN
-	cp #KEY_EVENT_FLAG_DOWN
-	ret nz
+	; payload_count = LEN - (LEN + TYPE + CRC)
+	ld a,(vdrip_packet_body)
+	sub #VDRIP_WIRE_OVERHEAD
+	ret z
 
-	; ASCII field.
-	ld a,(vdrip_packet_body + 3)
+	ld (terminal_payload_count),a
 
-	; Enter sends CR only.
-	cp #0x0d
-	jr z,vdrip_key_enqueue
+	ld hl,#(vdrip_packet_body + 2)
+	ld (terminal_payload_ptr),hl
 
-	; Also tolerate LF, but do not require it.
-	cp #0x0a
-	jr z,vdrip_key_enqueue
+vdrip_terminal_enqueue_loop:
+	ld hl,(terminal_payload_ptr)
+	ld a,(hl)
+	inc hl
+	ld (terminal_payload_ptr),hl
 
-	; Printable ASCII only.
-	cp #0x20
-	ret c
-	cp #0x7f
-	ret nc
-
-vdrip_key_enqueue:
 	call textq_put_ascii
 	ld a,(key_echo_count)
 	inc a
 	ld (key_echo_count),a    
-  
+
+	ld a,(terminal_payload_count)
+	dec a
+	ld (terminal_payload_count),a
+	jr nz,vdrip_terminal_enqueue_loop
 	ret
 
 ; ---------------------------------------------------------------------------
 ; textq_put_ascii
 ;
 ; Input:
-;   A = printable ASCII
+;   A = terminal input byte
 ;
 ; Called from foreground parser, not ISR.
 ; Fast: only enqueues into a RAM queue.
 ; ---------------------------------------------------------------------------
 
-text_put_ascii_no_rts:
-	; Input:
-	;   A = ASCII/control char
+term_process_byte:
+	ld c,a
 
+	ld a,(term_state)
+	cp #TERM_STATE_ESC
+	jr z,term_process_esc
+
+	cp #TERM_STATE_CSI
+	jr z,term_process_csi
+
+	ld a,c
+	cp #0x1b
+	jr z,term_enter_esc
+
+	cp #0x08
+	jr z,term_backspace
+
+	cp #0x09
+	jr z,term_tab
+
+	; Enter sends CR. LF is tolerated as a newline.
 	cp #0x0d
-	jr z,text_put_newline
+	jp z,text_put_newline
 
 	cp #0x0a
-	jr z,text_put_newline
+	jp z,text_put_newline
+
+	cp #0x20
+	ret c
+	cp #0x7f
+	ret nc
+
+	jr text_put_printable
+
+term_enter_esc:
+	ld a,#TERM_STATE_ESC
+	ld (term_state),a
+	ret
+
+term_process_esc:
+	xor a
+	ld (term_state),a
+
+	ld a,c
+	cp #'[
+	ret nz
+
+	ld a,#TERM_STATE_CSI
+	ld (term_state),a
+	ret
+
+term_process_csi:
+	xor a
+	ld (term_state),a
+
+	ld a,c
+	cp #'A
+	jp z,term_cursor_up
+
+	cp #'B
+	jp z,term_cursor_down
+
+	cp #'C
+	jp z,term_cursor_right
+
+	cp #'D
+	jp z,term_cursor_left
+
+	cp #'H
+	jp z,term_cursor_home
+
+	cp #'F
+	jp z,term_cursor_end
+
+	; Unsupported CSI, including ESC [ 3 ~ delete, is ignored.
+	ret
+
+text_put_printable:
+	; Input:
+	;   A = printable ASCII
 
 	push af
 
@@ -565,6 +621,86 @@ text_put_ascii_no_rts:
 
 text_put_newline:
 	call text_newline
+	call vdrip_cursor_set_position_current
+	ret
+
+term_backspace:
+	ld a,(text_col)
+	or a
+	ret z
+
+	dec a
+	ld (text_col),a
+
+	call text_cursor_to_vram
+	ld a,#0x20
+	call vdp_write_data_byte
+	call vdrip_cursor_set_position_current
+	ret
+
+term_tab:
+	; Minimal tab: move to the next 4-column stop, wrapping if needed.
+	call text_advance_cursor
+	ld a,(text_col)
+	and #0x03
+	jr nz,term_tab
+
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cursor_up:
+	ld a,(text_row)
+	cp #0x01
+	ret z
+
+	dec a
+	ld (text_row),a
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cursor_down:
+	ld a,(text_row)
+	cp #(TEXT_ROWS - 1)
+	ret nc
+
+	inc a
+	ld (text_row),a
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cursor_left:
+	ld a,(text_col)
+	or a
+	ret z
+
+	dec a
+	ld (text_col),a
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cursor_right:
+	ld a,(text_col)
+	cp #(TEXT_COLUMNS - 1)
+	ret nc
+
+	inc a
+	ld (text_col),a
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cursor_home:
+	; Row 0 is the static HELLO WORLD header; home goes to row 1, col 0.
+	xor a
+	ld (text_col),a
+	ld a,#0x01
+	ld (text_row),a
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cursor_end:
+	; Minimal end: end of the current editable line.
+	ld a,#(TEXT_COLUMNS - 1)
+	ld (text_col),a
 	call vdrip_cursor_set_position_current
 	ret
 
@@ -707,9 +843,9 @@ textq_render_have_char:
 	dec a
 	ld (textq_count),a
 
-	; Render character.
+	; Interpret one terminal input byte and render any resulting text action.
 	ld a,c
-	call text_put_ascii_no_rts
+	call term_process_byte
 
 	; If queue is now empty, emit one frame mark for the whole drained burst.
 	ld a,(textq_count)
@@ -1310,6 +1446,15 @@ textq_count:
 
 textq_buffer:
 	.ds TEXTQ_SIZE
+
+term_state:
+	.db TERM_STATE_NORMAL
+
+terminal_payload_ptr:
+	.dw 0x0000
+
+terminal_payload_count:
+	.db 0x00
 
 rx_drop_count:
 	.db 0x00
