@@ -1,19 +1,71 @@
 ; Zephyr-80 BIOS-owned Z80 SIO core.
 ;
-; SIO is platform plumbing. Console, storage, and future protocols are clients.
-; This module owns the BIOS-facing SIO hardware boundary:
-;   - SIO0/B async setup for the legacy serial console path,
-;   - SIO1/A synchronous setup for the IO Controller transaction link,
-;   - SIO interrupt enable/disable,
-;   - IM2 table/trampoline/ISR for the current SIO-only build,
-;   - one RX byte sink per BIOS-owned SIO channel,
-;   - blocking byte I/O services used by client drivers.
+; This file is the BIOS hardware boundary for Z80 SIO devices. Higher-level
+; clients, such as the Virtual Drip console driver and the IO Controller
+; transport, register callbacks and call byte I/O helpers; they do not program
+; SIO registers directly except through deliberately exposed low-level helpers.
+;
+; What this module owns:
+;   - SIO0/B asynchronous setup for the console / Virtual Drip serial link.
+;   - SIO1/A synchronous setup for the IO Controller transaction link.
+;   - IM2 setup for the current SIO RX interrupt path.
+;   - The exact IM2 vector table word consumed by the Z80 during interrupt
+;     acknowledge.
+;   - SIO WR1/WR2/WR9 interrupt enable/disable for BIOS-owned channels.
+;   - One registered RX byte sink per BIOS-owned channel.
+;   - Foreground byte send/receive helpers for BIOS clients.
+;
+; Console channel map:
+;   - Hardware channel: SIO0/B.
+;   - Logical dispatch id: SIO_CH_CONSOLE.
+;   - Data port: SIO0B_DATA_PORT.
+;   - Control port: SIO0B_CTRL_PORT.
+;   - Registered sink slot: SIO0B_RX_SINK.
+;
+; RX sink registration:
+;   sio_register_rx_sink stores a callback address for a logical channel.
+;   sio_core_dispatch_rx later calls that callback for each received byte.
+;
+; RX sink calling convention:
+;   In:
+;     A = SIO channel id, for example SIO_CH_CONSOLE.
+;     C = received byte.
+;   The registered sink may clobber AF/BC/DE/HL. The SIO ISR saves those
+;   registers before dispatching and restores them before RETI. Foreground
+;   sio_rx_kick also preserves BC/DE/HL around the sink call for callers that
+;   may keep live values in those registers.
+;
+; Hardware RX interrupt path:
+;     SIO receives byte
+;     -> Z80 interrupt / IM2
+;     -> sio_core_isr
+;     -> check RR0 RX_READY
+;     -> read SIO0B_DATA_PORT
+;     -> C = received byte
+;     -> A = SIO_CH_CONSOLE
+;     -> sio_core_dispatch_rx
+;     -> registered sink
+;
+; Foreground kick path:
+;     caller calls sio_rx_kick
+;     -> check RR0 RX_READY
+;     -> read SIO0B_DATA_PORT
+;     -> C = received byte
+;     -> A = SIO_CH_CONSOLE
+;     -> sio_core_dispatch_rx
+;     -> registered sink
+;
+; Both paths intentionally converge at sio_core_dispatch_rx and therefore feed
+; the same registered sink. During debugging, however, they prove different
+; things. Bytes delivered through sio_rx_kick prove the parser/sink/FIFO path can
+; work from foreground polling; they do not prove that SIO RX interrupts are
+; configured, acknowledged, and dispatching bytes correctly.
 ;
 ; Ownership rules:
 ;   BIOS owns SIO0/B and the SIO1/A IO Controller transport.
-;   Applications own SIO0/A. This code does not configure SIO0/A as a channel.
-;   The SIO WR9 master interrupt bit is still reached through the SIO0/A
-;   control port, which is a hardware limitation of the Z80 SIO.
+;   Applications own SIO0/A. This code does not configure SIO0/A as a channel,
+;   but it masks SIO0/A WR1 interrupts before enabling the chip-wide SIO0 WR9
+;   master interrupt bit used by the SIO0/B console.
 ;   CTC remains application-owned and is not required by this module.
 ;
 ; SIO1 IO Controller link:
@@ -45,6 +97,7 @@
 	.globl CONSOLE_IM2_VECTOR_ENTRY
 	.globl CONSOLE_IM2_VECTOR_TABLE_START,CONSOLE_IM2_VECTOR_TABLE_END
 
+SIO0A_CTRL_PORT		= SIOA_CTRL
 SIO0B_DATA_PORT		= SIOB_DATA
 SIO0B_CTRL_PORT		= SIOB_CTRL
 SIO1_IOC_DATA_PORT	= SIO1A_DATA
@@ -107,7 +160,8 @@ sio_init:
 ; Clobbers: AF.
 ; Important invariants:
 ;   This does not configure application-owned SIO0/A as a channel and does not
-;   require or program the CTC.
+;   require or program the CTC. It only masks SIO0/A WR1 interrupts so SIO0/B
+;   can own the chip-wide SIO0 interrupt path.
 sio_core_init:
 	xor a
 	ld (SIO0B_RX_SINK),a
@@ -212,7 +266,29 @@ sio_console_disable_interrupts:
 ; Enable BIOS-owned SIO interrupts.
 ; Purpose:
 ;   Program the Z80 for IM2, program SIO0/B WR2 with vector 00h, enable SIO0/B
-;   receive interrupts, and enable the SIO master interrupt bit.
+;   receive interrupts on all received characters without parity-vector
+;   modification, and enable the SIO master interrupt bit.
+;
+; Interrupt setup trace:
+;   1. Load I with CBIOS_IM2_VECTOR_PAGE and enter interrupt mode 2.
+;   2. Mask SIO0/A WR1 interrupts. WR9 MIE is chip-wide for SIO0, while this
+;      module only owns SIO0/B.
+;   3. Write SIO0/B WR2 with CBIOS_SIO_VECTOR. The Z80 forms the IM2 vector
+;      table address from I plus the SIO-supplied vector byte.
+;   4. Issue Reset Highest IUS / Return-from-Interrupt through channel A, the
+;      SIO master channel for WR0 commands that affect interrupt state.
+;   5. Program SIO0/B WR1 RX mode.
+;   6. Program WR9 MIE through the SIO0 master control port.
+;
+; SIO WR1 receive interrupt mode bits are D4:D3:
+;   00 -> RX interrupts disabled
+;   01 -> interrupt on first received character / special condition
+;   10 -> interrupt on all received characters, parity affects vector
+;   11 -> interrupt on all received characters, parity does not affect vector
+;
+; The desired console mode is "all receive characters, parity does not affect
+; vector." Stable vector behavior matters because CONSOLE_IM2_VECTOR_ENTRY is an
+; exact two-byte table entry, not a table of status-modified vectors.
 ; Outputs:
 ;   SIO_CORE_IRQ_ENABLED = 1, SIO_CORE_IRQ_COUNT = 0, A = BIOS_OK.
 ; Clobbers: AF.
@@ -222,15 +298,24 @@ sio_core_enable_interrupts:
 	ld i,a
 	im 2
 
+	; SIO0 WR9 MIE is chip-wide; keep channel A masked before enabling it.
+	ld a,#0x01
+	out (SIO0A_CTRL_PORT),a
+	xor a
+	out (SIO0A_CTRL_PORT),a
+
 	ld a,#0x02
 	out (SIO0B_CTRL_PORT),a
 	ld a,#CBIOS_SIO_VECTOR
 	out (SIO0B_CTRL_PORT),a
 
+	; Reset Highest IUS / Return from Interrupt is issued through channel A.
 	ld a,#SIO_WR0_RESET_HIGHEST_IUS
-	out (SIO0B_CTRL_PORT),a
+	out (SIO_MASTER_CTRL_PORT),a
 	ld a,#0x01
 	out (SIO0B_CTRL_PORT),a
+	; WR1 D4:D3 = 11b: RX interrupt on all received characters, with parity
+	; status not affecting the interrupt vector.
 	ld a,#SIO_WR1_RX_INT_ALL
 	out (SIO0B_CTRL_PORT),a
 	ld a,#0x09
@@ -412,6 +497,21 @@ sio1_ioc_get_byte:
 	jp sio_recv_byte
 
 ; Optional foreground RX kick.
+;
+; This is a polling/fallback path. It reads SIO0/B RR0 in foreground code and,
+; if RX_READY is set, reads one pending byte and dispatches it through the same
+; registered sink used by the real ISR path.
+;
+; Important debugging distinction:
+;   If keyboard input works only when sio_rx_kick is called, the Virtual Drip
+;   parser, vdrip_rx_sink, and textq FIFO may be functioning, but the true
+;   interrupt-fed hardware path may still be broken. sio_rx_kick does not prove
+;   that WR1/WR2/WR9, IM2 entry, IUS reset, or RX interrupt delivery are correct.
+;
+; Final console input design:
+;   Hot CONST loops should not call sio_rx_kick. CONST should be a cheap queue
+;   availability check, and normal input should arrive through sio_core_isr.
+;
 ; In:  A = SIO channel id.
 ; Out: A = BIOS_OK / BIOS_ERR.
 ; Purpose:
@@ -432,6 +532,8 @@ SIO_RX_KICK_NOOP:
 	ret
 SIO_RX_KICK_CONSOLE:
 	call sio_core_rx_lock
+	xor a
+	out (SIO0B_CTRL_PORT),a
 	in a,(SIO0B_CTRL_PORT)
 	and #SIO_RX_READY
 	jr z,SIO_RX_KICK_DONE
@@ -441,7 +543,7 @@ SIO_RX_KICK_CONSOLE:
 	in a,(SIO0B_DATA_PORT)
 	ld c,a
 	call sio0b_record_rx_diag
-	ld a,#SIO_CH_CONSOLE
+	; sio0b_record_rx_diag returns A=0, matching SIO_CH_CONSOLE.
 	call sio_core_dispatch_rx
 	pop hl
 	pop de
@@ -467,14 +569,58 @@ sio_core_rx_unlock:
 	ret
 
 ; SIO interrupt service routine.
+;
+; Entry assumptions:
+;   - The Z80 is in IM2.
+;   - SIO0/B WR2 selects CONSOLE_IM2_VECTOR_ENTRY.
+;   - SIO0/B WR1 RX interrupts are enabled for all received characters.
+;   - SIO0 WR9 MIE is enabled.
+;   - The active console driver has registered SIO0B_RX_SINK.
+;
+; Register preservation:
+;   The ISR pushes AF, BC, DE, and HL before touching SIO state or dispatching to
+;   a registered sink. The sink callback may clobber those registers. The ISR
+;   restores them before RETI.
+;
+; Channel serviced:
+;   This ISR services BIOS-owned SIO0/B console RX. SIO1/A is polled by the
+;   IO Controller transport and does not currently use this ISR.
+;
+; RX handling policy:
+;   The ISR is bounded. It handles at most one byte on entry and at most one
+;   additional byte during the post-RESET_HIGHEST_IUS race check. It must not
+;   drain RX indefinitely while RR0 RX_READY remains set. Unbounded draining can
+;   produce long interrupt latency because the registered sink may parse VDrip
+;   packet bytes and update queues.
+;
+; IUS handling:
+;   RESET_HIGHEST_IUS is the SIO WR0 command used here as the Return from
+;   Interrupt / reset-highest-interrupt-under-service acknowledgement. It is
+;   written through the SIO0 master control port. After the first reset, this ISR
+;   checks RR0 once more for a byte that may have arrived between the final poll
+;   and the IUS reset, then issues a final RESET_HIGHEST_IUS before RETI.
+;
+; Sink call:
+;   sio_core_isr_rx_once reads SIO0B_DATA_PORT, puts the byte in C, leaves A as
+;   SIO_CH_CONSOLE, and jumps to sio_core_dispatch_rx.
+;
+; The ISR must not:
+;   - emit VDP traffic
+;   - call CONOUT
+;   - block on serial TX
+;   - perform screen redraws
+;   - run slow diagnostics
+;   - touch CP/M/BDOS state directly
+;
 ; Purpose:
 ;   Handle BIOS-owned SIO interrupt work and dispatch received bytes to the
 ;   registered channel sink. Today only SIO_CH_CONSOLE / SIO0/B is active.
 ; Outputs:
 ;   SIO_CORE_IRQ_COUNT increments; RX bytes are dispatched if a sink exists.
 ; Important invariants:
-;   The ISR is short, never calls BDOS, does not block, does not switch banks,
-;   resets highest IUS, and returns with RETI.
+;   The ISR is bounded: it handles at most one RX byte at entry and at most one
+;   more byte after RESET_HIGHEST_IUS. It never calls BDOS, does not block, does
+;   not switch banks, resets highest IUS, and returns with RETI.
 sio_core_isr:
 	push af
 	push bc
@@ -485,29 +631,38 @@ sio_core_isr:
 	inc hl
 	ld (SIO_CORE_IRQ_COUNT),hl
 
-; fallthrough to the RX loop.
-SIO_CORE_ISR_RX_LOOP:
-	in a,(SIO0B_CTRL_PORT)
-	and #SIO_RX_READY
-	jr z,SIO_CORE_ISR_DONE
-
-	in a,(SIO0B_DATA_PORT)
-	ld c,a
-	call sio0b_record_rx_diag
-	ld a,#SIO_CH_CONSOLE
-	call sio_core_dispatch_rx
-
-	jr SIO_CORE_ISR_RX_LOOP
-
+	call sio_core_isr_rx_once
 
 SIO_CORE_ISR_DONE:
+	; Reset Highest IUS / Return from Interrupt is issued through channel A.
 	ld a,#SIO_WR0_RESET_HIGHEST_IUS
-	out (SIO0B_CTRL_PORT),a
+	out (SIO_MASTER_CTRL_PORT),a
+
+	; Re-check RR0: a byte may have arrived between the
+	; final poll and RESET_HIGHEST_IUS. If so, process one
+	; byte only; do not drain indefinitely in ISR context.
+	call sio_core_isr_rx_once
+	ld a,#SIO_WR0_RESET_HIGHEST_IUS
+	out (SIO_MASTER_CTRL_PORT),a
+
+SIO_CORE_ISR_EXIT:
 	pop hl
 	pop de
 	pop bc
 	pop af
 	reti
+
+sio_core_isr_rx_once:
+	xor a
+	out (SIO0B_CTRL_PORT),a
+	in a,(SIO0B_CTRL_PORT)
+	and #SIO_RX_READY
+	ret z
+	in a,(SIO0B_DATA_PORT)
+	ld c,a
+	call sio0b_record_rx_diag
+	; sio0b_record_rx_diag returns A=0, matching SIO_CH_CONSOLE.
+	jp sio_core_dispatch_rx
 
 ; SIO0/B console RTS helpers.
 ; RTS is software-managed by the BIOS/client. The SIO core does not own a
@@ -588,10 +743,6 @@ SIO_DISPATCH_IOCTRL:
 	ld hl,(SIO1_RX_SINK)
 	ld a,#SIO_CH_IOCTRL
 SIO_DISPATCH_HAVE:
-	ld d,h
-	ld e,l
-	ld h,d
-	ld l,e
 	ld d,a
 	ld a,h
 	or l

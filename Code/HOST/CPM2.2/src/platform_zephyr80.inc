@@ -37,11 +37,29 @@ PAGE_COPY_START             = 0x0000
 PAGE_COPY_LEN               = 0xc000
 
 ; --- SIO & CTC Commands / Bitmasks ---
+;
+; Z80 SIO WR1 receive interrupt mode bits are D4:D3. These bit values are
+; intentionally named with the full vector/parity behavior because the console
+; IM2 setup depends on a stable vector:
+;
+;   WR1 D4:D3 = 00 -> RX interrupts disabled
+;   WR1 D4:D3 = 01 -> interrupt on first received character / special condition
+;   WR1 D4:D3 = 10 -> interrupt on all received characters, parity affects vector
+;   WR1 D4:D3 = 11 -> interrupt on all received characters, parity does not
+;                     affect vector
+;
+; The SIO0/B Virtual Drip console path wants all received characters to raise an
+; RX interrupt, with parity status not modifying the vector. That keeps WR2 as
+; the exact IM2 table selector for the SIO core ISR.
 CTC_RESET_DISABLE           = 0x03
 RR0_RX_AVAILABLE            = 0x01
 RR0_TX_EMPTY                = 0x04
 SIO_WR0_RESET_HIGHEST_IUS   = 0x38
-SIO_WR1_RX_INT_ALL          = 0x10
+SIO_WR1_RX_INT_DISABLED              = 0x00
+SIO_WR1_RX_INT_FIRST_CHAR            = 0x08
+SIO_WR1_RX_INT_ALL_PARITY_VECTOR     = 0x10
+SIO_WR1_RX_INT_ALL_NO_PARITY_VECTOR  = 0x18
+SIO_WR1_RX_INT_ALL          = SIO_WR1_RX_INT_ALL_NO_PARITY_VECTOR
 SIO_WR1_TX_INT_ENABLE       = 0x02
 SIO_WR9_MIE                 = 0x08
 

@@ -4,15 +4,67 @@
 ; console backend. It owns the Virtual Drip packet transport, VDP text
 ; rendering, proxy cursor control, and terminal input queue.
 ;
+; Major subsystems:
+;   - CP/M console dispatch table consumed by cbios_console.asm.
+;   - Startup / proxy READY handshake before normal VDP output traffic.
+;   - SIO0/B RX sink registration with the BIOS SIO core.
+;   - Input path: terminal-input packets are parsed and enqueued into textq,
+;     the CP/M CONIN FIFO.
+;   - Output path: CP/M CONOUT bytes are interpreted by an ANSI/VT100-light
+;     parser and rendered to the text shadow buffer / VDP name table.
+;   - Virtual Drip RX packet parser for host-to-Z80 packets.
+;   - Virtual cursor command helpers for the proxy renderer.
+;   - RTS flow control for host-to-Z80 keyboard traffic and large VDP bursts.
+;
+; Input path, intended final design:
+;     SIO RX interrupt
+;     -> sio_core_isr
+;     -> sio_core_dispatch_rx
+;     -> vdrip_rx_sink
+;     -> vdrip_parse_rx_byte
+;     -> PACKET_TERMINAL_INPUT payload
+;     -> textq FIFO
+;     -> CONST checks textq_count
+;     -> CONIN dequeues oldest byte
+;
+; Input path, fallback/polling:
+;     CONIN/CONST/handshake may call sio_rx_kick
+;     -> sio_core_dispatch_rx
+;     -> vdrip_rx_sink
+;     -> vdrip_parse_rx_byte
+;     -> textq FIFO
+;
+; In the intended steady state, only the startup handshake uses sio_rx_kick.
+; A keyboard path that works only when sio_rx_kick is called proves the parser
+; and textq path can work, but does not prove the SIO RX interrupt path.
+;
+; Output path:
+;     CP/M calls CONOUT
+;     -> vdrip_console_conout
+;     -> ANSI/VT100-light parser
+;     -> text shadow / VDP name table updates
+;     -> VDrip VDP packets to proxy
+;     -> proxy renders display
+;
+; Input and output are deliberately separate. Keyboard packet payloads are raw
+; terminal input bytes and must not be interpreted by the output parser. Output
+; bytes may be interpreted as terminal control sequences. Keyboard packet
+; handlers must not draw characters, move the screen cursor, or scroll the
+; display. CONOUT must not read keyboard packets.
+;
 ; Driver dispatch table consumed by cbios_console.asm:
 ;   const, conin, conout, list, punch, reader, listst
 ;
 ; Public entry points:
 ;   vdrip_console_init    — Init VDP, font, cursor, SIO transport
-;   vdrip_console_const   — Return A=0xff if input available, A=0x00 if not
+;   vdrip_console_const   — Return A=0xff if CONIN FIFO non-empty, A=0x00 if not
 ;   vdrip_console_conin   — Return next queued input byte in A (blocks if empty)
 ;   vdrip_console_conout  — Output byte in A to the text console
-;   vdrip_console_poll    — Kick SIO RX, drain ring, parse packets, enqueue input
+;
+; Input architecture (interrupt-fed):
+;   SIO RX ISR → vdrip_rx_sink → vdrip_parse_rx_byte → textq_put_ascii
+;   CONST: check textq_count — no RX polling, kicking, or parsing
+;   CONIN: block until textq_count > 0, dequeue oldest byte
 ;
 ; Startup sequence:
 ;   1. sio_core_init has already run; SIO0/B is configured but RTS is released.
@@ -31,7 +83,6 @@
 	.globl vdrip_console_driver
 	.globl vdrip_console_init,vdrip_console_const
 	.globl vdrip_console_conin,vdrip_console_conout
-	.globl vdrip_console_poll
 	.globl vdrip_rx_sink
 	.globl VDRIP_CONSOLE_CODE_START,VDRIP_CONSOLE_CODE_END
 
@@ -76,7 +127,12 @@ VDRIP_WIRE_OVERHEAD	= 0x03
 ; Inter-byte pacing for scroll redraw (~1 ms at 4 MHz).
 VDRIP_TX_PACE_DELAY	= 0x0001
 
-; TMS9928A layout (Text 2 mode: 80 columns, 480x192).
+; TMS9928A / Virtual Drip Text80 layout.
+;
+; The proxy exposes a 9928-like Text 2 display for an 80-column terminal. The
+; logical console and physical name-table view are both 80 columns by 24 rows in
+; this build, so horizontal panning constants collapse to zero-width movement.
+; The font is ASCII 20h-7Fh: 96 glyphs, 8 bytes per glyph.
 PATTERN_TABLE		= 0x0000
 NAME_TABLE		= 0x3800
 TEXT_PHYS_COLUMNS	= 80
@@ -126,23 +182,14 @@ CSI_SGR			= 'm	; select graphic rendition
 ; ANSI maximum parameter count.
 CSI_MAX_PARAMS		= 2
 
-; Receive ring.
-VDRIP_RX_BUFFER_SIZE	= 0x40
-VDRIP_RX_BUFFER_MASK	= VDRIP_RX_BUFFER_SIZE - 1
-
 ; Max payload = 16, plus LEN + TYPE + CRC = 3.
 VDRIP_PACKET_PAYLOAD_MAX = 0x10
 VDRIP_PACKET_BODY_MAX	 = VDRIP_PACKET_PAYLOAD_MAX + VDRIP_WIRE_OVERHEAD
 
-VDRIP_RX_RTS_HIGH_WATER	= 0x04
-VDRIP_RX_RTS_LOW_WATER	= 0x00
-
-VDRIP_RX_KICK_SPINS	= 0x10
-
-; Console input queue.
+; Console input queue (CONIN FIFO, interrupt-fed).
 TEXTQ_SIZE		= 0x80
 TEXTQ_MASK		= TEXTQ_SIZE - 1
-TEXTQ_RTS_HIGH_WATER	= 0x08
+TEXTQ_RTS_HIGH_WATER	= 0x40
 TEXTQ_RTS_LOW_WATER	= 0x00
 
 ; Stub return values for auxiliary CP/M devices.
@@ -182,7 +229,29 @@ vdrip_console_driver:
 ; ---------------------------------------------------------------------------
 ; vdrip_console_init
 ;
-; Initialize Virtual Drip transport, SIO RX, VDP text mode, font, cursor.
+; Purpose:
+;   Initialize the Virtual Drip console backend selected by cbios_console.asm.
+;   Clears driver-owned parser/FIFO/display state, registers vdrip_rx_sink for
+;   SIO_CH_CONSOLE, enables SIO RX interrupts, waits for proxy READY on cold
+;   boot, initializes the remote VDP/Text80 state, and enters interactive mode.
+;
+; Inputs:
+;   None.
+; Outputs:
+;   Virtual Drip console state initialized; proxy READY has been observed on
+;   cold boot; SIO0/B RTS asserted for normal input.
+; Preserved registers:
+;   None promised. Called during BOOT/WBOOT setup.
+; Clobbers:
+;   AF, BC, DE, HL.
+; Blocking behavior:
+;   Blocks during the cold-boot proxy READY handshake and during serial TX.
+; VDrip traffic:
+;   Emits RESET, PING, VDP register/font/clear packets, cursor commands, and a
+;   FRAME_MARK after the proxy is ready.
+; sio_rx_kick:
+;   The READY handshake uses sio_rx_kick as a startup-only fallback while normal
+;   interrupt-fed input is being established.
 ;
 ; Startup sequence:
 ;   1. Release RTS, init RX, register sink, enable interrupts.
@@ -246,73 +315,93 @@ vdrip_init_skip_handshake:
 	ret
 
 ; ---------------------------------------------------------------------------
-; vdrip_console_poll
-;
-; Kick pending SIO RX, drain the RX ring, parse complete Virtual Drip packets,
-; and enqueue terminal input bytes into the console input queue.
-;
-; Does not render diagnostics or block indefinitely.
-; ---------------------------------------------------------------------------
-
-vdrip_console_poll:
-	call vdrip_rx_kick_pending
-	call vdrip_poll_rx
-	ret
-
-; ---------------------------------------------------------------------------
 ; vdrip_console_const
 ;
-; Return A = 0xff if at least one input byte is available in the console
-; input queue after draining the RX ring.
-; Return A = 0x00 if no input byte is available.
+; Purpose:
+;   CP/M CONST backend. Report whether textq, the CONIN FIFO, currently has at
+;   least one byte available.
 ;
-; Must drain the RX ring (kick + parse) so bytes that arrived via ISR
-; into vdrip_rx_buffer get moved through the packet parser into textq.
-; Without this, CP/M's non-blocking BDOS function 6 input loop (which
-; relies on CONST alone) never sees terminal input.
+; Intended final design:
+;   CONST should be cheap:
+;     check textq_count only
+;     return 0xff if non-empty
+;     return 0x00 if empty
+;
+; Return A = 0xff if at least one input byte is available in the CONIN
+; FIFO (textq), or A = 0x00 if empty.
+;
+; Input is interrupt-fed: the SIO RX sink parses keyboard packets and
+; enqueues payload bytes directly into textq.  CONST simply checks the
+; queue — no RX polling, no SIO kicking, no packet parsing.
+;
+; Inputs:
+;   None.
+; Outputs:
+;   A = CONST_HAS_CHAR (0xff) if textq_count != 0, else 0x00.
+; Preserved registers:
+;   HL is preserved by this routine. The facade preserves DE/HL around backend
+;   dispatch as well.
+; Clobbers:
+;   AF.
+; Blocking behavior:
+;   Does not block.
+; VDrip traffic:
+;   Emits no traffic.
+; sio_rx_kick:
+;   Does not call sio_rx_kick. Safe for hot BDOS/CCP/BBC BASIC CONST loops.
 ; ---------------------------------------------------------------------------
 
 vdrip_console_const:
-	push bc
-	push de
 	push hl
-	; Kick SIO RX to move bytes from hardware into the ring.
-	call vdrip_rx_kick_pending
-	; Only parse if the ring actually has data — prevents
-	; parsing phantom bytes when the ring is empty.
-	ld a,(vdrip_rx_count)
-	or a
-	call nz,vdrip_poll_rx
 	ld a,(textq_count)
 	or a
 	jr z,vdrip_console_const_empty
 	ld a,#CONST_HAS_CHAR
 	pop hl
-	pop de
-	pop bc
 	ret
-
 vdrip_console_const_empty:
 	xor a
 	pop hl
-	pop de
-	pop bc
 	ret
 
 ; ---------------------------------------------------------------------------
 ; vdrip_console_conin
 ;
-; Return the next queued input byte in A.
-; Blocks by polling until input exists.
-; Keeps BIOS-compatible in spirit (caller may check CONST first).
+; Purpose:
+;   CP/M CONIN backend. Return the oldest queued terminal byte from textq.
+;
+; Inputs:
+;   None.
+; Outputs:
+;   A = oldest byte from textq.
+; Preserved registers:
+;   BC, DE, HL.
+; Clobbers:
+;   AF.
+; Blocking behavior:
+;   Blocks until textq_count is nonzero. It does not interpret bytes while
+;   waiting; it waits for the SIO RX sink / parser to enqueue input.
+; VDrip traffic:
+;   May assert RTS after dequeue if textq has drained to the low-water mark.
+;   Does not emit VDP traffic.
+; sio_rx_kick:
+;   Does not call sio_rx_kick. Any future use here would be fallback behavior,
+;   not the desired steady-state design.
+;
+; FIFO semantics:
+;   Producer writes at textq_head. CONIN reads from textq_tail and consumes the
+;   oldest byte. Input bytes are raw terminal bytes, for example Ctrl-X = 18h,
+;   Enter = 0Dh, and arrow-up = 1Bh 5Bh 41h.
 ; ---------------------------------------------------------------------------
 
 vdrip_console_conin:
+	; Input is interrupt-fed — the SIO RX sink enqueues keyboard
+	; bytes directly into textq.  CONIN blocks until textq is
+	; non-empty, dequeues one byte, and returns.
 	push bc
 	push de
 	push hl
 vdrip_console_conin_wait:
-	call vdrip_console_poll
 	ld a,(textq_count)
 	or a
 	jr z,vdrip_console_conin_wait
@@ -347,10 +436,28 @@ vdrip_console_conin_wait:
 ; ---------------------------------------------------------------------------
 ; vdrip_console_conout
 ;
+; Purpose:
+;   CP/M CONOUT backend. Render one output byte through the output-only terminal
+;   parser and Virtual Drip VDP packet path.
+;
 ; Output one byte to the Virtual Drip text console.
 ;
 ; Input:
 ;   C = byte to output (CP/M console facade convention)
+; Outputs:
+;   Display state may be updated.
+; Preserved registers:
+;   BC, DE, HL.
+; Clobbers:
+;   AF.
+; Blocking behavior:
+;   May block waiting for serial TX readiness and CTS while emitting VDrip
+;   packets.
+; VDrip traffic:
+;   May emit VDP data/control packets, cursor packets, and FRAME_MARK packets for
+;   burst operations.
+; sio_rx_kick:
+;   Does not call sio_rx_kick and must not read keyboard packets.
 ;
 ; Renders the byte on the VDP text display with ANSI/VT-100 light
 ; terminal emulation for cursor movement, backspace, tab, etc.
@@ -365,15 +472,19 @@ vdrip_console_conout:
 	push de
 	push hl
 
-	; Pause host input while rendering.
-	call vdrip_rts_release_raw
-	ld a,#0x01
-	ld (vdrip_rx_rts_released),a
+	; Do not release RTS for single-character output — the burst
+	; output helpers (scroll, clear, redraw) manage RTS themselves.
+	; Keeping RTS asserted during single-byte CONOUT prevents the
+	; proxy from flooding keyboard data that must then be serviced
+	; by CONST/CONIN before the next character can be output.
+	;
+	; Do not send FRAME_MARK per character — the proxy's VDP
+	; backend already marks the framebuffer dirty on every
+	; VDP_DATA_WRITE.  FRAME_MARK is still sent by burst
+	; operations (scroll, clear, redraw).
 
 	ld a,c
 	call term_process_byte
-	call vdrip_send_frame_mark
-	call app_maybe_resume_rts
 	pop hl
 	pop de
 	pop bc
@@ -381,6 +492,22 @@ vdrip_console_conout:
 
 ; ---------------------------------------------------------------------------
 ; Auxiliary CP/M device stubs.
+;
+; vdrip_console_list:
+;   CP/M LIST backend. Input C is ignored. Returns immediately, emits no VDrip
+;   traffic, does not call sio_rx_kick.
+;
+; vdrip_console_punch:
+;   CP/M PUNCH backend. Input C is ignored. Returns immediately, emits no VDrip
+;   traffic, does not call sio_rx_kick.
+;
+; vdrip_console_reader:
+;   CP/M READER backend. Returns CONSOLE_EOF in A. Does not block, emits no
+;   VDrip traffic, does not call sio_rx_kick.
+;
+; vdrip_console_listst:
+;   CP/M LISTST backend. Returns CONSOLE_READY in A. Does not block, emits no
+;   VDrip traffic, does not call sio_rx_kick.
 ; ---------------------------------------------------------------------------
 
 vdrip_console_list:
@@ -433,9 +560,18 @@ vdrip_wait_for_proxy_ready:
 	xor a
 	ld (vdrip_proxy_ready_flag),a
 
+	; During the one-time init handshake, poll the SIO directly.
+	; The ISR-fed parser takes over for normal operation afterward.
 vdrip_wait_for_proxy_ready_loop:
-	call vdrip_rx_kick_pending
-	call vdrip_poll_rx
+	; Handshake-only fallback: poll SIO into the registered sink.
+	ld b,#0x04
+vdrip_wait_kick:
+	push bc
+	ld a,#SIO_CH_CONSOLE
+	call sio_rx_kick
+	pop bc
+	djnz vdrip_wait_kick
+
 	ld a,(vdrip_proxy_ready_flag)
 	or a
 	jr z,vdrip_wait_for_proxy_ready_loop
@@ -448,9 +584,6 @@ vdrip_wait_for_proxy_ready_loop:
 
 vdrip_rx_init:
 	xor a
-	ld (vdrip_rx_head),a
-	ld (vdrip_rx_tail),a
-	ld (vdrip_rx_count),a
 	ld (vdrip_parse_state),a
 	ld (vdrip_parse_len_store),a
 	ld (vdrip_parse_remaining),a
@@ -459,7 +592,6 @@ vdrip_rx_init:
 	ld (textq_head),a
 	ld (textq_tail),a
 	ld (textq_count),a
-	ld (rx_drop_count),a
 	ld (textq_drop_count),a
 	ld (crc_fail_count),a
 	ld (packet_ok_count),a
@@ -496,100 +628,74 @@ vdrip_register_rx_sink:
 	ret
 
 
+; SIO RX sink registered with sio_core for SIO_CH_CONSOLE.
+;
+; Called from:
+;   - sio_core_isr, the real interrupt-fed RX path.
+;   - sio_rx_kick, the foreground polling/fallback path.
+;
+; Inputs from SIO core:
+;   A = SIO channel id.
+;   C = received byte.
+; Preserved registers:
+;   AF, BC, DE, HL are saved here as a local defensive boundary. The SIO ISR
+;   also preserves them around the whole interrupt frame.
+; Blocking behavior:
+;   Must not block.
+; VDrip traffic:
+;   Must not emit VDP or cursor traffic. This routine can run inside the SIO ISR.
+; Behavior:
+;   Only SIO_CH_CONSOLE bytes are accepted. The byte in C is fed to the VDrip RX
+;   parser. Complete PACKET_TERMINAL_INPUT payload bytes are enqueued into textq.
 vdrip_rx_sink:
-    push af
+	; ISR-safe entry: feed received byte directly into the packet
+	; parser.  Complete keyboard packets enqueue bytes into textq
+	; (the CONIN FIFO) without any foreground polling or ring
+	; buffering.
+	push af
 	push bc
 	push de
 	push hl
+
 	cp #SIO_CH_CONSOLE
-	jr nz,vdrip_rx_sink_ret
+	jr nz,vdrip_rx_sink_done
 
-	ld a,(vdrip_rx_count)
-	cp #VDRIP_RX_BUFFER_SIZE
-	jr nc,vdrip_rx_sink_full
+	ld a,c
+	call vdrip_parse_rx_byte
 
-	ld hl,#vdrip_rx_buffer
-	ld a,(vdrip_rx_head)
-	ld e,a
-	ld d,#0x00
-	add hl,de
-
-	ld (hl),c
-
-	ld a,(vdrip_rx_head)
-	inc a
-	and #VDRIP_RX_BUFFER_MASK
-	ld (vdrip_rx_head),a
-
-	ld a,(vdrip_rx_count)
-	inc a
-	ld (vdrip_rx_count),a
-
-	call vdrip_rx_maybe_release_rts
-vdrip_rx_sink_ret:
+vdrip_rx_sink_done:
 	pop hl
 	pop de
 	pop bc
-    pop af
+	pop af
 	ret
 
 
-vdrip_rx_sink_full:
-	ld a,(rx_drop_count)
-	inc a
-	ld (rx_drop_count),a
-
-	call vdrip_rts_release_raw
-	ld a,#0x01
-	ld (vdrip_rx_rts_released),a
-	jr vdrip_rx_sink_ret
-
-
-vdrip_rx_get_byte:
-	di
-
-	ld a,(vdrip_rx_count)
-	or a
-	jr nz,vdrip_rx_get_have_byte
-
-	ei
-	ld a,#0x01
-	ret
-
-vdrip_rx_get_have_byte:
-	ld hl,#vdrip_rx_buffer
-	ld a,(vdrip_rx_tail)
-	ld e,a
-	ld d,#0x00
-	add hl,de
-
-	ld c,(hl)
-
-	ld a,(vdrip_rx_tail)
-	inc a
-	and #VDRIP_RX_BUFFER_MASK
-	ld (vdrip_rx_tail),a
-
-	ld a,(vdrip_rx_count)
-	dec a
-	ld (vdrip_rx_count),a
-
-	call vdrip_rx_maybe_assert_rts
-
-	ei
-	xor a
-	ret
-
-
-vdrip_rx_kick_pending:
-	ld b,#VDRIP_RX_KICK_SPINS
-
-vdrip_rx_kick_pending_loop:
-	ld a,#SIO_CH_CONSOLE
-	call sio_rx_kick
-	djnz vdrip_rx_kick_pending_loop
-	ret
-
+; ===========================================================================
+; RTS flow-control primitives
+; ===========================================================================
+;
+; Naming note:
+;   "Assert RTS" and "release RTS" are logical names used by this BIOS layer.
+;   The actual SIO WR5 bit polarity and RS-232 electrical level can be mentally
+;   inverted, so reason about these helpers by behavior:
+;
+;   vdrip_rts_assert_raw:
+;     Tell the proxy/host that the Z80 side is ready to receive keyboard input.
+;
+;   vdrip_rts_release_raw:
+;     Tell the proxy/host to stop or pause sending keyboard input.
+;
+; This driver releases RTS while it is not ready for input, when textq reaches
+; its high-water mark, and around large VDP output bursts such as scroll/redraw
+; where serial bandwidth is dominated by Z80-to-proxy display traffic. RTS is
+; asserted again when the input queue drains to the low-water mark or after a
+; burst completes.
+;
+; Existing counters:
+;   rts_assert_count and rts_release_count are pre-existing state counters used
+;   to observe RTS transitions. This documentation pass does not add new
+;   diagnostics or change how they are updated.
 vdrip_rts_assert_raw:
 	ld a,(rts_assert_count)
 	inc a
@@ -616,39 +722,64 @@ vdrip_rts_release_raw:
 	ret
 
 
-vdrip_rx_maybe_release_rts:
-	ld a,(vdrip_rx_rts_released)
-	or a
-	ret nz
-
-	ld a,(vdrip_rx_count)
-	cp #VDRIP_RX_RTS_HIGH_WATER
-	ret c
-
-	call vdrip_rts_release_raw
-
-	ld a,#0x01
-	ld (vdrip_rx_rts_released),a
-	ret
-
-
-vdrip_rx_maybe_assert_rts:
-	jp app_maybe_resume_rts
-
-
 ; ===========================================================================
 ; Virtual Drip packet transport — RX parser
 ; ===========================================================================
-
-vdrip_poll_rx:
-	call vdrip_rx_get_byte
-	or a
-	ret nz
-
-	ld a,c
-	call vdrip_parse_rx_byte
-	jr vdrip_poll_rx
-
+;
+; State machine:
+;
+;   WAIT_SYNC0:
+;     wait for A5.
+;
+;   WAIT_SYNC1:
+;     wait for 5A. If another A5 arrives, remain one byte into sync so repeated
+;     sync bytes can still lock onto a frame.
+;
+;   LEN:
+;     validate packet length and initialize body buffer / counters.
+;
+;   BODY:
+;     collect TYPE, PAYLOAD, and CRC bytes into vdrip_packet_body.
+;
+;   COMPLETE:
+;     validate CRC, dispatch packet type, then reset parser state.
+;
+; Wire format:
+;   A5 5A LEN TYPE PAYLOAD... CRC
+;
+; LEN semantics:
+;   LEN includes LEN itself, TYPE, PAYLOAD, and CRC. A zero-payload packet has
+;   LEN = VDRIP_WIRE_OVERHEAD = 3.
+;
+; vdrip_packet_body layout after LEN has been accepted:
+;   +0 = LEN
+;   +1 = TYPE
+;   +2... = PAYLOAD bytes, if any
+;   final collected byte = received CRC
+;
+; CRC semantics:
+;   CRC covers LEN, TYPE, and PAYLOAD. It does not include A5/5A sync bytes and
+;   does not include the received CRC byte itself.
+;
+; BIOS-consumed packet types:
+;   PACKET_PROXY_READY sets vdrip_proxy_ready_flag and is not enqueued.
+;   PACKET_TERMINAL_INPUT enqueues raw payload bytes into textq.
+;
+; Other packet types:
+;   Valid packets with unhandled types are ignored after CRC validation.
+;
+; CRC failure:
+;   crc_fail_count is incremented and the parser resets to WAIT_SYNC0.
+;
+; ISR rule:
+;   This parser is called from vdrip_rx_sink and may therefore run in ISR
+;   context. It must not emit VDP/display traffic, call CONOUT, block on serial
+;   TX, redraw the screen, or touch CP/M/BDOS state directly.
+;
+; vdrip_parse_rx_byte is called from the SIO RX sink (ISR context).
+; It is ISR-safe: updates only parser state, runs CRC over small
+; packets, and enqueues terminal payload bytes into textq.  It does
+; not emit VDP traffic, call CONOUT, or block.
 
 vdrip_parse_rx_byte:
 	ld c,a
@@ -808,6 +939,13 @@ vdrip_parse_reset:
 ;   -> Enqueue payload bytes into the console input queue only.
 ;   Does NOT directly move the screen cursor or draw characters.
 ;   That is the job of CONOUT after the CP/M caller reads the byte.
+;
+; Payload semantics:
+;   Payload bytes are raw terminal input bytes. The input path does not translate
+;   or interpret them. Examples:
+;     Ctrl-X   -> 18h
+;     Enter    -> 0Dh
+;     Arrow-up -> 1Bh 5Bh 41h
 
 vdrip_parse_apply_terminal_input:
 	ld a,(vdrip_packet_body + 1)
@@ -846,14 +984,49 @@ vdrip_terminal_enqueue_loop:
 ; CONOUT terminal renderer — ANSI/VT-100 light
 ; ===========================================================================
 ;
+; This parser applies to CP/M output only. It is reached from CONOUT and must
+; not be used for keyboard input. Keyboard bytes remain raw in textq until CP/M
+; reads them through CONIN.
+;
 ; term_process_byte interprets a single byte and renders it to the VDP
 ; text display.  Supports printable characters, CR/LF, backspace, tab,
 ; and ANSI/CSI sequences with numeric parameters needed by Turbo Pascal
 ; and similar CP/M programs.
 ;
+; Normal bytes supported:
+;   printable ASCII 20h..7Eh
+;   CR  = 0Dh
+;   LF  = 0Ah
+;   BS  = 08h
+;   TAB = 09h
+;
+; ANSI/CSI sequences supported:
+;   ESC [ row ; col H
+;   ESC [ row ; col f
+;   ESC [ A/B/C/D
+;   ESC [ n A/B/C/D
+;   ESC [ 2 J
+;   ESC [ K
+;   ESC [ 0 K
+;   ESC [ 2 K
+;   ESC [ m
+;
+; Unsupported CSI sequences are consumed or ignored safely. SGR is currently
+; consumed and ignored unless attributes are implemented later. ANSI cursor
+; coordinates are 1-based; internal text_row/text_col coordinates are 0-based.
+;
 ; Output parser states:
 ;   NORMAL -> ESC (on 0x1b) -> CSI (on '[')
 ; CSI accumulates digits and ';' separators, dispatches on final byte.
+;
+; Parser state variables:
+;   term_state       = NORMAL/ESC/CSI.
+;   csi_param0      = first numeric CSI parameter.
+;   csi_param1      = second numeric CSI parameter.
+;   csi_param_count = number of stored numeric parameters.
+;   csi_accum       = current decimal parameter being accumulated.
+;   csi_have_digit  = nonzero after at least one digit in current parameter.
+;   esc_press_count = triple-Esc display reset counter.
 
 term_process_byte:
 	ld c,a
@@ -1448,6 +1621,38 @@ text_clear_line:
 ; ===========================================================================
 ; Console input queue
 ; ===========================================================================
+;
+; textq is the CP/M CONIN FIFO.
+;
+; FIFO ownership:
+;   Producer:
+;     vdrip_parse_apply_terminal_input calls textq_put_ascii after a complete
+;     PACKET_TERMINAL_INPUT frame passes CRC validation. The producer may be
+;     running from vdrip_rx_sink in the SIO ISR path.
+;
+;   Consumer:
+;     vdrip_console_conin runs in CP/M foreground code. It removes the oldest
+;     byte from textq and returns it in A.
+;
+; FIFO variables:
+;   textq_head  = producer write index.
+;   textq_tail  = consumer read index.
+;   textq_count = availability indicator used by CONST.
+;   textq_buffer = raw terminal byte storage.
+;
+; Semantics:
+;   This queue is FIFO, not LIFO. CONST never consumes data; it only checks
+;   textq_count. CONIN consumes exactly one oldest queued byte. Input bytes are
+;   raw terminal bytes and are not interpreted here:
+;     Ctrl-X   -> 18h
+;     Enter    -> 0Dh
+;     Arrow-up -> 1Bh 5Bh 41h
+;
+; Concurrency:
+;   The producer must remain short and non-blocking because it can run under the
+;   SIO RX ISR. The foreground consumer disables interrupts around dequeue so
+;   tail/count updates cannot race the ISR producer. The producer updates
+;   head/count as a small bounded operation.
 
 textq_put_ascii:
 	ld c,a
@@ -1589,28 +1794,62 @@ text_cursor_rows_done:
 	ld d,#0x00
 	add hl,de
 
+	; Skip VDP address setup if writing to the expected next
+	; address (auto-increment from previous write).
+	ld a,(vdp_addr_valid)
+	or a
+	jr z,text_cursor_vram_do_setup
+
+	ld de,(vdp_addr_next)
+	or a		; clear carry
+	sbc hl,de
+	jr nz,text_cursor_vram_do_setup
+
+	; Match — auto-increment handles it.  Update next-expected.
+	inc de
+	ld (vdp_addr_next),de
+	ret
+
+text_cursor_vram_do_setup:
+	; Mismatch or first write — send VDP address.
+	add hl,de	; restore HL from sbc
 	call vdp_set_vram_write_addr
+	; Track next expected address.
+	inc hl
+	ld (vdp_addr_next),hl
+	ld a,#0x01
+	ld (vdp_addr_valid),a
 	ret
 
 
 ; ===========================================================================
 ; RTS flow control
 ; ===========================================================================
+;
+; Queue thresholds:
+;   TEXTQ_RTS_HIGH_WATER:
+;     When textq_count reaches this value, textq_put_ascii releases RTS to ask
+;     the host/proxy to stop sending more terminal input.
+;
+;   TEXTQ_RTS_LOW_WATER:
+;     When CONIN drains textq to or below this value, app_maybe_resume_rts
+;     asserts RTS so host input can resume.
+;
+; Large VDP bursts:
+;   Scroll/redraw/clear traffic can consume many bytes over a 115200 baud serial
+;   link. Those routines release RTS before the burst to keep keyboard input from
+;   competing with display traffic, then assert RTS after the burst or after the
+;   input queue drains.
 
 app_maybe_resume_rts:
 	ld a,(vdrip_rx_rts_released)
 	or a
 	ret z				; already asserted
 
-	; RX ring must be empty.
-	ld a,(vdrip_rx_count)
-	or a
-	ret nz
-
-	; Text output queue must be empty.
+	; Re-assert RTS when textq drains to/below the low-water mark.
 	ld a,(textq_count)
-	or a
-	ret nz
+	cp #(TEXTQ_RTS_LOW_WATER + 1)
+	ret nc
 
 	call vdrip_rts_assert_raw
 
@@ -1769,7 +2008,7 @@ text_ensure_redraw:
 ; text_redraw_view
 ;
 ; Redraw all visible rows (rows 0..23) from the 80-column shadow buffer
-; into the 40-column VDP viewport, using the current text_view_col.
+; into the 80-column VDP viewport, using the current text_view_col.
 ;
 ; RTS must be released before calling this (caller's responsibility).
 ; Sends one FRAME_MARK after the redraw completes.
@@ -1813,7 +2052,7 @@ text_redraw_view_shadow_row_done:
 	ld d,#0
 	add hl,de
 
-	; Write 40 bytes from shadow to VDP with pacing.
+		; Write one physical row from shadow to VDP with pacing.
 	ld b,#TEXT_PHYS_COLUMNS
 text_redraw_view_byte_loop:
 	ld a,(hl)
@@ -1885,7 +2124,7 @@ text_scroll_blank_loop:
 	pop de
 	pop bc
 
-	; Redraw the 40-column viewport from the 80-column shadow.
+		; Redraw the 80-column viewport from the 80-column shadow.
 	; text_view_col is reset to 0 after scroll.
 	call text_redraw_view
 
@@ -1896,8 +2135,12 @@ text_scroll_blank_loop:
 	ld a,#(TEXT_SCROLL_BOTTOM)
 	ld (text_row),a
 
-	; Reassert RTS if both queues are drained.
-	call app_maybe_resume_rts
+	; Reassert RTS unconditionally after a scroll burst.
+	; app_maybe_resume_rts would skip if textq has data,
+	; but the scroll just finished — input MUST resume.
+	call vdrip_rts_assert_raw
+	xor a
+	ld (vdrip_rx_rts_released),a
 	ret
 
 
@@ -1939,6 +2182,24 @@ vdrip_reset_display:
 ; ===========================================================================
 ; VDP text backend
 ; ===========================================================================
+;
+; Virtual Drip display model:
+;   The backend is an 80-column 9928-like/Text80 display. The logical text
+;   buffer and physical name table are both 80 columns by 24 rows in this build.
+;   The VDP name table stores character codes. The pattern table stores the
+;   ASCII 20h-7Fh font, 96 glyphs at 8 bytes per glyph, so writing ASCII bytes
+;   directly into the name table selects the expected glyphs.
+;
+; Shadow buffer:
+;   text_shadow mirrors the terminal text state and is the source for scroll,
+;   clear, and redraw operations. Single-character output writes both shadow and
+;   VDP when the cursor is visible.
+;
+; Serial cost:
+;   VDP writes are currently emitted as single-byte Virtual Drip data/control
+;   packets unless a helper loops over multiple bytes. Large operations are slow
+;   over 115200 baud and are paced / RTS-gated. Future block packets could reduce
+;   this cost, but this documentation pass does not implement them.
 
 text_init_vdp:
 	; R0 = 0
@@ -1993,11 +2254,11 @@ text_load_font:
 
 
 ; ---------------------------------------------------------------------------
-; Clear 40x24 text screen to ASCII space — clears both VDP and shadow buffer.
+; Clear 80x24 text screen to ASCII space — clears both VDP and shadow buffer.
 ; ---------------------------------------------------------------------------
 
 text_clear_screen:
-	; Clear VDP name table (40x24).
+		; Clear VDP name table (80x24).
 	ld hl,#NAME_TABLE
 	call vdp_set_vram_write_addr
 
@@ -2039,6 +2300,12 @@ vdp_write_register:
 
 ; Set TMS9928A VRAM write address to HL.
 vdp_set_vram_write_addr:
+	; Invalidate sequential-address tracking — explicit address
+	; setups (clear, font load, scroll) reset the auto-increment
+	; assumption.
+	xor a
+	ld (vdp_addr_valid),a
+
 	ld a,l
 	call vdrip_ctrl_write
 
@@ -2404,7 +2671,14 @@ crc8_update_next:
 ; ===========================================================================
 ; Data / buffers / font include
 ; ===========================================================================
+;
+; Variables are grouped by subsystem without reordering code or changing storage.
+; These live in the driver slot area with the code and are part of the current
+; memory layout.
 
+; Packet output temporary storage.
+; Used by vdrip_send_packet* while constructing outbound Virtual Drip frames:
+;   A5 5A LEN TYPE PAYLOAD... CRC
 packet_len_store:
 	.db 0x00
 
@@ -2428,21 +2702,17 @@ block_ptr_store:
 
 block_count_store:
 	.dw 0x0000
-vdrip_rx_head:
-	.db 0x00
 
-vdrip_rx_tail:
-	.db 0x00
-
-vdrip_rx_count:
-	.db 0x00
-
-vdrip_rx_buffer:
-	.ds VDRIP_RX_BUFFER_SIZE
-
+; RTS / input-gate state.
+; Nonzero means the driver believes host input is currently paused by released
+; RTS and app_maybe_resume_rts may need to assert RTS after queues drain.
 vdrip_rx_rts_released:
 	.db 0x00
 
+; VDrip RX parser state.
+; vdrip_packet_body contains LEN at +0, TYPE at +1, then payload bytes and the
+; received CRC byte as they arrive. Parser state is updated by vdrip_parse_rx_byte
+; and must remain valid across individual SIO RX bytes.
 vdrip_parse_state:
 	.db VDRIP_RX_WAIT_SYNC0
 
@@ -2458,6 +2728,11 @@ vdrip_parse_payload_index:
 vdrip_packet_body:
 	.ds VDRIP_PACKET_BODY_MAX
 
+; Text cursor state.
+; text_col/text_row are internal 0-based logical coordinates. text_view_col is
+; the horizontal viewport offset into the 80-column logical buffer. In this
+; Text80 build the physical and logical widths are both 80, so the offset should
+; normally remain zero.
 text_col:
 	.db 0x00
 
@@ -2468,6 +2743,9 @@ text_row:
 text_view_col:
 	.db 0x00
 
+; CONIN FIFO / textq.
+; Producer writes at textq_head, consumer reads at textq_tail, and textq_count is
+; the single-byte availability count used by CONST.
 textq_head:
 	.db 0x00
 
@@ -2485,6 +2763,8 @@ textq_buffer:
 text_shadow:
 	.ds TEXT_SHADOW_SIZE
 
+; ANSI output parser state.
+; Applies only to CONOUT bytes. Keyboard input must not use this state machine.
 term_state:
 	.db TERM_STATE_NORMAL
 
@@ -2500,15 +2780,25 @@ csi_accum:
 csi_have_digit:
 	.db 0x00
 
+; VDP address tracking — skip redundant address setup when writing
+; sequential characters (auto-increment handles it).
+vdp_addr_next:
+	.dw 0x0000
+vdp_addr_valid:
+	.db 0x00
+
+; Terminal-input packet payload iterator.
+; Used while copying a validated PACKET_TERMINAL_INPUT payload into textq.
 terminal_payload_ptr:
 	.dw 0x0000
 
 terminal_payload_count:
 	.db 0x00
 
-rx_drop_count:
-	.db 0x00
-
+; Existing trace counters.
+; These counters already existed before this documentation pass. They are useful
+; when inspecting whether bytes reached CRC validation, terminal-input dispatch,
+; queue overflow, and RTS transitions. No new diagnostics are added here.
 textq_drop_count:
 	.db 0x00
 
@@ -2527,7 +2817,10 @@ rts_release_count:
 rts_assert_count:
 	.db 0x00
 
-; Proxy readiness handshake.
+; Proxy readiness handshake state.
+; vdrip_proxy_ready_flag is set by PACKET_PROXY_READY. vdrip_handshake_done
+; survives warm boot so the driver does not wait for a second READY packet from
+; an already-connected proxy.
 vdrip_proxy_ready_flag:
 	.db 0x00
 proxy_ready_count:

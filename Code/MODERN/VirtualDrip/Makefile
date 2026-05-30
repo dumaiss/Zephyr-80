@@ -68,7 +68,7 @@ CMAKE_BINARY_DIR = /home/kitamura/Documents/Z80HomeBrew/Code/MODERN/VirtualDrip
 # Special rule for the target edit_cache
 edit_cache:
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Running CMake cache editor..."
-	/snap/cmake/1544/bin/ccmake -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR)
+	/home/kitamura/.renesas/platform/cmake/3.31.8/cmake-3.31.8-linux-x86_64/bin/ccmake -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR)
 .PHONY : edit_cache
 
 # Special rule for the target edit_cache
@@ -489,6 +489,30 @@ src/video_device_tms9928.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/video_device_tms9928.c.s
 .PHONY : src/video_device_tms9928.c.s
 
+src/video_device_vdrip9928.o: src/video_device_vdrip9928.c.o
+.PHONY : src/video_device_vdrip9928.o
+
+# target to build an object file
+src/video_device_vdrip9928.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/video_device_vdrip9928.c.o
+.PHONY : src/video_device_vdrip9928.c.o
+
+src/video_device_vdrip9928.i: src/video_device_vdrip9928.c.i
+.PHONY : src/video_device_vdrip9928.i
+
+# target to preprocess a source file
+src/video_device_vdrip9928.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/video_device_vdrip9928.c.i
+.PHONY : src/video_device_vdrip9928.c.i
+
+src/video_device_vdrip9928.s: src/video_device_vdrip9928.c.s
+.PHONY : src/video_device_vdrip9928.s
+
+# target to generate assembly for a file
+src/video_device_vdrip9928.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/video_device_vdrip9928.c.s
+.PHONY : src/video_device_vdrip9928.c.s
+
 src/virtual_text_cursor.o: src/virtual_text_cursor.c.o
 .PHONY : src/virtual_text_cursor.o
 
@@ -567,6 +591,9 @@ help:
 	@echo "... src/video_device_tms9928.o"
 	@echo "... src/video_device_tms9928.i"
 	@echo "... src/video_device_tms9928.s"
+	@echo "... src/video_device_vdrip9928.o"
+	@echo "... src/video_device_vdrip9928.i"
+	@echo "... src/video_device_vdrip9928.s"
 	@echo "... src/virtual_text_cursor.o"
 	@echo "... src/virtual_text_cursor.i"
 	@echo "... src/virtual_text_cursor.s"
