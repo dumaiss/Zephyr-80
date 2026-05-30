@@ -23,6 +23,7 @@
 #include "serial_reader.h"
 #include "video_device.h"
 #include "video_device_tms9928.h"
+#include "video_device_vdrip9928.h"
 
 #include <pthread.h>
 #include <stdint.h>
@@ -38,8 +39,11 @@ static VideoDevice *create_video_backend(const char *backend_name)
     if (strcmp(backend_name, "tms9928") == 0) {
         return video_device_tms9928_create();
     }
+    if (strcmp(backend_name, "vdrip9928") == 0) {
+        return video_device_vdrip9928_create();
+    }
 
-    fprintf(stderr, "Unsupported video backend: %s. Available: tms9928\n", backend_name);
+    fprintf(stderr, "Unsupported video backend: %s. Available: tms9928, vdrip9928\n", backend_name);
     return NULL;
 }
 

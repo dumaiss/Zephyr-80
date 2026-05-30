@@ -76,15 +76,15 @@ VDRIP_WIRE_OVERHEAD	= 0x03
 ; Inter-byte pacing for scroll redraw (~1 ms at 4 MHz).
 VDRIP_TX_PACE_DELAY	= 0x0001
 
-; TMS9928A layout.
+; TMS9928A layout (Text 2 mode: 80 columns, 480x192).
 PATTERN_TABLE		= 0x0000
 NAME_TABLE		= 0x3800
-TEXT_PHYS_COLUMNS	= 40
-TEXT_LOG_COLUMNS	= 40
+TEXT_PHYS_COLUMNS	= 80
+TEXT_LOG_COLUMNS	= 80
 TEXT_ROWS		= 24
-TEXT_PHYS_CELLS		= TEXT_PHYS_COLUMNS * TEXT_ROWS	; 960
+TEXT_PHYS_CELLS		= TEXT_PHYS_COLUMNS * TEXT_ROWS	; 1920
 TEXT_VIEW_COLUMNS	= TEXT_PHYS_COLUMNS
-TEXT_VIEW_MAX_COL	= TEXT_LOG_COLUMNS - TEXT_PHYS_COLUMNS	; 40
+TEXT_VIEW_MAX_COL	= TEXT_LOG_COLUMNS - TEXT_PHYS_COLUMNS	; 0
 
 ; Text scrolling / shadow constants.
 TEXT_SCROLL_TOP		= 0
@@ -1564,12 +1564,11 @@ text_init_vdp:
 	; R1:
 	;   16K mode
 	;   display on
-	;   text mode
+	;   Text 2 mode (M1=1, M2=1 for 80 columns)
 	;
-	; Existing graphics mode used C0h.
-	; Text mode adds bit 4, so D0h.
+	; 0xD8 = 16K | display | Text 2
 	ld b,#0x01
-	ld a,#0xd0
+	ld a,#0xd8
 	call vdp_write_register
 
 	; R2 = name table base.
