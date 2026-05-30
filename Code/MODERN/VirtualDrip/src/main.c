@@ -33,6 +33,8 @@
 
 static pthread_mutex_t framebuffer_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+static const uint8_t RAW_TERMINAL_READY[] = { 0x1B, 0x5B, 0x3F, 0x31, 0x3B, 0x30, 0x63 };
+
 /* Backend selection stays centralized until additional concrete backends exist. */
 static VideoDevice *create_video_backend(const char *backend_name)
 {
@@ -118,11 +120,23 @@ int main(int argc, char **argv)
         }
         packet_dispatch_set_keyboard_transport(&dispatch, keyboard_transport);
         input_keyboard_init(&keyboard, keyboard_transport, config.keyboard_enabled, config.log_keys);
+        if (config.raw_terminal_input) {
+            fprintf(stderr, "Keyboard input mode: raw-terminal\n");
+        }
 
-        /* Signal to the Z80 that the proxy is ready to receive VDP traffic. */
+        /*
+         * Signal to the Z80 that the proxy is ready to receive framed VDP
+         * traffic and send raw terminal input. This replaces the old framed
+         * PACKET_PROXY_READY packet on the proxy->Z80 direction.
+         */
         {
-            bool ready_sent = serial_port_send_packet(serial_port, PACKET_PROXY_READY, NULL, 0);
-            fprintf(stderr, "Proxy ready packet %s\n", ready_sent ? "sent" : "queued");
+            bool ready_sent = serial_port_send_raw(
+                serial_port,
+                RAW_TERMINAL_READY,
+                sizeof(RAW_TERMINAL_READY));
+            fprintf(stderr,
+                "Sent raw terminal readiness: ESC[?1;0c (%s)\n",
+                ready_sent ? "ok" : "failed");
         }
 
         SerialReaderConfig reader_config = {

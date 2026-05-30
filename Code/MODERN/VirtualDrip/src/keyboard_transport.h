@@ -3,7 +3,7 @@
 
 /**
  * @file keyboard_transport.h
- * Nonblocking keyboard enqueue path plus the gated serial writer.
+ * Nonblocking raw keyboard enqueue path plus the gated serial writer.
  */
 
 #include "protocol.h"
@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #define KEYBOARD_QUEUE_SIZE 1024
+#define KEYBOARD_INPUT_MAX_BYTES 16
 
 typedef enum {
     TRANSPORT_INTERACTIVE,
@@ -21,10 +22,9 @@ typedef enum {
 } TransportMode;
 
 typedef struct {
-    uint8_t type;
     uint8_t length;
-    uint8_t payload[MAX_PACKET_PAYLOAD];
-} QueuedPacket;
+    uint8_t bytes[KEYBOARD_INPUT_MAX_BYTES];
+} QueuedInput;
 
 typedef struct {
     uint64_t terminal_events_seen;
@@ -56,8 +56,7 @@ void keyboard_transport_stop(KeyboardTransport *transport);
 
 bool keyboard_transport_enqueue(
     KeyboardTransport *transport,
-    uint8_t type,
-    const uint8_t *payload,
+    const uint8_t *bytes,
     uint8_t length);
 
 void keyboard_transport_note_keyboard_event(KeyboardTransport *transport);

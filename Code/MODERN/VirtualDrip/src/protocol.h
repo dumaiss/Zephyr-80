@@ -35,7 +35,8 @@
  * Packet type values shared by file replay, serial input, and serial output.
  *
  * VDP_* packets flow from Zephyr or replay files into the video backend.
- * TERMINAL_INPUT flows from the VNC/display side back to Zephyr over serial.
+ * TERMINAL_INPUT is a legacy proxy-to-Z80 keyboard packet type; the default
+ * live proxy path now sends keyboard input as raw terminal bytes instead.
  * RESET and PING are Virtual Drip control packets, not TMS9928A port writes.
  * FRAME_MARK is a replay/pacing marker for animation tests; it is not a
  * hardware VBlank signal.

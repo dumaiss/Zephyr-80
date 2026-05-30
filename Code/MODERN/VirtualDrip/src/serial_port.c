@@ -16,8 +16,8 @@
 
 /*
  * This module owns all POSIX serial details. The rest of the proxy deals in a
- * SerialPort handle and packet bytes; raw termios setup, write completion, and
- * transmit locking stay here.
+ * SerialPort handle and either framed packet bytes or raw terminal input bytes;
+ * raw termios setup, write completion, and transmit locking stay here.
  */
 
 struct SerialPort {
@@ -263,6 +263,19 @@ bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payl
      */
     pthread_mutex_lock(&port->tx_mutex);
     bool sent = write_all(port->fd, bytes, byte_count);
+    pthread_mutex_unlock(&port->tx_mutex);
+
+    return sent;
+}
+
+bool serial_port_send_raw(SerialPort *port, const uint8_t *bytes, size_t length)
+{
+    if (port == NULL || port->fd < 0 || bytes == NULL || length == 0) {
+        return false;
+    }
+
+    pthread_mutex_lock(&port->tx_mutex);
+    bool sent = write_all(port->fd, bytes, length);
     pthread_mutex_unlock(&port->tx_mutex);
 
     return sent;

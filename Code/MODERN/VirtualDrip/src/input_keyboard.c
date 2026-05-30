@@ -1,7 +1,6 @@
 #include "input_keyboard.h"
 
 #include "display_libvncserver.h"
-#include "protocol.h"
 #include "protocol_debug.h"
 
 #include <stdio.h>
@@ -9,7 +8,8 @@
 /*
  * LibVNCServer supplies X11-style keysyms. This module maps a deliberately
  * small subset to terminal input bytes. It never writes serial directly; the
- * display callback only enqueues packets for KeyboardTransport's writer thread.
+ * display callback only enqueues raw bytes for KeyboardTransport's writer
+ * thread.
  */
 
 typedef struct {
@@ -86,9 +86,18 @@ static TerminalMapping terminal_mapping_bytes(uint8_t b0, uint8_t b1, uint8_t b2
     return mapping;
 }
 
-static TerminalMapping map_display_keysym_to_terminal(uint32_t keysym)
+static TerminalMapping map_display_keysym_to_terminal(uint32_t keysym, uint8_t modifiers)
 {
     TerminalMapping unmapped = { 0 };
+
+    if ((modifiers & KEY_MODIFIER_CTRL) != 0) {
+        if (keysym >= 'A' && keysym <= 'Z') {
+            return terminal_mapping_bytes((uint8_t)(keysym - 'A' + 1), 0, 0, 0, 1);
+        }
+        if (keysym >= 'a' && keysym <= 'z') {
+            return terminal_mapping_bytes((uint8_t)(keysym - 'a' + 1), 0, 0, 0, 1);
+        }
+    }
 
     if (keysym >= 0x20 && keysym <= 0x7E) {
         return terminal_mapping_bytes((uint8_t)keysym, 0, 0, 0, 1);
@@ -162,7 +171,7 @@ void input_keyboard_handle_display_key(InputKeyboardContext *ctx, bool down, uin
 
     keyboard_transport_note_keyboard_event(ctx->keyboard_transport);
 
-    TerminalMapping mapping = map_display_keysym_to_terminal(keysym);
+    TerminalMapping mapping = map_display_keysym_to_terminal(keysym, ctx->modifiers);
     if (!mapping.mapped || mapping.length == 0) {
         if (modifier_bit == 0) {
             keyboard_transport_note_unsupported_key(ctx->keyboard_transport);
@@ -175,20 +184,19 @@ void input_keyboard_handle_display_key(InputKeyboardContext *ctx, bool down, uin
 
     if (ctx->keyboard_transport == NULL) {
         if (ctx->log_keys) {
-            log_terminal_payload("Keyboard terminal packet not queued: no transport bytes=", mapping.bytes, mapping.length);
+            log_terminal_payload("Raw key bytes not queued: no transport bytes=", mapping.bytes, mapping.length);
         }
         return;
     }
 
     bool queued = keyboard_transport_enqueue(
         ctx->keyboard_transport,
-        PACKET_TERMINAL_INPUT,
         mapping.bytes,
         mapping.length);
 
     if (ctx->log_keys) {
         log_terminal_payload(
-            queued ? "Keyboard terminal packet queued: " : "Keyboard terminal packet queue dropped: ",
+            queued ? "Raw key bytes queued: " : "Raw key bytes queue dropped: ",
             mapping.bytes,
             mapping.length);
     }

@@ -3,15 +3,17 @@
 
 /**
  * @file serial_port.h
- * POSIX serial port ownership and packet transmit helpers.
+ * POSIX serial port ownership and transmit helpers.
  *
  * Virtual Drip opens serial devices read/write: VDP operation packets arrive
- * from Zephyr, while TERMINAL_INPUT packets are sent back over the same link. The
- * implementation configures raw mode and protects writes with a mutex because
- * keyboard callbacks may transmit while the serial reader thread is active.
+ * from Zephyr as framed packets, while keyboard input is sent back to Zephyr as
+ * raw terminal bytes. The implementation configures raw mode and protects writes
+ * with a mutex because keyboard callbacks may transmit while the serial reader
+ * thread is active.
  */
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /** Opaque owner of an open serial fd, path copy, baud rate, and TX mutex. */
@@ -46,5 +48,13 @@ int serial_port_baud_rate(const SerialPort *port);
  * are observable during pseudo-terminal tests.
  */
 bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payload, uint8_t length);
+
+/**
+ * Write raw bytes under the TX mutex.
+ *
+ * Used for proxy->Z80 terminal input and readiness. Bytes are not wrapped in
+ * Virtual Drip framing and no CRC is appended.
+ */
+bool serial_port_send_raw(SerialPort *port, const uint8_t *bytes, size_t length);
 
 #endif

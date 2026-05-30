@@ -12,7 +12,7 @@
 #define VDP_BUSY_IDLE_TIMEOUT_MS 50
 
 typedef struct {
-    QueuedPacket entries[KEYBOARD_QUEUE_SIZE];
+    QueuedInput entries[KEYBOARD_QUEUE_SIZE];
     size_t head;
     size_t tail;
     size_t count;
@@ -97,7 +97,7 @@ static void keyboard_queue_shutdown(KeyboardQueue *queue)
     pthread_mutex_unlock(&queue->mutex);
 }
 
-static bool keyboard_queue_push(KeyboardQueue *queue, const QueuedPacket *packet)
+static bool keyboard_queue_push(KeyboardQueue *queue, const QueuedInput *input)
 {
     bool queued = false;
 
@@ -105,15 +105,15 @@ static bool keyboard_queue_push(KeyboardQueue *queue, const QueuedPacket *packet
     if (queue->count >= KEYBOARD_QUEUE_SIZE) {
         queue->packets_dropped++;
         fprintf(stderr,
-            "Keyboard queue full; dropped packet (drop=%llu qmax=%zu)\n",
+            "Keyboard queue full; dropped raw input bytes (drop=%llu qmax=%zu)\n",
             (unsigned long long)queue->packets_dropped,
             queue->high_water);
     } else {
-        queue->entries[queue->head] = *packet;
+        queue->entries[queue->head] = *input;
         queue->head = (queue->head + 1) % KEYBOARD_QUEUE_SIZE;
         queue->count++;
         queue->packets_queued++;
-        queue->bytes_queued += packet->length;
+        queue->bytes_queued += input->length;
         if (queue->count > queue->high_water) {
             queue->high_water = queue->count;
         }
@@ -125,7 +125,7 @@ static bool keyboard_queue_push(KeyboardQueue *queue, const QueuedPacket *packet
     return queued;
 }
 
-static bool keyboard_queue_wait_pop(KeyboardQueue *queue, QueuedPacket *packet)
+static bool keyboard_queue_wait_pop(KeyboardQueue *queue, QueuedInput *input)
 {
     pthread_mutex_lock(&queue->mutex);
     while (queue->count == 0 && !queue->shutting_down) {
@@ -137,7 +137,7 @@ static bool keyboard_queue_wait_pop(KeyboardQueue *queue, QueuedPacket *packet)
         return false;
     }
 
-    *packet = queue->entries[queue->tail];
+    *input = queue->entries[queue->tail];
     queue->tail = (queue->tail + 1) % KEYBOARD_QUEUE_SIZE;
     queue->count--;
     pthread_mutex_unlock(&queue->mutex);
@@ -266,7 +266,7 @@ static void keyboard_transport_log_stats(KeyboardTransport *transport, bool forc
         return;
     }
 
-    printf("term: events=%llu queued=%llu bytes=%llu sent=%llu fail=%llu drop=%llu unsupported=%llu qmax=%zu held=%llu\n",
+    printf("raw-input: events=%llu queued=%llu bytes=%llu sent=%llu fail=%llu drop=%llu unsupported=%llu qmax=%zu held=%llu\n",
         (unsigned long long)stats.terminal_events_seen,
         (unsigned long long)stats.terminal_packets_queued,
         (unsigned long long)stats.terminal_bytes_queued,
@@ -297,8 +297,8 @@ static void *keyboard_writer_thread(void *context)
     KeyboardTransport *transport = (KeyboardTransport *)context;
 
     for (;;) {
-        QueuedPacket packet;
-        if (!keyboard_queue_wait_pop(&transport->queue, &packet)) {
+        QueuedInput input;
+        if (!keyboard_queue_wait_pop(&transport->queue, &input)) {
             break;
         }
 
@@ -306,11 +306,10 @@ static void *keyboard_writer_thread(void *context)
             break;
         }
 
-        bool sent = serial_port_send_packet(
+        bool sent = serial_port_send_raw(
             transport->serial_port,
-            packet.type,
-            packet.payload,
-            packet.length);
+            input.bytes,
+            input.length);
 
         pthread_mutex_lock(&transport->stats_mutex);
         if (sent) {
@@ -321,7 +320,7 @@ static void *keyboard_writer_thread(void *context)
         pthread_mutex_unlock(&transport->stats_mutex);
 
         if (!sent) {
-            fprintf(stderr, "Keyboard packet send failed\n");
+            fprintf(stderr, "Raw key bytes send failed\n");
         }
         keyboard_transport_maybe_log_stats(transport);
     }
@@ -392,22 +391,18 @@ void keyboard_transport_stop(KeyboardTransport *transport)
 
 bool keyboard_transport_enqueue(
     KeyboardTransport *transport,
-    uint8_t type,
-    const uint8_t *payload,
+    const uint8_t *bytes,
     uint8_t length)
 {
-    if (transport == NULL || length > MAX_PACKET_PAYLOAD) {
+    if (transport == NULL || bytes == NULL || length == 0 || length > KEYBOARD_INPUT_MAX_BYTES) {
         return false;
     }
 
-    QueuedPacket packet;
-    packet.type = type;
-    packet.length = length;
-    if (length > 0 && payload != NULL) {
-        memcpy(packet.payload, payload, length);
-    }
+    QueuedInput input;
+    input.length = length;
+    memcpy(input.bytes, bytes, length);
 
-    bool queued = keyboard_queue_push(&transport->queue, &packet);
+    bool queued = keyboard_queue_push(&transport->queue, &input);
     keyboard_transport_maybe_log_stats(transport);
     return queued;
 }

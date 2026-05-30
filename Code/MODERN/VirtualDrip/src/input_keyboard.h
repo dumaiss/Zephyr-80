@@ -3,7 +3,7 @@
 
 /**
  * @file input_keyboard.h
- * Map display key events into Virtual Drip terminal input packets.
+ * Map display key events into raw terminal input bytes.
  *
  * This is a minimal terminal-input mapper, not a VT100 emulator. Key-down
  * events become raw input bytes; key-up events do not generate packets.
@@ -40,7 +40,7 @@ void input_keyboard_init(
 /**
  * Handle one display keysym event.
  *
- * If keyboard_transport is NULL, mapping/logging still occurs but no packet is queued.
+ * If keyboard_transport is NULL, mapping/logging still occurs but no bytes are queued.
  */
 void input_keyboard_handle_display_key(InputKeyboardContext *ctx, bool down, uint32_t keysym);
 

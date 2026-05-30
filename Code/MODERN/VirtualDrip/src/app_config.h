@@ -40,8 +40,10 @@ typedef struct {
     bool no_vnc;
     /** Enable LibVNCServer keyboard capture and serial terminal input output. */
     bool keyboard_enabled;
-    /** Print key mapping and packet bytes for debugging. */
+    /** Print key mapping and raw input bytes for debugging. */
     bool log_keys;
+    /** Proxy->Z80 keyboard input is raw terminal bytes. */
+    bool raw_terminal_input;
     /** Video backend selector. Currently only "tms9928" is accepted. */
     const char *video_backend;
 } AppConfig;

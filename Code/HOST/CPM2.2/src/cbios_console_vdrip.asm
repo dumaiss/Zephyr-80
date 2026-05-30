@@ -6,13 +6,14 @@
 ;
 ; Major subsystems:
 ;   - CP/M console dispatch table consumed by cbios_console.asm.
-;   - Startup / proxy READY handshake before normal VDP output traffic.
+;   - Startup VT100-style terminal readiness recognizer before normal VDP output
+;     traffic.
 ;   - SIO0/B RX sink registration with the BIOS SIO core.
-;   - Input path: terminal-input packets are parsed and enqueued into textq,
-;     the CP/M CONIN FIFO.
+;   - Input path: proxy-to-Z80 bytes are raw terminal input bytes after
+;     readiness and are enqueued into textq, the CP/M CONIN FIFO.
 ;   - Output path: CP/M CONOUT bytes are interpreted by an ANSI/VT100-light
 ;     parser and rendered to the text shadow buffer / VDP name table.
-;   - Virtual Drip RX packet parser for host-to-Z80 packets.
+;   - Obsolete framed RX parser retained inactive during the raw-input change.
 ;   - Virtual cursor command helpers for the proxy renderer.
 ;   - RTS flow control for host-to-Z80 keyboard traffic and large VDP bursts.
 ;
@@ -21,22 +22,20 @@
 ;     -> sio_core_isr
 ;     -> sio_core_dispatch_rx
 ;     -> vdrip_rx_sink
-;     -> vdrip_parse_rx_byte
-;     -> PACKET_TERMINAL_INPUT payload
+;     -> raw byte enqueue
 ;     -> textq FIFO
 ;     -> CONST checks textq_count
 ;     -> CONIN dequeues oldest byte
 ;
-; Input path, fallback/polling:
-;     CONIN/CONST/handshake may call sio_rx_kick
-;     -> sio_core_dispatch_rx
+; Startup readiness input:
+;     proxy sends raw ESC [ ? 1 ; 0 c
 ;     -> vdrip_rx_sink
-;     -> vdrip_parse_rx_byte
-;     -> textq FIFO
+;     -> vdrip_terminal_ready_parse_byte
+;     -> vdrip_terminal_ready_flag = 1
 ;
-; In the intended steady state, only the startup handshake uses sio_rx_kick.
-; A keyboard path that works only when sio_rx_kick is called proves the parser
-; and textq path can work, but does not prove the SIO RX interrupt path.
+; Proxy-to-Z80 input is raw bytes. Z80-to-proxy display/control output remains
+; framed Virtual Drip packets. Storage or future structured commands should stay
+; framed or use a separate channel later; this pass changes keyboard input only.
 ;
 ; Output path:
 ;     CP/M calls CONOUT
@@ -62,14 +61,14 @@
 ;   vdrip_console_conout  — Output byte in A to the text console
 ;
 ; Input architecture (interrupt-fed):
-;   SIO RX ISR → vdrip_rx_sink → vdrip_parse_rx_byte → textq_put_ascii
+;   SIO RX ISR → vdrip_rx_sink → textq_put_ascii
 ;   CONST: check textq_count — no RX polling, kicking, or parsing
 ;   CONIN: block until textq_count > 0, dequeue oldest byte
 ;
 ; Startup sequence:
 ;   1. sio_core_init has already run; SIO0/B is configured but RTS is released.
 ;   2. Register RX sink, enable interrupts, assert RTS.
-;   3. Wait for PACKET_PROXY_READY from the Virtual Drip proxy.
+;   3. Wait for raw terminal readiness bytes: ESC [ ? 1 ; 0 c.
 ;   4. Once ready, release RTS and send RESET/PING/VDP init/font/cursor.
 ;   5. Assert RTS and enter normal interactive mode.
 ;
@@ -108,11 +107,13 @@ PACKET_SYNC0		= 0xa5
 PACKET_SYNC1		= 0x5a
 PACKET_VDP_CTRL_WRITE	= 0x01
 PACKET_VDP_DATA_WRITE	= 0x02
+; Obsolete for proxy->Z80 keyboard input. Raw terminal bytes now feed textq.
 PACKET_TERMINAL_INPUT	= 0x05
 PACKET_RESET		= 0x06
 PACKET_PING		= 0x07
 PACKET_FRAME_MARK	= 0x08
 PACKET_CURSOR_COMMAND	= 0x09
+; Obsolete proxy->Z80 readiness packet. Readiness is now raw ESC [ ? 1 ; 0 c.
 PACKET_PROXY_READY	= 0x0a
 
 CURSOR_ENABLE		= 0x01
@@ -162,6 +163,19 @@ VDRIP_RX_WAIT_SYNC0	= 0x00
 VDRIP_RX_WAIT_SYNC1	= 0x01
 VDRIP_RX_LEN		= 0x02
 VDRIP_RX_BODY		= 0x03
+
+; VT100-style terminal readiness recognizer.
+; Expected raw bytes from proxy:
+;   ESC [ ? 1 ; 0 c
+; Optional accepted variant:
+;   ESC [ ? 1 ; 2 c
+VDRIP_READY_WAIT_ESC	= 0x00
+VDRIP_READY_WAIT_LBRACKET = 0x01
+VDRIP_READY_WAIT_QMARK	= 0x02
+VDRIP_READY_WAIT_1	= 0x03
+VDRIP_READY_WAIT_SEMI	= 0x04
+VDRIP_READY_WAIT_MODE	= 0x05
+VDRIP_READY_WAIT_C	= 0x06
 
 ; Terminal parser states (for ANSI/VT-100 output processing).
 TERM_STATE_NORMAL	= 0x00
@@ -232,30 +246,31 @@ vdrip_console_driver:
 ; Purpose:
 ;   Initialize the Virtual Drip console backend selected by cbios_console.asm.
 ;   Clears driver-owned parser/FIFO/display state, registers vdrip_rx_sink for
-;   SIO_CH_CONSOLE, enables SIO RX interrupts, waits for proxy READY on cold
-;   boot, initializes the remote VDP/Text80 state, and enters interactive mode.
+;   SIO_CH_CONSOLE, enables SIO RX interrupts, waits for raw VT100-style terminal
+;   readiness bytes, initializes the remote VDP/Text80 state, and enters
+;   interactive mode.
 ;
 ; Inputs:
 ;   None.
 ; Outputs:
-;   Virtual Drip console state initialized; proxy READY has been observed on
-;   cold boot; SIO0/B RTS asserted for normal input.
+;   Virtual Drip console state initialized; terminal readiness has been observed;
+;   SIO0/B RTS asserted for normal input.
 ; Preserved registers:
 ;   None promised. Called during BOOT/WBOOT setup.
 ; Clobbers:
 ;   AF, BC, DE, HL.
 ; Blocking behavior:
-;   Blocks during the cold-boot proxy READY handshake and during serial TX.
+;   Blocks during the terminal readiness handshake and during serial TX.
 ; VDrip traffic:
 ;   Emits RESET, PING, VDP register/font/clear packets, cursor commands, and a
 ;   FRAME_MARK after the proxy is ready.
 ; sio_rx_kick:
-;   The READY handshake uses sio_rx_kick as a startup-only fallback while normal
-;   interrupt-fed input is being established.
+;   Not used here. The readiness bytes are received by the normal SIO RX
+;   interrupt path and consumed by vdrip_terminal_ready_parse_byte.
 ;
 ; Startup sequence:
 ;   1. Release RTS, init RX, register sink, enable interrupts.
-;   2. Assert RTS and wait for PACKET_PROXY_READY from the proxy.
+;   2. Assert RTS and wait for raw ESC [ ? 1 ; 0 c from the proxy.
 ;   3. Once ready, release RTS and send RESET/PING/VDP init/font/cursor.
 ;   4. Assert RTS and enter normal interactive mode.
 ;
@@ -276,20 +291,24 @@ vdrip_console_init:
 	xor a
 	ld (vdrip_rx_rts_released),a
 
-	; Proxy READY handshake — skip on warm boot, the proxy
-	; is already connected and will not send another READY.
+	; Terminal readiness handshake — skip on warm boot.
 	ld a,(vdrip_handshake_done)
 	or a
 	jr nz,vdrip_init_skip_handshake
 
-	; Cold boot: wait for proxy to signal readiness.
-	call vdrip_wait_for_proxy_ready
+	call vdrip_wait_for_terminal_ready
 	ld a,#0x01
 	ld (vdrip_handshake_done),a
 
 vdrip_init_skip_handshake:
+	; Warm boot — readiness was already confirmed; restore the flag
+	; that vdrip_rx_init just zeroed so vdrip_rx_sink routes bytes
+	; to textq instead of the readiness parser.
+	ld a,#0x01
+	ld (vdrip_terminal_ready_flag),a
+
 	; Release RTS and begin VDP initialization.
-	call vdrip_rts_release_raw
+		call vdrip_rts_release_raw
 	ld a,#0x01
 	ld (vdrip_rx_rts_released),a
 
@@ -353,6 +372,8 @@ vdrip_init_skip_handshake:
 
 vdrip_console_const:
 	push hl
+	ld a,#SIO_CH_CONSOLE
+	call sio_rx_kick
 	ld a,(textq_count)
 	or a
 	jr z,vdrip_console_const_empty
@@ -380,7 +401,7 @@ vdrip_console_const_empty:
 ;   AF.
 ; Blocking behavior:
 ;   Blocks until textq_count is nonzero. It does not interpret bytes while
-;   waiting; it waits for the SIO RX sink / parser to enqueue input.
+;   waiting; it waits for the SIO RX sink to enqueue raw input.
 ; VDrip traffic:
 ;   May assert RTS after dequeue if textq has drained to the low-water mark.
 ;   Does not emit VDP traffic.
@@ -402,6 +423,8 @@ vdrip_console_conin:
 	push de
 	push hl
 vdrip_console_conin_wait:
+	ld a,#SIO_CH_CONSOLE
+	call sio_rx_kick
 	ld a,(textq_count)
 	or a
 	jr z,vdrip_console_conin_wait
@@ -546,44 +569,38 @@ vdrip_tx_pace_loop:
 
 
 ; ===========================================================================
-; Proxy readiness handshake
+; Terminal readiness handshake
 ; ===========================================================================
 ;
-; Poll RX and wait for PACKET_PROXY_READY (0x0a) from the host before
-; allowing any Virtual Drip output traffic.
+; Wait for the proxy to send a raw VT100-style Device Attributes response before
+; allowing any Virtual Drip output traffic:
+;
+;   ESC [ ? 1 ; 0 c
+;
+; The readiness bytes are raw input bytes handled by vdrip_rx_sink and consumed
+; by vdrip_terminal_ready_parse_byte. They are not enqueued into textq.
 ;
 ; Must be called after RX is initialized, sink registered, interrupts
-; enabled, and RTS asserted so the proxy can send the ready packet.
+; enabled, and RTS asserted so the proxy can send the readiness bytes.
 
-vdrip_wait_for_proxy_ready:
-	; Clear flag before waiting.
-	xor a
-	ld (vdrip_proxy_ready_flag),a
-
-	; During the one-time init handshake, poll the SIO directly.
-	; The ISR-fed parser takes over for normal operation afterward.
-vdrip_wait_for_proxy_ready_loop:
-	; Handshake-only fallback: poll SIO into the registered sink.
-	ld b,#0x04
-vdrip_wait_kick:
-	push bc
+vdrip_wait_for_terminal_ready:
+vdrip_wait_for_terminal_ready_loop:
+	; Kick SIO to move available bytes through the ISR path.
 	ld a,#SIO_CH_CONSOLE
 	call sio_rx_kick
-	pop bc
-	djnz vdrip_wait_kick
 
-	ld a,(vdrip_proxy_ready_flag)
+	ld a,(vdrip_terminal_ready_flag)
 	or a
-	jr z,vdrip_wait_for_proxy_ready_loop
+	jr z,vdrip_wait_for_terminal_ready_loop
 	ret
 
 
 ; ===========================================================================
-; SIO RX ring and BIOS helper integration
+; SIO RX integration
 ; ===========================================================================
 
 vdrip_rx_init:
-	xor a
+		xor a
 	ld (vdrip_parse_state),a
 	ld (vdrip_parse_len_store),a
 	ld (vdrip_parse_remaining),a
@@ -598,8 +615,8 @@ vdrip_rx_init:
 	ld (key_echo_count),a
 	ld (rts_release_count),a
 	ld (rts_assert_count),a
-	ld (vdrip_proxy_ready_flag),a
-	ld (proxy_ready_count),a
+		ld (vdrip_terminal_ready_flag),a
+		ld (vdrip_terminal_ready_state),a
 	ld (esc_press_count),a
 	ld (text_view_col),a
 	ld (term_state),a
@@ -632,7 +649,7 @@ vdrip_register_rx_sink:
 ;
 ; Called from:
 ;   - sio_core_isr, the real interrupt-fed RX path.
-;   - sio_rx_kick, the foreground polling/fallback path.
+;   - sio_rx_kick, if a foreground caller explicitly invokes that fallback.
 ;
 ; Inputs from SIO core:
 ;   A = SIO channel id.
@@ -645,29 +662,173 @@ vdrip_register_rx_sink:
 ; VDrip traffic:
 ;   Must not emit VDP or cursor traffic. This routine can run inside the SIO ISR.
 ; Behavior:
-;   Only SIO_CH_CONSOLE bytes are accepted. The byte in C is fed to the VDrip RX
-;   parser. Complete PACKET_TERMINAL_INPUT payload bytes are enqueued into textq.
+;   Only SIO_CH_CONSOLE bytes are accepted. Before terminal readiness, bytes feed
+;   the tiny readiness recognizer. After readiness, every received byte is
+;   enqueued unchanged into textq. The old framed PACKET_TERMINAL_INPUT parser is
+;   not active in the keyboard input path.
 vdrip_rx_sink:
-	; ISR-safe entry: feed received byte directly into the packet
-	; parser.  Complete keyboard packets enqueue bytes into textq
-	; (the CONIN FIFO) without any foreground polling or ring
-	; buffering.
-	push af
-	push bc
-	push de
+		; ISR-safe entry: consume startup readiness bytes until ready, then enqueue
+		; every byte unchanged into textq.
+		push af
+		push bc
+		push de
 	push hl
 
-	cp #SIO_CH_CONSOLE
-	jr nz,vdrip_rx_sink_done
+		cp #SIO_CH_CONSOLE
+		jr nz,vdrip_rx_sink_done
 
-	ld a,c
-	call vdrip_parse_rx_byte
+		ld a,(vdrip_terminal_ready_flag)
+		or a
+		jr z,vdrip_rx_sink_ready_byte
+
+		ld a,c
+		call textq_put_ascii
+		jr vdrip_rx_sink_done
+
+vdrip_rx_sink_ready_byte:
+		ld a,c
+		call vdrip_terminal_ready_parse_byte
 
 vdrip_rx_sink_done:
 	pop hl
 	pop de
 	pop bc
 	pop af
+	ret
+
+
+; ---------------------------------------------------------------------------
+; vdrip_terminal_ready_parse_byte
+;
+; Tiny boot-time recognizer for raw VT100-style readiness:
+;   ESC [ ? 1 ; 0 c
+;
+; Also accepts:
+;   ESC [ ? 1 ; 2 c
+;
+; This is not a general input parser. It only runs while
+; vdrip_terminal_ready_flag is zero. The recognized readiness bytes are consumed
+; and never enqueued into textq. After the flag is set, vdrip_rx_sink bypasses
+; this recognizer and enqueues all received bytes unchanged.
+;
+; Input:
+;   A = received raw byte.
+; Output:
+;   vdrip_terminal_ready_flag set to 1 when readiness is recognized.
+; Clobbers:
+;   AF, C.
+; ---------------------------------------------------------------------------
+
+vdrip_terminal_ready_parse_byte:
+	ld c,a
+
+	ld a,(vdrip_terminal_ready_state)
+	cp #VDRIP_READY_WAIT_ESC
+	jr z,vdrip_ready_wait_esc
+	cp #VDRIP_READY_WAIT_LBRACKET
+	jr z,vdrip_ready_wait_lbracket
+	cp #VDRIP_READY_WAIT_QMARK
+	jr z,vdrip_ready_wait_qmark
+	cp #VDRIP_READY_WAIT_1
+	jr z,vdrip_ready_wait_1
+	cp #VDRIP_READY_WAIT_SEMI
+	jr z,vdrip_ready_wait_semi
+	cp #VDRIP_READY_WAIT_MODE
+	jr z,vdrip_ready_wait_mode
+	cp #VDRIP_READY_WAIT_C
+	jr z,vdrip_ready_wait_c
+
+	xor a
+	ld (vdrip_terminal_ready_state),a
+	ret
+
+vdrip_ready_wait_esc:
+	ld a,c
+	cp #0x1b
+	ret nz
+	ld a,#VDRIP_READY_WAIT_LBRACKET
+	ld (vdrip_terminal_ready_state),a
+	ret
+
+vdrip_ready_wait_lbracket:
+	ld a,c
+	cp #'[
+	jr z,vdrip_ready_advance_qmark
+	jr vdrip_ready_restart
+
+vdrip_ready_advance_qmark:
+	ld a,#VDRIP_READY_WAIT_QMARK
+	ld (vdrip_terminal_ready_state),a
+	ret
+
+vdrip_ready_wait_qmark:
+	ld a,c
+	cp #'?
+	jr z,vdrip_ready_advance_1
+	jr vdrip_ready_restart
+
+vdrip_ready_advance_1:
+	ld a,#VDRIP_READY_WAIT_1
+	ld (vdrip_terminal_ready_state),a
+	ret
+
+vdrip_ready_wait_1:
+	ld a,c
+	cp #'1
+	jr z,vdrip_ready_advance_semi
+	jr vdrip_ready_restart
+
+vdrip_ready_advance_semi:
+	ld a,#VDRIP_READY_WAIT_SEMI
+	ld (vdrip_terminal_ready_state),a
+	ret
+
+vdrip_ready_wait_semi:
+	ld a,c
+	cp #';
+	jr z,vdrip_ready_advance_mode
+	jr vdrip_ready_restart
+
+vdrip_ready_advance_mode:
+	ld a,#VDRIP_READY_WAIT_MODE
+	ld (vdrip_terminal_ready_state),a
+	ret
+
+vdrip_ready_wait_mode:
+	ld a,c
+	cp #'0
+	jr z,vdrip_ready_advance_c
+	cp #'2
+	jr z,vdrip_ready_advance_c
+	jr vdrip_ready_restart
+
+vdrip_ready_advance_c:
+	ld a,#VDRIP_READY_WAIT_C
+	ld (vdrip_terminal_ready_state),a
+	ret
+
+vdrip_ready_wait_c:
+	ld a,c
+	cp #'c
+	jr z,vdrip_ready_complete
+	jr vdrip_ready_restart
+
+vdrip_ready_complete:
+	ld a,#0x01
+	ld (vdrip_terminal_ready_flag),a
+	ret
+
+vdrip_ready_restart:
+	ld a,c
+	cp #0x1b
+	jr z,vdrip_ready_restart_after_esc
+	xor a
+	ld (vdrip_terminal_ready_state),a
+	ret
+
+vdrip_ready_restart_after_esc:
+	ld a,#VDRIP_READY_WAIT_LBRACKET
+	ld (vdrip_terminal_ready_state),a
 	ret
 
 
@@ -723,8 +884,17 @@ vdrip_rts_release_raw:
 
 
 ; ===========================================================================
-; Virtual Drip packet transport — RX parser
+; Obsolete proxy-to-Z80 framed input parser
 ; ===========================================================================
+;
+; This code is no longer active in the keyboard input path. Proxy-to-Z80
+; keyboard input is raw terminal bytes after the VT100-style readiness response,
+; and vdrip_rx_sink does not call vdrip_parse_rx_byte. The framed packet sender
+; below remains active for Z80-to-proxy display/control output.
+;
+; The old parser is left here temporarily to keep the diff focused while the
+; input protocol changes. Do not reintroduce PACKET_TERMINAL_INPUT as a normal
+; keyboard input path.
 ;
 ; State machine:
 ;
@@ -761,9 +931,9 @@ vdrip_rts_release_raw:
 ;   CRC covers LEN, TYPE, and PAYLOAD. It does not include A5/5A sync bytes and
 ;   does not include the received CRC byte itself.
 ;
-; BIOS-consumed packet types:
-;   PACKET_PROXY_READY sets vdrip_proxy_ready_flag and is not enqueued.
-;   PACKET_TERMINAL_INPUT enqueues raw payload bytes into textq.
+; Obsolete BIOS-consumed proxy-to-Z80 packet types:
+;   PACKET_PROXY_READY used to set a framed ready flag.
+;   PACKET_TERMINAL_INPUT used to enqueue payload bytes into textq.
 ;
 ; Other packet types:
 ;   Valid packets with unhandled types are ignored after CRC validation.
@@ -771,15 +941,10 @@ vdrip_rts_release_raw:
 ; CRC failure:
 ;   crc_fail_count is incremented and the parser resets to WAIT_SYNC0.
 ;
-; ISR rule:
-;   This parser is called from vdrip_rx_sink and may therefore run in ISR
-;   context. It must not emit VDP/display traffic, call CONOUT, block on serial
-;   TX, redraw the screen, or touch CP/M/BDOS state directly.
-;
-; vdrip_parse_rx_byte is called from the SIO RX sink (ISR context).
-; It is ISR-safe: updates only parser state, runs CRC over small
-; packets, and enqueues terminal payload bytes into textq.  It does
-; not emit VDP traffic, call CONOUT, or block.
+; Historical ISR rule:
+;   This parser used to be called from vdrip_rx_sink. If this code is ever
+;   repurposed, it still must not emit VDP/display traffic, call CONOUT, block on
+;   serial TX, redraw the screen, or touch CP/M/BDOS state directly.
 
 vdrip_parse_rx_byte:
 	ld c,a
@@ -897,13 +1062,11 @@ vdrip_parse_body_done:
 
 
 vdrip_handle_proxy_ready:
-	; Set the ready flag and count. Do NOT enqueue into input queue.
-	ld a,#0x01
-	ld (vdrip_proxy_ready_flag),a
-	ld a,(proxy_ready_count)
-	inc a
-	ld (proxy_ready_count),a
-	jr vdrip_parse_reset
+		; Obsolete framed READY path. This parser is inactive for keyboard input,
+		; but if reached accidentally, do not enqueue the packet.
+		ld a,#0x01
+		ld (vdrip_terminal_ready_flag),a
+		jr vdrip_parse_reset
 
 
 vdrip_packet_crc_valid:
@@ -932,13 +1095,12 @@ vdrip_parse_reset:
 
 
 ; ===========================================================================
-; Terminal input packet handling
+; Obsolete terminal input packet handling
 ; ===========================================================================
 ;
 ; PACKET_TERMINAL_INPUT / keyboard input packets
-;   -> Enqueue payload bytes into the console input queue only.
-;   Does NOT directly move the screen cursor or draw characters.
-;   That is the job of CONOUT after the CP/M caller reads the byte.
+;   This is no longer active for keyboard input. Raw terminal bytes now bypass
+;   the framed packet parser and enqueue directly from vdrip_rx_sink.
 ;
 ; Payload semantics:
 ;   Payload bytes are raw terminal input bytes. The input path does not translate
@@ -1626,9 +1788,8 @@ text_clear_line:
 ;
 ; FIFO ownership:
 ;   Producer:
-;     vdrip_parse_apply_terminal_input calls textq_put_ascii after a complete
-;     PACKET_TERMINAL_INPUT frame passes CRC validation. The producer may be
-;     running from vdrip_rx_sink in the SIO ISR path.
+;     vdrip_rx_sink calls textq_put_ascii directly after terminal readiness.
+;     The producer may be running in the SIO ISR path.
 ;
 ;   Consumer:
 ;     vdrip_console_conin runs in CP/M foreground code. It removes the oldest
@@ -2709,10 +2870,24 @@ block_count_store:
 vdrip_rx_rts_released:
 	.db 0x00
 
+; Raw terminal readiness state.
+; vdrip_terminal_ready_flag is set after ESC [ ? 1 ; 0 c or ESC [ ? 1 ; 2 c.
+; vdrip_terminal_ready_state tracks the byte-by-byte recognizer while the flag
+; is still zero. These replace the old framed PACKET_PROXY_READY dependency.
+vdrip_terminal_ready_flag:
+	.db 0x00
+
+vdrip_terminal_ready_state:
+	.db VDRIP_READY_WAIT_ESC
+
+; Set after first successful terminal readiness handshake; survives warm boot.
+vdrip_handshake_done:
+	.db 0x00
+
 ; VDrip RX parser state.
 ; vdrip_packet_body contains LEN at +0, TYPE at +1, then payload bytes and the
-; received CRC byte as they arrive. Parser state is updated by vdrip_parse_rx_byte
-; and must remain valid across individual SIO RX bytes.
+; received CRC byte as they arrive. This parser state is obsolete for keyboard
+; input and is not touched by vdrip_rx_sink in raw-input mode.
 vdrip_parse_state:
 	.db VDRIP_RX_WAIT_SYNC0
 
@@ -2787,8 +2962,8 @@ vdp_addr_next:
 vdp_addr_valid:
 	.db 0x00
 
-; Terminal-input packet payload iterator.
-; Used while copying a validated PACKET_TERMINAL_INPUT payload into textq.
+; Obsolete terminal-input packet payload iterator.
+; Used only by the inactive PACKET_TERMINAL_INPUT helper.
 terminal_payload_ptr:
 	.dw 0x0000
 
@@ -2817,18 +2992,7 @@ rts_release_count:
 rts_assert_count:
 	.db 0x00
 
-; Proxy readiness handshake state.
-; vdrip_proxy_ready_flag is set by PACKET_PROXY_READY. vdrip_handshake_done
-; survives warm boot so the driver does not wait for a second READY packet from
-; an already-connected proxy.
-vdrip_proxy_ready_flag:
-	.db 0x00
-proxy_ready_count:
-	.db 0x00
-
-; Set after first successful proxy handshake; survives warm boot.
-vdrip_handshake_done:
-	.db 0x00
+; Obsolete framed-input readiness storage was removed from the active path.
 
 ; Triple-Esc VDP reset counter.
 esc_press_count:

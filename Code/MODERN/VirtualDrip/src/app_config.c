@@ -20,8 +20,9 @@ void print_usage(const char *program_name)
     fprintf(stderr, "  --vnc-port: VNC TCP port, default %d\n", DEFAULT_VNC_PORT);
     fprintf(stderr, "  --no-vnc, --headless: disable VNC output\n");
     fprintf(stderr, "  --video-backend: video backend, default %s (available: tms9928, vdrip9928)\n", DEFAULT_VIDEO_BACKEND);
-    fprintf(stderr, "  --log-keys: log RFB key events, mappings, and serial terminal input packets\n");
+    fprintf(stderr, "  --log-keys: log RFB key events, mappings, and raw serial terminal input bytes\n");
     fprintf(stderr, "  --no-keyboard: disable VNC keyboard capture\n");
+    fprintf(stderr, "  --raw-terminal-input: send proxy->Z80 keyboard bytes raw (default)\n");
 }
 
 static bool parse_int_range(const char *text, int min_value, int max_value, int *result)
@@ -46,6 +47,7 @@ bool parse_args(int argc, char **argv, AppConfig *config)
     config->no_vnc = false;
     config->keyboard_enabled = true;
     config->log_keys = false;
+    config->raw_terminal_input = true;
     config->video_backend = DEFAULT_VIDEO_BACKEND;
 
     for (int index = 1; index < argc; ++index) {
@@ -61,6 +63,10 @@ bool parse_args(int argc, char **argv, AppConfig *config)
         }
         if (strcmp(arg, "--no-keyboard") == 0) {
             config->keyboard_enabled = false;
+            continue;
+        }
+        if (strcmp(arg, "--raw-terminal-input") == 0) {
+            config->raw_terminal_input = true;
             continue;
         }
         if (strcmp(arg, "--no-vnc") == 0 || strcmp(arg, "--headless") == 0) {
