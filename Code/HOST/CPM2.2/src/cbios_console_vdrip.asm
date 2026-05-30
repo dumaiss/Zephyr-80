@@ -112,6 +112,20 @@ TERM_STATE_NORMAL	= 0x00
 TERM_STATE_ESC		= 0x01
 TERM_STATE_CSI		= 0x02
 
+; ANSI CSI final command bytes.
+CSI_CUU			= 'A	; cursor up
+CSI_CUD			= 'B	; cursor down
+CSI_CUF			= 'C	; cursor forward / right
+CSI_CUB			= 'D	; cursor back / left
+CSI_CUP			= 'H	; cursor position
+CSI_CUP_ALT		= 'f	; cursor position (alternate)
+CSI_ED			= 'J	; erase in display
+CSI_EL			= 'K	; erase in line
+CSI_SGR			= 'm	; select graphic rendition
+
+; ANSI maximum parameter count.
+CSI_MAX_PARAMS		= 2
+
 ; Receive ring.
 VDRIP_RX_BUFFER_SIZE	= 0x40
 VDRIP_RX_BUFFER_MASK	= VDRIP_RX_BUFFER_SIZE - 1
@@ -834,19 +848,24 @@ vdrip_terminal_enqueue_loop:
 ;
 ; term_process_byte interprets a single byte and renders it to the VDP
 ; text display.  Supports printable characters, CR/LF, backspace, tab,
-; and minimal ANSI/CSI cursor movement.  CP/M handles its own line
-; editing; this layer translates control codes into screen operations.
+; and ANSI/CSI sequences with numeric parameters needed by Turbo Pascal
+; and similar CP/M programs.
+;
+; Output parser states:
+;   NORMAL -> ESC (on 0x1b) -> CSI (on '[')
+; CSI accumulates digits and ';' separators, dispatches on final byte.
 
 term_process_byte:
 	ld c,a
 
 	ld a,(term_state)
 	cp #TERM_STATE_ESC
-	jr z,term_process_esc
+	jp z,term_process_esc
 
 	cp #TERM_STATE_CSI
-	jr z,term_process_csi
+	jp z,term_process_csi
 
+	; ---- NORMAL state ----
 	ld a,c
 	cp #0x1b
 	jr z,term_enter_esc
@@ -863,9 +882,6 @@ term_process_byte:
 	cp #0x09
 	jp z,term_tab
 
-	; CR returns carriage to column 0.  LF advances to next row.
-	; CP/M sends CR+LF as a pair; treating both as full newlines
-	; would double-space every line.
 	cp #0x0d
 	jp z,term_cr
 
@@ -877,7 +893,12 @@ term_process_byte:
 	cp #0x7f
 	ret nc
 
-	jr text_put_printable
+	jp text_put_printable
+
+
+; ---------------------------------------------------------------------------
+; ESC state
+; ---------------------------------------------------------------------------
 
 term_enter_esc:
 	; Increment the triple-Esc counter.
@@ -895,55 +916,315 @@ term_process_esc:
 	xor a
 	ld (term_state),a
 
-	; If this is another Esc (while in ESC state), count it.
+	; Another Esc while in ESC state — count it.
 	ld a,c
 	cp #0x1b
 	jr z,term_enter_esc
 
-	; Non-ESC byte while in ESC state — reset the triple-Esc counter.
+	; Non-ESC byte — reset triple-Esc counter.
 	push af
 	xor a
 	ld (esc_press_count),a
 	pop af
 
 	cp #'[
-	ret nz
+	jr nz,term_esc_done
 
+	; Enter CSI — reset parser variables.
 	ld a,#TERM_STATE_CSI
 	ld (term_state),a
+
+	xor a
+	ld (csi_param0),a
+	ld (csi_param1),a
+	ld (csi_param_count),a
+	ld (csi_accum),a
+	ld (csi_have_digit),a
+term_esc_done:
 	ret
 
+
+; ---------------------------------------------------------------------------
+; CSI parser state
+; ---------------------------------------------------------------------------
+
 term_process_csi:
+	ld a,c
+
+	; Digit '0'..'9' — accumulate.
+	cp #'0
+	jr c,term_csi_not_digit
+	cp #'9+1
+	jr nc,term_csi_not_digit
+
+	sub #'0
+	ld e,a
+
+	ld a,(csi_accum)
+	add a,a		; *2
+	ld d,a
+	add a,a		; *4
+	add a,a		; *8
+	add a,d		; *10
+	add a,e
+	ld (csi_accum),a
+
+	ld a,#1
+	ld (csi_have_digit),a
+	ret
+
+term_csi_not_digit:
+	; Semicolon — advance to next param slot.
+	cp #';
+	jr nz,term_csi_final
+
+	call ansi_store_param
+	ret
+
+term_csi_final:
+	; Final command byte — store any pending param, then dispatch.
+	call ansi_store_param
+
+	; Reset state and triple-Esc counter.
 	xor a
 	ld (term_state),a
+	ld (esc_press_count),a
 
-	; Any CSI-terminating byte resets the triple-Esc counter.
-	push af
+	push af		; save command byte
 	xor a
 	ld (esc_press_count),a
 	pop af
 
-	ld a,c
-	cp #'A
-	jp z,term_cursor_up
-
-	cp #'B
-	jp z,term_cursor_down
-
-	cp #'C
-	jp z,term_cursor_right
-
-	cp #'D
-	jp z,term_cursor_left
-
-	cp #'H
-	jp z,term_cursor_home
-
-	cp #'F
-	jp z,term_cursor_end
-
-	; Unsupported CSI, including ESC [ 3 ~ delete, is ignored.
+	call ansi_dispatch_csi
 	ret
+
+
+; ---------------------------------------------------------------------------
+; ANSI helpers
+; ---------------------------------------------------------------------------
+
+; Store csi_accum into the current param slot (0-based index in
+; csi_param_count).  Advance csi_param_count, capped at CSI_MAX_PARAMS.
+; Clears csi_accum and csi_have_digit.
+ansi_store_param:
+	ld a,(csi_have_digit)
+	or a
+	jr z,ansi_store_param_reset
+
+	ld a,(csi_param_count)
+	cp #CSI_MAX_PARAMS
+	jr nc,ansi_store_param_reset
+
+	; Select slot: 0 -> csi_param0, 1 -> csi_param1.
+	ld a,(csi_accum)
+	push af
+	ld a,(csi_param_count)
+	or a
+	jr nz,ansi_store_slot1
+
+	pop af
+	ld (csi_param0),a
+	jr ansi_store_inc
+
+ansi_store_slot1:
+	pop af
+	ld (csi_param1),a
+
+ansi_store_inc:
+	ld a,(csi_param_count)
+	inc a
+	ld (csi_param_count),a
+
+ansi_store_param_reset:
+	xor a
+	ld (csi_accum),a
+	ld (csi_have_digit),a
+	ret
+
+
+; Return param0, default 1 if count == 0.
+; Output: A = param value (at least 1).
+ansi_param0_default_1:
+	ld a,(csi_param_count)
+	or a
+	jr z,ansi_pd1_ret1
+	ld a,(csi_param0)
+	ret
+ansi_pd1_ret1:
+	ld a,#1
+	ret
+
+; Return param1, default 1 if count < 2.
+; Output: A = param value (at least 1).
+ansi_param1_default_1:
+	ld a,(csi_param_count)
+	cp #2
+	jr c,ansi_pd1_ret1
+	ld a,(csi_param1)
+	ret
+
+
+; ---------------------------------------------------------------------------
+; CSI dispatch
+; ---------------------------------------------------------------------------
+
+ansi_dispatch_csi:
+	ld c,a		; C = final command byte
+
+	ld a,c
+	cp #CSI_CUU
+	jp z,ansi_cuu
+
+	cp #CSI_CUD
+	jp z,ansi_cud
+
+	cp #CSI_CUF
+	jp z,ansi_cuf
+
+	cp #CSI_CUB
+	jp z,ansi_cub
+
+	cp #CSI_CUP
+	jp z,ansi_cup
+
+	cp #CSI_CUP_ALT
+	jp z,ansi_cup
+
+	cp #CSI_ED
+	jp z,ansi_ed
+
+	cp #CSI_EL
+	jp z,ansi_el
+
+	cp #CSI_SGR
+	jp z,ansi_sgr		; consume and ignore
+
+	; Unsupported CSI — ignore.
+	ret
+
+
+; ---- CSI CUP / CUF / CUB / CUU / CUD ----
+
+ansi_cuu:
+	call ansi_param0_default_1	; A = n
+	ld b,a
+ansi_cuu_loop:
+	push bc
+	call term_cursor_up
+	pop bc
+	djnz ansi_cuu_loop
+	ret
+
+ansi_cud:
+	call ansi_param0_default_1
+	ld b,a
+ansi_cud_loop:
+	push bc
+	call term_cursor_down
+	pop bc
+	djnz ansi_cud_loop
+	ret
+
+ansi_cuf:
+	call ansi_param0_default_1
+	ld b,a
+ansi_cuf_loop:
+	push bc
+	call term_cursor_right
+	pop bc
+	djnz ansi_cuf_loop
+	ret
+
+ansi_cub:
+	call ansi_param0_default_1
+	ld b,a
+ansi_cub_loop:
+	push bc
+	call term_cursor_left
+	pop bc
+	djnz ansi_cub_loop
+	ret
+
+
+; ---- CSI CUP: cursor position (row;col H  or  row;col f) ----
+
+ansi_cup:
+	call ansi_param0_default_1	; A = row (1-based)
+	dec a
+	jr nc,ansi_cup_row_ok
+	xor a
+ansi_cup_row_ok:
+	cp #TEXT_ROWS
+	jr c,ansi_cup_row_clamped
+	ld a,#(TEXT_ROWS - 1)
+ansi_cup_row_clamped:
+	ld (text_row),a
+
+	call ansi_param1_default_1	; A = col (1-based)
+	dec a
+	jr nc,ansi_cup_col_ok
+	xor a
+ansi_cup_col_ok:
+	cp #TEXT_LOG_COLUMNS
+	jr c,ansi_cup_col_clamped
+	ld a,#(TEXT_LOG_COLUMNS - 1)
+ansi_cup_col_clamped:
+	ld (text_col),a
+
+	call text_ensure_cursor_visible
+	call vdrip_cursor_set_position_current
+	ret
+
+
+; ---- CSI ED: erase in display ----
+
+ansi_ed:
+	; param0 == 2: clear entire screen.
+	ld a,(csi_param_count)
+	or a
+	jr z,ansi_ed_done		; no param -> ignore
+
+	ld a,(csi_param0)
+	cp #2
+	jr nz,ansi_ed_done		; only support ESC [ 2 J
+
+	call text_clear_screen_runtime
+ansi_ed_done:
+	ret
+
+
+; ---- CSI EL: erase in line ----
+
+ansi_el:
+	; param0 == 0 or missing: clear to end of line.
+	; param0 == 2: clear whole line.
+	ld a,(csi_param_count)
+	or a
+	jr z,ansi_el_to_eol		; default: clear to EOL
+
+	ld a,(csi_param0)
+	cp #2
+	jr z,ansi_el_whole_line
+
+ansi_el_to_eol:
+	call text_clear_to_eol
+	ret
+
+ansi_el_whole_line:
+	call text_clear_line
+	ret
+
+
+; ---- CSI SGR: select graphic rendition (consume and ignore) ----
+
+ansi_sgr:
+	; All SGR parameters are consumed — nothing rendered.
+	ret
+
+
+; ===========================================================================
+; Terminal action helpers
+; ===========================================================================
 
 text_put_printable:
 	; Input: A = printable ASCII
@@ -1042,8 +1323,6 @@ term_cursor_right:
 	ret
 
 term_cursor_home:
-	; Home to row 0, col 0.  Let ensure_cursor_visible handle the
-	; viewport reset and redraw.
 	xor a
 	ld (text_col),a
 	ld (text_row),a
@@ -1052,11 +1331,117 @@ term_cursor_home:
 	ret
 
 term_cursor_end:
-	; End of logical line.
 	ld a,#(TEXT_LOG_COLUMNS - 1)
 	ld (text_col),a
 	call text_ensure_cursor_visible
 	call vdrip_cursor_set_position_current
+	ret
+
+
+; ---------------------------------------------------------------------------
+; text_clear_screen_runtime — clear screen at runtime (for ESC [ 2 J)
+;
+; Clears shadow buffer and VDP name table. Resets cursor to 0,0.
+; RTS must be released before calling. Sends FRAME_MARK after.
+; ---------------------------------------------------------------------------
+
+text_clear_screen_runtime:
+	; Clear VDP name table.
+	ld hl,#NAME_TABLE
+	call vdp_set_vram_write_addr
+
+	ld bc,#TEXT_PHYS_CELLS
+text_clear_runtime_vdp_loop:
+	ld a,#0x20
+	call vdp_write_data_byte
+	dec bc
+	ld a,b
+	or c
+	jr nz,text_clear_runtime_vdp_loop
+
+	; Clear shadow buffer.
+	ld hl,#text_shadow
+	ld bc,#TEXT_SHADOW_SIZE
+text_clear_runtime_shadow_loop:
+	ld (hl),#0x20
+	inc hl
+	dec bc
+	ld a,b
+	or c
+	jr nz,text_clear_runtime_shadow_loop
+
+	; Reset cursor and viewport.
+	xor a
+	ld (text_col),a
+	ld (text_row),a
+	ld (text_view_col),a
+
+	call vdrip_send_frame_mark
+	ret
+
+
+; ---------------------------------------------------------------------------
+; text_clear_to_eol — clear from cursor to end of logical line (ESC [ K)
+; ---------------------------------------------------------------------------
+
+text_clear_to_eol:
+	; Compute VDP address of cursor.
+	call text_cursor_to_vram
+
+	; Write spaces from cursor to end of physical row.
+	ld a,(text_col)
+	ld e,a
+	ld a,#TEXT_LOG_COLUMNS
+	sub e			; A = columns remaining
+	jr z,text_clear_to_eol_done
+	ld b,a
+
+text_clear_to_eol_vdp_loop:
+	ld a,#0x20
+	call vdp_write_data_byte
+	call vdrip_tx_pace
+	djnz text_clear_to_eol_vdp_loop
+
+text_clear_to_eol_done:
+	; Clear corresponding shadow buffer bytes.
+	ld a,(text_col)
+	ld e,a
+	ld a,#TEXT_LOG_COLUMNS
+	sub e
+	jr z,text_clear_to_eol_shadow_done
+	ld b,a
+
+	push bc
+	call text_shadow_addr_current	; HL = shadow addr for cursor
+	pop bc
+
+text_clear_to_eol_shadow_loop:
+	ld (hl),#0x20
+	inc hl
+	djnz text_clear_to_eol_shadow_loop
+	ret
+
+text_clear_to_eol_shadow_done:
+	ret
+
+
+; ---------------------------------------------------------------------------
+; text_clear_line — clear entire current logical line (ESC [ 2 K)
+; ---------------------------------------------------------------------------
+
+text_clear_line:
+	; Save current cursor column.
+	ld a,(text_col)
+	push af
+
+	; Move to column 0 on same row and clear to EOL.
+	xor a
+	ld (text_col),a
+	call text_clear_to_eol
+
+	; Restore cursor column.
+	pop af
+	ld (text_col),a
 	ret
 
 
@@ -2102,6 +2487,18 @@ text_shadow:
 
 term_state:
 	.db TERM_STATE_NORMAL
+
+; ANSI/CSI parser state.
+csi_param0:
+	.db 0x00
+csi_param1:
+	.db 0x00
+csi_param_count:
+	.db 0x00
+csi_accum:
+	.db 0x00
+csi_have_digit:
+	.db 0x00
 
 terminal_payload_ptr:
 	.dw 0x0000

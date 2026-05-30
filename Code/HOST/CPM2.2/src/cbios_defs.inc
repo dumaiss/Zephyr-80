@@ -207,7 +207,7 @@ CBIOS_DRIVER_SLOT4_BASE         = 0xf000
 CBIOS_DRIVER_SLOT4_LIMIT        = CBIOS_DRIVER_SLOT4_BASE + CBIOS_DRIVER_SLOT_SIZE
 CBIOS_DRIVER_SLOT4_END          = CBIOS_DRIVER_SLOT4_LIMIT - 1
 
-CBIOS_DRIVER_SLOT5_BASE         = 0xf400
+CBIOS_DRIVER_SLOT5_BASE         = 0xf540
 CBIOS_DRIVER_SLOT5_LIMIT        = CBIOS_DRIVER_SLOT5_BASE + CBIOS_DRIVER_SLOT_SIZE
 CBIOS_DRIVER_SLOT5_END          = CBIOS_DRIVER_SLOT5_LIMIT - 1
 
@@ -228,14 +228,14 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ;
 ; These names are kept so existing source can still ORG against them.
 
-CBIOS_RAMDISK_CODE_BASE         = CBIOS_DRIVER_SLOT5_BASE              ; F400h
+CBIOS_RAMDISK_CODE_BASE         = CBIOS_DRIVER_SLOT5_BASE              ; F540h
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x0550                  ; DF50h
 
 ; Resident code region ends before scratch.
 ; LIMIT is one byte past the end.
-CBIOS_CODE_LIMIT                = 0xf800
+CBIOS_CODE_LIMIT                = CBIOS_DRIVER_SLOT5_LIMIT
 CBIOS_CODE_END                  = CBIOS_CODE_LIMIT - 1
 
 ; ------------------------------------------------------------------------------
@@ -249,19 +249,19 @@ CBIOS_CODE_END                  = CBIOS_CODE_LIMIT - 1
 ;
 ; The remaining gaps are available for later temporary BIOS work buffers.
 
-CBIOS_SCRATCH_BASE              = 0xf800
-CBIOS_SCRATCH_LIMIT             = 0xfa00
+CBIOS_SCRATCH_BASE              = CBIOS_DRIVER_SLOT5_LIMIT             ; F940h
+CBIOS_SCRATCH_LIMIT             = CBIOS_SCRATCH_BASE + 0x0200          ; FB40h
 CBIOS_SCRATCH_END               = CBIOS_SCRATCH_LIMIT - 1
 
 MOVE_BUFFER                     = CBIOS_SCRATCH_BASE
 MOVE_BUFFER_SIZE                = 0x0100
 
-RAMDISK_DIRBUF                  = CBIOS_SCRATCH_BASE + 0x0100
+RAMDISK_DIRBUF                  = CBIOS_SCRATCH_BASE + 0x0100          ; FA40h
 RAMDISK_DIRBUF_SIZE             = 0x0080
 
 ; Optional named free scratch windows.
-CBIOS_SCRATCH_FREE0             = 0xf980
-CBIOS_SCRATCH_FREE0_LIMIT       = 0xfa00
+CBIOS_SCRATCH_FREE0             = CBIOS_SCRATCH_BASE + 0x0180          ; FAC0h
+CBIOS_SCRATCH_FREE0_LIMIT       = CBIOS_SCRATCH_LIMIT                  ; FB40h
 CBIOS_SCRATCH_FREE0_SIZE        = CBIOS_SCRATCH_FREE0_LIMIT - CBIOS_SCRATCH_FREE0
 
 ; ------------------------------------------------------------------------------
@@ -286,12 +286,12 @@ CBIOS_IM2_VECTOR_END            = CBIOS_IM2_VECTOR_LIMIT - 1
 ; ------------------------------------------------------------------------------
 ; Work Areas / Runtime State
 ; ------------------------------------------------------------------------------
-; FA00h-FAFFh = persistent BIOS runtime state.
+; FB40h-FC3Fh = persistent BIOS runtime state.
 ;
 ; Keep existing public work-area names so current source keeps assembling.
 
-CBIOS_WORK_AREA                 = 0xfa00
-CBIOS_WORK_AREA_LIMIT           = 0xfb00
+CBIOS_WORK_AREA                 = CBIOS_SCRATCH_LIMIT              ; FB40h
+CBIOS_WORK_AREA_LIMIT           = CBIOS_WORK_AREA + 0x0100          ; FC40h
 CBIOS_WORK_AREA_END             = CBIOS_WORK_AREA_LIMIT - 1
 
 CBIOS_CONSOLE_WORK_AREA         = CBIOS_WORK_AREA + 0x0004
@@ -315,7 +315,7 @@ CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 ; near FFF0h stay intact when CONOUT is called during BOOT.
 ; Stack grows downward and should not cross FB00h.
 
-CBIOS_STACK_GUARD               = 0xfb00
+CBIOS_STACK_GUARD               = CBIOS_WORK_AREA_LIMIT            ; FC40h
 CBIOS_STACK_TOP                 = 0xfff0
 CBIOS_CONSOLE_STACK_TOP         = CBIOS_STACK_TOP - 0x0100
 
