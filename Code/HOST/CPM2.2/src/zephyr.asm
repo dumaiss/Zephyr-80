@@ -100,7 +100,7 @@ bdos_entry_shim:
 	.include "cbios_console.asm"
 	.include "sio_core.asm"
 	.include "cbios_iocall.asm"
-	.include "cbios_console_sio.asm"
+	.include "cbios_console_vdrip.asm"
 	.include "cbios_storage.asm"
 	.include "cbios_ramdisk.asm"
 	.include "cbios_bank.asm"

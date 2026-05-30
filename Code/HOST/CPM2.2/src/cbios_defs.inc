@@ -4,12 +4,13 @@
 ; source under cpm-2.2.
 ;
 ; ------------------------------------------------------------------------------
-; Transitional fixed-slot BIOS map, before Virtual Drip
+; Transitional fixed-slot BIOS map, with Virtual Drip
 ; ------------------------------------------------------------------------------
 ;
 ;   FFFFh ┌──────────────────────────────────────────────┐
 ;         │ BIOS stack / reserve                         │
 ;   FFF0h │   CBIOS_STACK_TOP                            │
+;   FEF0h │   CBIOS_CONSOLE_STACK_TOP                    │
 ;         │   stack grows downward                       │
 ;   FB00h ├──────────────────────────────────────────────┤
 ;   FAFFh │ Runtime state end                            │
@@ -28,26 +29,26 @@
 ;   F400h │ Driver slot 5 start: RAM disk backend        │
 ;         │                                              │
 ;   F3FFh │ Driver slot 4 end                            │
-;   F000h │ Driver slot 4 start (reserved)               │
+;   F000h │ Driver slot 4 start: Virtual Drip console    │
 ;         │                                              │
 ;   EFFFh │ Driver slot 3 end                            │
-;   EC00h │ Driver slot 3 start (reserved)               │
+;   EC00h │ Driver slot 3 start: Virtual Drip console    │
 ;         │                                              │
 ;   EBFFh │ Driver slot 2 end                            │
-;   E800h │ Driver slot 2 start (reserved)               │
+;   E800h │ Driver slot 2 start: Virtual Drip console    │
 ;         │                                              │
 ;   E7FFh │ Driver slot 1 end                            │
-;   E400h │ Driver slot 1 start: legacy SIO console      │
+;   E400h │ Driver slot 1 start: Virtual Drip console    │
 ;         │                                              │
 ;   E3FFh │ Driver slot 0 end                            │
-;   E000h │ Driver slot 0 start (reserved)               │
+;   E000h │ Driver slot 0 start: Virtual Drip console    │
 ;         ├──────────────────────────────────────────────┤
 ;   DFFFh │ Core BIOS end                                │
 ;   DF50h │   IOCALL transaction transport               │
 ;   DD10h │   SIO core + exact IM2 vector entry          │
 ;   DC00h │   banking / XMOVE / LAUNCH                   │
 ;   DBC0h │   storage facade                             │
-;   DB80h │   console facade                             │
+;   DB79h │   console facade                             │
 ;   DA00h │ CBIOS_BASE / jump table / boot / WBOOT       │
 ;         └──────────────────────────────────────────────┘
 ;
@@ -78,7 +79,7 @@ LF                              = 0x0a
 
 ; BIOS-owned SIO service channels.
 ;
-; SIO_CH_CONSOLE is SIO0/B and backs the legacy CP/M serial console.
+; SIO_CH_CONSOLE is SIO0/B and backs the CP/M console transport.
 ; SIO_CH_IOCTRL is SIO1/A and backs the BIOS-owned synchronous IO Controller
 ; link. SIO0/A and the CTC remain application-owned.
 SIO_CH_CONSOLE                  = 0x00
@@ -145,7 +146,7 @@ CBIOS_BASE                      = 0xda00
 ; Current intended packing:
 ;   DA00h  BIOS jump table
 ;   DA42h  BDOS shim / boot glue area
-;   DB80h  console facade
+;   DB79h  console facade
 ;   DBC0h  storage facade
 ;   DC00h  banking / XMOVE / LAUNCH
 ;   DD10h  SIO core
@@ -157,7 +158,7 @@ CBIOS_CORE_SIZE                 = CBIOS_CORE_LIMIT - CBIOS_CORE_BASE
 
 ; Existing public symbols kept.
 CBIOS_JUMP_TABLE                = CBIOS_BASE
-CBIOS_CONSOLE_CODE_BASE         = CBIOS_BASE + 0x0180      ; DB80h
+CBIOS_CONSOLE_CODE_BASE         = CBIOS_BASE + 0x0179      ; DB79h
 CBIOS_STORAGE_CODE_BASE         = CBIOS_BASE + 0x01c0      ; DBC0h
 
 ; Banking is core BIOS, not a driver.
@@ -222,17 +223,14 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ;   Slot 5:
 ;     F400h... current RAM disk backend
 ;
-;   Slot 1:
-;     E400h... current legacy SIO console driver
-;
-;   Slots 0, 2-4:
-;     Reserved for future Virtual Drip console driver
+;   Slots 0-4:
+;     E000h... Virtual Drip console driver (code, font, shadow, queues)
 ;
 ; These names are kept so existing source can still ORG against them.
 
 CBIOS_RAMDISK_CODE_BASE         = CBIOS_DRIVER_SLOT5_BASE              ; F400h
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
-CBIOS_CONSOLE_DRIVER_CODE_BASE  = CBIOS_DRIVER_SLOT1_BASE              ; E400h
+CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x0550                  ; DF50h
 
 ; Resident code region ends before scratch.
@@ -313,10 +311,13 @@ CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 ; FB00h-FFFFh = BIOS stack / reserve.
 ;
 ; Stack top remains FFF0h.
+; Console backend calls use a lower private top so boot-time BIOS stack frames
+; near FFF0h stay intact when CONOUT is called during BOOT.
 ; Stack grows downward and should not cross FB00h.
 
 CBIOS_STACK_GUARD               = 0xfb00
 CBIOS_STACK_TOP                 = 0xfff0
+CBIOS_CONSOLE_STACK_TOP         = CBIOS_STACK_TOP - 0x0100
 
 CBIOS_AREA_LIMIT                = 0x10000
 CBIOS_AREA_END                  = 0xffff
@@ -390,14 +391,13 @@ RESERVED_RUNTIME_STATE_END      = CBIOS_RUNTIME_STATE_END
 ; These are for external layout validation/documentation.
 ;
 ; Before Virtual Drip:
+;   Slots 0-4 contain the Virtual Drip console driver (code, font, shadow,
+;   packet buffers, and terminal input queue).
 ;   Slot 5 contains current RAM disk backend.
-;   Slots 0, 2-4 are reserved for the future Virtual Drip console driver.
-;   Slot 1 contains current legacy SIO console driver, including its IM2 table
-;   and trampoline. Logical ownership of SIO hardware, IM2, and ISR now belongs
-;   to the SIO core; the legacy console is a client in the same transitional
-;   slot.
 ;   SIO core is part of core BIOS, not a driver slot occupant.
 ;   IOCALL is part of core BIOS, not a driver slot occupant.
+;   The legacy SIO console driver (cbios_console_sio.asm) is preserved in the
+;   repository but not linked in the active VDrip-console build.
 
 LEGACY_RAMDISK_SLOT_FIRST       = 5
 LEGACY_RAMDISK_SLOT_LAST        = 5

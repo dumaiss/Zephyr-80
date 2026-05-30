@@ -120,13 +120,10 @@ IMPLEMENTATION_SYMBOLS = [
     (("IOCTRL_CODE_START",), "IOCALL transaction code start in core BIOS."),
     (("IOCALL",), "Zephyr extended BIOS IO Controller transaction call."),
     (("IOCTRL_CODE_END",), "IOCALL transaction code end."),
-    (("CONSOLE_DRIVER_CODE_START",), "Legacy SIO console client driver code start."),
-    (("sio_console_driver",), "Legacy console driver dispatch table."),
-    (("sio_console_init",), "Legacy console initialization and SIO RX sink registration."),
-    (("legacy_console_rx_sink",), "Registered SIO_CH_CONSOLE RX byte sink."),
-    (("sio_console_enable_interrupts",), "Compatibility alias for `sio_core_enable_interrupts`."),
-    (("sio_console_disable_interrupts",), "Compatibility alias for `sio_core_disable_interrupts`."),
-    (("CONSOLE_DRIVER_CODE_END",), "Legacy SIO console client driver code end."),
+    (("VDRIP_CONSOLE_CODE_START",), "Virtual Drip console driver code start."),
+    (("vdrip_console_driver",), "Virtual Drip console driver dispatch table."),
+    (("vdrip_console_init",), "Virtual Drip console init, proxy handshake, VDP setup."),
+    (("VDRIP_CONSOLE_CODE_END",), "Virtual Drip console driver code end."),
     (("BANKING_CODE_START",), "Banking extension implementation start."),
     (("SELMEM",), "Select RAM bank."),
     (("SETBNK",), "Record future DMA bank."),
@@ -141,6 +138,7 @@ RUNTIME_STATE = [
     ("CURRENT_BANK", 1),
     ("cbios_dma_addr", 2),
     ("CONSOLE_DRIVER", 2),
+    ("CONSOLE_CALLER_SP", 2),
     ("SAVED_BANK", 1),
     ("DMA_BANK", 1),
     ("XMOVE_SRC_BANK", 1),
@@ -162,34 +160,20 @@ RUNTIME_STATE = [
     ("SIO_CORE_IRQ_COUNT", 2),
     ("SIO0B_LAST_RR1", 1),
     ("SIO0B_LAST_RX_ERROR", 1),
-    ("CONSOLE_RX_HEAD", 1),
-    ("CONSOLE_RX_TAIL", 1),
-    ("CONSOLE_RX_COUNT", 1),
-    ("CONSOLE_RX_RTS_RELEASED", 1),
-    ("CONSOLE_RX_DROPPED_COUNT", 1),
-    ("CONSOLE_RX_MAX_COUNT", 1),
-    ("CONSOLE_RX_RTS_RELEASE_COUNT", 1),
-    ("CONSOLE_RX_RTS_ASSERT_COUNT", 1),
-    ("CONSOLE_TX_HEAD", 1),
-    ("CONSOLE_TX_TAIL", 1),
-    ("CONSOLE_TX_COUNT", 1),
-    ("CONSOLE_TX_ACTIVE", 1),
-    ("CONSOLE_RX_BUFFER", 96),
-    ("CONSOLE_TX_BUFFER", 16),
 ]
 
 DRIVER_SLOT_OWNERS = {
-    0: "RAM disk backend",
-    1: "legacy SIO console backend",
-    2: "available",
-    3: "available",
-    4: "available",
-    5: "available",
+    0: "Virtual Drip console driver",
+    1: "Virtual Drip console driver",
+    2: "Virtual Drip console driver",
+    3: "Virtual Drip console driver",
+    4: "Virtual Drip console driver",
+    5: "RAM disk backend",
 }
 
 DRIVER_DECLARATIONS = [
-    ("RAM disk backend", "RAMDISK_CODE_START", "RAMDISK_CODE_END", 0, 0),
-    ("legacy SIO console backend", "CONSOLE_DRIVER_CODE_START", "CONSOLE_DRIVER_CODE_END", 1, 1),
+    ("Virtual Drip console driver", "VDRIP_CONSOLE_CODE_START", "VDRIP_CONSOLE_CODE_END", 0, 4),
+    ("RAM disk backend", "RAMDISK_CODE_START", "RAMDISK_CODE_END", 5, 5),
 ]
 
 CORE_RANGES = [
@@ -205,9 +189,9 @@ VALIDATION_NOTES = [
     "BIOS core must stay inside CBIOS_CORE_BASE-CBIOS_CORE_END.",
     "Core BIOS component ranges must not overlap.",
     "Each declared driver must stay inside its declared fixed slot range.",
-    "RAM disk backend must stay inside slot 0.",
+    "Virtual Drip console driver must stay inside slots 0-4.",
+    "RAM disk backend must stay inside slot 5.",
     "SIO core and its exact IM2 vector entry must stay inside core BIOS.",
-    "Legacy SIO console backend must stay inside slot 1.",
     "Scratch buffers must not overlap resident code.",
     "Runtime state must not overlap scratch, stack, or the SIO-owned IM2 table.",
     "Stack guard must remain above runtime state.",
@@ -335,7 +319,6 @@ def runtime_range(symbols: dict[str, int]) -> tuple[int, int]:
         require_symbol(symbols, "BANKING_STATE_START"),
         require_symbol(symbols, "STORAGE_STATE_START"),
         require_symbol(symbols, "SIO_CORE_STATE_START"),
-        require_symbol(symbols, "CONSOLE_DRIVER_STATE_START"),
     ]
     ends = [
         require_symbol(symbols, "RUNTIME_WORK_AREA_END"),
@@ -343,7 +326,6 @@ def runtime_range(symbols: dict[str, int]) -> tuple[int, int]:
         require_symbol(symbols, "BANKING_STATE_END"),
         require_symbol(symbols, "STORAGE_STATE_END"),
         require_symbol(symbols, "SIO_CORE_STATE_END"),
-        require_symbol(symbols, "CONSOLE_DRIVER_STATE_END"),
     ]
     return min(starts), max(ends) - 1
 
@@ -720,6 +702,7 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             symbol_row(symbols, ("RUNTIME_WORK_AREA_END",), "Runtime work area end."),
             symbol_row(symbols, ("CONSOLE_STATE_START",), "Console state start."),
             symbol_row(symbols, ("CONSOLE_DRIVER",), "Active console driver table pointer."),
+            symbol_row(symbols, ("CONSOLE_CALLER_SP",), "Saved caller stack pointer while console backends run on their private stack."),
             symbol_row(symbols, ("CONSOLE_STATE_END",), "Console state end."),
             symbol_row(symbols, ("BANKING_STATE_START",), "Banking state start."),
             symbol_row(symbols, ("SAVED_BANK",), "Saved active bank for cross-bank moves."),
@@ -748,22 +731,6 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             symbol_row(symbols, ("SIO0B_LAST_RR1",), "Last SIO0/B RR1 value sampled after RX data read."),
             symbol_row(symbols, ("SIO0B_LAST_RX_ERROR",), "Last masked SIO0/B RR1 receive-error bits."),
             symbol_row(symbols, ("SIO_CORE_STATE_END",), "BIOS-owned SIO core state end."),
-            symbol_row(symbols, ("CONSOLE_DRIVER_STATE_START",), "Console driver state start."),
-            symbol_row(symbols, ("CONSOLE_RX_HEAD",), "Receive buffer head index."),
-            symbol_row(symbols, ("CONSOLE_RX_TAIL",), "Receive buffer tail index."),
-            symbol_row(symbols, ("CONSOLE_RX_COUNT",), "Receive buffer byte count."),
-            symbol_row(symbols, ("CONSOLE_RX_RTS_RELEASED",), "SIO0/B RTS currently released for console RX backpressure."),
-            symbol_row(symbols, ("CONSOLE_RX_DROPPED_COUNT",), "Legacy console RX bytes dropped because the ring was full, wrapping at 255."),
-            symbol_row(symbols, ("CONSOLE_RX_MAX_COUNT",), "Maximum observed legacy console RX ring depth, wrapping only on reboot/init."),
-            symbol_row(symbols, ("CONSOLE_RX_RTS_RELEASE_COUNT",), "SIO0/B RTS release transition count, wrapping at 255."),
-            symbol_row(symbols, ("CONSOLE_RX_RTS_ASSERT_COUNT",), "SIO0/B RTS assert transition count, wrapping at 255."),
-            symbol_row(symbols, ("CONSOLE_TX_HEAD",), "Transmit buffer head index."),
-            symbol_row(symbols, ("CONSOLE_TX_TAIL",), "Transmit buffer tail index."),
-            symbol_row(symbols, ("CONSOLE_TX_COUNT",), "Transmit buffer byte count."),
-            symbol_row(symbols, ("CONSOLE_TX_ACTIVE",), "Transmit byte active flag."),
-            symbol_row(symbols, ("CONSOLE_RX_BUFFER",), "Receive ring buffer."),
-            symbol_row(symbols, ("CONSOLE_TX_BUFFER",), "Transmit ring buffer."),
-            symbol_row(symbols, ("CONSOLE_DRIVER_STATE_END",), "Console driver state end."),
             "",
         ]
     )
@@ -783,6 +750,7 @@ def write_memory_map(
     core_end = require_symbol(symbols, "CBIOS_CORE_END")
     stack_guard = require_symbol(symbols, "CBIOS_STACK_GUARD")
     stack_top = require_symbol(symbols, "CBIOS_STACK_TOP")
+    console_stack_top = require_symbol(symbols, "CBIOS_CONSOLE_STACK_TOP")
     area_end = require_symbol(symbols, "CBIOS_AREA_END")
     runtime_start, runtime_end = runtime_range(symbols)
     protected_tpa_start = require_symbol(symbols, "PROTECTED_TPA_START")
@@ -809,12 +777,11 @@ def write_memory_map(
         range_row(span(require_symbol(symbols, "CBASE"), require_symbol(symbols, "CCPSTACK")), "CP/M CCP", f"`CBASE` is `{h4(require_symbol(symbols, 'CBASE'))}`."),
         range_row(span(require_symbol(symbols, "FBASE"), cbios_base - 1), "CP/M BDOS and state", f"`FBASE` is `{h4(require_symbol(symbols, 'FBASE'))}` in the current assembled image."),
         range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, LAUNCH, SIO core, and IOCALL transport."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT0_END")), "Driver slot 0", "Current transitional owner: RAM disk backend."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT1_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT1_END")), "Driver slot 1", "Current transitional owner: legacy SIO console client."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT2_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slots 2-5", "Available fixed 1 KiB slots for future drivers."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END")), "Driver slots 0-4", "Virtual Drip console driver (code, font, shadow buffer, queues, state)."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slot 5", "Current transitional owner: RAM disk backend."),
         range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `RAMDISK_DIRBUF` is at `{h4(require_symbol(symbols, 'RAMDISK_DIRBUF'))}`."),
         range_row(span(runtime_start, runtime_end), "BIOS runtime state", "Current bank, DMA address, banking state, storage state, SIO core state, and console driver state."),
-        range_row(span(stack_guard, area_end), "Protected firmware stack and work window", f"Stack top is `{h4(stack_top)}`; stack guard is `{h4(stack_guard)}`."),
+        range_row(span(stack_guard, area_end), "Protected firmware stack and work window", f"Stack top is `{h4(stack_top)}`; console backend stack top is `{h4(console_stack_top)}`; stack guard is `{h4(stack_guard)}`."),
         "",
         "## Core BIOS Layout",
         "",
@@ -842,12 +809,12 @@ def write_memory_map(
     for slot in range(6):
         slot_start, slot_limit = slot_range(symbols, slot)
         owner = DRIVER_SLOT_OWNERS[slot]
-        if slot == 0:
+        if slot == 5:
             contents = f"`{span(require_symbol(symbols, 'RAMDISK_CODE_START'), require_symbol(symbols, 'RAMDISK_CODE_END') - 1)}` RAM disk backend."
-        elif slot == 1:
-            contents = f"`{span(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'), require_symbol(symbols, 'CONSOLE_DRIVER_CODE_END') - 1)}` legacy console client."
+        elif slot == 0:
+            contents = f"`{span(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'), require_symbol(symbols, 'VDRIP_CONSOLE_CODE_END') - 1)}` VDrip code, font, shadow, queues, state."
         else:
-            contents = "Available."
+            contents = "Part of Virtual Drip console driver above."
         lines.append(
             f"| {slot} | `{h4(slot_start)}` | `{h4(slot_limit - 1)}` | "
             f"{slot_limit - slot_start} bytes | {owner} | {contents} |"
@@ -863,13 +830,13 @@ def write_memory_map(
             f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core | BIOS-owned SIO0/B async setup with CTS-polled TX and software-managed RTS helpers, SIO1/A sync setup, SIO IRQ control, RX sink registration, byte I/O APIs, IO Controller RTS helpers, RX diagnostics, RX kick, ISR, and compatibility labels. |",
             f"| `{span(require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_START'), require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_END') - 1)}` | SIO core | Exact two-byte IM2 vector table entry. |",
             "",
-            "SIO_CH_CONSOLE is the BIOS-owned SIO0/B async console link. It uses RTS/CTS hardware flow control without requiring DTR/DCD. WR3 Auto Enables remain off intentionally to avoid DCD dependence. CTS is checked before console TX; core init holds RTS released and discards stale RX before the legacy console client registers its sink. The legacy console client releases RTS at 32/96 RX bytes and reasserts it at 16/96 RX bytes.",
+            "SIO_CH_CONSOLE is the BIOS-owned SIO0/B async console link used by the Virtual Drip console driver. It uses RTS/CTS hardware flow control without requiring DTR/DCD. WR3 Auto Enables remain off intentionally to avoid DCD dependence. The VDrip console driver manages RTS through its own high/low watermark logic for host-to-Zephyr backpressure and VDP traffic gating.",
             "",
-            "## Slot 1 Console Layout",
+            "## VDrip Console Layout",
             "",
             "| Range | Owner | Notes |",
             "|---|---|---|",
-            f"| `{span(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'), require_symbol(symbols, 'CONSOLE_DRIVER_CODE_END') - 1)}` | legacy console driver | CP/M console semantics and terminal RX buffer client. |",
+            f"| `{span(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'), require_symbol(symbols, 'VDRIP_CONSOLE_CODE_END') - 1)}` | Virtual Drip console driver | CP/M console semantics, Virtual Drip packet transport, VDP text rendering, font, shadow buffer, RX ring, input queue, and cursor/viewport state. |",
             "",
             "SIO_CH_IOCTRL is the BIOS-owned SIO1/A synchronous IO Controller link. SIO1/A uses external clock and external sync from the MCU, with RTS as the service-request signal. SIO1/A interrupts are disabled in this build.",
             f"`IOCALL` is core BIOS code at `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` and does not occupy driver slot space.",
@@ -982,7 +949,7 @@ def write_memory_map(
             f"- WBOOT restores the CCP range `{span(require_symbol(symbols, 'CBASE'), require_symbol(symbols, 'FBASE') - 1)}` from ROM page 0 using `ROM_VISIBLE_BANK0` (`{h2(require_symbol(symbols, 'ROM_VISIBLE_BANK0'))}`) before returning to `CCP_CLEARBUF_ENTRY`.",
             f"- `CBIOS_BASE` is `{h4(cbios_base)}`; CBIOS layout constants are derived from this base.",
             f"- `CBIOS_CODE_LIMIT` is `{h4(code_limit)}`; no resident code may cross into scratch/staging.",
-            f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the legacy console client starts at `{h4(require_symbol(symbols, 'CONSOLE_DRIVER_CODE_START'))}` in slot 1.",
+            f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the Virtual Drip console driver starts at `{h4(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'))}` spanning slots 0-4.",
             f"- `IOCALL` code starts at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` inside core BIOS and uses the BIOS-owned SIO1/A synchronous IO Controller transport.",
             f"- `LAUNCH` code resides at `{h4(require_symbol(symbols, 'LAUNCH'))}`, inside protected high BIOS memory.",
             f"- `WBOOT` resident code starts at `{h4(require_symbol(symbols, 'WBOOT_RESIDENT_START'))}`, inside protected high BIOS memory.",

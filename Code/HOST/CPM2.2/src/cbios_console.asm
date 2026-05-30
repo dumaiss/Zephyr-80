@@ -1,7 +1,7 @@
 ; Local Zephyr-80 CP/M console BIOS facade.
 ;
 ; CP/M entry labels stay stable while the active console backend is selected
-; through a small driver table. The default backend is SIO channel B.
+; through a small driver table. The default backend is Virtual Drip on SIO0/B.
 ;
 ; Driver table contract, seven 16-bit little-endian entries:
 ;   +00 const   -> A = FFh if input is available, A = 00h otherwise
@@ -14,10 +14,16 @@
 ;
 ; The facade preserves DE and HL around the indirect call. Backend routines
 ; follow the CP/M register conventions for their specific entry points.
+;
+; CP/M BDOS function 2 uses a small private stack while checking console
+; status and outputting characters. The Virtual Drip backend is intentionally
+; deeper than the legacy byte-oriented SIO backend, so dispatch runs backend
+; calls on a private console stack in the BIOS stack reserve and restores the
+; caller stack before returning.
 
 	.globl const,conin,conout,list,punch,reader,listst
 	.globl console_init,console_set_driver
-	.globl sio_console_driver,sio_console_init
+	.globl vdrip_console_driver,vdrip_console_init
 	.globl CONSOLE_CODE_START,CONSOLE_CODE_END
 	.globl CONSOLE_STATE_START,CONSOLE_STATE_END
 	.globl CONSOLE_DRIVER
@@ -29,14 +35,14 @@ CONSOLE_CODE_START:
 
 ; Initialize the default console backend.
 ; Purpose:
-;   Install the legacy SIO console table and clear its backend state.
+;   Install the Virtual Drip console table and clear its backend state.
 ; Inputs: none.
-; Outputs: CONSOLE_DRIVER points at sio_console_driver.
+; Outputs: CONSOLE_DRIVER points at vdrip_console_driver.
 ; Clobbers: AF, HL.
 console_init:
-	ld hl,#sio_console_driver
+	ld hl,#vdrip_console_driver
 	ld (CONSOLE_DRIVER),hl
-	jp sio_console_init
+	jp vdrip_console_init
 
 ; Install a different console driver table.
 ; Purpose:
@@ -80,7 +86,8 @@ listst:
 
 CONSOLE_DISPATCH:
 	; A contains a byte offset into the active driver table. Fetch the function
-	; pointer, call it through a tiny return shim, then restore facade registers.
+	; pointer, call it through a tiny return shim on the console stack, then
+	; restore facade registers and the caller stack.
 	push de
 	push hl
 	ld e,a
@@ -91,16 +98,17 @@ CONSOLE_DISPATCH:
 	inc hl
 	ld d,(hl)
 	ex de,hl
-	call CONSOLE_CALL_HL
-	pop hl
-	pop de
-	ret
-
-CONSOLE_CALL_HL:
+	ld (CONSOLE_CALLER_SP),sp
+	ld sp,#CBIOS_CONSOLE_STACK_TOP
 	ld de,#CONSOLE_CALL_RETURN
 	push de
 	jp (hl)
+
 CONSOLE_CALL_RETURN:
+	ld hl,(CONSOLE_CALLER_SP)
+	ld sp,hl
+	pop hl
+	pop de
 	ret
 
 CONSOLE_CODE_END:
@@ -109,7 +117,9 @@ CONSOLE_CODE_END:
 	.org CBIOS_CONSOLE_WORK_AREA
 CONSOLE_STATE_START:
 CONSOLE_DRIVER:
-	.dw sio_console_driver
+	.dw vdrip_console_driver
+CONSOLE_CALLER_SP:
+	.dw 0x0000
 
 CONSOLE_STATE_END:
 

@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 29988 bytes |
+| Firmware symbol map | `build/firmware.map` | 35193 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 524288 bytes |
 | Final burnable image | `build/zephyr80.bin` | 524288 bytes |
 | Layout manifest | `build/layout.manifest` | 882 bytes |
@@ -90,16 +90,16 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `init_page_zero` | `DB31h` | Installs `JP WBOOT` and `JP FBASE`. |
 | `runtime_set_default_dma` | `DB46h` | Sets default DMA to `0080h`. |
 | `runtime_clear_default_dma` | `DB54h` | Clears command tail/default DMA area. |
-| `CONSOLE_CODE_START` | `DB80h` | Console BIOS facade start. |
-| `console_init` | `DB80h` | Installs and initializes the default console driver. |
-| `console_set_driver` | `DB89h` | Installs an alternate console driver table. |
-| `const` | `DB8Dh` | Console status facade. |
-| `conin` | `DB91h` | Blocking console input facade. |
-| `conout` | `DB95h` | Blocking console output facade. |
-| `list` | `DB99h` | No-op list implementation. |
-| `punch` | `DB9Dh` | No-op punch implementation. |
-| `reader` | `DBA1h` | EOF reader implementation. |
-| `listst` | `DBA5h` | Ready list-status implementation. |
+| `CONSOLE_CODE_START` | `DB79h` | Console BIOS facade start. |
+| `console_init` | `DB79h` | Installs and initializes the default console driver. |
+| `console_set_driver` | `DB82h` | Installs an alternate console driver table. |
+| `const` | `DB86h` | Console status facade. |
+| `conin` | `DB8Ah` | Blocking console input facade. |
+| `conout` | `DB8Eh` | Blocking console output facade. |
+| `list` | `DB92h` | No-op list implementation. |
+| `punch` | `DB96h` | No-op punch implementation. |
+| `reader` | `DB9Ah` | EOF reader implementation. |
+| `listst` | `DB9Eh` | Ready list-status implementation. |
 | `CONSOLE_CODE_END` | `DBC0h` | Console BIOS facade end. |
 | `STORAGE_STUB_CODE_START` | `DBC0h` | Storage BIOS facade start. |
 | `home` | `DBC0h` | Storage HOME facade; routes to RAM disk backend. |
@@ -142,13 +142,10 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `IOCTRL_CODE_START` | `DF50h` | IOCALL transaction code start in core BIOS. |
 | `IOCALL` | `DF50h` | Zephyr extended BIOS IO Controller transaction call. |
 | `IOCTRL_CODE_END` | `DFE6h` | IOCALL transaction code end. |
-| `CONSOLE_DRIVER_CODE_START` | `E400h` | Legacy SIO console client driver code start. |
-| `sio_console_driver` | `E400h` | Legacy console driver dispatch table. |
-| `sio_console_init` | `E40Eh` | Legacy console initialization and SIO RX sink registration. |
-| `legacy_console_rx_sink` | `E49Ah` | Registered SIO_CH_CONSOLE RX byte sink. |
-| `sio_console_enable_interrupts` | `DD8Bh` | Compatibility alias for `sio_core_enable_interrupts`. |
-| `sio_console_disable_interrupts` | `DD8Eh` | Compatibility alias for `sio_core_disable_interrupts`. |
-| `CONSOLE_DRIVER_CODE_END` | `E51Bh` | Legacy SIO console client driver code end. |
+| `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
+| `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
+| `vdrip_console_init` | `E00Eh` | Virtual Drip console init, proxy handshake, VDP setup. |
+| `VDRIP_CONSOLE_CODE_END` | `F27Ch` | Virtual Drip console driver code end. |
 | `BANKING_CODE_START` | `DC00h` | Banking extension implementation start. |
 | `SELMEM` | `DC00h` | Select RAM bank. |
 | `SETBNK` | `DC0Ah` | Record future DMA bank. |
@@ -168,7 +165,8 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `RUNTIME_WORK_AREA_END` | `FA03h` | Runtime work area end. |
 | `CONSOLE_STATE_START` | `FA04h` | Console state start. |
 | `CONSOLE_DRIVER` | `FA04h` | Active console driver table pointer. |
-| `CONSOLE_STATE_END` | `FA06h` | Console state end. |
+| `CONSOLE_CALLER_SP` | `FA06h` | Saved caller stack pointer while console backends run on their private stack. |
+| `CONSOLE_STATE_END` | `FA08h` | Console state end. |
 | `BANKING_STATE_START` | `FA20h` | Banking state start. |
 | `SAVED_BANK` | `FA20h` | Saved active bank for cross-bank moves. |
 | `DMA_BANK` | `FA21h` | Recorded DMA bank. |
@@ -196,19 +194,3 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `SIO0B_LAST_RR1` | `FA77h` | Last SIO0/B RR1 value sampled after RX data read. |
 | `SIO0B_LAST_RX_ERROR` | `FA78h` | Last masked SIO0/B RR1 receive-error bits. |
 | `SIO_CORE_STATE_END` | `FA79h` | BIOS-owned SIO core state end. |
-| `CONSOLE_DRIVER_STATE_START` | `FA80h` | Console driver state start. |
-| `CONSOLE_RX_HEAD` | `FA80h` | Receive buffer head index. |
-| `CONSOLE_RX_TAIL` | `FA81h` | Receive buffer tail index. |
-| `CONSOLE_RX_COUNT` | `FA82h` | Receive buffer byte count. |
-| `CONSOLE_RX_RTS_RELEASED` | `FA83h` | SIO0/B RTS currently released for console RX backpressure. |
-| `CONSOLE_RX_DROPPED_COUNT` | `FA84h` | Legacy console RX bytes dropped because the ring was full, wrapping at 255. |
-| `CONSOLE_RX_MAX_COUNT` | `FA85h` | Maximum observed legacy console RX ring depth, wrapping only on reboot/init. |
-| `CONSOLE_RX_RTS_RELEASE_COUNT` | `FA86h` | SIO0/B RTS release transition count, wrapping at 255. |
-| `CONSOLE_RX_RTS_ASSERT_COUNT` | `FA87h` | SIO0/B RTS assert transition count, wrapping at 255. |
-| `CONSOLE_TX_HEAD` | `FA88h` | Transmit buffer head index. |
-| `CONSOLE_TX_TAIL` | `FA89h` | Transmit buffer tail index. |
-| `CONSOLE_TX_COUNT` | `FA8Ah` | Transmit buffer byte count. |
-| `CONSOLE_TX_ACTIVE` | `FA8Bh` | Transmit byte active flag. |
-| `CONSOLE_RX_BUFFER` | `FA8Ch` | Receive ring buffer. |
-| `CONSOLE_TX_BUFFER` | `FAECh` | Transmit ring buffer. |
-| `CONSOLE_DRIVER_STATE_END` | `FAFCh` | Console driver state end. |
