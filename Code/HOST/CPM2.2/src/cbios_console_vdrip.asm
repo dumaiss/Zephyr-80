@@ -74,13 +74,13 @@ CURSOR_STYLE_UNDERLINE	= 0x01
 VDRIP_WIRE_OVERHEAD	= 0x03
 
 ; Inter-byte pacing for scroll redraw (~1 ms at 4 MHz).
-VDRIP_TX_PACE_DELAY	= 0x0020
+VDRIP_TX_PACE_DELAY	= 0x0001
 
 ; TMS9928A layout.
 PATTERN_TABLE		= 0x0000
 NAME_TABLE		= 0x3800
 TEXT_PHYS_COLUMNS	= 40
-TEXT_LOG_COLUMNS	= 80
+TEXT_LOG_COLUMNS	= 40
 TEXT_ROWS		= 24
 TEXT_PHYS_CELLS		= TEXT_PHYS_COLUMNS * TEXT_ROWS	; 960
 TEXT_VIEW_COLUMNS	= TEXT_PHYS_COLUMNS
@@ -93,8 +93,8 @@ TEXT_SCROLL_ROWS	= TEXT_ROWS
 TEXT_SHADOW_SIZE	= TEXT_LOG_COLUMNS * TEXT_ROWS	; 1920
 
 ; Horizontal pan hysteresis.
-TEXT_PAN_RIGHT_TARGET	= 30
-TEXT_PAN_LEFT_MARGIN	= 8
+TEXT_PAN_RIGHT_TARGET	= 0
+TEXT_PAN_LEFT_MARGIN	= 0
 
 ; Font assumptions: 96 chars, ASCII 20h-7Fh, 8 bytes each.
 FONT_FIRST_CHAR		= 0x20
@@ -106,6 +106,11 @@ VDRIP_RX_WAIT_SYNC0	= 0x00
 VDRIP_RX_WAIT_SYNC1	= 0x01
 VDRIP_RX_LEN		= 0x02
 VDRIP_RX_BODY		= 0x03
+
+; Terminal parser states (for ANSI/VT-100 output processing).
+TERM_STATE_NORMAL	= 0x00
+TERM_STATE_ESC		= 0x01
+TERM_STATE_CSI		= 0x02
 
 ; Receive ring.
 VDRIP_RX_BUFFER_SIZE	= 0x40
@@ -178,21 +183,29 @@ vdrip_console_init:
 	; Release RTS — we are not ready yet.
 	call vdrip_rts_release_raw
 
-	; Initialize RX state and register the sink so we can receive
-	; the proxy READY packet.
+	; Initialize RX state and register the sink.
 	call vdrip_rx_init
 	call vdrip_register_rx_sink
 	call sio_core_enable_interrupts
 
-	; Assert RTS so the proxy knows it can send.
+	; Assert RTS so the proxy can send.
 	call vdrip_rts_assert_raw
 	xor a
 	ld (vdrip_rx_rts_released),a
 
-	; Wait for the proxy to signal readiness.
-	call vdrip_wait_for_proxy_ready
+	; Proxy READY handshake — skip on warm boot, the proxy
+	; is already connected and will not send another READY.
+	ld a,(vdrip_handshake_done)
+	or a
+	jr nz,vdrip_init_skip_handshake
 
-	; Proxy is ready — release RTS and begin VDP initialization.
+	; Cold boot: wait for proxy to signal readiness.
+	call vdrip_wait_for_proxy_ready
+	ld a,#0x01
+	ld (vdrip_handshake_done),a
+
+vdrip_init_skip_handshake:
+	; Release RTS and begin VDP initialization.
 	call vdrip_rts_release_raw
 	ld a,#0x01
 	ld (vdrip_rx_rts_released),a
@@ -325,12 +338,10 @@ vdrip_console_conin_wait:
 ; Input:
 ;   C = byte to output (CP/M console facade convention)
 ;
-; CP/M handles line editing; the driver only renders individual bytes:
-;   printable → write at cursor and advance
-;   CR (0x0d) → carriage return (column 0)
-;   LF (0x0a) → line feed (next row)
-;   BS (0x08) → backspace (CP/M sends BS-SPACE-BS to erase)
-;   all other bytes → silently ignored
+; Renders the byte on the VDP text display with ANSI/VT-100 light
+; terminal emulation for cursor movement, backspace, tab, etc.
+; CP/M handles line editing; the driver interprets control sequences
+; for display.
 ;
 ; Does not read keyboard packets or call CONIN from CONOUT.
 ; ---------------------------------------------------------------------------
@@ -346,7 +357,7 @@ vdrip_console_conout:
 	ld (vdrip_rx_rts_released),a
 
 	ld a,c
-	call conout_put_char
+	call term_process_byte
 	call vdrip_send_frame_mark
 	call app_maybe_resume_rts
 	pop hl
@@ -443,7 +454,9 @@ vdrip_rx_init:
 	ld (rts_assert_count),a
 	ld (vdrip_proxy_ready_flag),a
 	ld (proxy_ready_count),a
+	ld (esc_press_count),a
 	ld (text_view_col),a
+	ld (term_state),a
 
 	; Zero the text input queue buffer so phantom bytes
 	; cannot appear if textq_count is ever corrupted.
@@ -816,51 +829,231 @@ vdrip_terminal_enqueue_loop:
 
 
 ; ===========================================================================
-; CONOUT character output — minimal CP/M terminal
+; CONOUT terminal renderer — ANSI/VT-100 light
 ; ===========================================================================
 ;
-; CP/M handles its own line editing and terminal processing.  The BIOS
-; CONOUT only needs to render individual bytes on the VDP display:
-;   - printable characters (0x20-0x7e) → write at cursor, advance
-;   - CR (0x0d) → move to column 0
-;   - LF (0x0a) → newline (column 0, next row, scroll if needed)
-;   - BS (0x08) → move cursor left (CP/M sends BS-SPACE-BS to erase)
-;   - all other bytes → silently ignored
+; term_process_byte interprets a single byte and renders it to the VDP
+; text display.  Supports printable characters, CR/LF, backspace, tab,
+; and minimal ANSI/CSI cursor movement.  CP/M handles its own line
+; editing; this layer translates control codes into screen operations.
 
-conout_put_char:
-	cp #0x0d
-	jr z,conout_cr
-	cp #0x0a
-	jr z,conout_lf
+term_process_byte:
+	ld c,a
+
+	ld a,(term_state)
+	cp #TERM_STATE_ESC
+	jr z,term_process_esc
+
+	cp #TERM_STATE_CSI
+	jr z,term_process_csi
+
+	ld a,c
+	cp #0x1b
+	jr z,term_enter_esc
+
+	; Non-Esc byte resets the triple-Esc counter.
+	push af
+	xor a
+	ld (esc_press_count),a
+	pop af
+
 	cp #0x08
-	jr z,conout_bs
+	jp z,term_backspace
+
+	cp #0x09
+	jp z,term_tab
+
+	; CR returns carriage to column 0.  LF advances to next row.
+	; CP/M sends CR+LF as a pair; treating both as full newlines
+	; would double-space every line.
+	cp #0x0d
+	jp z,term_cr
+
+	cp #0x0a
+	jp z,term_lf
+
 	cp #0x20
 	ret c
 	cp #0x7f
 	ret nc
-	; printable — write to screen
+
+	jr text_put_printable
+
+term_enter_esc:
+	; Increment the triple-Esc counter.
+	ld a,(esc_press_count)
+	inc a
+	ld (esc_press_count),a
+	cp #3
+	jp z,vdrip_reset_display
+
+	ld a,#TERM_STATE_ESC
+	ld (term_state),a
+	ret
+
+term_process_esc:
+	xor a
+	ld (term_state),a
+
+	; If this is another Esc (while in ESC state), count it.
+	ld a,c
+	cp #0x1b
+	jr z,term_enter_esc
+
+	; Non-ESC byte while in ESC state — reset the triple-Esc counter.
+	push af
+	xor a
+	ld (esc_press_count),a
+	pop af
+
+	cp #'[
+	ret nz
+
+	ld a,#TERM_STATE_CSI
+	ld (term_state),a
+	ret
+
+term_process_csi:
+	xor a
+	ld (term_state),a
+
+	; Any CSI-terminating byte resets the triple-Esc counter.
+	push af
+	xor a
+	ld (esc_press_count),a
+	pop af
+
+	ld a,c
+	cp #'A
+	jp z,term_cursor_up
+
+	cp #'B
+	jp z,term_cursor_down
+
+	cp #'C
+	jp z,term_cursor_right
+
+	cp #'D
+	jp z,term_cursor_left
+
+	cp #'H
+	jp z,term_cursor_home
+
+	cp #'F
+	jp z,term_cursor_end
+
+	; Unsupported CSI, including ESC [ 3 ~ delete, is ignored.
+	ret
+
+text_put_printable:
+	; Input: A = printable ASCII
 	call text_put_char_at_cursor
 	call text_advance_cursor
 	call text_ensure_cursor_visible
 	call vdrip_cursor_set_position_current
 	ret
-conout_cr:
+
+text_put_newline:
+	call text_newline
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cr:
+	; Carriage return — column 0, row unchanged.
 	xor a
 	ld (text_col),a
 	call text_ensure_cursor_visible
 	call vdrip_cursor_set_position_current
 	ret
-conout_lf:
+
+term_lf:
+	; Line feed — column 0, next row.
 	xor a
 	ld (text_col),a
 	call text_newline
 	call vdrip_cursor_set_position_current
 	ret
-conout_bs:
+
+term_backspace:
 	ld a,(text_col)
 	or a
 	ret z
+
 	dec a
+	ld (text_col),a
+
+	call text_ensure_cursor_visible
+	ld a,#0x20
+	call text_put_char_at_cursor
+	call vdrip_cursor_set_position_current
+	ret
+
+term_tab:
+	; Advance to next 4-column tab stop in logical columns.
+	call text_advance_cursor
+	ld a,(text_col)
+	and #0x03
+	jr nz,term_tab
+
+	call text_ensure_cursor_visible
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cursor_up:
+	ld a,(text_row)
+	or a
+	ret z
+
+	dec a
+	ld (text_row),a
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cursor_down:
+	ld a,(text_row)
+	cp #(TEXT_ROWS - 1)
+	ret nc
+
+	inc a
+	ld (text_row),a
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cursor_left:
+	ld a,(text_col)
+	or a
+	ret z
+
+	dec a
+	ld (text_col),a
+	call text_ensure_cursor_visible
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cursor_right:
+	ld a,(text_col)
+	cp #(TEXT_LOG_COLUMNS - 1)
+	ret nc
+
+	inc a
+	ld (text_col),a
+	call text_ensure_cursor_visible
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cursor_home:
+	; Home to row 0, col 0.  Let ensure_cursor_visible handle the
+	; viewport reset and redraw.
+	xor a
+	ld (text_col),a
+	ld (text_row),a
+	call text_ensure_cursor_visible
+	call vdrip_cursor_set_position_current
+	ret
+
+term_cursor_end:
+	; End of logical line.
+	ld a,#(TEXT_LOG_COLUMNS - 1)
 	ld (text_col),a
 	call text_ensure_cursor_visible
 	call vdrip_cursor_set_position_current
@@ -1320,6 +1513,41 @@ text_scroll_blank_loop:
 
 	; Reassert RTS if both queues are drained.
 	call app_maybe_resume_rts
+	ret
+
+
+; ===========================================================================
+; VDP reset (triple-Esc)
+; ===========================================================================
+;
+; Called when Esc is pressed three times rapidly.
+; Re-initialises the VDP text mode, font, and virtual cursor.
+
+vdrip_reset_display:
+	xor a
+	ld (esc_press_count),a
+
+	call vdrip_rts_release_raw
+	ld a,#0x01
+	ld (vdrip_rx_rts_released),a
+
+	call vdrip_send_reset
+	call vdrip_send_ping
+	call text_init_vdp
+	call text_load_font
+	call text_clear_screen
+
+	xor a
+	ld (text_col),a
+	ld (text_row),a
+	ld (text_view_col),a
+
+	call vdrip_cursor_init
+	call vdrip_send_frame_mark
+
+	call vdrip_rts_assert_raw
+	xor a
+	ld (vdrip_rx_rts_released),a
 	ret
 
 
@@ -1874,7 +2102,7 @@ text_shadow:
 	.ds TEXT_SHADOW_SIZE
 
 term_state:
-	.db 0x00
+	.db TERM_STATE_NORMAL
 
 terminal_payload_ptr:
 	.dw 0x0000
@@ -1907,6 +2135,14 @@ rts_assert_count:
 vdrip_proxy_ready_flag:
 	.db 0x00
 proxy_ready_count:
+	.db 0x00
+
+; Set after first successful proxy handshake; survives warm boot.
+vdrip_handshake_done:
+	.db 0x00
+
+; Triple-Esc VDP reset counter.
+esc_press_count:
 	.db 0x00
 
 
