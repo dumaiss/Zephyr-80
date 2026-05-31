@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 41109 bytes |
+| Firmware symbol map | `build/firmware.map` | 41108 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 524288 bytes |
 | Final burnable image | `build/zephyr80.bin` | 524288 bytes |
 | Layout manifest | `build/layout.manifest` | 643 bytes |
@@ -111,13 +111,13 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `write` | `DBE2h` | Storage WRITE facade; transfers to VDrip proxy storage. |
 | `sectran` | `DBFCh` | Returns untranslated 0-based logical sector for no-skew media. |
 | `STORAGE_STUB_CODE_END` | `DBFFh` | Storage BIOS facade end. |
-| `RAMDISK_CODE_START` | `F7EBh` | VDrip storage backend code start. |
-| `ramdisk_seldsk` | `F7FCh` | Selects CP/M drive A and returns its DPH. |
-| `ramdisk_read` | `F810h` | Reads one 128-byte record from VDrip proxy storage. |
-| `ramdisk_write` | `F83Eh` | Writes one 128-byte record to VDrip proxy storage. |
-| `RAMDISK_DPH` | `FB40h` | Drive A disk parameter header. |
-| `RAMDISK_DPB` | `FB50h` | Drive A disk parameter block. |
-| `RAMDISK_CODE_END` | `FA7Bh` | VDrip storage backend code end. |
+| `VDRIP_STORAGE_CODE_START` | `F7EBh` | VDrip storage backend code start. |
+| `vdrip_storage_seldsk` | `F7FCh` | Selects CP/M drive A and returns its DPH. |
+| `vdrip_storage_read` | `F810h` | Reads one 128-byte record from VDrip proxy storage. |
+| `vdrip_storage_write` | `F83Eh` | Writes one 128-byte record to VDrip proxy storage. |
+| `VDRIP_STORAGE_DPH` | `FB40h` | Drive A disk parameter header. |
+| `VDRIP_STORAGE_DPB` | `FB50h` | Drive A disk parameter block. |
+| `VDRIP_STORAGE_CODE_END` | `FA7Bh` | VDrip storage backend code end. |
 | `SIO_CORE_CODE_START` | `DD10h` | BIOS-owned SIO core code start in core BIOS. |
 | `CONSOLE_IM2_VECTOR_ENTRY` | `DD10h` | SIO core exact IM2 vector table entry address. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |
@@ -180,13 +180,13 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `MOVE_CHUNK_LEN` | `FE2Ch` | Current cross-bank chunk length. |
 | `BANKING_STATE_END` | `FE2Eh` | Banking state end. |
 | `STORAGE_STATE_START` | `FE40h` | Storage state start. |
-| `ramdisk_selected_drive` | `FE40h` | Selected storage drive, or `FFh` for unsupported. |
-| `ramdisk_track` | `FE41h` | Selected CP/M track. |
-| `ramdisk_sector` | `FE43h` | Selected 0-based CP/M sector. |
-| `RAMDISK_SAVED_BANK` | `FE45h` | Saved active bank for DMA copies. |
-| `ramdisk_seq` | `FE47h` | VDrip storage sequence byte. |
-| `ramdisk_active_seq` | `FE48h` | Sequence byte for the active storage transaction. |
-| `ramdisk_lba` | `FE49h` | Computed little-endian 16-bit LBA for the active request. |
+| `vdrip_storage_selected_drive` | `FE40h` | Selected storage drive, or `FFh` for unsupported. |
+| `vdrip_storage_track` | `FE41h` | Selected CP/M track. |
+| `vdrip_storage_sector` | `FE43h` | Selected 0-based CP/M sector. |
+| `VDRIP_STORAGE_SAVED_BANK` | `FE45h` | Saved active bank for DMA copies. |
+| `vdrip_storage_seq` | `FE47h` | VDrip storage sequence byte. |
+| `vdrip_storage_active_seq` | `FE48h` | Sequence byte for the active storage transaction. |
+| `vdrip_storage_lba` | `FE49h` | Computed little-endian 16-bit LBA for the active request. |
 | `storage_expected_type` | `FE4Bh` | Expected storage reply packet type. |
 | `storage_expected_len` | `FE4Ch` | Expected storage reply payload length. |
 | `storage_expected_seq` | `FE4Dh` | Expected storage reply sequence byte. |
@@ -200,8 +200,8 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `storage_rx_complete` | `FE55h` | Storage reply completion flag. |
 | `storage_rx_error` | `FE56h` | Storage reply error flag. |
 | `storage_caller_sp` | `FE57h` | Saved caller stack pointer while storage backends run on the BIOS stack. |
-| `RAMDISK_CSV` | `FE59h` | Zero-length fixed-disk check vector label. |
-| `RAMDISK_ALV` | `FC00h` | VDrip storage allocation vector. |
+| `VDRIP_STORAGE_CSV` | `FE59h` | Zero-length fixed-disk check vector label. |
+| `VDRIP_STORAGE_ALV` | `FC00h` | VDrip storage allocation vector. |
 | `STORAGE_STATE_END` | `FE59h` | Storage state end. |
 | `SIO_CORE_STATE_START` | `FE70h` | BIOS-owned SIO core state start. |
 | `SIO0B_RX_SINK` | `FE70h` | Registered RX byte sink for SIO_CH_CONSOLE / SIO0/B. |

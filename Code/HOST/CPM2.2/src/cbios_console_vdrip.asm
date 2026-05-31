@@ -106,6 +106,9 @@ SIO_RR0_CTS		= 0x20
 ; Virtual Drip packet protocol.
 ; Wire format:  A5 5A LEN TYPE PAYLOAD... CRC
 ; LEN = LEN + TYPE + PAYLOAD + CRC  (zero-payload LEN = 3)
+; Storage packets share this framing but are parsed by cbios_storage_vdrip.asm
+; while the storage backend temporarily owns the SIO RX sink. The small inactive
+; console RX parser below is not sized for storage replies.
 PACKET_SYNC0		= 0xa5
 PACKET_SYNC1		= 0x5a
 PACKET_VDP_CTRL_WRITE	= 0x01

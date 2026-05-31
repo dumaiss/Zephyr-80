@@ -21,8 +21,8 @@
 ;         │   console driver state                       │
 ;         ├──────────────────────────────────────────────┤
 ;   FDFFh │ Scratch / staging end                        │
-;   FC00h │   RAMDISK_ALV                                │
-;   FB80h │   RAMDISK_DIRBUF                             │
+;   FC00h │   VDRIP_STORAGE_ALV                         │
+;   FB80h │   VDRIP_STORAGE_DIRBUF                      │
 ;   FA80h │   MOVE_BUFFER                                │
 ;         ├──────────────────────────────────────────────┤
 ;   FA7Fh │ Driver slot 5 end                            │
@@ -227,9 +227,7 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ;   Slots 0-5 tail:
 ;     E000h... Virtual Drip console driver (code, font, shadow, queues)
 ;
-; These names are kept so existing source can still ORG against them.
-
-CBIOS_RAMDISK_CODE_BASE         = 0xf7eb                                ; ends at FA80h
+CBIOS_STORAGE_VDRIP_CODE_BASE         = 0xf7eb                                ; ends at FA80h
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x0550                  ; DF50h
@@ -246,13 +244,13 @@ CBIOS_CODE_END                  = CBIOS_CODE_LIMIT - 1
 ;
 ; Current active buffers:
 ;   FA80h-FB3Fh MOVE_BUFFER          (192 bytes; max storage transaction = 134)
-;   FB40h-FB7Fh RAMDISK_DPHDPB       (DPH+DPB, relocated out of the code slot)
-;   FB80h-FBFFh RAMDISK_DIRBUF
-;   FC00h-FDFFh RAMDISK_ALV
+;   FB40h-FB7Fh VDRIP_STORAGE_DPHDPB       (DPH+DPB, relocated out of the code slot)
+;   FB80h-FBFFh VDRIP_STORAGE_DIRBUF
+;   FC00h-FCFFh VDRIP_STORAGE_ALV
 ;
-; RAMDISK_ALV is 512 bytes for the 2 KiB allocation-block VDrip disk format.
+; VDRIP_STORAGE_ALV is 256 bytes for the 4 KiB allocation-block VDrip disk format.
 ;
-; MOVE_BUFFER was shrunk from 256 to 192 bytes to carve RAMDISK_DPHDPB out of
+; MOVE_BUFFER was shrunk from 256 to 192 bytes to carve VDRIP_STORAGE_DPHDPB out of
 ; the scratch area.  The DPH/DPB previously lived at the tail of the VDrip
 ; storage code slot, which overflowed past FA80h and overlapped MOVE_BUFFER's
 ; low bytes; every storage transfer then corrupted the DPH ALV pointer and the
@@ -266,14 +264,14 @@ CBIOS_SCRATCH_END               = CBIOS_SCRATCH_LIMIT - 1
 MOVE_BUFFER                     = CBIOS_SCRATCH_BASE                   ; FA80h
 MOVE_BUFFER_SIZE                = 0x00c0                               ; 192 bytes
 
-RAMDISK_DPHDPB_BASE             = MOVE_BUFFER + MOVE_BUFFER_SIZE       ; FB40h
-RAMDISK_DPHDPB_SIZE             = 0x0040                               ; 64 bytes (DPH+DPB = 31)
+VDRIP_STORAGE_DPHDPB_BASE             = MOVE_BUFFER + MOVE_BUFFER_SIZE       ; FB40h
+VDRIP_STORAGE_DPHDPB_SIZE             = 0x0040                               ; 64 bytes (DPH+DPB = 31)
 
-RAMDISK_DIRBUF                  = CBIOS_SCRATCH_BASE + 0x0100          ; FB80h
-RAMDISK_DIRBUF_SIZE             = 0x0080
+VDRIP_STORAGE_DIRBUF                  = CBIOS_SCRATCH_BASE + 0x0100          ; FB80h
+VDRIP_STORAGE_DIRBUF_SIZE             = 0x0080
 
-STORAGE_ALV_BUFFER              = CBIOS_SCRATCH_BASE + 0x0180          ; FC00h
-STORAGE_ALV_BUFFER_SIZE         = 0x0200
+VDRIP_STORAGE_ALV_BUFFER              = CBIOS_SCRATCH_BASE + 0x0180          ; FC00h
+VDRIP_STORAGE_ALV_BUFFER_SIZE         = 0x0200
 
 ; ------------------------------------------------------------------------------
 ; IM2 Interrupt Vectors
@@ -336,21 +334,21 @@ CBIOS_AREA_END                  = 0xffff
 ; ------------------------------------------------------------------------------
 ; VDrip Storage Configuration (DPB Mapping)
 ; ------------------------------------------------------------------------------
-RAMDISK_DRIVE                   = 0x00
-RAMDISK_RECORD_BYTES            = 0x0080
-RAMDISK_TOTAL_RECORDS           = 0x10000
-RAMDISK_SECTORS_PER_TRACK       = 0x0004
-RAMDISK_TRACKS                  = 0x4000
-RAMDISK_OFFSET_TRACKS           = 0x0000
-RAMDISK_BLOCK_SHIFT             = 0x05
-RAMDISK_BLOCK_MASK              = 0x1f
-RAMDISK_EXTENT_MASK             = 0x01
-RAMDISK_MAX_BLOCK               = 0x07ff
-RAMDISK_DIR_ENTRIES             = 0x01ff
-RAMDISK_ALLOC0                  = 0xf0
-RAMDISK_ALLOC1                  = 0x00
-RAMDISK_CHECK_SIZE              = 0x0000
-RAMDISK_ALV_SIZE                = 0x0100
+VDRIP_STORAGE_DRIVE                   = 0x00
+VDRIP_STORAGE_RECORD_BYTES            = 0x0080
+VDRIP_STORAGE_TOTAL_RECORDS           = 0x10000
+VDRIP_STORAGE_SECTORS_PER_TRACK       = 0x0004
+VDRIP_STORAGE_TRACKS                  = 0x4000
+VDRIP_STORAGE_OFFSET_TRACKS           = 0x0000
+VDRIP_STORAGE_BLOCK_SHIFT             = 0x05
+VDRIP_STORAGE_BLOCK_MASK              = 0x1f
+VDRIP_STORAGE_EXTENT_MASK             = 0x01
+VDRIP_STORAGE_MAX_BLOCK               = 0x07ff
+VDRIP_STORAGE_DIR_ENTRIES             = 0x01ff
+VDRIP_STORAGE_ALLOC0                  = 0xf0
+VDRIP_STORAGE_ALLOC1                  = 0x00
+VDRIP_STORAGE_CHECK_SIZE              = 0x0000
+VDRIP_STORAGE_ALV_SIZE                = 0x0100
 
 ; ------------------------------------------------------------------------------
 ; Build-Time Validation Boundaries
@@ -403,8 +401,8 @@ RESERVED_RUNTIME_STATE_END      = CBIOS_RUNTIME_STATE_END
 ;   The legacy SIO console driver (cbios_console_sio.asm) is preserved in the
 ;   repository but not linked in the active VDrip-console build.
 
-LEGACY_RAMDISK_SLOT_FIRST       = 5
-LEGACY_RAMDISK_SLOT_LAST        = 5
+VDRIP_STORAGE_SLOT_FIRST       = 5
+VDRIP_STORAGE_SLOT_LAST        = 5
 
 LEGACY_CONSOLE_SLOT_FIRST       = 1
 LEGACY_CONSOLE_SLOT_LAST        = 1

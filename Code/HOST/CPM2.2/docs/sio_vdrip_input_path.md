@@ -3,6 +3,8 @@
 This note documents the Zephyr-80 SIO0/B keyboard-input path used by the
 Virtual Drip console backend after the raw-input protocol change.
 
+For the full framed display/storage protocol, see `docs/vdrip_protocol.md`.
+
 ## Protocol Split
 
 ```text

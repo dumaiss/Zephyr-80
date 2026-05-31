@@ -36,8 +36,6 @@ Implemented now:
 
 Planned later:
 
-- The proxy-side persistent storage implementation must mirror the BIOS storage
-  packet IDs and the single 8 MiB flat image geometry.
 - Real video-card interrupt handling may need a different IM2 ownership model
   or table layout.
 - Additional drivers may occupy one or more whole fixed slots.
@@ -74,65 +72,27 @@ warm-entry path. BDOS and BIOS are left intact.
 ## Memory Map
 
 The current fixed-slot layout is declared in `src/cbios_defs.inc` and reproduced
-by `tools/generate_memory_docs.py`.
+by `tools/generate_memory_docs.py`. The generated `docs/memory-map.md` is the
+address authority after each build.
 
-```text
-FFFFh +----------------------------------------------+
-      | BIOS stack / reserve                         |
-FFF0h |   CBIOS_STACK_TOP                            |
-      |   stack grows downward                       |
-FD80h +----------------------------------------------+
-FD7Fh | Runtime state end                            |
-FC80h | Runtime state start                          |
-      |   CURRENT_BANK / DMA / XMOVE                 |
-      |   storage state                              |
-      |   SIO core state                             |
-      |   console driver state                       |
-      +----------------------------------------------+
-FC7Fh | Scratch / storage buffers end                |
-FC00h |   RAMDISK_ALV                                |
-FB80h |   RAMDISK_DIRBUF                             |
-FA80h |   MOVE_BUFFER                                |
-      +----------------------------------------------+
-FA7Fh | Driver slot 5 end                            |
-F7D9h |   VDrip storage backend                      |
-F680h | Driver slot 5 start                          |
-      |                                              |
-F3FFh | Driver slot 4 end                            |
-F000h | Driver slot 4 start                          |
-      |                                              |
-EFFFh | Driver slot 3 end                            |
-EC00h | Driver slot 3 start                          |
-      |                                              |
-EBFFh | Driver slot 2 end                            |
-E800h | Driver slot 2 start                          |
-      |                                              |
-E7FFh | Driver slot 1 end                            |
-E400h | Driver slot 1 start: Virtual Drip console    |
-      |                                              |
-E3FFh | Driver slot 0 end                            |
-E000h | Driver slot 0 start: Virtual Drip console    |
-      +----------------------------------------------+
-DFFFh | Core BIOS end                                |
-DF50h |   IOCALL transaction transport               |
-DD10h |   SIO core + exact IM2 vector entry          |
-DC00h |   banking / XMOVE / LAUNCH                   |
-DBC0h |   storage facade                             |
-DB80h |   console facade                             |
-DA00h | CBIOS_BASE / jump table / boot / WBOOT       |
-      +----------------------------------------------+
-D9FFh | CP/M BDOS/state end                          |
-CC06h | FBASE / BDOS entry                           |
-C400h | CCP base                                     |
-C000h | protected/common TPA, application-owned       |
-      +----------------------------------------------+
-BFFFh | banked TPA end                               |
-0100h | transient program area                       |
-0080h | default DMA / command tail                   |
-0005h | JP FBASE                                     |
-0000h | JP WBOOT                                     |
-      +----------------------------------------------+
-```
+Major regions:
+
+| Range | Owner |
+|---|---|
+| `0100h-BFFFh` | Banked transient program area |
+| `C000h-C3FFh` | Protected/common TPA, application-owned |
+| `C400h-D9FFh` | CCP/BDOS in the current MEM=56 build |
+| `DA00h-DFFFh` | Core BIOS |
+| `E000h-FA7Fh` | Fixed driver/code slots |
+| `FA80h-FDFFh` | BIOS scratch and CP/M storage buffers |
+| `FE00h-FE7Fh` | Persistent BIOS runtime state |
+| `FE80h-FFFFh` | BIOS stack/reserve |
+
+Hand-written walkthroughs:
+
+- `docs/zephyr80_bios_walkthrough.md`
+- `docs/vdrip_protocol.md`
+- `docs/zephyr80_vdrip_disk.md`
 
 ## Driver Model
 

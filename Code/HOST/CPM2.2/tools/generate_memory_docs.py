@@ -89,13 +89,13 @@ IMPLEMENTATION_SYMBOLS = [
     (("write",), "Storage WRITE facade; transfers to VDrip proxy storage."),
     (("sectran",), "Returns untranslated 0-based logical sector for no-skew media."),
     (("STORAGE_STUB_CODE_END",), "Storage BIOS facade end."),
-    (("RAMDISK_CODE_START",), "VDrip storage backend code start."),
-    (("ramdisk_seldsk",), "Selects CP/M drive A and returns its DPH."),
-    (("ramdisk_read",), "Reads one 128-byte record from VDrip proxy storage."),
-    (("ramdisk_write",), "Writes one 128-byte record to VDrip proxy storage."),
-    (("RAMDISK_DPH",), "Drive A disk parameter header."),
-    (("RAMDISK_DPB",), "Drive A disk parameter block."),
-    (("RAMDISK_CODE_END",), "VDrip storage backend code end."),
+    (("VDRIP_STORAGE_CODE_START",), "VDrip storage backend code start."),
+    (("vdrip_storage_seldsk",), "Selects CP/M drive A and returns its DPH."),
+    (("vdrip_storage_read",), "Reads one 128-byte record from VDrip proxy storage."),
+    (("vdrip_storage_write",), "Writes one 128-byte record to VDrip proxy storage."),
+    (("VDRIP_STORAGE_DPH",), "Drive A disk parameter header."),
+    (("VDRIP_STORAGE_DPB",), "Drive A disk parameter block."),
+    (("VDRIP_STORAGE_CODE_END",), "VDrip storage backend code end."),
     (("SIO_CORE_CODE_START",), "BIOS-owned SIO core code start in core BIOS."),
     (("CONSOLE_IM2_VECTOR_ENTRY",), "SIO core exact IM2 vector table entry address."),
     (("CONSOLE_IM2_VECTOR_TABLE_START",), "SIO core exact IM2 vector table start."),
@@ -149,13 +149,13 @@ RUNTIME_STATE = [
     ("MOVE_DST_PTR", 2),
     ("MOVE_REMAIN", 2),
     ("MOVE_CHUNK_LEN", 2),
-    ("ramdisk_selected_drive", 1),
-    ("ramdisk_track", 2),
-    ("ramdisk_sector", 2),
-    ("RAMDISK_SAVED_BANK", 1),
-    ("ramdisk_seq", 1),
-    ("ramdisk_active_seq", 1),
-    ("ramdisk_lba", 2),
+    ("vdrip_storage_selected_drive", 1),
+    ("vdrip_storage_track", 2),
+    ("vdrip_storage_sector", 2),
+    ("VDRIP_STORAGE_SAVED_BANK", 1),
+    ("vdrip_storage_seq", 1),
+    ("vdrip_storage_active_seq", 1),
+    ("vdrip_storage_lba", 2),
     ("storage_expected_type", 1),
     ("storage_expected_len", 1),
     ("storage_expected_seq", 1),
@@ -188,7 +188,7 @@ DRIVER_SLOT_OWNERS = {
 
 DRIVER_DECLARATIONS = [
     ("Virtual Drip console driver", "VDRIP_CONSOLE_CODE_START", "VDRIP_CONSOLE_CODE_END", 0, 5),
-    ("VDrip storage backend", "RAMDISK_CODE_START", "RAMDISK_CODE_END", 5, 5),
+    ("VDrip storage backend", "VDRIP_STORAGE_CODE_START", "VDRIP_STORAGE_CODE_END", 5, 5),
 ]
 
 CORE_RANGES = [
@@ -348,14 +348,17 @@ def runtime_range(symbols: dict[str, int]) -> tuple[int, int]:
 def scratch_buffer_ranges(symbols: dict[str, int]) -> list[tuple[str, int, int, str]]:
     move_start = require_symbol(symbols, "MOVE_BUFFER")
     move_limit = move_start + require_symbol(symbols, "MOVE_BUFFER_SIZE")
-    dirbuf_start = require_symbol(symbols, "RAMDISK_DIRBUF")
+    dphdpb_start = require_symbol(symbols, "VDRIP_STORAGE_DPHDPB_BASE")
+    dphdpb_limit = dphdpb_start + require_symbol(symbols, "VDRIP_STORAGE_DPHDPB_SIZE")
+    dirbuf_start = require_symbol(symbols, "VDRIP_STORAGE_DIRBUF")
     dirbuf_limit = dirbuf_start + require_symbol(symbols, "DEFAULT_DMA_LEN")
-    alv_start = require_symbol(symbols, "RAMDISK_ALV")
-    alv_limit = alv_start + require_symbol(symbols, "RAMDISK_ALV_SIZE")
+    alv_start = require_symbol(symbols, "VDRIP_STORAGE_ALV")
+    alv_limit = alv_start + require_symbol(symbols, "VDRIP_STORAGE_ALV_SIZE")
     return [
         ("MOVE_BUFFER", move_start, move_limit, "Cross-bank MOVE and VDrip storage transaction staging buffer."),
-        ("RAMDISK_DIRBUF", dirbuf_start, dirbuf_limit, "CP/M directory buffer referenced by the VDrip storage DPH."),
-        ("RAMDISK_ALV", alv_start, alv_limit, "CP/M allocation vector for the fixed 8 MiB VDrip work disk."),
+        ("VDRIP_STORAGE_DPHDPB", dphdpb_start, dphdpb_limit, "CP/M DPH/DPB constants for the VDrip storage disk."),
+        ("VDRIP_STORAGE_DIRBUF", dirbuf_start, dirbuf_limit, "CP/M directory buffer referenced by the VDrip storage DPH."),
+        ("VDRIP_STORAGE_ALV", alv_start, alv_limit, "CP/M allocation vector for the fixed 8 MiB VDrip work disk."),
     ]
 
 
@@ -751,13 +754,13 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             symbol_row(symbols, ("MOVE_CHUNK_LEN",), "Current cross-bank chunk length."),
             symbol_row(symbols, ("BANKING_STATE_END",), "Banking state end."),
             symbol_row(symbols, ("STORAGE_STATE_START",), "Storage state start."),
-            symbol_row(symbols, ("ramdisk_selected_drive",), "Selected storage drive, or `FFh` for unsupported."),
-            symbol_row(symbols, ("ramdisk_track",), "Selected CP/M track."),
-            symbol_row(symbols, ("ramdisk_sector",), "Selected 0-based CP/M sector."),
-            symbol_row(symbols, ("RAMDISK_SAVED_BANK",), "Saved active bank for DMA copies."),
-            symbol_row(symbols, ("ramdisk_seq",), "VDrip storage sequence byte."),
-            symbol_row(symbols, ("ramdisk_active_seq",), "Sequence byte for the active storage transaction."),
-            symbol_row(symbols, ("ramdisk_lba",), "Computed little-endian 16-bit LBA for the active request."),
+            symbol_row(symbols, ("vdrip_storage_selected_drive",), "Selected storage drive, or `FFh` for unsupported."),
+            symbol_row(symbols, ("vdrip_storage_track",), "Selected CP/M track."),
+            symbol_row(symbols, ("vdrip_storage_sector",), "Selected 0-based CP/M sector."),
+            symbol_row(symbols, ("VDRIP_STORAGE_SAVED_BANK",), "Saved active bank for DMA copies."),
+            symbol_row(symbols, ("vdrip_storage_seq",), "VDrip storage sequence byte."),
+            symbol_row(symbols, ("vdrip_storage_active_seq",), "Sequence byte for the active storage transaction."),
+            symbol_row(symbols, ("vdrip_storage_lba",), "Computed little-endian 16-bit LBA for the active request."),
             symbol_row(symbols, ("storage_expected_type",), "Expected storage reply packet type."),
             symbol_row(symbols, ("storage_expected_len",), "Expected storage reply payload length."),
             symbol_row(symbols, ("storage_expected_seq",), "Expected storage reply sequence byte."),
@@ -771,8 +774,8 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             symbol_row(symbols, ("storage_rx_complete",), "Storage reply completion flag."),
             symbol_row(symbols, ("storage_rx_error",), "Storage reply error flag."),
             symbol_row(symbols, ("storage_caller_sp",), "Saved caller stack pointer while storage backends run on the BIOS stack."),
-            symbol_row(symbols, ("RAMDISK_CSV",), "Zero-length fixed-disk check vector label."),
-            symbol_row(symbols, ("RAMDISK_ALV",), "VDrip storage allocation vector."),
+            symbol_row(symbols, ("VDRIP_STORAGE_CSV",), "Zero-length fixed-disk check vector label."),
+            symbol_row(symbols, ("VDRIP_STORAGE_ALV",), "VDrip storage allocation vector."),
             symbol_row(symbols, ("STORAGE_STATE_END",), "Storage state end."),
             symbol_row(symbols, ("SIO_CORE_STATE_START",), "BIOS-owned SIO core state start."),
             symbol_row(symbols, ("SIO0B_RX_SINK",), "Registered RX byte sink for SIO_CH_CONSOLE / SIO0/B."),
@@ -830,7 +833,7 @@ def write_memory_map(
         range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, LAUNCH, SIO core, and IOCALL transport."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END")), "Driver slots 0-4", "Virtual Drip console driver (code, font, shadow buffer, queues, state)."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slot 5", "Virtual Drip console tail plus VDrip storage backend."),
-        range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch/storage buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `RAMDISK_DIRBUF` is at `{h4(require_symbol(symbols, 'RAMDISK_DIRBUF'))}`; `RAMDISK_ALV` is at `{h4(require_symbol(symbols, 'RAMDISK_ALV'))}`."),
+        range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch/storage buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `VDRIP_STORAGE_DPHDPB` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DPHDPB_BASE'))}`; `VDRIP_STORAGE_DIRBUF` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DIRBUF'))}`; `VDRIP_STORAGE_ALV` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_ALV'))}`."),
         range_row(span(runtime_start, runtime_end), "BIOS runtime state", "Current bank, DMA address, banking state, storage state, SIO core state, and console driver state."),
         range_row(span(stack_guard, area_end), "Protected firmware stack and work window", f"Stack top is `{h4(stack_top)}`; console backend stack top is `{h4(console_stack_top)}`; stack guard is `{h4(stack_guard)}`."),
         "",
@@ -863,7 +866,7 @@ def write_memory_map(
         if slot == 5:
             contents = (
                 f"Console tail through `{h4(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_END') - 1)}`; "
-                f"`{span(require_symbol(symbols, 'RAMDISK_CODE_START'), require_symbol(symbols, 'RAMDISK_CODE_END') - 1)}` VDrip storage backend."
+                f"`{span(require_symbol(symbols, 'VDRIP_STORAGE_CODE_START'), require_symbol(symbols, 'VDRIP_STORAGE_CODE_END') - 1)}` VDrip storage backend."
             )
         elif slot == 0:
             contents = f"`{span(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'), require_symbol(symbols, 'VDRIP_CONSOLE_CODE_END') - 1)}` VDrip code, font, shadow, queues, state."
@@ -1003,7 +1006,7 @@ def write_memory_map(
             f"- WBOOT restores the CCP range `{span(require_symbol(symbols, 'CBASE'), require_symbol(symbols, 'FBASE') - 1)}` from ROM page 0 using `ROM_VISIBLE_BANK0` (`{h2(require_symbol(symbols, 'ROM_VISIBLE_BANK0'))}`) before returning to `CCP_CLEARBUF_ENTRY`.",
             f"- `CBIOS_BASE` is `{h4(cbios_base)}`; CBIOS layout constants are derived from this base.",
             f"- `CBIOS_CODE_LIMIT` is `{h4(code_limit)}`; no resident code may cross into scratch/staging.",
-            f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the Virtual Drip console driver starts at `{h4(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'))}` and the VDrip storage backend starts at `{h4(require_symbol(symbols, 'RAMDISK_CODE_START'))}`.",
+            f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the Virtual Drip console driver starts at `{h4(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'))}` and the VDrip storage backend starts at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_CODE_START'))}`.",
             f"- `IOCALL` code starts at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` inside core BIOS and uses the BIOS-owned SIO1/A synchronous IO Controller transport.",
             f"- `LAUNCH` code resides at `{h4(require_symbol(symbols, 'LAUNCH'))}`, inside protected high BIOS memory.",
             f"- `WBOOT` resident code starts at `{h4(require_symbol(symbols, 'WBOOT_RESIDENT_START'))}`, inside protected high BIOS memory.",

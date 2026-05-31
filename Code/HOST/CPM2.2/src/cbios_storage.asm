@@ -17,9 +17,9 @@
 	.globl home,seldsk,settrk,setsec,setdma,read,write,sectran
 	.globl STORAGE_STUB_CODE_START,STORAGE_STUB_CODE_END
 	.globl cbios_dma_addr
-	.globl ramdisk_home,ramdisk_seldsk,ramdisk_seldsk_unsupported
-	.globl ramdisk_settrk,ramdisk_setsec,ramdisk_read,ramdisk_write
-	.globl ramdisk_sectran
+	.globl vdrip_storage_home,vdrip_storage_seldsk,vdrip_storage_seldsk_unsupported
+	.globl vdrip_storage_settrk,vdrip_storage_setsec,vdrip_storage_read,vdrip_storage_write
+	.globl vdrip_storage_sectran
 	.globl storage_caller_sp
 
 	.area CODE (ABS)
@@ -30,11 +30,11 @@ STORAGE_STUB_CODE_START:
 ; HOME
 ; Purpose: select track 0 on the active backend.
 ; Inputs: none.
-; Outputs: ramdisk_track = 0.
+; Outputs: vdrip_storage_track = 0.
 ; Clobbers: backend-defined; HL preserved for conservative CP/M callers.
 home:
 	push hl
-	call ramdisk_home
+	call vdrip_storage_home
 	pop hl
 	ret
 
@@ -42,13 +42,13 @@ home:
 ; Input: BC = CP/M track number.
 ; Output: selected track recorded by backend.
 settrk:
-	jp ramdisk_settrk
+	jp vdrip_storage_settrk
 
 ; SETSEC
 ; Input: BC = CP/M logical sector number, zero-based after SECTRAN.
 ; Output: selected sector recorded by backend.
 setsec:
-	jp ramdisk_setsec
+	jp vdrip_storage_setsec
 
 ; SELDSK
 ; Purpose:
@@ -60,9 +60,9 @@ setsec:
 ; Clobbers: AF, HL.
 seldsk:
 	ld a,c
-	cp #RAMDISK_DRIVE
-	jp z,ramdisk_seldsk
-	jp ramdisk_seldsk_unsupported
+	cp #VDRIP_STORAGE_DRIVE
+	jp z,vdrip_storage_seldsk
+	jp vdrip_storage_seldsk_unsupported
 
 ; SETDMA
 ; Input: BC = DMA address.
@@ -75,7 +75,7 @@ setdma:
 ; Purpose:
 ;   Transfer one CP/M 128-byte record through the VDrip storage backend.
 ; Inputs:
-;   ramdisk_track, ramdisk_sector, cbios_dma_addr, and DMA_BANK hold the active
+;   vdrip_storage_track, vdrip_storage_sector, cbios_dma_addr, and DMA_BANK hold the active
 ;   CP/M disk address and caller buffer bank/address.
 ; Outputs:
 ;   A = 0 on success, nonzero on backend error.
@@ -90,14 +90,14 @@ read:
 	push bc
 	push de
 	push hl
-	ld hl,#ramdisk_read
+	ld hl,#vdrip_storage_read
 	jr storage_call_backend
 
 write:
 	push bc
 	push de
 	push hl
-	ld hl,#ramdisk_write
+	ld hl,#vdrip_storage_write
 
 storage_call_backend:
 	ld (storage_caller_sp),sp
@@ -117,6 +117,6 @@ storage_call_return:
 ; SECTRAN
 ; Input: BC = logical sector. Returns HL = untranslated logical sector.
 sectran:
-	jp ramdisk_sectran
+	jp vdrip_storage_sectran
 
 STORAGE_STUB_CODE_END:

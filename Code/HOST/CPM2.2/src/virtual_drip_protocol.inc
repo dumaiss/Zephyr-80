@@ -6,6 +6,16 @@
 ; LEN counts LEN, TYPE, PAYLOAD, and CRC8. CRC8 covers LEN, TYPE, and
 ; PAYLOAD only. Cursor commands are proxy/display overlay commands; they do
 ; not write emulated VDP memory or registers.
+;
+; Current protocol split:
+;   - proxy-to-Z80 keyboard input is raw after terminal readiness
+;   - Z80-to-proxy display/control packets use this framing
+;   - storage requests/replies use this framing while the storage driver owns
+;     the SIO RX sink
+;
+; PACKET_KEY_EVENT is the legacy name for type 05h. The active BIOS console
+; source calls the same value PACKET_TERMINAL_INPUT and keeps it inactive for
+; normal keyboard input.
 
 PACKET_SYNC0            EQU     0A5H
 PACKET_SYNC1            EQU     05AH
