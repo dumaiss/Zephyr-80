@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 38710 bytes |
+| Firmware symbol map | `build/firmware.map` | 39548 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 524288 bytes |
 | Final burnable image | `build/zephyr80.bin` | 524288 bytes |
 | Layout manifest | `build/layout.manifest` | 882 bytes |
@@ -111,13 +111,13 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `write` | `DBE4h` | Storage WRITE facade; transfers to RAM disk. |
 | `sectran` | `DBEEh` | Returns untranslated 0-based logical sector for no-skew media. |
 | `STORAGE_STUB_CODE_END` | `DBF1h` | Storage BIOS facade end. |
-| `RAMDISK_CODE_START` | `F680h` | RAM disk backend code start. |
-| `ramdisk_seldsk` | `F691h` | Selects CP/M drive A and returns its DPH. |
-| `ramdisk_read` | `F6A5h` | Reads one 128-byte record from RAM disk storage. |
-| `ramdisk_write` | `F6DCh` | Writes one 128-byte record to RAM disk storage. |
-| `RAMDISK_DPH` | `F771h` | Drive A disk parameter header. |
-| `RAMDISK_DPB` | `F781h` | Drive A disk parameter block. |
-| `RAMDISK_CODE_END` | `F790h` | RAM disk backend code end. |
+| `RAMDISK_CODE_START` | `F970h` | RAM disk backend code start. |
+| `ramdisk_seldsk` | `F981h` | Selects CP/M drive A and returns its DPH. |
+| `ramdisk_read` | `F995h` | Reads one 128-byte record from RAM disk storage. |
+| `ramdisk_write` | `F9CCh` | Writes one 128-byte record to RAM disk storage. |
+| `RAMDISK_DPH` | `FA61h` | Drive A disk parameter header. |
+| `RAMDISK_DPB` | `FA71h` | Drive A disk parameter block. |
+| `RAMDISK_CODE_END` | `FA80h` | RAM disk backend code end. |
 | `SIO_CORE_CODE_START` | `DD10h` | BIOS-owned SIO core code start in core BIOS. |
 | `CONSOLE_IM2_VECTOR_ENTRY` | `DD10h` | SIO core exact IM2 vector table entry address. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |
@@ -145,7 +145,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E00Eh` | Virtual Drip console init, proxy handshake, VDP setup. |
-| `VDRIP_CONSOLE_CODE_END` | `F64Ah` | Virtual Drip console driver code end. |
+| `VDRIP_CONSOLE_CODE_END` | `F7D9h` | Virtual Drip console driver code end. |
 | `BANKING_CODE_START` | `DC00h` | Banking extension implementation start. |
 | `SELMEM` | `DC00h` | Select RAM bank. |
 | `SETBNK` | `DC0Ah` | Record future DMA bank. |

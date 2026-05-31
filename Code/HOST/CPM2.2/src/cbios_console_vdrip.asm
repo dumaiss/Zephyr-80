@@ -120,6 +120,7 @@ PACKET_PROXY_READY	= 0x0a
 
 CURSOR_ENABLE		= 0x01
 CURSOR_SHOW		= 0x02
+CURSOR_HIDE		= 0x03
 CURSOR_SET_POSITION	= 0x04
 CURSOR_SET_STYLE	= 0x06
 CURSOR_SET_BLINK	= 0x07
@@ -183,14 +184,18 @@ VDRIP_READY_WAIT_C	= 0x06
 TERM_STATE_NORMAL	= 0x00
 TERM_STATE_ESC		= 0x01
 TERM_STATE_CSI		= 0x02
+TERM_STATE_ESC_HASH	= 0x03
+TERM_STATE_CHARSET	= 0x04
 
 ; ANSI CSI final command bytes.
+CSI_CHA			= 'G	; cursor horizontal absolute
 CSI_CUU			= 'A	; cursor up
 CSI_CUD			= 'B	; cursor down
 CSI_CUF			= 'C	; cursor forward / right
 CSI_CUB			= 'D	; cursor back / left
 CSI_CUP			= 'H	; cursor position
 CSI_CUP_ALT		= 'f	; cursor position (alternate)
+CSI_VPA			= 'd	; cursor vertical absolute
 CSI_ED			= 'J	; erase in display
 CSI_EL			= 'K	; erase in line
 CSI_SGR			= 'm	; select graphic rendition
@@ -1198,15 +1203,25 @@ vdrip_terminal_enqueue_loop:
 ;   printable ASCII 20h..7Eh
 ;   CR  = 0Dh
 ;   LF  = 0Ah
+;   VT/FF = treated as LF
 ;   BS  = 08h
 ;   TAB = 09h
+;   NUL/BEL/SO/SI and other controls are consumed, not printed
 ;
 ; ANSI/CSI sequences supported:
 ;   ESC c              RIS — reset terminal (triple-Esc also works)
+;   ESC D/E/M          IND / NEL / RI (RI does not scroll down yet)
+;   ESC H              HTS consumed; fixed tab stops remain active
 ;   ESC 7              save cursor position and attributes
 ;   ESC 8              restore saved cursor position and attributes
+;   ESC Z              DECID consumed; response deferred
+;   ESC = / ESC >      keypad modes consumed; input mapping unchanged
+;   ESC ( B / ESC ) B  ASCII charset designation consumed
+;   ESC ( 0 / ESC ) 0  DEC special graphics designation consumed
 ;   ESC [ row ; col H  cursor position (1-based)
 ;   ESC [ row ; col f  cursor position (alternate)
+;   ESC [ n G          cursor horizontal absolute
+;   ESC [ n d          cursor vertical absolute
 ;   ESC [ A/B/C/D      cursor up/down/forward/back
 ;   ESC [ n A/B/C/D    with repeat count (0 treated as 1)
 ;   ESC [ s            save cursor (CSI form)
@@ -1217,32 +1232,41 @@ vdrip_terminal_enqueue_loop:
 ;   ESC [ K / 0 K      erase from cursor to end of line
 ;   ESC [ 1 K          erase from start of line through cursor
 ;   ESC [ 2 K          erase entire current line
-;   ESC [ m / 0 m      reset SGR attributes
-;   ESC [ 7 m          reverse video on (tracked, not rendered)
-;   ESC [ 27 m         reverse video off
+;   ESC [ n X          erase n characters from cursor position
+;   ESC [ m / 0 m      reset SGR attributes (no visual effect)
+;   ESC [ 1/4/5 m      bold/underline/blink consumed, no visual effect
+;   ESC [ 7/27 m       reverse on/off tracked, not rendered
+;   ESC [ 22/24/25 m   style-off params consumed, no visual effect
+;   ESC [ 30-37/40-47 m  colors consumed, no visual effect
+;   ESC [ c / 0 c      device attributes consumed; response deferred
+;   ESC [ 5 n / 6 n    device status consumed; response deferred
 ;   ESC [ ? 25 h       show cursor (DEC private)
-;   ESC [ ? 25 l       hide cursor (consumed, not supported yet)
-;   ESC [ ? 7 h/l      auto-wrap mode (consumed safely)
+;   ESC [ ? 25 l       hide cursor
+;   ESC [ ? 1/3/6/7 h/l  DEC private modes consumed safely
 ;
 ; Unsupported CSI / DEC private sequences are consumed safely.
 ; CSI parser supports '?' prefix for DEC private sequences.
-; SGR parameters 1 (bold) and 4 (underline) are consumed.
-; DSR, scroll region, CHA, VPA are consumed safely.
+; Scroll regions, insert/delete line, insert/delete character, tab clearing,
+; origin mode, 132-column mode, and DEC special graphics rendering are deferred
+; and are consumed where their ESC/CSI forms are recognized.
 ; ANSI coordinates are 1-based; internal coordinates are 0-based.
 ; Tab stops are 8 columns (VT100 standard).
-; Reverse video is tracked in current_attr but not visually rendered.
+; Text80 cannot render font effects; reverse video, bold, underline, blink, and
+; color are parsed/consumed but intentionally have no visual effect.
 ;
 ; Output parser states:
 ;   NORMAL -> ESC (on 0x1b) -> CSI (on '[')
+;   ESC_HASH and CHARSET consume one following byte, then return to NORMAL.
 ; CSI accumulates digits and ';' separators, dispatches on final byte.
 ;
 ; Parser state variables:
-;   term_state       = NORMAL/ESC/CSI.
+;   term_state       = NORMAL/ESC/CSI/ESC_HASH/CHARSET.
 ;   csi_param0      = first numeric CSI parameter.
 ;   csi_param1      = second numeric CSI parameter.
 ;   csi_param_count = number of stored numeric parameters.
 ;   csi_accum       = current decimal parameter being accumulated.
 ;   csi_have_digit  = nonzero after at least one digit in current parameter.
+;   csi_private_flag = nonzero after a DEC private '?' prefix.
 ;   esc_press_count = triple-Esc display reset counter.
 
 term_process_byte:
@@ -1254,6 +1278,10 @@ term_process_byte:
 
 	cp #TERM_STATE_CSI
 	jp z,term_process_csi
+	cp #TERM_STATE_ESC_HASH
+	jp z,term_consume_one
+	cp #TERM_STATE_CHARSET
+	jp z,term_consume_one
 
 	; ---- NORMAL state ----
 	ld a,c
@@ -1276,6 +1304,10 @@ term_process_byte:
 	jp z,term_cr
 
 	cp #0x0a
+	jp z,term_lf
+	cp #0x0b
+	jp z,term_lf
+	cp #0x0c
 	jp z,term_lf
 
 	cp #0x20
@@ -1334,16 +1366,61 @@ term_process_esc:
 	ret
 
 term_esc_not_csi:
+	; ESC # x — consume one character-set/screen-control final byte.
+	cp #'#
+	jr z,term_enter_esc_hash
+	; ESC ( x / ESC ) x — consume G0/G1 character-set designation.
+	cp #'(
+	jr z,term_enter_charset
+	cp #')
+	jr z,term_enter_charset
+	; ESC D — IND, index down within the current terminal model.
+	cp #'D
+	jp z,term_lf
+	; ESC E — NEL, carriage return plus line feed.
+	cp #'E
+	jp z,term_nel
+	; ESC M — RI, reverse index. Scroll-down-at-top is deferred.
+	cp #'M
+	jp z,term_reverse_index
+	; ESC H — HTS, dynamic tab stops deferred; consume safely.
+	cp #'H
+	ret z
 	; ESC 7 — save cursor and attributes.
 	cp #'7
 	jp z,ansi_save_cursor
 	; ESC 8 — restore cursor and attributes.
 	cp #'8
 	jp z,ansi_restore_cursor
+	; ESC Z — DECID. Response is deferred because cursor-key application
+	; mode is not coupled to the proxy-side raw keyboard mapper.
+	cp #'Z
+	ret z
+	; ESC = / ESC > — keypad modes. Input mapping is unchanged; consume.
+	cp #'=
+	ret z
+	cp #'>
+	ret z
 	; ESC c — RIS (reset terminal), already handled by triple-Esc.
 	cp #'c
 	jp z,vdrip_reset_display
 term_esc_done:
+	ret
+
+term_enter_esc_hash:
+	ld a,#TERM_STATE_ESC_HASH
+	ld (term_state),a
+	ret
+
+term_enter_charset:
+	ld a,#TERM_STATE_CHARSET
+	ld (term_state),a
+	ret
+
+term_consume_one:
+	xor a
+	ld (term_state),a
+	ld (esc_press_count),a
 	ret
 
 
@@ -1419,15 +1496,13 @@ term_csi_final:
 ; csi_param_count).  Advance csi_param_count, capped at CSI_MAX_PARAMS.
 ; Clears csi_accum and csi_have_digit.
 ansi_store_param:
-	ld a,(csi_have_digit)
-	or a
-	jr z,ansi_store_param_reset
-
 	ld a,(csi_param_count)
 	cp #CSI_MAX_PARAMS
 	jr nc,ansi_store_param_reset
 
-	; Select slot: 0 -> csi_param0, 1 -> csi_param1.
+	; Select slot: 0 -> csi_param0, 1 -> csi_param1.  If no digits were
+	; seen, csi_accum is zero; later default helpers treat zero as one for
+	; VT100-style cursor counts and coordinates.
 	ld a,(csi_accum)
 	push af
 	ld a,(csi_param_count)
@@ -1501,6 +1576,8 @@ ansi_dispatch_csi:
 
 ansi_dispatch_public:
 	ld a,c
+	cp #CSI_CHA
+	jp z,ansi_cha
 	cp #CSI_CUU
 	jp z,ansi_cuu
 	cp #CSI_CUD
@@ -1513,12 +1590,20 @@ ansi_dispatch_public:
 	jp z,ansi_cup
 	cp #CSI_CUP_ALT
 	jp z,ansi_cup
+	cp #CSI_VPA
+	jp z,ansi_vpa
 	cp #CSI_ED
 	jp z,ansi_ed
 	cp #CSI_EL
 	jp z,ansi_el
+	cp #'X
+	jp z,ansi_ech
 	cp #CSI_SGR
 	jp z,ansi_sgr
+	cp #'c
+	ret z
+	cp #'n
+	ret z
 	cp #CSI_SAVE
 	jp z,ansi_save_cursor
 	cp #CSI_RESTORE
@@ -1569,6 +1654,31 @@ ansi_cub_loop:
 	djnz ansi_cub_loop
 	ret
 
+; ---- CSI CHA/VPA: absolute column / row ----
+
+ansi_cha:
+	call ansi_param0_default_1	; A = col (1-based)
+	dec a
+	cp #TEXT_LOG_COLUMNS
+	jr c,ansi_cha_clamped
+	ld a,#(TEXT_LOG_COLUMNS - 1)
+ansi_cha_clamped:
+	ld (text_col),a
+	call text_ensure_cursor_visible
+	call vdrip_cursor_set_position_current
+	ret
+
+ansi_vpa:
+	call ansi_param0_default_1	; A = row (1-based)
+	dec a
+	cp #TEXT_ROWS
+	jr c,ansi_vpa_clamped
+	ld a,#(TEXT_ROWS - 1)
+ansi_vpa_clamped:
+	ld (text_row),a
+	call vdrip_cursor_set_position_current
+	ret
+
 
 ; ---- CSI CUP: cursor position (row;col H  or  row;col f) ----
 
@@ -1597,9 +1707,31 @@ ansi_cup_col_clamped:
 ; ---- CSI ED: erase in display ----
 
 ansi_ed:
-	; All ED variants clear the screen for now (TP3 uses ESC[2J).
-	; TODO: implement 0=to-end, 1=from-start when memory allows.
+	; param0 == 0 or missing: clear from cursor to end of screen.
+	; param0 == 1: clear from start of screen through cursor.
+	; param0 == 2: clear whole screen. This implementation homes the cursor
+	; for CP/M full-screen program compatibility.
+	ld a,(csi_param_count)
+	or a
+	jr z,ansi_ed_to_eos
+
+	ld a,(csi_param0)
+	or a
+	jr z,ansi_ed_to_eos
+	dec a
+	jr z,ansi_ed_from_start
+	dec a
+	ret nz
+
 	call text_clear_screen_runtime
+	ret
+
+ansi_ed_to_eos:
+	call text_clear_from_cursor_to_eos
+	ret
+
+ansi_ed_from_start:
+	call text_clear_from_start_to_cursor
 	ret
 
 
@@ -1632,26 +1764,67 @@ ansi_el_from_start:
 	ret
 
 
+; ---- CSI ECH: erase n characters from cursor to the right ----
+
+ansi_ech:
+	call ansi_param0_default_1
+	ld e,a				; requested count
+	ld a,(text_col)
+	ld d,a
+	ld a,#TEXT_LOG_COLUMNS
+	sub d				; remaining columns
+	ret z
+	cp e
+	jr nc,ansi_ech_count_ok
+	ld e,a
+ansi_ech_count_ok:
+	call text_shadow_addr_current
+	push hl
+	ld b,e
+	ld a,#0x20
+ansi_ech_shadow_loop:
+	ld (hl),a
+	inc hl
+	djnz ansi_ech_shadow_loop
+
+	ld a,e
+	push af
+	call text_cursor_to_vram
+	pop af
+	pop hl
+	ld c,a
+	ld b,#0x00
+	call vdp_write_data_block
+	call vdrip_send_frame_mark
+	ret
+
+
 ; ---- CSI SGR: select graphic rendition ----
 
 ansi_sgr:
 	; Consume SGR.  Track reverse video in current_attr.
-	; 0=reset, 7=reverse on, 27=reverse off.  1,4=consume.
+	; 0=reset, 7=reverse on, 27=reverse off. Other font/color
+	; parameters are consumed with no visual effect in Text80.
 	ld a,(csi_param_count)
 	or a
-	jr nz,ansi_sgr_process
-	xor a
-	ld (current_attr),a
-	ret
-ansi_sgr_process:
+	jr z,ansi_sgr_reset
 	ld a,(csi_param0)
+	call ansi_sgr_apply_param
+	ld a,(csi_param_count)
+	cp #2
+	ret c
+	ld a,(csi_param1)
+	call ansi_sgr_apply_param
+	ret
+
+ansi_sgr_apply_param:
 	or a
 	jr z,ansi_sgr_reset
 	cp #7
 	jr z,ansi_sgr_rev_on
 	cp #27
 	jr z,ansi_sgr_rev_off
-	ret		; 1,4,etc — consume
+	ret		; 1,4,5,22,24,25,30-47,etc — consume
 ansi_sgr_reset:
 	xor a
 	ld (current_attr),a
@@ -1714,7 +1887,8 @@ ansi_decrst:
 	ret		; ?7l etc — consume
 
 ansi_hide_cursor:
-	ret		; HIDE not supported by proxy yet
+	call vdrip_cursor_hide
+	ret
 
 
 ; ===========================================================================
@@ -1750,6 +1924,24 @@ term_lf:
 	pop af
 	ld (text_col),a
 	call text_ensure_cursor_visible
+	call vdrip_cursor_set_position_current
+	ret
+
+term_nel:
+	; Next line — CR + LF.
+	xor a
+	ld (text_col),a
+	call text_newline
+	call vdrip_cursor_set_position_current
+	ret
+
+term_reverse_index:
+	; Reverse index — move up one row. Region scroll-down is deferred.
+	ld a,(text_row)
+	or a
+	ret z
+	dec a
+	ld (text_row),a
 	call vdrip_cursor_set_position_current
 	ret
 
@@ -1875,6 +2067,79 @@ text_clear_runtime_shadow_loop:
 
 
 ; ---------------------------------------------------------------------------
+; text_clear_from_cursor_to_eos — ED 0: cursor through end of screen.
+; Cursor position is restored after the erase.
+; ---------------------------------------------------------------------------
+text_clear_from_cursor_to_eos:
+	ld a,(text_col)
+	ld (ansi_tmp_col),a
+	ld a,(text_row)
+	ld (ansi_tmp_row),a
+
+	call text_clear_to_eol
+
+	ld a,(ansi_tmp_row)
+	inc a
+	cp #TEXT_ROWS
+	jr nc,text_clear_eos_restore
+
+text_clear_eos_row_loop:
+	ld (text_row),a
+	xor a
+	ld (text_col),a
+	call text_clear_to_eol
+	ld a,(text_row)
+	inc a
+	cp #TEXT_ROWS
+	jr c,text_clear_eos_row_loop
+
+text_clear_eos_restore:
+	ld a,(ansi_tmp_col)
+	ld (text_col),a
+	ld a,(ansi_tmp_row)
+	ld (text_row),a
+	call vdrip_cursor_set_position_current
+	ret
+
+
+; ---------------------------------------------------------------------------
+; text_clear_from_start_to_cursor — ED 1: screen start through cursor.
+; Cursor position is restored after the erase.
+; ---------------------------------------------------------------------------
+text_clear_from_start_to_cursor:
+	ld a,(text_col)
+	ld (ansi_tmp_col),a
+	ld a,(text_row)
+	ld (ansi_tmp_row),a
+	or a
+	jr z,text_clear_stc_current_row
+
+	ld b,a
+	xor a
+	ld (text_row),a
+
+text_clear_stc_row_loop:
+	xor a
+	ld (text_col),a
+	push bc
+	call text_clear_line
+	pop bc
+	ld a,(text_row)
+	inc a
+	ld (text_row),a
+	djnz text_clear_stc_row_loop
+
+text_clear_stc_current_row:
+	ld a,(ansi_tmp_row)
+	ld (text_row),a
+	ld a,(ansi_tmp_col)
+	ld (text_col),a
+	call text_clear_from_sol_to_cursor
+	call vdrip_cursor_set_position_current
+	ret
+
+
+; ---------------------------------------------------------------------------
 ; text_clear_to_eol — clear from cursor to end of logical line (ESC [ K)
 ; ---------------------------------------------------------------------------
 
@@ -1968,6 +2233,7 @@ text_clear_stc_fill:
 
 	ld a,e
 	ld (text_col),a
+	call vdrip_send_frame_mark
 	ret
 
 
@@ -2555,6 +2821,15 @@ vdrip_handle_reconnect:
 vdrip_reset_display:
 	xor a
 	ld (esc_press_count),a
+	ld (term_state),a
+	ld (csi_param0),a
+	ld (csi_param1),a
+	ld (csi_param_count),a
+	ld (csi_accum),a
+	ld (csi_have_digit),a
+	ld (csi_private_flag),a
+	ld (current_attr),a
+	ld (text_attr_saved),a
 
 	call vdrip_rts_release_raw
 	ld a,#0x01
@@ -2887,6 +3162,16 @@ vdrip_cursor_enable:
 vdrip_cursor_show:
 	ld hl,#packet_payload0
 	ld (hl),#CURSOR_SHOW
+
+	ld a,#PACKET_CURSOR_COMMAND
+	ld b,#0x01
+	ld hl,#packet_payload0
+	jp vdrip_send_packet
+
+
+vdrip_cursor_hide:
+	ld hl,#packet_payload0
+	ld (hl),#CURSOR_HIDE
 
 	ld a,#PACKET_CURSOR_COMMAND
 	ld b,#0x01
@@ -3274,6 +3559,12 @@ text_attr_saved:
 
 ; Current SGR attribute.  bit 0 = reverse video.
 current_attr:
+	.db 0x00
+
+; Temporary cursor save used by ED 0/1 helpers.
+ansi_tmp_col:
+	.db 0x00
+ansi_tmp_row:
 	.db 0x00
 
 ; VDP address tracking — skip redundant address setup when writing

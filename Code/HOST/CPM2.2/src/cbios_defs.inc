@@ -12,21 +12,22 @@
 ;   FFF0h │   CBIOS_STACK_TOP                            │
 ;   FEF0h │   CBIOS_CONSOLE_STACK_TOP                    │
 ;         │   stack grows downward                       │
-;   FB00h ├──────────────────────────────────────────────┤
-;   FAFFh │ Runtime state end                            │
-;   FA00h │ Runtime state start                          │
+;   FD80h ├──────────────────────────────────────────────┤
+;   FD7Fh │ Runtime state end                            │
+;   FC80h │ Runtime state start                          │
 ;         │   CURRENT_BANK / DMA / XMOVE                 │
 ;         │   storage state                              │
 ;         │   SIO core state                             │
 ;         │   console driver state                       │
 ;         ├──────────────────────────────────────────────┤
-;   F9FFh │ Scratch / staging end                        │
-;   F980h │   free scratch window                        │
-;   F900h │   RAMDISK_DIRBUF                             │
-;   F800h │   MOVE_BUFFER                                │
+;   FC7Fh │ Scratch / staging end                        │
+;   FC00h │   free scratch window                        │
+;   FB80h │   RAMDISK_DIRBUF                             │
+;   FA80h │   MOVE_BUFFER                                │
 ;         ├──────────────────────────────────────────────┤
-;   F7FFh │ Driver slot 5 end                            │
-;   F400h │ Driver slot 5 start: RAM disk backend        │
+;   FA7Fh │ Driver slot 5 end                            │
+;   F970h │   RAM disk backend, ending at code limit     │
+;   F680h │ Driver slot 5 start: transitional free space │
 ;         │                                              │
 ;   F3FFh │ Driver slot 4 end                            │
 ;   F000h │ Driver slot 4 start: Virtual Drip console    │
@@ -221,14 +222,14 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ; Before Virtual Drip:
 ;
 ;   Slot 5:
-;     F400h... current RAM disk backend
+;     F970h... RAM disk backend, deliberately packed against FA80h
 ;
 ;   Slots 0-4:
 ;     E000h... Virtual Drip console driver (code, font, shadow, queues)
 ;
 ; These names are kept so existing source can still ORG against them.
 
-CBIOS_RAMDISK_CODE_BASE         = CBIOS_DRIVER_SLOT5_BASE              ; F540h
+CBIOS_RAMDISK_CODE_BASE         = 0xf970                                ; ends at FA80h
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x0550                  ; DF50h
@@ -241,11 +242,11 @@ CBIOS_CODE_END                  = CBIOS_CODE_LIMIT - 1
 ; ------------------------------------------------------------------------------
 ; Scratch Area & Buffers
 ; ------------------------------------------------------------------------------
-; F800h-F9FFh = BIOS scratch / staging.
+; FA80h-FC7Fh = BIOS scratch / staging.
 ;
 ; Current active buffers:
-;   F800h-F8FFh MOVE_BUFFER
-;   F900h-F97Fh RAMDISK_DIRBUF
+;   FA80h-FB7Fh MOVE_BUFFER
+;   FB80h-FBFFh RAMDISK_DIRBUF
 ;
 ; The remaining gaps are available for later temporary BIOS work buffers.
 
