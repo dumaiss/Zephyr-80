@@ -194,6 +194,10 @@ CSI_CUP_ALT		= 'f	; cursor position (alternate)
 CSI_ED			= 'J	; erase in display
 CSI_EL			= 'K	; erase in line
 CSI_SGR			= 'm	; select graphic rendition
+CSI_SAVE		= 's	; save cursor
+CSI_RESTORE		= 'u	; restore cursor
+CSI_DECSET		= 'h	; DEC private mode set
+CSI_DECRST		= 'l	; DEC private mode reset
 
 ; ANSI maximum parameter count.
 CSI_MAX_PARAMS		= 2
@@ -326,6 +330,8 @@ vdrip_init_skip_handshake:
 
 	; Cursor starts at row 0, col 0 (full-screen scrolling).
 	xor a
+	ld (current_attr),a
+	ld (text_attr_saved),a
 	ld (text_col),a
 	ld (text_row),a
 	ld (text_view_col),a
@@ -681,12 +687,12 @@ vdrip_register_rx_sink:
 ; VDrip traffic:
 ;   Must not emit VDP or cursor traffic. This routine can run inside the SIO ISR.
 ; Behavior:
-;   Only SIO_CH_CONSOLE bytes are accepted.  The readiness recognizer runs
-;   on every byte — even after the first handshake — so a second
-;   ESC [ ? 1 ; 0 c from a reconnecting proxy is detected and flagged.
+;   Only SIO_CH_CONSOLE bytes are accepted. Before the initial terminal-ready
+;   handshake, bytes feed the readiness recognizer and are consumed. After the
+;   handshake, every byte is raw terminal input and is enqueued unchanged.
+;   This is important for the ESC key: a standalone 1Bh must reach CONIN, not
+;   remain trapped as the first byte of a possible readiness sequence.
 vdrip_rx_sink:
-	; ISR-safe: always feed bytes to the readiness parser.
-	; Bytes are only enqueued when the parser is idle AND ready.
 	push af
 	push bc
 	push de
@@ -695,23 +701,20 @@ vdrip_rx_sink:
 	cp #SIO_CH_CONSOLE
 	jr nz,vdrip_rx_sink_done
 
-	ld a,c
-	call vdrip_terminal_ready_parse_byte
-
-	; If the parser is tracking a sequence (state != WAIT_ESC),
-	; consume the byte silently — don't enqueue.
-	ld a,(vdrip_terminal_ready_state)
-	cp #VDRIP_READY_WAIT_ESC
-	jr nz,vdrip_rx_sink_done
-
-	; Parser is idle.  Only enqueue if ready and not in
-	; reconnection-reset window (flag may be zeroed by reconnect).
+	; Once ready, bypass the readiness recognizer entirely.  It is not a
+	; general input parser and would otherwise eat ESC while waiting to see
+	; whether ESC starts ESC [ ? 1 ; 0 c.
 	ld a,(vdrip_terminal_ready_flag)
 	or a
-	jr z,vdrip_rx_sink_done
+	jr z,vdrip_rx_sink_wait_ready
 
 	ld a,c
 	call textq_put_ascii
+	jr vdrip_rx_sink_done
+
+vdrip_rx_sink_wait_ready:
+	ld a,c
+	call vdrip_terminal_ready_parse_byte
 
 vdrip_rx_sink_done:
 	pop hl
@@ -733,7 +736,7 @@ vdrip_rx_sink_done:
 ; This is not a general input parser. It only runs while
 ; vdrip_terminal_ready_flag is zero. The recognized readiness bytes are consumed
 ; and never enqueued into textq. After the flag is set, vdrip_rx_sink bypasses
-; this recognizer and enqueues all received bytes unchanged.
+; this recognizer and enqueues all received bytes unchanged, including ESC.
 ;
 ; Input:
 ;   A = received raw byte.
@@ -1199,19 +1202,35 @@ vdrip_terminal_enqueue_loop:
 ;   TAB = 09h
 ;
 ; ANSI/CSI sequences supported:
-;   ESC [ row ; col H
-;   ESC [ row ; col f
-;   ESC [ A/B/C/D
-;   ESC [ n A/B/C/D
-;   ESC [ 2 J
-;   ESC [ K
-;   ESC [ 0 K
-;   ESC [ 2 K
-;   ESC [ m
+;   ESC c              RIS — reset terminal (triple-Esc also works)
+;   ESC 7              save cursor position and attributes
+;   ESC 8              restore saved cursor position and attributes
+;   ESC [ row ; col H  cursor position (1-based)
+;   ESC [ row ; col f  cursor position (alternate)
+;   ESC [ A/B/C/D      cursor up/down/forward/back
+;   ESC [ n A/B/C/D    with repeat count (0 treated as 1)
+;   ESC [ s            save cursor (CSI form)
+;   ESC [ u            restore cursor (CSI form)
+;   ESC [ 2 J          erase entire screen, cursor home
+;   ESC [ 0 J / ESC [ J  erase from cursor to end of screen
+;   ESC [ 1 J          erase from start of screen through cursor
+;   ESC [ K / 0 K      erase from cursor to end of line
+;   ESC [ 1 K          erase from start of line through cursor
+;   ESC [ 2 K          erase entire current line
+;   ESC [ m / 0 m      reset SGR attributes
+;   ESC [ 7 m          reverse video on (tracked, not rendered)
+;   ESC [ 27 m         reverse video off
+;   ESC [ ? 25 h       show cursor (DEC private)
+;   ESC [ ? 25 l       hide cursor (consumed, not supported yet)
+;   ESC [ ? 7 h/l      auto-wrap mode (consumed safely)
 ;
-; Unsupported CSI sequences are consumed or ignored safely. SGR is currently
-; consumed and ignored unless attributes are implemented later. ANSI cursor
-; coordinates are 1-based; internal text_row/text_col coordinates are 0-based.
+; Unsupported CSI / DEC private sequences are consumed safely.
+; CSI parser supports '?' prefix for DEC private sequences.
+; SGR parameters 1 (bold) and 4 (underline) are consumed.
+; DSR, scroll region, CHA, VPA are consumed safely.
+; ANSI coordinates are 1-based; internal coordinates are 0-based.
+; Tab stops are 8 columns (VT100 standard).
+; Reverse video is tracked in current_attr but not visually rendered.
 ;
 ; Output parser states:
 ;   NORMAL -> ESC (on 0x1b) -> CSI (on '[')
@@ -1299,7 +1318,7 @@ term_process_esc:
 	pop af
 
 	cp #'[
-	jr nz,term_esc_done
+	jr nz,term_esc_not_csi
 
 	; Enter CSI — reset parser variables.
 	ld a,#TERM_STATE_CSI
@@ -1311,6 +1330,19 @@ term_process_esc:
 	ld (csi_param_count),a
 	ld (csi_accum),a
 	ld (csi_have_digit),a
+	ld (csi_private_flag),a
+	ret
+
+term_esc_not_csi:
+	; ESC 7 — save cursor and attributes.
+	cp #'7
+	jp z,ansi_save_cursor
+	; ESC 8 — restore cursor and attributes.
+	cp #'8
+	jp z,ansi_restore_cursor
+	; ESC c — RIS (reset terminal), already handled by triple-Esc.
+	cp #'c
+	jp z,vdrip_reset_display
 term_esc_done:
 	ret
 
@@ -1345,6 +1377,17 @@ term_process_csi:
 	ret
 
 term_csi_not_digit:
+	; Question mark — DEC private sequence prefix.
+	cp #'?
+	jr nz,term_csi_not_qmark
+	ld a,(csi_param_count)
+	or a
+	jr nz,term_csi_not_qmark	; ? only valid as first char
+	ld a,#0x01
+	ld (csi_private_flag),a
+	ret
+
+term_csi_not_qmark:
 	; Semicolon — advance to next param slot.
 	cp #';
 	jr nz,term_csi_final
@@ -1354,6 +1397,7 @@ term_csi_not_digit:
 
 term_csi_final:
 	; Final command byte — store any pending param, then dispatch.
+	push af		; save command byte across ansi_store_param
 	call ansi_store_param
 
 	; Reset state and triple-Esc counter.
@@ -1361,9 +1405,6 @@ term_csi_final:
 	ld (term_state),a
 	ld (esc_press_count),a
 
-	push af		; save command byte
-	xor a
-	ld (esc_press_count),a
 	pop af
 
 	call ansi_dispatch_csi
@@ -1420,6 +1461,8 @@ ansi_param0_default_1:
 	or a
 	jr z,ansi_pd1_ret1
 	ld a,(csi_param0)
+	or a
+	jr z,ansi_pd1_ret1
 	ret
 ansi_pd1_ret1:
 	ld a,#1
@@ -1432,6 +1475,8 @@ ansi_param1_default_1:
 	cp #2
 	jr c,ansi_pd1_ret1
 	ld a,(csi_param1)
+	or a
+	jr z,ansi_pd1_ret1
 	ret
 
 
@@ -1442,35 +1487,43 @@ ansi_param1_default_1:
 ansi_dispatch_csi:
 	ld c,a		; C = final command byte
 
+	; DEC private mode (ESC [ ? ... h/l).
+	ld a,(csi_private_flag)
+	or a
+	jr z,ansi_dispatch_public
+
+	ld a,c
+	cp #CSI_DECSET
+	jp z,ansi_decset
+	cp #CSI_DECRST
+	jp z,ansi_decrst
+	ret		; unsupported DEC private — consume
+
+ansi_dispatch_public:
 	ld a,c
 	cp #CSI_CUU
 	jp z,ansi_cuu
-
 	cp #CSI_CUD
 	jp z,ansi_cud
-
 	cp #CSI_CUF
 	jp z,ansi_cuf
-
 	cp #CSI_CUB
 	jp z,ansi_cub
-
 	cp #CSI_CUP
 	jp z,ansi_cup
-
 	cp #CSI_CUP_ALT
 	jp z,ansi_cup
-
 	cp #CSI_ED
 	jp z,ansi_ed
-
 	cp #CSI_EL
 	jp z,ansi_el
-
 	cp #CSI_SGR
-	jp z,ansi_sgr		; consume and ignore
-
-	; Unsupported CSI — ignore.
+	jp z,ansi_sgr
+	cp #CSI_SAVE
+	jp z,ansi_save_cursor
+	cp #CSI_RESTORE
+	jp z,ansi_restore_cursor
+	; Unsupported CSI / DEC private fallthrough — consume.
 	ret
 
 
@@ -1522,9 +1575,6 @@ ansi_cub_loop:
 ansi_cup:
 	call ansi_param0_default_1	; A = row (1-based)
 	dec a
-	jr nc,ansi_cup_row_ok
-	xor a
-ansi_cup_row_ok:
 	cp #TEXT_ROWS
 	jr c,ansi_cup_row_clamped
 	ld a,#(TEXT_ROWS - 1)
@@ -1533,9 +1583,6 @@ ansi_cup_row_clamped:
 
 	call ansi_param1_default_1	; A = col (1-based)
 	dec a
-	jr nc,ansi_cup_col_ok
-	xor a
-ansi_cup_col_ok:
 	cp #TEXT_LOG_COLUMNS
 	jr c,ansi_cup_col_clamped
 	ld a,#(TEXT_LOG_COLUMNS - 1)
@@ -1550,17 +1597,9 @@ ansi_cup_col_clamped:
 ; ---- CSI ED: erase in display ----
 
 ansi_ed:
-	; param0 == 2: clear entire screen.
-	ld a,(csi_param_count)
-	or a
-	jr z,ansi_ed_done		; no param -> ignore
-
-	ld a,(csi_param0)
-	cp #2
-	jr nz,ansi_ed_done		; only support ESC [ 2 J
-
+	; All ED variants clear the screen for now (TP3 uses ESC[2J).
+	; TODO: implement 0=to-end, 1=from-start when memory allows.
 	call text_clear_screen_runtime
-ansi_ed_done:
 	ret
 
 
@@ -1568,29 +1607,114 @@ ansi_ed_done:
 
 ansi_el:
 	; param0 == 0 or missing: clear to end of line.
+	; param0 == 1: clear from start of line through cursor.
 	; param0 == 2: clear whole line.
 	ld a,(csi_param_count)
 	or a
 	jr z,ansi_el_to_eol		; default: clear to EOL
 
 	ld a,(csi_param0)
-	cp #2
-	jr z,ansi_el_whole_line
-
-ansi_el_to_eol:
-	call text_clear_to_eol
-	ret
+	or a
+	jr z,ansi_el_to_eol		; ESC [ 0 K
+	dec a
+	jr z,ansi_el_from_start		; ESC [ 1 K
 
 ansi_el_whole_line:
 	call text_clear_line
 	ret
 
+ansi_el_to_eol:
+	call text_clear_to_eol
+	ret
 
-; ---- CSI SGR: select graphic rendition (consume and ignore) ----
+ansi_el_from_start:
+	call text_clear_from_sol_to_cursor
+	ret
+
+
+; ---- CSI SGR: select graphic rendition ----
 
 ansi_sgr:
-	; All SGR parameters are consumed — nothing rendered.
+	; Consume SGR.  Track reverse video in current_attr.
+	; 0=reset, 7=reverse on, 27=reverse off.  1,4=consume.
+	ld a,(csi_param_count)
+	or a
+	jr nz,ansi_sgr_process
+	xor a
+	ld (current_attr),a
 	ret
+ansi_sgr_process:
+	ld a,(csi_param0)
+	or a
+	jr z,ansi_sgr_reset
+	cp #7
+	jr z,ansi_sgr_rev_on
+	cp #27
+	jr z,ansi_sgr_rev_off
+	ret		; 1,4,etc — consume
+ansi_sgr_reset:
+	xor a
+	ld (current_attr),a
+	ret
+ansi_sgr_rev_on:
+	ld a,#0x01
+	ld (current_attr),a
+	ret
+ansi_sgr_rev_off:
+	xor a
+	ld (current_attr),a
+	ret
+
+
+; ---- ANSI save/restore cursor (ESC 7/8 and CSI s/u) ----
+
+ansi_save_cursor:
+	ld a,(text_col)
+	ld (text_cursor_saved_col),a
+	ld a,(text_row)
+	ld (text_cursor_saved_row),a
+	ld a,(current_attr)
+	ld (text_attr_saved),a
+	ret
+
+ansi_restore_cursor:
+	ld a,(text_cursor_saved_col)
+	ld (text_col),a
+	ld a,(text_cursor_saved_row)
+	ld (text_row),a
+	ld a,(text_attr_saved)
+	ld (current_attr),a
+	call text_ensure_cursor_visible
+	call vdrip_cursor_set_position_current
+	ret
+
+
+; ---- DEC private modes (ESC [ ? ... h/l) ----
+
+ansi_decset:
+	ld a,(csi_param_count)
+	or a
+	ret z
+	ld a,(csi_param0)
+	cp #25
+	jr z,ansi_show_cursor
+	ret		; ?7h etc — consume
+
+ansi_show_cursor:
+	call vdrip_cursor_show
+	ret
+
+ansi_decrst:
+	ld a,(csi_param_count)
+	or a
+	ret z
+	ld a,(csi_param0)
+	cp #25
+	jr z,ansi_hide_cursor
+	ret		; ?7l etc — consume
+
+ansi_hide_cursor:
+	ret		; HIDE not supported by proxy yet
 
 
 ; ===========================================================================
@@ -1619,10 +1743,13 @@ term_cr:
 	ret
 
 term_lf:
-	; Line feed — column 0, next row.
-	xor a
-	ld (text_col),a
+	; Line feed — move down one row, preserving column.
+	ld a,(text_col)
+	push af
 	call text_newline
+	pop af
+	ld (text_col),a
+	call text_ensure_cursor_visible
 	call vdrip_cursor_set_position_current
 	ret
 
@@ -1635,16 +1762,14 @@ term_backspace:
 	ld (text_col),a
 
 	call text_ensure_cursor_visible
-	ld a,#0x20
-	call text_put_char_at_cursor
 	call vdrip_cursor_set_position_current
 	ret
 
 term_tab:
-	; Advance to next 4-column tab stop in logical columns.
+	; Advance to next 8-column tab stop (VT100 standard).
 	call text_advance_cursor
 	ld a,(text_col)
-	and #0x03
+	and #0x07
 	jr nz,term_tab
 
 	call text_ensure_cursor_visible
@@ -1744,6 +1869,7 @@ text_clear_runtime_shadow_loop:
 	ld (text_row),a
 	ld (text_view_col),a
 
+	call vdrip_cursor_set_position_current
 	call vdrip_send_frame_mark
 	ret
 
@@ -1802,6 +1928,45 @@ text_clear_line:
 
 	; Restore cursor column.
 	pop af
+	ld (text_col),a
+	ret
+
+
+; ---------------------------------------------------------------------------
+; text_clear_from_sol_to_cursor — EL 1: start of line through cursor.
+; Cursor position unchanged.  Uses block write.
+; ---------------------------------------------------------------------------
+text_clear_from_sol_to_cursor:
+	ld a,(text_col)
+	ld e,a			; save original col
+
+	xor a
+	ld (text_col),a
+	call text_cursor_to_vram	; VDP addr at col 0
+
+	ld a,e
+	inc a			; count = col + 1
+	ld c,a
+	ld b,#0x00
+
+	call text_shadow_addr_current	; HL = shadow[row][0]
+	push hl
+	push bc
+	ld a,#0x20
+text_clear_stc_fill:
+	ld (hl),a
+	inc hl
+	dec bc
+	ld a,b
+	or c
+	ld a,#0x20
+	jr nz,text_clear_stc_fill
+
+	pop bc
+	pop hl
+	call vdp_write_data_block
+
+	ld a,e
 	ld (text_col),a
 	ret
 
@@ -3093,6 +3258,22 @@ csi_param_count:
 csi_accum:
 	.db 0x00
 csi_have_digit:
+	.db 0x00
+
+; CSI parser: nonzero after '?' prefix (DEC private sequences).
+csi_private_flag:
+	.db 0x00
+
+; Saved cursor for ESC 7/8 and CSI s/u.
+text_cursor_saved_col:
+	.db 0x00
+text_cursor_saved_row:
+	.db 0x00
+text_attr_saved:
+	.db 0x00
+
+; Current SGR attribute.  bit 0 = reverse video.
+current_attr:
 	.db 0x00
 
 ; VDP address tracking — skip redundant address setup when writing
