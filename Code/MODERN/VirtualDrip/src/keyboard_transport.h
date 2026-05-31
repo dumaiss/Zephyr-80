@@ -40,10 +40,13 @@ typedef struct {
     uint64_t keyboard_queue_dropped;
     size_t keyboard_queue_high_water;
     uint64_t keyboard_held_due_to_vdp;
+    uint64_t keyboard_held_due_to_storage;
     uint64_t vdp_busy_enter_count;
+    uint64_t storage_busy_enter_count;
     uint64_t frame_mark_count;
     uint64_t vdp_busy_timeout_count;
     TransportMode mode;
+    bool storage_active;
 } KeyboardTransportStats;
 
 typedef struct KeyboardTransport KeyboardTransport;
@@ -62,6 +65,7 @@ bool keyboard_transport_enqueue(
 void keyboard_transport_note_keyboard_event(KeyboardTransport *transport);
 void keyboard_transport_note_unsupported_key(KeyboardTransport *transport);
 void keyboard_transport_note_incoming_packet(KeyboardTransport *transport, const Packet *packet);
+void keyboard_transport_set_storage_active(KeyboardTransport *transport, bool active);
 void keyboard_transport_get_stats(KeyboardTransport *transport, KeyboardTransportStats *stats);
 
 #endif

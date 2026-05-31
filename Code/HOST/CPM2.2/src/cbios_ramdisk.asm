@@ -1,18 +1,21 @@
-; Local Zephyr-80 CP/M RAM disk backend.
+; Local Zephyr-80 CP/M VDrip storage backend.
 ;
-; Drive A is backed by RAM banks 2-7, addresses 0000h-BFFFh in each bank.
-; CP/M owns the filesystem layout; this BIOS layer only maps and transfers
-; 128-byte records.
+; Drive A is backed by the proxy-side "Zephyr VDrip CP/M 8M" flat image.
+; CP/M owns the filesystem layout; this BIOS layer only maps standard 128-byte
+; records to Virtual Drip storage transactions.
 ;
 ; Geometry assumptions:
-;   6 banks * 48 KiB/bank = 294912 bytes.
-;   128-byte CP/M records produce 0180h records per bank and 0900h total.
-;   48 tracks * 48 sectors/track * 128 bytes/sector = full capacity.
-;   Allocation and directory parameters are encoded in RAMDISK_DPB below.
+;   8,388,608 bytes, 65,536 logical 128-byte records.
+;   4 records/track, 16,384 tracks, no reserved/system tracks.
+;   2 KiB allocation blocks, 4096 blocks, 512 directory entries.
 ;
-; MOVE_BUFFER is the cross-bank staging buffer. RAMDISK_DIRBUF is the CP/M
-; directory buffer referenced by the DPH. Both live in the scratch/staging area
-; and must never overlap resident code or persistent runtime state.
+; Packet constants use the next free Virtual Drip packet IDs after existing
+; display/control packets:
+;   0Dh READ request, 0Eh READ reply, 0Fh WRITE request, 10h WRITE reply.
+;
+; MOVE_BUFFER is transaction scratch. READ replies store payload bytes there
+; before copying data to the caller DMA bank; WRITE requests stage the caller
+; DMA record there before transmission.
 
 	.globl ramdisk_home,ramdisk_seldsk,ramdisk_seldsk_unsupported
 	.globl ramdisk_settrk,ramdisk_setsec,ramdisk_read,ramdisk_write
@@ -22,6 +25,25 @@
 	.globl RAMDISK_DPH,RAMDISK_DPB,RAMDISK_CSV,RAMDISK_ALV
 	.globl ramdisk_selected_drive,ramdisk_track,ramdisk_sector
 	.globl CURRENT_BANK,DMA_BANK,cbios_dma_addr
+	.globl sio_register_rx_sink,sio_rx_kick
+	.globl vdrip_rx_sink,vdrip_send_packet,vdrip_rts_assert_raw,crc8_update
+	.globl vdrip_rx_rts_released
+
+STORAGE_RX_WAIT_SYNC0	= 0x00
+STORAGE_RX_WAIT_SYNC1	= 0x01
+STORAGE_RX_LEN		= 0x02
+STORAGE_RX_TYPE		= 0x03
+STORAGE_RX_PAYLOAD	= 0x04
+STORAGE_RX_CRC		= 0x05
+
+STORAGE_READ_REQ_LEN	= 0x06
+STORAGE_READ_REPLY_LEN	= 0x82
+STORAGE_WRITE_REQ_LEN	= 0x86
+STORAGE_WRITE_REPLY_LEN	= 0x02
+STORAGE_REPLY_MAX_LEN	= STORAGE_READ_REPLY_LEN
+STORAGE_WRITE_DATA_OFF	= 0x06
+STORAGE_READ_DATA_OFF	= 0x02
+STORAGE_TIMEOUT		= 0xffff
 
 	.area CODE (ABS)
 	.org CBIOS_RAMDISK_CODE_BASE
@@ -46,7 +68,7 @@ ramdisk_settrk:
 	ret
 
 ; SETSEC backend.
-; Input: BC = CP/M sector within track.
+; Input: BC = zero-based CP/M sector within track.
 ; Output: ramdisk_sector updated.
 ramdisk_setsec:
 	ld (ramdisk_sector),bc
@@ -70,7 +92,7 @@ ramdisk_seldsk_unsupported:
 
 ; SECTRAN backend.
 ; Input: BC = logical sector.
-; Output: HL = same logical sector; the RAM disk uses no skew table.
+; Output: HL = same logical sector; VDrip storage uses no skew table.
 ramdisk_sectran:
 	ld h,b
 	ld l,c
@@ -78,152 +100,431 @@ ramdisk_sectran:
 
 ; READ backend.
 ; Purpose:
-;   Copy one 128-byte record from RAM disk bank storage to the caller DMA bank.
+;   Fetch one CP/M 128-byte record from the VDrip proxy into the caller DMA
+;   bank/address.
 ; Inputs:
 ;   ramdisk_track/ramdisk_sector select the record; DMA_BANK and cbios_dma_addr
 ;   identify the caller's DMA buffer.
 ; Outputs:
-;   A = BIOS_OK on success, BIOS_ERR on invalid drive/track/sector.
+;   A = BIOS_OK on success, BIOS_ERR on invalid address or storage failure.
 ; Clobbers:
 ;   AF, BC, DE, HL.
-; Important invariants:
-;   The active bank is restored from RAMDISK_SAVED_BANK before returning.
-;   Cross-bank transfer always stages through MOVE_BUFFER in common scratch.
+; Blocking behavior:
+;   Bounded by STORAGE_TIMEOUT while waiting for the framed storage reply.
 ramdisk_read:
-	call ramdisk_map_current
+	call ramdisk_compute_lba
 	or a
 	ret nz
-	ld (RAMDISK_IO_ADDR),hl
-	ld a,c
-	ld (RAMDISK_IO_BANK),a
-	ld a,(CURRENT_BANK)
-	ld (RAMDISK_SAVED_BANK),a
+	call ramdisk_next_seq
+	ld (ramdisk_active_seq),a
+	call ramdisk_build_request_header
 
-	ld a,(RAMDISK_IO_BANK)
-	call ramdisk_select_bank_a
-	ld hl,(RAMDISK_IO_ADDR)
-	ld de,#MOVE_BUFFER
-	ld bc,#RAMDISK_RECORD_BYTES
-	ldir
+	ld a,#PACKET_STORAGE_READ_REPLY
+	ld b,#STORAGE_READ_REPLY_LEN
+	call ramdisk_storage_begin
 
-	ld a,(DMA_BANK)
-	call ramdisk_select_bank_a
+	or a
+	ret nz
+
+	ld a,#PACKET_STORAGE_READ_REQ
+	ld b,#STORAGE_READ_REQ_LEN
 	ld hl,#MOVE_BUFFER
-	ld de,(cbios_dma_addr)
-	ld bc,#RAMDISK_RECORD_BYTES
-	ldir
-	jr ramdisk_restore_ok
+	call vdrip_send_packet
+	call ramdisk_wait_storage_reply
+	call ramdisk_storage_end
+	or a
+	ret nz
+
+	call ramdisk_copy_read_to_dma
+	xor a
+	ret
 
 ; WRITE backend.
 ; Purpose:
-;   Copy one 128-byte record from the caller DMA bank into RAM disk bank
-;   storage.
+;   Send one CP/M 128-byte record from the caller DMA bank/address to the VDrip
+;   proxy storage image.
 ; Inputs/Outputs/Clobbers:
 ;   Same contract as ramdisk_read.
 ramdisk_write:
-	call ramdisk_map_current
+	call ramdisk_compute_lba
 	or a
 	ret nz
-	ld (RAMDISK_IO_ADDR),hl
-	ld a,c
-	ld (RAMDISK_IO_BANK),a
-	ld a,(CURRENT_BANK)
-	ld (RAMDISK_SAVED_BANK),a
+	call ramdisk_next_seq
+	ld (ramdisk_active_seq),a
+	call ramdisk_build_request_header
+	call ramdisk_copy_dma_to_write
 
-	ld a,(DMA_BANK)
-	call ramdisk_select_bank_a
-	ld hl,(cbios_dma_addr)
-	ld de,#MOVE_BUFFER
-	ld bc,#RAMDISK_RECORD_BYTES
-	ldir
+	ld a,#PACKET_STORAGE_WRITE_REPLY
+	ld b,#STORAGE_WRITE_REPLY_LEN
+	call ramdisk_storage_begin
 
-	ld a,(RAMDISK_IO_BANK)
-	call ramdisk_select_bank_a
+	ld a,#PACKET_STORAGE_WRITE_REQ
+	ld b,#STORAGE_WRITE_REQ_LEN
 	ld hl,#MOVE_BUFFER
-	ld de,(RAMDISK_IO_ADDR)
-	ld bc,#RAMDISK_RECORD_BYTES
-	ldir
-
-ramdisk_restore_ok:
-	ld a,(RAMDISK_SAVED_BANK)
-	call ramdisk_select_bank_a
-	xor a
+	call vdrip_send_packet
+	call ramdisk_wait_storage_reply
+	call ramdisk_storage_end
 	ret
 
-; Map the current CP/M track and 0-based sector to a storage bank/address.
-; Output on success: A=0, C=bank, HL=address. Output on failure: A=BIOS_ERR.
-;
-; Walkthrough:
-;   1. Reject unsupported drives and out-of-range tracks/sectors.
-;   2. Convert track to record offset with track * RAMDISK_SECTORS_PER_TRACK.
-;   3. Add sector to get an absolute 128-byte record number.
-;   4. Subtract RAMDISK_RECORDS_PER_BANK until the target RAM bank is found.
-;   5. Convert record-within-bank to a byte address by multiplying by 128.
-ramdisk_map_current:
+; Compute canonical LBA = track * 4 + zero-based sector.
+; Output: A=0 and ramdisk_lba updated, or A=BIOS_ERR on invalid drive/LBA.
+ramdisk_compute_lba:
 	ld a,(ramdisk_selected_drive)
 	or a
-	jr nz,ramdisk_map_error
+	jr nz,ramdisk_lba_error
 
 	ld hl,(ramdisk_track)
 	ld a,h
-	or a
-	jr nz,ramdisk_map_error
-	ld a,l
-	cp #RAMDISK_TRACKS
-	jr nc,ramdisk_map_error
+	cp #0x40
+	jr nc,ramdisk_lba_error
 
-	ld h,#0x00
-	add hl,hl
-	add hl,hl
-	add hl,hl
-	add hl,hl
-	ld d,h
-	ld e,l
-	add hl,hl
-	add hl,de
-	ex de,hl
-
-	ld hl,(ramdisk_sector)
-	ld a,h
+	ld de,(ramdisk_sector)
+	ld a,d
 	or a
-	jr nz,ramdisk_map_error
-	ld a,l
+	jr nz,ramdisk_lba_error
+	ld a,e
 	cp #RAMDISK_SECTORS_PER_TRACK
-	jr nc,ramdisk_map_error
+	jr nc,ramdisk_lba_error
 
+	add hl,hl
+	add hl,hl
+	ld d,#0x00
 	add hl,de
-	ld c,#RAMDISK_FIRST_BANK
-
-ramdisk_map_bank_loop:
-	ld de,#RAMDISK_RECORDS_PER_BANK
-	or a
-	sbc hl,de
-	jr c,ramdisk_map_bank_found
-	inc c
-	jr ramdisk_map_bank_loop
-
-ramdisk_map_bank_found:
-	add hl,de
-	ld a,l
-	and #0x01
-	jr z,ramdisk_map_low_zero
-	ld e,#0x80
-	jr ramdisk_map_have_low
-ramdisk_map_low_zero:
-	ld e,#0x00
-ramdisk_map_have_low:
-	srl h
-	rr l
-	ld h,l
-	ld l,e
+	ld (ramdisk_lba),hl
 	xor a
 	ret
 
-ramdisk_map_error:
+ramdisk_lba_error:
 	ld a,#BIOS_ERR
 	ret
 
-; Select a RAM-only bank and update CURRENT_BANK.
+; Increment the storage sequence byte. Zero is skipped so completion diagnostics
+; and reply matching never use the all-clear sentinel value.
+; Output: A = new sequence.
+ramdisk_next_seq:
+	ld a,(ramdisk_seq)
+	inc a
+	jr nz,ramdisk_next_seq_store
+	inc a
+ramdisk_next_seq_store:
+	ld (ramdisk_seq),a
+	ret
+
+; Build common READ/WRITE request header at MOVE_BUFFER:
+;   seq, drive 0, little-endian 32-bit LBA.
+ramdisk_build_request_header:
+	ld hl,#MOVE_BUFFER
+	ld a,(ramdisk_active_seq)
+	ld (hl),a
+	inc hl
+	ld (hl),#RAMDISK_DRIVE
+	inc hl
+	ld de,(ramdisk_lba)
+	ld (hl),e
+	inc hl
+	ld (hl),d
+	inc hl
+	ld (hl),#0x00
+	inc hl
+	ld (hl),#0x00
+	ret
+
+; Copy 128 bytes from the caller DMA bank into WRITE request payload scratch.
+ramdisk_copy_dma_to_write:
+	ld a,(CURRENT_BANK)
+	ld (RAMDISK_SAVED_BANK),a
+	ld a,(DMA_BANK)
+	call ramdisk_select_bank_a
+	ld hl,(cbios_dma_addr)
+	ld de,#(MOVE_BUFFER + STORAGE_WRITE_DATA_OFF)
+	ld bc,#RAMDISK_RECORD_BYTES
+	ldir
+	ld a,(RAMDISK_SAVED_BANK)
+	jp ramdisk_select_bank_a
+
+; Copy READ reply data from scratch into the caller DMA bank.
+ramdisk_copy_read_to_dma:
+	ld a,(CURRENT_BANK)
+	ld (RAMDISK_SAVED_BANK),a
+	ld a,(DMA_BANK)
+	call ramdisk_select_bank_a
+	ld hl,#(MOVE_BUFFER + STORAGE_READ_DATA_OFF)
+	ld de,(cbios_dma_addr)
+	ld bc,#RAMDISK_RECORD_BYTES
+	ldir
+	ld a,(RAMDISK_SAVED_BANK)
+	jp ramdisk_select_bank_a
+
+; Enter transaction-scoped storage receive mode.
+; Input: A = expected reply packet type, B = expected reply payload length.
+; Output: A = BIOS_OK / BIOS_ERR.
+ramdisk_storage_begin:
+	ld (storage_expected_type),a
+	ld a,b
+	ld (storage_expected_len),a
+	ld a,(ramdisk_active_seq)
+	ld (storage_expected_seq),a
+	xor a
+	ld (storage_rx_state),a
+	ld (storage_rx_complete),a
+	ld (storage_rx_error),a
+
+    ; Save console RTS state before we take the channel
+    ld a,(vdrip_rx_rts_released)
+    ld (ramdisk_saved_rts_state),a	
+
+	di
+	ld hl,#ramdisk_storage_rx_sink
+	ld a,#SIO_CH_CONSOLE
+	call sio_register_rx_sink
+	ei
+	or a
+	ret nz
+
+	call vdrip_rts_assert_raw
+	xor a
+	ret
+
+; Restore the normal raw keyboard RX sink after a storage transaction.
+; Preserves A so callers keep the transaction status.
+ramdisk_storage_end:
+	di
+	push af
+	ld hl,#vdrip_rx_sink
+	ld a,#SIO_CH_CONSOLE
+	call sio_register_rx_sink
+	ei
+    ; Restore pre-transaction RTS state instead of blindly clearing
+    ld a,(ramdisk_saved_rts_state)
+    ld (vdrip_rx_rts_released),a
+    or a
+    jr nz,ramdisk_storage_end_was_released
+    call vdrip_rts_assert_raw      ; console said RTS was asserted, re-assert
+    jr ramdisk_storage_end_done
+ramdisk_storage_end_was_released:
+    call vdrip_rts_release_raw     ; console had released RTS, restore that state
+ramdisk_storage_end_done:
+    pop af
+    ret
+
+; Wait for the storage RX sink to complete the expected reply.
+; Output: A = BIOS_OK or BIOS_ERR.
+ramdisk_wait_storage_reply:
+	ld de,#STORAGE_TIMEOUT
+
+ramdisk_wait_storage_loop:
+	ld a,(storage_rx_error)
+	or a
+	jr nz,ramdisk_wait_storage_error
+	ld a,(storage_rx_complete)
+	or a
+	jr nz,ramdisk_wait_storage_ok
+
+	ld a,#SIO_CH_CONSOLE
+	call sio_rx_kick
+
+	ld a,(storage_rx_error)
+	or a
+	jr nz,ramdisk_wait_storage_error
+	ld a,(storage_rx_complete)
+	or a
+	jr nz,ramdisk_wait_storage_ok
+
+	dec de
+	ld a,d
+	or e
+	jr nz,ramdisk_wait_storage_loop
+
+ramdisk_wait_storage_error:
+	ld a,#BIOS_ERR
+	ret
+
+ramdisk_wait_storage_ok:
+	xor a
+	ret
+
+; Storage reply RX sink. Runs from SIO ISR or foreground sio_rx_kick.
+; Inputs: A = SIO channel id, C = received byte.
+; ISR-safe: does bounded parser work only; no VDrip output and no bank switch.
+ramdisk_storage_rx_sink:
+	push af
+	push bc
+	push de
+	push hl
+
+	cp #SIO_CH_CONSOLE
+	jr nz,ramdisk_storage_rx_done
+	ld a,c
+	call ramdisk_storage_parse_byte
+
+ramdisk_storage_rx_done:
+	pop hl
+	pop de
+	pop bc
+	pop af
+	ret
+
+; Transaction-scoped framed reply parser.
+; Unexpected raw bytes before A5 are ignored. Once a frame starts, bad length,
+; CRC, type, sequence, status, or payload size marks the transaction failed.
+ramdisk_storage_parse_byte:
+	ld c,a
+	ld a,(storage_rx_state)
+	cp #STORAGE_RX_WAIT_SYNC0
+	jr z,storage_parse_wait_sync0
+	cp #STORAGE_RX_WAIT_SYNC1
+	jr z,storage_parse_wait_sync1
+	cp #STORAGE_RX_LEN
+	jr z,storage_parse_len
+	cp #STORAGE_RX_TYPE
+	jr z,storage_parse_type
+	cp #STORAGE_RX_PAYLOAD
+	jr z,storage_parse_payload
+	cp #STORAGE_RX_CRC
+	jp z,storage_parse_crc
+	xor a
+	ld (storage_rx_state),a
+	ret
+
+storage_parse_wait_sync0:
+	ld a,c
+	cp #PACKET_SYNC0
+	ret nz
+	ld a,#STORAGE_RX_WAIT_SYNC1
+	ld (storage_rx_state),a
+	ret
+
+storage_parse_wait_sync1:
+	ld a,c
+	cp #PACKET_SYNC1
+	jr z,storage_parse_sync_done
+	cp #PACKET_SYNC0
+	jr z,storage_parse_keep_sync1
+	xor a
+	ld (storage_rx_state),a
+	ret
+
+storage_parse_keep_sync1:
+	ld a,#STORAGE_RX_WAIT_SYNC1
+	ld (storage_rx_state),a
+	ret
+
+storage_parse_sync_done:
+	ld a,#STORAGE_RX_LEN
+	ld (storage_rx_state),a
+	ret
+
+storage_parse_len:
+	ld a,c
+	cp #VDRIP_WIRE_OVERHEAD
+	jp c,storage_parse_error
+	ld (storage_rx_len),a
+	ld c,#0x00
+	call crc8_update
+	ld a,c
+	ld (storage_rx_crc),a
+
+	ld a,(storage_rx_len)
+	sub #VDRIP_WIRE_OVERHEAD
+	cp #(STORAGE_REPLY_MAX_LEN + 1)
+	jp nc,storage_parse_error
+	ld (storage_rx_payload_len),a
+	ld (storage_rx_remaining),a
+	xor a
+	ld (storage_rx_index),a
+	ld a,#STORAGE_RX_TYPE
+	ld (storage_rx_state),a
+	ret
+
+storage_parse_type:
+	ld a,c
+	ld (storage_rx_type),a
+	ld e,a
+	ld a,(storage_rx_crc)
+	ld c,a
+	ld a,e
+	call crc8_update
+	ld a,c
+	ld (storage_rx_crc),a
+
+	ld a,(storage_rx_payload_len)
+	or a
+	jr z,storage_parse_expect_crc
+	ld a,#STORAGE_RX_PAYLOAD
+	ld (storage_rx_state),a
+	ret
+
+storage_parse_expect_crc:
+	ld a,#STORAGE_RX_CRC
+	ld (storage_rx_state),a
+	ret
+
+storage_parse_payload:
+	ld hl,#MOVE_BUFFER
+	ld a,(storage_rx_index)
+	ld e,a
+	ld d,#0x00
+	add hl,de
+	ld (hl),c
+
+	ld e,c
+	ld a,(storage_rx_crc)
+	ld c,a
+	ld a,e
+	call crc8_update
+	ld a,c
+	ld (storage_rx_crc),a
+
+	ld a,(storage_rx_index)
+	inc a
+	ld (storage_rx_index),a
+	ld a,(storage_rx_remaining)
+	dec a
+	ld (storage_rx_remaining),a
+	jr z,storage_parse_expect_crc
+	ret
+
+storage_parse_crc:
+	ld a,(storage_rx_crc)
+	cp c
+	jr nz,storage_parse_error
+
+	ld a,(storage_rx_type)
+	ld b,a
+	ld a,(storage_expected_type)
+	cp b
+	jr nz,storage_parse_error
+
+	ld a,(storage_rx_payload_len)
+	ld b,a
+	ld a,(storage_expected_len)
+	cp b
+	jr nz,storage_parse_error
+
+	ld a,(MOVE_BUFFER)
+	ld b,a
+	ld a,(storage_expected_seq)
+	cp b
+	jr nz,storage_parse_error
+
+	ld a,(MOVE_BUFFER + 1)
+	or a
+	jr nz,storage_parse_error
+
+	ld a,#0x01
+	ld (storage_rx_complete),a
+	xor a
+	ld (storage_rx_state),a
+	ret
+
+storage_parse_error:
+	ld a,#0x01
+	ld (storage_rx_error),a
+	xor a
+	ld (storage_rx_state),a
+	ret
+
+; Select a RAM bank and update CURRENT_BANK.
 ; Input: A = bank number.
 ; Output: hardware bank latch and CURRENT_BANK updated.
 ; Clobbers: AF.
@@ -234,8 +535,25 @@ ramdisk_select_bank_a:
 	out (BANK_PORT),a
 	ret
 
-; CP/M Drive Parameter Header for drive A. The allocation/check vectors are
-; persistent runtime state; RAMDISK_DIRBUF is a scratch directory buffer.
+RAMDISK_CODE_END:
+
+; CP/M Drive Parameter Header and Block for drive A.
+;
+; These live in their own scratch-area slot (RAMDISK_DPHDPB_BASE = FB40h), NOT
+; in the packed VDrip storage code slot.  They are constants that BDOS reads
+; (and re-reads on every Select Disk), so they must never share memory with a
+; buffer that gets written during operation.  Previously they sat at the tail
+; of the code slot, which overflowed past FA80h into MOVE_BUFFER; every storage
+; transfer then overwrote the DPH ALV pointer and the DPB geometry, wrecking
+; BDOS as soon as it re-read the DPH after the directory login.
+;
+; The boot shadow copy mirrors the whole C000h-FFFFh window from ROM to RAM, so
+; these initializers load correctly just like code, the same as RAMDISK_ALV and
+; the storage state block below.
+;
+; CKS is zero for fixed-disk behavior, so RAMDISK_CSV is a zero-length label.
+	.area WORK (ABS)
+	.org RAMDISK_DPHDPB_BASE
 RAMDISK_DPH:
 	.dw 0x0000
 	.dw 0x0000
@@ -246,7 +564,9 @@ RAMDISK_DPH:
 	.dw RAMDISK_CSV
 	.dw RAMDISK_ALV
 
-; CP/M Drive Parameter Block for the in-memory drive geometry above.
+; CP/M Drive Parameter Block for Zephyr VDrip CP/M 8M:
+;   SPT=4, BSH=5, BLM=31, EXM=1, DSM=2047, DRM=511,
+;   AL0=F0h, AL1=00h, CKS=0, OFF=0.
 RAMDISK_DPB:
 	.dw RAMDISK_SECTORS_PER_TRACK
 	.db RAMDISK_BLOCK_SHIFT
@@ -259,7 +579,10 @@ RAMDISK_DPB:
 	.dw RAMDISK_CHECK_SIZE
 	.dw RAMDISK_OFFSET_TRACKS
 
-RAMDISK_CODE_END:
+	.area WORK (ABS)
+	.org STORAGE_ALV_BUFFER
+RAMDISK_ALV:
+	.blkb RAMDISK_ALV_SIZE
 
 	.area WORK (ABS)
 	.org CBIOS_STORAGE_WORK_AREA
@@ -272,14 +595,42 @@ ramdisk_sector:
 	.dw 0x0000
 RAMDISK_SAVED_BANK:
 	.db 0x00
-RAMDISK_IO_BANK:
+ramdisk_saved_rts_state:
+	.db 0x00	
+ramdisk_seq:
 	.db 0x00
-RAMDISK_IO_ADDR:
+ramdisk_active_seq:
+	.db 0x00
+ramdisk_lba:
+	.dw 0x0000
+storage_expected_type:
+	.db 0x00
+storage_expected_len:
+	.db 0x00
+storage_expected_seq:
+	.db 0x00
+storage_rx_state:
+	.db STORAGE_RX_WAIT_SYNC0
+storage_rx_len:
+	.db 0x00
+storage_rx_type:
+	.db 0x00
+storage_rx_payload_len:
+	.db 0x00
+storage_rx_remaining:
+	.db 0x00
+storage_rx_index:
+	.db 0x00
+storage_rx_crc:
+	.db 0x00
+storage_rx_complete:
+	.db 0x00
+storage_rx_error:
+	.db 0x00
+storage_caller_sp:
 	.dw 0x0000
 RAMDISK_CSV:
 	.blkb RAMDISK_CHECK_SIZE
-RAMDISK_ALV:
-	.blkb RAMDISK_ALV_SIZE
 STORAGE_STATE_END:
 
 	.area CODE (ABS)

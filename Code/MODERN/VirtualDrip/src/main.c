@@ -21,6 +21,7 @@
 #include "packet_dispatch.h"
 #include "serial_port.h"
 #include "serial_reader.h"
+#include "storage_backend.h"
 #include "video_device.h"
 #include "video_device_tms9928.h"
 #include "video_device_vdrip9928.h"
@@ -57,10 +58,14 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    StorageBackend storage_backend;
+    storage_backend_init(&storage_backend);
+
     app_runtime_install_signal_handlers();
 
     VideoDevice *video_device = create_video_backend(config.video_backend);
     if (video_device == NULL) {
+        storage_backend_close(&storage_backend);
         return 1;
     }
 
@@ -70,6 +75,7 @@ int main(int argc, char **argv)
     if (framebuffer == NULL) {
         fprintf(stderr, "Failed to allocate %dx%d framebuffer\n", video_device->info.width, video_device->info.height);
         video_device_destroy(video_device);
+        storage_backend_close(&storage_backend);
         return 1;
     }
 
@@ -81,6 +87,7 @@ int main(int argc, char **argv)
         video_device->info.width,
         video_device->info.height,
         &framebuffer_mutex);
+    packet_dispatch_set_packet_logging(&dispatch, config.log_packets);
     packet_dispatch_render(&dispatch);
 
     /* Keyboard can be initialized before serial; no-serial modes just log/drop sends. */
@@ -98,6 +105,7 @@ int main(int argc, char **argv)
             packet_dispatch_destroy(&dispatch);
             free(framebuffer);
             video_device_destroy(video_device);
+            storage_backend_close(&storage_backend);
             return 1;
         }
     } else if (config.input_mode == INPUT_SERIAL) {
@@ -106,13 +114,25 @@ int main(int argc, char **argv)
             packet_dispatch_destroy(&dispatch);
             free(framebuffer);
             video_device_destroy(video_device);
+            storage_backend_close(&storage_backend);
             return 1;
         }
+
+        if (!storage_backend_open(&storage_backend, config.disk_a_path)) {
+            serial_port_close(serial_port);
+            packet_dispatch_destroy(&dispatch);
+            free(framebuffer);
+            video_device_destroy(video_device);
+            storage_backend_close(&storage_backend);
+            return 1;
+        }
+        packet_dispatch_set_storage_backend(&dispatch, &storage_backend, serial_port, config.log_storage);
 
         keyboard_transport = keyboard_transport_create(serial_port);
         if (keyboard_transport == NULL || !keyboard_transport_start(keyboard_transport)) {
             keyboard_transport_destroy(keyboard_transport);
             serial_port_close(serial_port);
+            storage_backend_close(&storage_backend);
             packet_dispatch_destroy(&dispatch);
             free(framebuffer);
             video_device_destroy(video_device);
@@ -122,21 +142,6 @@ int main(int argc, char **argv)
         input_keyboard_init(&keyboard, keyboard_transport, config.keyboard_enabled, config.log_keys);
         if (config.raw_terminal_input) {
             fprintf(stderr, "Keyboard input mode: raw-terminal\n");
-        }
-
-        /*
-         * Signal to the Z80 that the proxy is ready to receive framed VDP
-         * traffic and send raw terminal input. This replaces the old framed
-         * PACKET_PROXY_READY packet on the proxy->Z80 direction.
-         */
-        {
-            bool ready_sent = serial_port_send_raw(
-                serial_port,
-                RAW_TERMINAL_READY,
-                sizeof(RAW_TERMINAL_READY));
-            fprintf(stderr,
-                "Sent raw terminal readiness: ESC[?1;0c (%s)\n",
-                ready_sent ? "ok" : "failed");
         }
 
         SerialReaderConfig reader_config = {
@@ -151,10 +156,25 @@ int main(int argc, char **argv)
         if (serial_reader == NULL) {
             keyboard_transport_destroy(keyboard_transport);
             serial_port_close(serial_port);
+            storage_backend_close(&storage_backend);
             packet_dispatch_destroy(&dispatch);
             free(framebuffer);
             video_device_destroy(video_device);
             return 1;
+        }
+
+        /*
+         * Signal to the Z80 only after the serial reader is active, so the
+         * first framed storage/display packet cannot beat the proxy RX path.
+         */
+        {
+            bool ready_sent = serial_port_send_raw(
+                serial_port,
+                RAW_TERMINAL_READY,
+                sizeof(RAW_TERMINAL_READY));
+            fprintf(stderr,
+                "Sent raw terminal readiness: ESC[?1;0c (%s)\n",
+                ready_sent ? "ok" : "failed");
         }
     }
 
@@ -177,6 +197,7 @@ int main(int argc, char **argv)
             serial_reader_join(serial_reader);
             keyboard_transport_destroy(keyboard_transport);
             serial_port_close(serial_port);
+            storage_backend_close(&storage_backend);
             packet_dispatch_destroy(&dispatch);
             free(framebuffer);
             video_device_destroy(video_device);
@@ -216,6 +237,7 @@ int main(int argc, char **argv)
     display_libvncserver_destroy(display);
     keyboard_transport_destroy(keyboard_transport);
     serial_port_close(serial_port);
+    storage_backend_close(&storage_backend);
     packet_dispatch_destroy(&dispatch);
     free(framebuffer);
     video_device_destroy(video_device);

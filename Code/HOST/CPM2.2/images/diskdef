@@ -1,9 +1,19 @@
 diskdef zephyr80
   seclen 128
-  tracks 48
-  sectrk 48
-  blocksize 2048
-  maxdir 64
+  tracks 512
+  sectrk 128
+  blocksize 8192
+  maxdir 1024
+  skew 0
+  boottrk 0
+  os 2.2
+end
+diskdef zephyr80-vdrip
+  seclen 128
+  tracks 16384
+  sectrk 4
+  blocksize 4096
+  maxdir 512
   skew 0
   boottrk 0
   os 2.2

@@ -227,11 +227,13 @@ int serial_port_baud_rate(const SerialPort *port)
     return port == NULL ? 0 : port->baud_rate;
 }
 
-bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payload, uint8_t length)
+static bool build_packet_bytes(
+    uint8_t type,
+    const uint8_t *payload,
+    uint8_t length,
+    uint8_t *bytes,
+    size_t *byte_count)
 {
-    if (port == NULL || port->fd < 0) {
-        return false;
-    }
     if (length > MAX_PACKET_PAYLOAD) {
         fprintf(stderr, "Packet payload too large: %u bytes\n", length);
         return false;
@@ -246,7 +248,6 @@ bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payl
     packet.crc = packet_crc8(&packet);
     uint8_t wire_length = packet_wire_length(&packet);
 
-    uint8_t bytes[PACKET_SYNC_SIZE + 255];
     bytes[0] = PACKET_SYNC0;
     bytes[1] = PACKET_SYNC1;
     bytes[2] = wire_length;
@@ -255,7 +256,21 @@ bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payl
         memcpy(&bytes[4], packet.payload, length);
     }
     bytes[4 + length] = packet.crc;
-    size_t byte_count = (size_t)wire_length + PACKET_SYNC_SIZE;
+    *byte_count = (size_t)wire_length + PACKET_SYNC_SIZE;
+    return true;
+}
+
+bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payload, uint8_t length)
+{
+    if (port == NULL || port->fd < 0) {
+        return false;
+    }
+
+    uint8_t bytes[PACKET_SYNC_SIZE + 255];
+    size_t byte_count = 0;
+    if (!build_packet_bytes(type, payload, length, bytes, &byte_count)) {
+        return false;
+    }
 
     /*
      * Keep each encoded packet contiguous even if future transmit paths share
@@ -263,6 +278,39 @@ bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payl
      */
     pthread_mutex_lock(&port->tx_mutex);
     bool sent = write_all(port->fd, bytes, byte_count);
+    pthread_mutex_unlock(&port->tx_mutex);
+
+    return sent;
+}
+
+bool serial_port_send_packet_paced(
+    SerialPort *port,
+    uint8_t type,
+    const uint8_t *payload,
+    uint8_t length,
+    unsigned inter_byte_delay_us)
+{
+    if (port == NULL || port->fd < 0) {
+        return false;
+    }
+
+    uint8_t bytes[PACKET_SYNC_SIZE + 255];
+    size_t byte_count = 0;
+    if (!build_packet_bytes(type, payload, length, bytes, &byte_count)) {
+        return false;
+    }
+
+    pthread_mutex_lock(&port->tx_mutex);
+    bool sent = true;
+    for (size_t index = 0; index < byte_count; ++index) {
+        if (!write_all(port->fd, &bytes[index], 1)) {
+            sent = false;
+            break;
+        }
+        if (inter_byte_delay_us > 0 && index + 1 < byte_count) {
+            usleep(inter_byte_delay_us);
+        }
+    }
     pthread_mutex_unlock(&port->tx_mutex);
 
     return sent;

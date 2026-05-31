@@ -17,10 +17,13 @@ void print_usage(const char *program_name)
     fprintf(stderr, "  no argument: start LibVNCServer VDP display server on port %d\n", DEFAULT_VNC_PORT);
     fprintf(stderr, "  packet-file: replay packets, then serve the resulting framebuffer\n");
     fprintf(stderr, "  --serial: read live packets from a serial device, default baud 115200\n");
+    fprintf(stderr, "  --disk-a: drive A disk image path, default %s\n", DEFAULT_DISK_A_PATH);
     fprintf(stderr, "  --vnc-port: VNC TCP port, default %d\n", DEFAULT_VNC_PORT);
     fprintf(stderr, "  --no-vnc, --headless: disable VNC output\n");
     fprintf(stderr, "  --video-backend: video backend, default %s (available: tms9928, vdrip9928)\n", DEFAULT_VIDEO_BACKEND);
     fprintf(stderr, "  --log-keys: log RFB key events, mappings, and raw serial terminal input bytes\n");
+    fprintf(stderr, "  --log-storage: log storage request/reply summaries\n");
+    fprintf(stderr, "  --log-packets: log decoded non-storage packets\n");
     fprintf(stderr, "  --no-keyboard: disable VNC keyboard capture\n");
     fprintf(stderr, "  --raw-terminal-input: send proxy->Z80 keyboard bytes raw (default)\n");
 }
@@ -43,10 +46,13 @@ bool parse_args(int argc, char **argv, AppConfig *config)
     config->file_path = NULL;
     config->serial_path = NULL;
     config->baud_rate = 115200;
+    config->disk_a_path = DEFAULT_DISK_A_PATH;
     config->vnc_port = DEFAULT_VNC_PORT;
     config->no_vnc = false;
     config->keyboard_enabled = true;
     config->log_keys = false;
+    config->log_storage = false;
+    config->log_packets = false;
     config->raw_terminal_input = true;
     config->video_backend = DEFAULT_VIDEO_BACKEND;
 
@@ -59,6 +65,14 @@ bool parse_args(int argc, char **argv, AppConfig *config)
         }
         if (strcmp(arg, "--log-keys") == 0) {
             config->log_keys = true;
+            continue;
+        }
+        if (strcmp(arg, "--log-storage") == 0) {
+            config->log_storage = true;
+            continue;
+        }
+        if (strcmp(arg, "--log-packets") == 0) {
+            config->log_packets = true;
             continue;
         }
         if (strcmp(arg, "--no-keyboard") == 0) {
@@ -82,6 +96,14 @@ bool parse_args(int argc, char **argv, AppConfig *config)
                 fprintf(stderr, "Invalid VNC port: %s\n", argv[index]);
                 return false;
             }
+            continue;
+        }
+        if (strcmp(arg, "--disk-a") == 0) {
+            if (++index >= argc) {
+                fprintf(stderr, "--disk-a requires a disk image path\n");
+                return false;
+            }
+            config->disk_a_path = argv[index];
             continue;
         }
         if (strcmp(arg, "--video-backend") == 0) {

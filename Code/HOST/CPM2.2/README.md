@@ -2,7 +2,7 @@
 
 Zephyr-80 is a Z80-based CP/M 2.2 machine and firmware target. This repository
 builds a CP/M 2.2 firmware image with a local Zephyr-80 CBIOS, banked RAM
-support, a RAM-disk-backed CP/M drive, and a driver-facing layout for console
+support, a VDrip-backed CP/M drive, and a driver-facing layout for console
 and storage backends.
 
 The project is part of the broader pBITz / coffee-machine retro-computing
@@ -18,9 +18,10 @@ Implemented now:
 - CP/M 2.2 boots on the Zephyr-80 firmware target.
 - The CBIOS uses a cleaned-up fixed memory map with a core BIOS area and six
   fixed 1 KiB driver slots.
-- Drive A is backed by a RAM disk stored across RAM banks 2-7.
+- Drive A is backed by a VDrip proxy flat image using the standard CP/M BIOS
+  disk call model.
 - A BIOS-owned SIO core exists in core BIOS for SIO0/B and SIO1/A plumbing.
-- The legacy SIO console backend is now a client of the SIO core.
+- The Virtual Drip console backend is a client of the SIO core.
 - SIO0/B receive uses maskable interrupts and a console RX sink/buffer.
 - SIO0/B transmit checks CTS, and SIO0/B RTS is exposed for software-managed
   RX backpressure by the console client.
@@ -35,8 +36,8 @@ Implemented now:
 
 Planned later:
 
-- A Virtual Drip console/storage driver is planned, but not implemented in this
-  build.
+- The proxy-side persistent storage implementation must mirror the BIOS storage
+  packet IDs and the single 8 MiB flat image geometry.
 - Real video-card interrupt handling may need a different IM2 ownership model
   or table layout.
 - Additional drivers may occupy one or more whole fixed slots.
@@ -64,7 +65,7 @@ Important runtime areas:
 - CBIOS:
   - BIOS jump table begins at `DA00h`
   - core BIOS occupies `DA00h-DFFFh`
-  - driver slots occupy `E000h-F7FFh`
+  - driver slots occupy `E000h-FA7Fh`
   - scratch, runtime state, and stack live above the driver slots
 
 Warm boot restores the CCP range from ROM page 0 before returning to the CCP
@@ -80,21 +81,22 @@ FFFFh +----------------------------------------------+
       | BIOS stack / reserve                         |
 FFF0h |   CBIOS_STACK_TOP                            |
       |   stack grows downward                       |
-FB00h +----------------------------------------------+
-FAFFh | Runtime state end                            |
-FA00h | Runtime state start                          |
+FD80h +----------------------------------------------+
+FD7Fh | Runtime state end                            |
+FC80h | Runtime state start                          |
       |   CURRENT_BANK / DMA / XMOVE                 |
       |   storage state                              |
       |   SIO core state                             |
       |   console driver state                       |
       +----------------------------------------------+
-F9FFh | Scratch / staging end                        |
-F980h |   free scratch window                        |
-F900h |   RAMDISK_DIRBUF                             |
-F800h |   MOVE_BUFFER                                |
+FC7Fh | Scratch / storage buffers end                |
+FC00h |   RAMDISK_ALV                                |
+FB80h |   RAMDISK_DIRBUF                             |
+FA80h |   MOVE_BUFFER                                |
       +----------------------------------------------+
-F7FFh | Driver slot 5 end                            |
-F400h | Driver slot 5 start                          |
+FA7Fh | Driver slot 5 end                            |
+F7D9h |   VDrip storage backend                      |
+F680h | Driver slot 5 start                          |
       |                                              |
 F3FFh | Driver slot 4 end                            |
 F000h | Driver slot 4 start                          |
@@ -106,10 +108,10 @@ EBFFh | Driver slot 2 end                            |
 E800h | Driver slot 2 start                          |
       |                                              |
 E7FFh | Driver slot 1 end                            |
-E400h | Driver slot 1 start: legacy SIO console      |
+E400h | Driver slot 1 start: Virtual Drip console    |
       |                                              |
 E3FFh | Driver slot 0 end                            |
-E000h | Driver slot 0 start: RAM disk backend        |
+E000h | Driver slot 0 start: Virtual Drip console    |
       +----------------------------------------------+
 DFFFh | Core BIOS end                                |
 DF50h |   IOCALL transaction transport               |
@@ -145,10 +147,8 @@ Current transitional allocation:
 
 | Slot | Range | Current owner |
 |---:|---:|---|
-| 0 | `E000h-E3FFh` | RAM disk backend |
-| 1 | `E400h-E7FFh` | legacy SIO console client |
-| 2 | `E800h-EBFFh` | available |
-| 3-5 | `EC00h-F7FFh` | available |
+| 0-4 | `E000h-F3FFh` | Virtual Drip console driver |
+| 5 | `F680h-FA7Fh` | Virtual Drip console tail and VDrip storage backend |
 
 At a high level, adding a driver means:
 
@@ -172,14 +172,12 @@ transport:
 - Boot and warm boot initialize BIOS-owned SIO services, install runtime state,
   register the console RX sink, and then enable the SIO interrupt path.
 - SIO RX interrupts dispatch received bytes to the registered console sink.
-- The legacy console sink stores received bytes in its foreground-safe terminal
-  RX buffer.
-- `CONST` checks the console RX buffer.
+- The Virtual Drip console sink stores raw terminal input bytes in `textq`.
+- `CONST` checks `textq`.
 - `CONIN` blocks until a buffered byte is available, then consumes it.
-- `CONOUT` calls the SIO core send-byte API, which polls TX-empty and CTS with
-  a finite timeout.
-- SIO0/B RTS is software-managed by the legacy console RX ring owner: RTS is
-  released at 32/96 buffered bytes and reasserted at 16/96 buffered bytes.
+- `CONOUT` emits framed VDrip display/control packets and keeps input and
+  output paths separate.
+- SIO0/B RTS is software-managed by the Virtual Drip console owner.
 - During SIO core init, RTS is held released and stale SIO0/B RX bytes are
   discarded before the console sink is registered.
 - DTR/DCD are not required, and WR3 Auto Enables remain off to avoid depending
@@ -249,7 +247,7 @@ python3 tools/generate_memory_docs.py \
 src/        Zephyr-80 CBIOS and platform-specific runtime source
 cpm-2.2/    CP/M 2.2 source and reference material
 tools/      image-building, conversion, bit-swap, and documentation tools
-images/     payload and disk-image inputs
+images/     payload and disk-format inputs
 docs/       generated and hand-written project documentation
 build/      generated build outputs
 ```
@@ -264,5 +262,5 @@ build/      generated build outputs
   services, not drivers.
 - `C000h-C3FFh` is protected/common TPA and remains application-owned. It must
   not be used as BIOS scratch, runtime state, or interrupt/vector storage.
-- Future Virtual Drip work should clearly distinguish what replaces the legacy
-  SIO/RAM-disk paths from what remains common core BIOS behavior.
+- Virtual Drip work should clearly distinguish proxy-visible packet protocol
+  changes from common core BIOS behavior.

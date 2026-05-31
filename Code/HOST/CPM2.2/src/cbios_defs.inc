@@ -10,24 +10,24 @@
 ;   FFFFh ┌──────────────────────────────────────────────┐
 ;         │ BIOS stack / reserve                         │
 ;   FFF0h │   CBIOS_STACK_TOP                            │
-;   FEF0h │   CBIOS_CONSOLE_STACK_TOP                    │
+;   FF80h │   CBIOS_CONSOLE_STACK_TOP                    │
 ;         │   stack grows downward                       │
-;   FD80h ├──────────────────────────────────────────────┤
-;   FD7Fh │ Runtime state end                            │
-;   FC80h │ Runtime state start                          │
+;   FE80h ├──────────────────────────────────────────────┤
+;   FE7Fh │ Runtime state end                            │
+;   FE00h │ Runtime state start                          │
 ;         │   CURRENT_BANK / DMA / XMOVE                 │
 ;         │   storage state                              │
 ;         │   SIO core state                             │
 ;         │   console driver state                       │
 ;         ├──────────────────────────────────────────────┤
-;   FC7Fh │ Scratch / staging end                        │
-;   FC00h │   free scratch window                        │
+;   FDFFh │ Scratch / staging end                        │
+;   FC00h │   RAMDISK_ALV                                │
 ;   FB80h │   RAMDISK_DIRBUF                             │
 ;   FA80h │   MOVE_BUFFER                                │
 ;         ├──────────────────────────────────────────────┤
 ;   FA7Fh │ Driver slot 5 end                            │
-;   F970h │   RAM disk backend, ending at code limit     │
-;   F680h │ Driver slot 5 start: transitional free space │
+;   F7EBh │   VDrip storage backend, ending at code limit │
+;   F680h │ Driver slot 5 start: console tail / storage  │
 ;         │                                              │
 ;   F3FFh │ Driver slot 4 end                            │
 ;   F000h │ Driver slot 4 start: Virtual Drip console    │
@@ -169,7 +169,7 @@ CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x0200      ; DC00h
 ; ------------------------------------------------------------------------------
 ; Fixed Driver Slots
 ; ------------------------------------------------------------------------------
-; E000h-F7FFh = six fixed 1 KiB driver/code slots.
+; E000h-FA7Fh = fixed driver/code slots.
 ;
 ; Drivers may occupy one or more whole slots.
 ; Build-time validation should ensure drivers stay inside declared slots.
@@ -219,17 +219,17 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ; ------------------------------------------------------------------------------
 ; Current Transitional Driver Placement
 ; ------------------------------------------------------------------------------
-; Before Virtual Drip:
+; Current VDrip placement:
 ;
 ;   Slot 5:
-;     F970h... RAM disk backend, deliberately packed against FA80h
+;     F7EBh... VDrip storage backend, deliberately packed against FA80h
 ;
-;   Slots 0-4:
+;   Slots 0-5 tail:
 ;     E000h... Virtual Drip console driver (code, font, shadow, queues)
 ;
 ; These names are kept so existing source can still ORG against them.
 
-CBIOS_RAMDISK_CODE_BASE         = 0xf970                                ; ends at FA80h
+CBIOS_RAMDISK_CODE_BASE         = 0xf7eb                                ; ends at FA80h
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x0550                  ; DF50h
@@ -242,28 +242,38 @@ CBIOS_CODE_END                  = CBIOS_CODE_LIMIT - 1
 ; ------------------------------------------------------------------------------
 ; Scratch Area & Buffers
 ; ------------------------------------------------------------------------------
-; FA80h-FC7Fh = BIOS scratch / staging.
+; FA80h-FDFFh = BIOS scratch / staging.
 ;
 ; Current active buffers:
-;   FA80h-FB7Fh MOVE_BUFFER
+;   FA80h-FB3Fh MOVE_BUFFER          (192 bytes; max storage transaction = 134)
+;   FB40h-FB7Fh RAMDISK_DPHDPB       (DPH+DPB, relocated out of the code slot)
 ;   FB80h-FBFFh RAMDISK_DIRBUF
+;   FC00h-FDFFh RAMDISK_ALV
 ;
-; The remaining gaps are available for later temporary BIOS work buffers.
+; RAMDISK_ALV is 512 bytes for the 2 KiB allocation-block VDrip disk format.
+;
+; MOVE_BUFFER was shrunk from 256 to 192 bytes to carve RAMDISK_DPHDPB out of
+; the scratch area.  The DPH/DPB previously lived at the tail of the VDrip
+; storage code slot, which overflowed past FA80h and overlapped MOVE_BUFFER's
+; low bytes; every storage transfer then corrupted the DPH ALV pointer and the
+; DPB geometry.  A 192-byte MOVE_BUFFER still covers the largest transaction
+; (a 134-byte WRITE request: 6-byte header + 128-byte record).
 
-CBIOS_SCRATCH_BASE              = CBIOS_DRIVER_SLOT5_LIMIT             ; F940h
-CBIOS_SCRATCH_LIMIT             = CBIOS_SCRATCH_BASE + 0x0200          ; FB40h
+CBIOS_SCRATCH_BASE              = CBIOS_DRIVER_SLOT5_LIMIT             ; FA80h
+CBIOS_SCRATCH_LIMIT             = CBIOS_SCRATCH_BASE + 0x0380          ; FE00h
 CBIOS_SCRATCH_END               = CBIOS_SCRATCH_LIMIT - 1
 
-MOVE_BUFFER                     = CBIOS_SCRATCH_BASE
-MOVE_BUFFER_SIZE                = 0x0100
+MOVE_BUFFER                     = CBIOS_SCRATCH_BASE                   ; FA80h
+MOVE_BUFFER_SIZE                = 0x00c0                               ; 192 bytes
 
-RAMDISK_DIRBUF                  = CBIOS_SCRATCH_BASE + 0x0100          ; FA40h
+RAMDISK_DPHDPB_BASE             = MOVE_BUFFER + MOVE_BUFFER_SIZE       ; FB40h
+RAMDISK_DPHDPB_SIZE             = 0x0040                               ; 64 bytes (DPH+DPB = 31)
+
+RAMDISK_DIRBUF                  = CBIOS_SCRATCH_BASE + 0x0100          ; FB80h
 RAMDISK_DIRBUF_SIZE             = 0x0080
 
-; Optional named free scratch windows.
-CBIOS_SCRATCH_FREE0             = CBIOS_SCRATCH_BASE + 0x0180          ; FAC0h
-CBIOS_SCRATCH_FREE0_LIMIT       = CBIOS_SCRATCH_LIMIT                  ; FB40h
-CBIOS_SCRATCH_FREE0_SIZE        = CBIOS_SCRATCH_FREE0_LIMIT - CBIOS_SCRATCH_FREE0
+STORAGE_ALV_BUFFER              = CBIOS_SCRATCH_BASE + 0x0180          ; FC00h
+STORAGE_ALV_BUFFER_SIZE         = 0x0200
 
 ; ------------------------------------------------------------------------------
 ; IM2 Interrupt Vectors
@@ -287,12 +297,12 @@ CBIOS_IM2_VECTOR_END            = CBIOS_IM2_VECTOR_LIMIT - 1
 ; ------------------------------------------------------------------------------
 ; Work Areas / Runtime State
 ; ------------------------------------------------------------------------------
-; FB40h-FC3Fh = persistent BIOS runtime state.
+; FE00h-FE7Fh = persistent BIOS runtime state.
 ;
 ; Keep existing public work-area names so current source keeps assembling.
 
-CBIOS_WORK_AREA                 = CBIOS_SCRATCH_LIMIT              ; FB40h
-CBIOS_WORK_AREA_LIMIT           = CBIOS_WORK_AREA + 0x0100          ; FC40h
+CBIOS_WORK_AREA                 = CBIOS_SCRATCH_LIMIT              ; FE00h
+CBIOS_WORK_AREA_LIMIT           = CBIOS_WORK_AREA + 0x0080          ; FE80h
 CBIOS_WORK_AREA_END             = CBIOS_WORK_AREA_LIMIT - 1
 
 CBIOS_CONSOLE_WORK_AREA         = CBIOS_WORK_AREA + 0x0004
@@ -309,45 +319,38 @@ CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 ; ------------------------------------------------------------------------------
 ; Stack & Guard
 ; ------------------------------------------------------------------------------
-; FB00h-FFFFh = BIOS stack / reserve.
+; FE80h-FFFFh = BIOS stack / reserve.
 ;
 ; Stack top remains FFF0h.
 ; Console backend calls use a lower private top so boot-time BIOS stack frames
 ; near FFF0h stay intact when CONOUT is called during BOOT.
-; Stack grows downward and should not cross FB00h.
+; Stack grows downward and should not cross FE80h.
 
-CBIOS_STACK_GUARD               = CBIOS_WORK_AREA_LIMIT            ; FC40h
+CBIOS_STACK_GUARD               = CBIOS_WORK_AREA_LIMIT            ; FE80h
 CBIOS_STACK_TOP                 = 0xfff0
-CBIOS_CONSOLE_STACK_TOP         = CBIOS_STACK_TOP - 0x0100
+CBIOS_CONSOLE_STACK_TOP         = 0xff80
 
 CBIOS_AREA_LIMIT                = 0x10000
 CBIOS_AREA_END                  = 0xffff
 
 ; ------------------------------------------------------------------------------
-; RAM Disk Configuration (DPB Mapping)
+; VDrip Storage Configuration (DPB Mapping)
 ; ------------------------------------------------------------------------------
 RAMDISK_DRIVE                   = 0x00
-RAMDISK_FIRST_BANK              = 0x02
-RAMDISK_LAST_BANK               = 0x07
-RAMDISK_BANK_COUNT              = 0x06
-RAMDISK_BANK_BASE               = 0x0000
-RAMDISK_BANK_LIMIT              = 0xc000
-RAMDISK_BANK_BYTES              = 0xc000
 RAMDISK_RECORD_BYTES            = 0x0080
-RAMDISK_RECORDS_PER_BANK        = 0x0180
-RAMDISK_TOTAL_RECORDS           = 0x0900
-RAMDISK_SECTORS_PER_TRACK       = 0x0030
-RAMDISK_TRACKS                  = 0x0030
+RAMDISK_TOTAL_RECORDS           = 0x10000
+RAMDISK_SECTORS_PER_TRACK       = 0x0004
+RAMDISK_TRACKS                  = 0x4000
 RAMDISK_OFFSET_TRACKS           = 0x0000
-RAMDISK_BLOCK_SHIFT             = 0x04
-RAMDISK_BLOCK_MASK              = 0x0f
+RAMDISK_BLOCK_SHIFT             = 0x05
+RAMDISK_BLOCK_MASK              = 0x1f
 RAMDISK_EXTENT_MASK             = 0x01
-RAMDISK_MAX_BLOCK               = 0x008f
-RAMDISK_DIR_ENTRIES             = 0x003f
-RAMDISK_ALLOC0                  = 0x80
+RAMDISK_MAX_BLOCK               = 0x07ff
+RAMDISK_DIR_ENTRIES             = 0x01ff
+RAMDISK_ALLOC0                  = 0xf0
 RAMDISK_ALLOC1                  = 0x00
-RAMDISK_CHECK_SIZE              = 0x0010
-RAMDISK_ALV_SIZE                = 0x0012
+RAMDISK_CHECK_SIZE              = 0x0000
+RAMDISK_ALV_SIZE                = 0x0100
 
 ; ------------------------------------------------------------------------------
 ; Build-Time Validation Boundaries
@@ -391,10 +394,10 @@ RESERVED_RUNTIME_STATE_END      = CBIOS_RUNTIME_STATE_END
 ; ------------------------------------------------------------------------------
 ; These are for external layout validation/documentation.
 ;
-; Before Virtual Drip:
-;   Slots 0-4 contain the Virtual Drip console driver (code, font, shadow,
-;   packet buffers, and terminal input queue).
-;   Slot 5 contains current RAM disk backend.
+; Current VDrip build:
+;   Slots 0-4 and the start of slot 5 contain the Virtual Drip console driver
+;   (code, font, shadow, packet buffers, and terminal input queue).
+;   Slot 5 also contains the VDrip storage backend.
 ;   SIO core is part of core BIOS, not a driver slot occupant.
 ;   IOCALL is part of core BIOS, not a driver slot occupant.
 ;   The legacy SIO console driver (cbios_console_sio.asm) is preserved in the

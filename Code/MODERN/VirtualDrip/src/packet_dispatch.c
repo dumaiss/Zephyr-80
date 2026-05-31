@@ -2,6 +2,7 @@
 
 #include "packet_replay.h"
 #include "protocol_debug.h"
+#include "storage_protocol.h"
 
 #include <stdio.h>
 
@@ -28,6 +29,10 @@ void packet_dispatch_init(
     dispatch->frame_changed = NULL;
     dispatch->frame_changed_userdata = NULL;
     dispatch->keyboard_transport = NULL;
+    dispatch->serial_port = NULL;
+    dispatch->storage_backend = NULL;
+    dispatch->log_storage = false;
+    dispatch->log_packets = false;
     virtual_text_cursor_init(&dispatch->cursor);
     dispatch->packet_count = 0;
 }
@@ -44,6 +49,22 @@ void packet_dispatch_set_frame_changed_callback(
 void packet_dispatch_set_keyboard_transport(PacketDispatch *dispatch, KeyboardTransport *keyboard_transport)
 {
     dispatch->keyboard_transport = keyboard_transport;
+}
+
+void packet_dispatch_set_storage_backend(
+    PacketDispatch *dispatch,
+    StorageBackend *storage_backend,
+    SerialPort *serial_port,
+    bool log_storage)
+{
+    dispatch->storage_backend = storage_backend;
+    dispatch->serial_port = serial_port;
+    dispatch->log_storage = log_storage;
+}
+
+void packet_dispatch_set_packet_logging(PacketDispatch *dispatch, bool log_packets)
+{
+    dispatch->log_packets = log_packets;
 }
 
 void packet_dispatch_render(PacketDispatch *dispatch)
@@ -88,8 +109,22 @@ void packet_dispatch_handle_packet(const Packet *packet, size_t offset, void *us
     PacketDispatch *dispatch = (PacketDispatch *)userdata;
     VideoDeviceUpdate update;
 
+    (void)offset;
+
+    if (storage_protocol_handle_packet(
+            packet,
+            dispatch->serial_port,
+            dispatch->keyboard_transport,
+            dispatch->storage_backend,
+            dispatch->log_storage)) {
+        return;
+    }
+
     keyboard_transport_note_incoming_packet(dispatch->keyboard_transport, packet);
-    /* print_packet(++dispatch->packet_count, offset, packet); */
+    dispatch->packet_count++;
+    if (dispatch->log_packets) {
+        print_packet(dispatch->packet_count, offset, packet);
+    }
 
     if (packet->type == PACKET_FRAME_MARK) {
         /* FRAME_MARK is the explicit render trigger after a burst of

@@ -34,9 +34,12 @@ typedef struct {
     uint64_t vdp_busy_enter_count;
     uint64_t frame_mark_count;
     uint64_t keyboard_held_count;
+    uint64_t keyboard_held_storage_count;
     uint64_t vdp_busy_timeout_count;
+    uint64_t storage_busy_enter_count;
     struct timespec last_vdp_activity;
     bool has_vdp_activity;
+    bool storage_active;
     bool shutting_down;
 } TransportGate;
 
@@ -178,13 +181,23 @@ static void transport_gate_enter_vdp_busy_locked(TransportGate *gate, struct tim
 
 static bool transport_gate_wait_until_interactive(TransportGate *gate)
 {
-    bool counted_hold = false;
+    bool counted_vdp_hold = false;
+    bool counted_storage_hold = false;
 
     pthread_mutex_lock(&gate->mutex);
-    while (gate->mode == TRANSPORT_VDP_BUSY && !gate->shutting_down) {
-        if (!counted_hold) {
+    while ((gate->storage_active || gate->mode == TRANSPORT_VDP_BUSY) && !gate->shutting_down) {
+        if (gate->storage_active) {
+            if (!counted_storage_hold) {
+                gate->keyboard_held_storage_count++;
+                counted_storage_hold = true;
+            }
+            pthread_cond_wait(&gate->cond, &gate->mutex);
+            continue;
+        }
+
+        if (!counted_vdp_hold) {
             gate->keyboard_held_count++;
-            counted_hold = true;
+            counted_vdp_hold = true;
         }
 
         struct timespec deadline = gate->has_vdp_activity
@@ -192,7 +205,7 @@ static bool transport_gate_wait_until_interactive(TransportGate *gate)
             : timespec_add_ms((struct timespec){ .tv_sec = time(NULL), .tv_nsec = 0 }, VDP_BUSY_IDLE_TIMEOUT_MS);
 
         int wait_status = pthread_cond_timedwait(&gate->cond, &gate->mutex, &deadline);
-        if (wait_status == ETIMEDOUT && gate->mode == TRANSPORT_VDP_BUSY) {
+        if (wait_status == ETIMEDOUT && gate->mode == TRANSPORT_VDP_BUSY && !gate->storage_active) {
             struct timespec now;
             clock_gettime(CLOCK_REALTIME, &now);
             struct timespec latest_deadline = gate->has_vdp_activity
@@ -236,10 +249,13 @@ static void keyboard_transport_copy_stats(KeyboardTransport *transport, Keyboard
 
     pthread_mutex_lock(&transport->gate.mutex);
     stats->keyboard_held_due_to_vdp = transport->gate.keyboard_held_count;
+    stats->keyboard_held_due_to_storage = transport->gate.keyboard_held_storage_count;
     stats->vdp_busy_enter_count = transport->gate.vdp_busy_enter_count;
+    stats->storage_busy_enter_count = transport->gate.storage_busy_enter_count;
     stats->frame_mark_count = transport->gate.frame_mark_count;
     stats->vdp_busy_timeout_count = transport->gate.vdp_busy_timeout_count;
     stats->mode = transport->gate.mode;
+    stats->storage_active = transport->gate.storage_active;
     pthread_mutex_unlock(&transport->gate.mutex);
 }
 
@@ -266,7 +282,7 @@ static void keyboard_transport_log_stats(KeyboardTransport *transport, bool forc
         return;
     }
 
-    printf("raw-input: events=%llu queued=%llu bytes=%llu sent=%llu fail=%llu drop=%llu unsupported=%llu qmax=%zu held=%llu\n",
+    printf("raw-input: events=%llu queued=%llu bytes=%llu sent=%llu fail=%llu drop=%llu unsupported=%llu qmax=%zu held_vdp=%llu held_storage=%llu\n",
         (unsigned long long)stats.terminal_events_seen,
         (unsigned long long)stats.terminal_packets_queued,
         (unsigned long long)stats.terminal_bytes_queued,
@@ -275,10 +291,13 @@ static void keyboard_transport_log_stats(KeyboardTransport *transport, bool forc
         (unsigned long long)stats.terminal_packets_dropped,
         (unsigned long long)stats.unsupported_key_count,
         stats.keyboard_queue_high_water,
-        (unsigned long long)stats.keyboard_held_due_to_vdp);
-    printf("gate: mode=%s vdp=%llu frame=%llu timeout=%llu\n",
+        (unsigned long long)stats.keyboard_held_due_to_vdp,
+        (unsigned long long)stats.keyboard_held_due_to_storage);
+    printf("gate: mode=%s storage=%s vdp=%llu storage_enter=%llu frame=%llu timeout=%llu\n",
         stats.mode == TRANSPORT_VDP_BUSY ? "VDP_BUSY" : "INTERACTIVE",
+        stats.storage_active ? "ACTIVE" : "idle",
         (unsigned long long)stats.vdp_busy_enter_count,
+        (unsigned long long)stats.storage_busy_enter_count,
         (unsigned long long)stats.frame_mark_count,
         (unsigned long long)stats.vdp_busy_timeout_count);
 
@@ -427,6 +446,27 @@ void keyboard_transport_note_unsupported_key(KeyboardTransport *transport)
     pthread_mutex_lock(&transport->queue.mutex);
     transport->queue.unsupported_key_count++;
     pthread_mutex_unlock(&transport->queue.mutex);
+}
+
+void keyboard_transport_set_storage_active(KeyboardTransport *transport, bool active)
+{
+    if (transport == NULL) {
+        return;
+    }
+
+    pthread_mutex_lock(&transport->gate.mutex);
+        if (transport->gate.storage_active != active) {
+            transport->gate.storage_active = active;
+            if (active) {
+                transport->gate.storage_busy_enter_count++;
+            } else if (transport->gate.mode == TRANSPORT_VDP_BUSY) {
+                transport->gate.mode = TRANSPORT_INTERACTIVE;
+            }
+            pthread_cond_broadcast(&transport->gate.cond);
+        }
+    pthread_mutex_unlock(&transport->gate.mutex);
+
+    keyboard_transport_maybe_log_stats(transport);
 }
 
 void keyboard_transport_note_incoming_packet(KeyboardTransport *transport, const Packet *packet)

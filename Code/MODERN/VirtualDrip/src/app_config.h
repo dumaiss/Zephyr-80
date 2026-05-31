@@ -13,6 +13,7 @@
 
 #define DEFAULT_VNC_PORT 5900
 #define DEFAULT_VIDEO_BACKEND "tms9928"
+#define DEFAULT_DISK_A_PATH "zephyr_a.img"
 
 /** Packet input source selected at startup. */
 typedef enum {
@@ -34,6 +35,8 @@ typedef struct {
     const char *serial_path;
     /** Serial baud rate; currently limited by serial_port.c's termios table. */
     int baud_rate;
+    /** Local flat 8 MiB disk image backing CP/M drive A in serial mode. */
+    const char *disk_a_path;
     /** TCP port for LibVNCServer. */
     int vnc_port;
     /** Disable VNC output and run headless. */
@@ -42,6 +45,10 @@ typedef struct {
     bool keyboard_enabled;
     /** Print key mapping and raw input bytes for debugging. */
     bool log_keys;
+    /** Print one line for each storage request/reply. */
+    bool log_storage;
+    /** Print decoded non-storage packets for live protocol debugging. */
+    bool log_packets;
     /** Proxy->Z80 keyboard input is raw terminal bytes. */
     bool raw_terminal_input;
     /** Video backend selector. Currently only "tms9928" is accepted. */

@@ -59,6 +59,14 @@ const char *packet_type_name(uint8_t type)
         return "VDP_DATA_BLOCK";
     case PACKET_VDP_SCROLL:
         return "VDP_SCROLL";
+    case PACKET_STORAGE_READ_REQ:
+        return "STORAGE_READ_REQ";
+    case PACKET_STORAGE_READ_REPLY:
+        return "STORAGE_READ_REPLY";
+    case PACKET_STORAGE_WRITE_REQ:
+        return "STORAGE_WRITE_REQ";
+    case PACKET_STORAGE_WRITE_REPLY:
+        return "STORAGE_WRITE_REPLY";
     default:
         return "UNKNOWN";
     }

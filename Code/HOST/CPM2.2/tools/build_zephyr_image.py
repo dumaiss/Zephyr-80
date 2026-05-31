@@ -15,6 +15,7 @@ APP_BASE = 0x0100
 COMMON_BASE = 0xC000
 BANK_SIZE = 0x10000
 MAX_BANK = 7
+IMAGE_BANK_COUNT = MAX_BANK + 1
 REQUIRED_SYMBOLS = ("MOVE", "XMOVE", "SELMEM", "SETBNK")
 DEFAULT_DEFS_PATH = Path("src/cbios_defs.inc")
 
@@ -253,6 +254,14 @@ def ramdisk_from_config(path: Path, geometry: RamDiskGeometry) -> RamDiskImage:
     return RamDiskImage(name=name, path=image_path, fill=fill, data=data, geometry=geometry)
 
 
+def config_has_section(path: Path, section: str) -> bool:
+    require_file(path, "payload configuration")
+    config = configparser.ConfigParser()
+    config.optionxform = str
+    config.read(path)
+    return section in config
+
+
 def legacy_payloads(args: argparse.Namespace) -> list[Payload]:
     if args.monitor is None or args.bbcbasic is None:
         raise SystemExit("Provide --payload-config, or both legacy --monitor and --bbcbasic payloads")
@@ -379,6 +388,8 @@ def write_manifest(
                 f"ramdisk.pad_size={ramdisk.pad_size}",
             ]
         )
+    else:
+        lines.append("storage.backend=vdrip_proxy")
     for symbol, status in symbol_status.items():
         lines.append(f"symbol.{symbol}={status}")
     lines.extend(["validation.payloads=pass", "bitswap.status=pending"])
@@ -426,6 +437,15 @@ def write_report(
                 ),
             ]
         )
+    else:
+        lines.extend(
+            [
+                "",
+                "## Storage",
+                "",
+                "- Drive A is backed by VDrip proxy storage; no RAM disk image is embedded in ROM banks.",
+            ]
+        )
     lines.extend(
         [
             "",
@@ -442,7 +462,7 @@ def write_report(
             "",
             "## Notes",
             "",
-            "- Drive A is backed by the configured RAM disk image in banks 2-7.",
+            "- Drive A is backed by VDrip proxy storage; banks 2-7 are not populated with a RAM disk seed image.",
             "- Bit-swap status is pending until `tools/swapbits.py` produces `zephyr80.bin`.",
             "- `../CPM` is context only and is not a build dependency.",
             "",
@@ -456,7 +476,9 @@ def main() -> int:
     require_file(args.firmware, "firmware image")
 
     payloads = payloads_from_config(args.payload_config) if args.payload_config else legacy_payloads(args)
-    ramdisk = ramdisk_from_config(args.payload_config, parse_ramdisk_geometry(args.defs)) if args.payload_config else None
+    if args.payload_config and config_has_section(args.payload_config, "ramdisk"):
+        raise SystemExit("RAM disk embedding has been replaced by VDrip proxy storage; remove [ramdisk]")
+    ramdisk = None
     for payload in payloads:
         require_file(payload.path, f"{payload.name} payload")
         validate_payload(payload)
@@ -465,7 +487,7 @@ def main() -> int:
     symbol_status = validate_symbols(args.symbols)
 
     firmware = args.firmware.read_bytes()
-    image_size = max(BANK_SIZE * (max(payload.bank for payload in payloads) + 1), len(firmware))
+    image_size = max(BANK_SIZE * IMAGE_BANK_COUNT, BANK_SIZE * (max(payload.bank for payload in payloads) + 1), len(firmware))
     if ramdisk is not None:
         image_size = max(image_size, BANK_SIZE * (ramdisk.geometry.last_bank + 1))
     image = bytearray([0x00] * image_size)

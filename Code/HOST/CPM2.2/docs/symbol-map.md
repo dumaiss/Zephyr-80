@@ -9,10 +9,10 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 39548 bytes |
+| Firmware symbol map | `build/firmware.map` | 41109 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 524288 bytes |
 | Final burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Layout manifest | `build/layout.manifest` | 882 bytes |
+| Layout manifest | `build/layout.manifest` | 643 bytes |
 
 ## Reset And CP/M Common Symbols
 
@@ -102,22 +102,22 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `listst` | `DB9Eh` | Ready list-status implementation. |
 | `CONSOLE_CODE_END` | `DBC0h` | Console BIOS facade end. |
 | `STORAGE_STUB_CODE_START` | `DBC0h` | Storage BIOS facade start. |
-| `home` | `DBC0h` | Storage HOME facade; routes to RAM disk backend. |
+| `home` | `DBC0h` | Storage HOME facade; routes to VDrip storage backend. |
 | `settrk` | `DBC6h` | Storage SETTRK facade; records selected track. |
 | `setsec` | `DBC9h` | Storage SETSEC facade; records selected sector. |
 | `seldsk` | `DBCCh` | Storage SELDSK facade; returns drive A DPH or no disk. |
 | `setdma` | `DBD5h` | Records DMA address. |
-| `read` | `DBDAh` | Storage READ facade; transfers from RAM disk. |
-| `write` | `DBE4h` | Storage WRITE facade; transfers to RAM disk. |
-| `sectran` | `DBEEh` | Returns untranslated 0-based logical sector for no-skew media. |
-| `STORAGE_STUB_CODE_END` | `DBF1h` | Storage BIOS facade end. |
-| `RAMDISK_CODE_START` | `F970h` | RAM disk backend code start. |
-| `ramdisk_seldsk` | `F981h` | Selects CP/M drive A and returns its DPH. |
-| `ramdisk_read` | `F995h` | Reads one 128-byte record from RAM disk storage. |
-| `ramdisk_write` | `F9CCh` | Writes one 128-byte record to RAM disk storage. |
-| `RAMDISK_DPH` | `FA61h` | Drive A disk parameter header. |
-| `RAMDISK_DPB` | `FA71h` | Drive A disk parameter block. |
-| `RAMDISK_CODE_END` | `FA80h` | RAM disk backend code end. |
+| `read` | `DBDAh` | Storage READ facade; transfers from VDrip proxy storage. |
+| `write` | `DBE2h` | Storage WRITE facade; transfers to VDrip proxy storage. |
+| `sectran` | `DBFCh` | Returns untranslated 0-based logical sector for no-skew media. |
+| `STORAGE_STUB_CODE_END` | `DBFFh` | Storage BIOS facade end. |
+| `RAMDISK_CODE_START` | `F7EBh` | VDrip storage backend code start. |
+| `ramdisk_seldsk` | `F7FCh` | Selects CP/M drive A and returns its DPH. |
+| `ramdisk_read` | `F810h` | Reads one 128-byte record from VDrip proxy storage. |
+| `ramdisk_write` | `F83Eh` | Writes one 128-byte record to VDrip proxy storage. |
+| `RAMDISK_DPH` | `FB40h` | Drive A disk parameter header. |
+| `RAMDISK_DPB` | `FB50h` | Drive A disk parameter block. |
+| `RAMDISK_CODE_END` | `FA7Bh` | VDrip storage backend code end. |
 | `SIO_CORE_CODE_START` | `DD10h` | BIOS-owned SIO core code start in core BIOS. |
 | `CONSOLE_IM2_VECTOR_ENTRY` | `DD10h` | SIO core exact IM2 vector table entry address. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |
@@ -145,7 +145,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E00Eh` | Virtual Drip console init, proxy handshake, VDP setup. |
-| `VDRIP_CONSOLE_CODE_END` | `F7D9h` | Virtual Drip console driver code end. |
+| `VDRIP_CONSOLE_CODE_END` | `F7E2h` | Virtual Drip console driver code end. |
 | `BANKING_CODE_START` | `DC00h` | Banking extension implementation start. |
 | `SELMEM` | `DC00h` | Select RAM bank. |
 | `SETBNK` | `DC0Ah` | Record future DMA bank. |
@@ -159,38 +159,55 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 
 | Symbol | Address | Notes |
 |---|---:|---|
-| `RUNTIME_WORK_AREA_START` | `FC80h` | Runtime work area start. |
-| `CURRENT_BANK` | `FC80h` | Active RAM bank record. |
-| `cbios_dma_addr` | `FC81h` | Current DMA address. |
-| `RUNTIME_WORK_AREA_END` | `FC83h` | Runtime work area end. |
-| `CONSOLE_STATE_START` | `FC84h` | Console state start. |
-| `CONSOLE_DRIVER` | `FC84h` | Active console driver table pointer. |
-| `CONSOLE_CALLER_SP` | `FC86h` | Saved caller stack pointer while console backends run on their private stack. |
-| `CONSOLE_STATE_END` | `FC88h` | Console state end. |
-| `BANKING_STATE_START` | `FCA0h` | Banking state start. |
-| `SAVED_BANK` | `FCA0h` | Saved active bank for cross-bank moves. |
-| `DMA_BANK` | `FCA1h` | Recorded DMA bank. |
-| `XMOVE_SRC_BANK` | `FCA2h` | Source bank for pending cross-bank move. |
-| `XMOVE_DST_BANK` | `FCA3h` | Destination bank for pending cross-bank move. |
-| `XMOVE_PENDING` | `FCA4h` | Pending cross-bank move flag. |
-| `APP_LAUNCH_BANK` | `FCA5h` | Target bank for `LAUNCH`. |
-| `MOVE_SRC_PTR` | `FCA6h` | Cross-bank move source pointer. |
-| `MOVE_DST_PTR` | `FCA8h` | Cross-bank move destination pointer. |
-| `MOVE_REMAIN` | `FCAAh` | Cross-bank move remaining byte count. |
-| `MOVE_CHUNK_LEN` | `FCACh` | Current cross-bank chunk length. |
-| `BANKING_STATE_END` | `FCAEh` | Banking state end. |
-| `STORAGE_STATE_START` | `FCC0h` | Storage state start. |
-| `ramdisk_selected_drive` | `FCC0h` | Selected storage drive, or `FFh` for unsupported. |
-| `ramdisk_track` | `FCC1h` | Selected CP/M track. |
-| `ramdisk_sector` | `FCC3h` | Selected 0-based CP/M sector. |
-| `RAMDISK_CSV` | `FCC9h` | RAM disk check vector. |
-| `RAMDISK_ALV` | `FCD9h` | RAM disk allocation vector. |
-| `STORAGE_STATE_END` | `FCEBh` | Storage state end. |
-| `SIO_CORE_STATE_START` | `FCF0h` | BIOS-owned SIO core state start. |
-| `SIO0B_RX_SINK` | `FCF0h` | Registered RX byte sink for SIO_CH_CONSOLE / SIO0/B. |
-| `SIO1_RX_SINK` | `FCF2h` | Registered RX byte sink slot for SIO_CH_IOCTRL / SIO1/A. |
-| `SIO_CORE_IRQ_ENABLED` / `CONSOLE_IRQ_ENABLED` | `FCF4h` | BIOS-owned SIO IRQ mode flag; legacy alias retained. |
-| `SIO_CORE_IRQ_COUNT` / `CONSOLE_IRQ_COUNT` | `FCF5h` | BIOS-owned SIO ISR entry counter; legacy alias retained. |
-| `SIO0B_LAST_RR1` | `FCF7h` | Last SIO0/B RR1 value sampled after RX data read. |
-| `SIO0B_LAST_RX_ERROR` | `FCF8h` | Last masked SIO0/B RR1 receive-error bits. |
-| `SIO_CORE_STATE_END` | `FCF9h` | BIOS-owned SIO core state end. |
+| `RUNTIME_WORK_AREA_START` | `FE00h` | Runtime work area start. |
+| `CURRENT_BANK` | `FE00h` | Active RAM bank record. |
+| `cbios_dma_addr` | `FE01h` | Current DMA address. |
+| `RUNTIME_WORK_AREA_END` | `FE03h` | Runtime work area end. |
+| `CONSOLE_STATE_START` | `FE04h` | Console state start. |
+| `CONSOLE_DRIVER` | `FE04h` | Active console driver table pointer. |
+| `CONSOLE_CALLER_SP` | `FE06h` | Saved caller stack pointer while console backends run on their private stack. |
+| `CONSOLE_STATE_END` | `FE08h` | Console state end. |
+| `BANKING_STATE_START` | `FE20h` | Banking state start. |
+| `SAVED_BANK` | `FE20h` | Saved active bank for cross-bank moves. |
+| `DMA_BANK` | `FE21h` | Recorded DMA bank. |
+| `XMOVE_SRC_BANK` | `FE22h` | Source bank for pending cross-bank move. |
+| `XMOVE_DST_BANK` | `FE23h` | Destination bank for pending cross-bank move. |
+| `XMOVE_PENDING` | `FE24h` | Pending cross-bank move flag. |
+| `APP_LAUNCH_BANK` | `FE25h` | Target bank for `LAUNCH`. |
+| `MOVE_SRC_PTR` | `FE26h` | Cross-bank move source pointer. |
+| `MOVE_DST_PTR` | `FE28h` | Cross-bank move destination pointer. |
+| `MOVE_REMAIN` | `FE2Ah` | Cross-bank move remaining byte count. |
+| `MOVE_CHUNK_LEN` | `FE2Ch` | Current cross-bank chunk length. |
+| `BANKING_STATE_END` | `FE2Eh` | Banking state end. |
+| `STORAGE_STATE_START` | `FE40h` | Storage state start. |
+| `ramdisk_selected_drive` | `FE40h` | Selected storage drive, or `FFh` for unsupported. |
+| `ramdisk_track` | `FE41h` | Selected CP/M track. |
+| `ramdisk_sector` | `FE43h` | Selected 0-based CP/M sector. |
+| `RAMDISK_SAVED_BANK` | `FE45h` | Saved active bank for DMA copies. |
+| `ramdisk_seq` | `FE47h` | VDrip storage sequence byte. |
+| `ramdisk_active_seq` | `FE48h` | Sequence byte for the active storage transaction. |
+| `ramdisk_lba` | `FE49h` | Computed little-endian 16-bit LBA for the active request. |
+| `storage_expected_type` | `FE4Bh` | Expected storage reply packet type. |
+| `storage_expected_len` | `FE4Ch` | Expected storage reply payload length. |
+| `storage_expected_seq` | `FE4Dh` | Expected storage reply sequence byte. |
+| `storage_rx_state` | `FE4Eh` | Transaction-scoped storage reply parser state. |
+| `storage_rx_len` | `FE4Fh` | Received storage reply LEN byte. |
+| `storage_rx_type` | `FE50h` | Received storage reply packet type. |
+| `storage_rx_payload_len` | `FE51h` | Received storage reply payload length. |
+| `storage_rx_remaining` | `FE52h` | Storage reply payload bytes remaining. |
+| `storage_rx_index` | `FE53h` | Storage reply payload write index. |
+| `storage_rx_crc` | `FE54h` | Storage reply CRC accumulator. |
+| `storage_rx_complete` | `FE55h` | Storage reply completion flag. |
+| `storage_rx_error` | `FE56h` | Storage reply error flag. |
+| `storage_caller_sp` | `FE57h` | Saved caller stack pointer while storage backends run on the BIOS stack. |
+| `RAMDISK_CSV` | `FE59h` | Zero-length fixed-disk check vector label. |
+| `RAMDISK_ALV` | `FC00h` | VDrip storage allocation vector. |
+| `STORAGE_STATE_END` | `FE59h` | Storage state end. |
+| `SIO_CORE_STATE_START` | `FE70h` | BIOS-owned SIO core state start. |
+| `SIO0B_RX_SINK` | `FE70h` | Registered RX byte sink for SIO_CH_CONSOLE / SIO0/B. |
+| `SIO1_RX_SINK` | `FE72h` | Registered RX byte sink slot for SIO_CH_IOCTRL / SIO1/A. |
+| `SIO_CORE_IRQ_ENABLED` / `CONSOLE_IRQ_ENABLED` | `FE74h` | BIOS-owned SIO IRQ mode flag; legacy alias retained. |
+| `SIO_CORE_IRQ_COUNT` / `CONSOLE_IRQ_COUNT` | `FE75h` | BIOS-owned SIO ISR entry counter; legacy alias retained. |
+| `SIO0B_LAST_RR1` | `FE77h` | Last SIO0/B RR1 value sampled after RX data read. |
+| `SIO0B_LAST_RX_ERROR` | `FE78h` | Last masked SIO0/B RR1 receive-error bits. |
+| `SIO_CORE_STATE_END` | `FE79h` | BIOS-owned SIO core state end. |

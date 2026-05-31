@@ -13,6 +13,8 @@
 #include "protocol.h"
 #include "video_device.h"
 #include "keyboard_transport.h"
+#include "serial_port.h"
+#include "storage_backend.h"
 #include "virtual_text_cursor.h"
 
 #include <pthread.h>
@@ -32,6 +34,10 @@ typedef struct {
     FrameChangedCallback frame_changed;
     void *frame_changed_userdata;
     KeyboardTransport *keyboard_transport;
+    SerialPort *serial_port;
+    StorageBackend *storage_backend;
+    bool log_storage;
+    bool log_packets;
     VirtualTextCursor cursor;
     size_t packet_count;
 } PacketDispatch;
@@ -53,6 +59,16 @@ void packet_dispatch_set_frame_changed_callback(
 
 /** Register optional keyboard transport gate updates for incoming serial packets. */
 void packet_dispatch_set_keyboard_transport(PacketDispatch *dispatch, KeyboardTransport *keyboard_transport);
+
+/** Register optional drive-image storage handling for incoming serial packets. */
+void packet_dispatch_set_storage_backend(
+    PacketDispatch *dispatch,
+    StorageBackend *storage_backend,
+    SerialPort *serial_port,
+    bool log_storage);
+
+/** Enable optional decoded non-storage packet logging. */
+void packet_dispatch_set_packet_logging(PacketDispatch *dispatch, bool log_packets);
 
 /** Render the backend's current state into the framebuffer under the mutex. */
 void packet_dispatch_render(PacketDispatch *dispatch);

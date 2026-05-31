@@ -50,6 +50,20 @@ int serial_port_baud_rate(const SerialPort *port);
 bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payload, uint8_t length);
 
 /**
+ * Build and write one Virtual Drip packet with a delay between bytes.
+ *
+ * Used for large proxy->Z80 storage replies when the Z80 side must parse each
+ * byte synchronously without an intermediate RX ring. Display/control packets
+ * keep using serial_port_send_packet().
+ */
+bool serial_port_send_packet_paced(
+    SerialPort *port,
+    uint8_t type,
+    const uint8_t *payload,
+    uint8_t length,
+    unsigned inter_byte_delay_us);
+
+/**
  * Write raw bytes under the TX mutex.
  *
  * Used for proxy->Z80 terminal input and readiness. Bytes are not wrapped in

@@ -83,10 +83,13 @@
 	.globl vdrip_console_init,vdrip_console_const
 	.globl vdrip_console_conin,vdrip_console_conout
 	.globl vdrip_rx_sink
+	.globl vdrip_send_packet,vdrip_rts_assert_raw,crc8_update
+	.globl vdrip_rx_rts_released
 	.globl VDRIP_CONSOLE_CODE_START,VDRIP_CONSOLE_CODE_END
 
 	; SIO core services — real BIOS symbols, not stale map addresses.
 	.globl sio_core_enable_interrupts,sio_register_rx_sink,sio_rx_kick
+	.globl sio_send_byte
 	.globl sio0b_rts_assert,sio0b_rts_release
 	.globl SIO_CH_CONSOLE
 
@@ -117,6 +120,10 @@ PACKET_FRAME_MARK	= 0x08
 PACKET_CURSOR_COMMAND	= 0x09
 ; Obsolete proxy->Z80 readiness packet. Readiness is now raw ESC [ ? 1 ; 0 c.
 PACKET_PROXY_READY	= 0x0a
+PACKET_STORAGE_READ_REQ	= 0x0d
+PACKET_STORAGE_READ_REPLY = 0x0e
+PACKET_STORAGE_WRITE_REQ = 0x0f
+PACKET_STORAGE_WRITE_REPLY = 0x10
 
 CURSOR_ENABLE		= 0x01
 CURSOR_SHOW		= 0x02
@@ -3355,23 +3362,27 @@ vdrip_send_packet_send_crc:
 
 
 vdrip_transport_putc:
-	push af
-	; Ensure SIO register pointer is at RR0 so we read
-	; actual status, not a stale write-register value
-	; left behind by RTS toggling.
-	xor a			; WR0 = 0: select RR0, null command
+	ld c,a
+	; Ensure SIO register pointer is at RR0 before the shared sender reads
+	; status. RTS toggles also write the SIO control port.
+	xor a
 	out (VDRIP_CTRL),a
+	ld a,#SIO_CH_CONSOLE
+	call sio_send_byte
+	or a
+	ret z
 
-vdrip_transport_wait_tx:
-	in a,(VDRIP_CTRL)	; RR0
-	; Wait for TX buffer empty AND CTS asserted.
-	; SIO_CONSOLE_TX_READY = SIO_TX_READY | SIO_RR0_CTS
-	and #(SIO_RR0_TX_EMPTY | SIO_RR0_CTS)
-	cp #(SIO_RR0_TX_EMPTY | SIO_RR0_CTS)
-	jr nz,vdrip_transport_wait_tx
-
-	pop af
+	; Last-resort escape from a stuck CTS line. Normal traffic still uses
+	; sio_send_byte above and therefore preserves hardware flow control.
+	xor a
+	out (VDRIP_CTRL),a
+vdrip_transport_wait_tx_empty:
+	in a,(VDRIP_CTRL)
+	and #SIO_RR0_TX_EMPTY
+	jr z,vdrip_transport_wait_tx_empty
+	ld a,c
 	out (VDRIP_DATA),a
+	xor a
 	ret
 
 vdrip_parse_crc_failed:

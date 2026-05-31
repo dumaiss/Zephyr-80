@@ -55,6 +55,10 @@ typedef enum {
     PACKET_PROXY_READY = 0x0a,
     PACKET_VDP_DATA_BLOCK = 0x0b,
     PACKET_VDP_SCROLL = 0x0c,
+    PACKET_STORAGE_READ_REQ = 0x0d,
+    PACKET_STORAGE_READ_REPLY = 0x0e,
+    PACKET_STORAGE_WRITE_REQ = 0x0f,
+    PACKET_STORAGE_WRITE_REPLY = 0x10,
 } PacketType;
 
 /** CURSOR_COMMAND payload byte 0 subcommands. */
