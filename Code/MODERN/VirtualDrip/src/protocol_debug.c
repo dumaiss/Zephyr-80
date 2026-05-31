@@ -21,8 +21,11 @@ void print_packet_detail(const Packet *packet)
     switch (packet->type) {
     case PACKET_VDP_CTRL_WRITE:
     case PACKET_VDP_DATA_WRITE:
+    case PACKET_VDP_DATA_BLOCK:
         if (packet->length == 1) {
             printf(" value=0x%02X", packet->payload[0]);
+        } else if (packet->length > 1) {
+            printf(" bytes=%u", packet->length);
         }
         break;
     case PACKET_TERMINAL_INPUT:

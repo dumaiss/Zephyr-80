@@ -89,7 +89,29 @@ void packet_dispatch_handle_packet(const Packet *packet, size_t offset, void *us
     VideoDeviceUpdate update;
 
     keyboard_transport_note_incoming_packet(dispatch->keyboard_transport, packet);
-    print_packet(++dispatch->packet_count, offset, packet);
+    /* print_packet(++dispatch->packet_count, offset, packet); */
+
+    if (packet->type == PACKET_FRAME_MARK) {
+        /* FRAME_MARK is the explicit render trigger after a burst of
+           silent DATA_BLOCK writes.  Render the current VRAM state. */
+        pthread_mutex_lock(dispatch->framebuffer_mutex);
+        (void)video_device_render_framebuffer(
+            dispatch->video_device,
+            dispatch->framebuffer,
+            dispatch->framebuffer_width,
+            dispatch->framebuffer_height);
+        virtual_text_cursor_render_overlay(
+            &dispatch->cursor,
+            dispatch->framebuffer,
+            dispatch->framebuffer_width,
+            dispatch->framebuffer_height,
+            video_device_is_text_mode(dispatch->video_device));
+        pthread_mutex_unlock(dispatch->framebuffer_mutex);
+        if (dispatch->frame_changed != NULL) {
+            dispatch->frame_changed(dispatch->frame_changed_userdata);
+        }
+        return;
+    }
 
     if (packet->type == PACKET_CURSOR_COMMAND) {
         bool accepted = virtual_text_cursor_handle_command(

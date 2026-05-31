@@ -53,6 +53,8 @@ typedef enum {
     PACKET_FRAME_MARK = 0x08,
     PACKET_CURSOR_COMMAND = 0x09,
     PACKET_PROXY_READY = 0x0a,
+    PACKET_VDP_DATA_BLOCK = 0x0b,
+    PACKET_VDP_SCROLL = 0x0c,
 } PacketType;
 
 /** CURSOR_COMMAND payload byte 0 subcommands. */

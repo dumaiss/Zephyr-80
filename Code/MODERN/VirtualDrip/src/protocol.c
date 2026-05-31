@@ -55,6 +55,10 @@ const char *packet_type_name(uint8_t type)
         return "FRAME_MARK";
     case PACKET_CURSOR_COMMAND:
         return "CURSOR_COMMAND";
+    case PACKET_VDP_DATA_BLOCK:
+        return "VDP_DATA_BLOCK";
+    case PACKET_VDP_SCROLL:
+        return "VDP_SCROLL";
     default:
         return "UNKNOWN";
     }

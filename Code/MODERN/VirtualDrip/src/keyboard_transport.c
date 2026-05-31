@@ -438,7 +438,11 @@ void keyboard_transport_note_incoming_packet(KeyboardTransport *transport, const
     pthread_mutex_lock(&transport->gate.mutex);
     switch (packet->type) {
     case PACKET_VDP_CTRL_WRITE:
-    case PACKET_VDP_DATA_WRITE: {
+    case PACKET_VDP_DATA_BLOCK:
+    case PACKET_VDP_SCROLL: {
+        /* Only gate keyboard on bulk/structural VDP traffic.
+           Single-byte VDP_DATA_WRITE (character output) is fast enough
+           that flow-control gating hurts more than it helps. */
         struct timespec now;
         clock_gettime(CLOCK_REALTIME, &now);
         transport_gate_enter_vdp_busy_locked(&transport->gate, now);

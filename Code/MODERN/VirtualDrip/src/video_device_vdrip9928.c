@@ -72,14 +72,14 @@ static void vdrip9928_write_control(Vdrip9928Device *impl, uint8_t value)
 {
     ++impl->control_writes;
     vrEmuTms9918WriteAddr(impl->tms9918, value);
-    printf("  VDP CTRL write value=0x%02X (vDrip9928, count=%zu)\n", value, impl->control_writes);
+    /* printf("  VDP CTRL write value=0x%02X (vDrip9928, count=%zu)\n", value, impl->control_writes); */
 }
 
 static void vdrip9928_write_data(Vdrip9928Device *impl, uint8_t value)
 {
     ++impl->data_writes;
     vrEmuTms9918WriteData(impl->tms9918, value);
-    printf("  VDP DATA write value=0x%02X (vDrip9928, count=%zu)\n", value, impl->data_writes);
+    /* printf("  VDP DATA write value=0x%02X (vDrip9928, count=%zu)\n", value, impl->data_writes); */
 }
 
 static bool vdrip9928_handle_packet(VideoDevice *device, const Packet *packet, VideoDeviceUpdate *update)
@@ -103,15 +103,59 @@ static bool vdrip9928_handle_packet(VideoDevice *device, const Packet *packet, V
         vdrip9928_write_data(impl, packet->payload[0]);
         video_device_update_mark_full(device, update);
         return true;
+    case PACKET_VDP_DATA_BLOCK:
+        if (packet->length == 0 || packet->length > MAX_PACKET_PAYLOAD) {
+            fprintf(stderr, "  VDP DATA BLOCK ignored: invalid payload length %u\n", packet->length);
+            return false;
+        }
+        for (uint8_t i = 0; i < packet->length; ++i) {
+            vdrip9928_write_data(impl, packet->payload[i]);
+        }
+        /* Do not mark framebuffer dirty — FRAME_MARK triggers the render. */
+        return true;
+    case PACKET_VDP_SCROLL: {
+        /* Hardware scroll: shift the Text 2 name table up by N rows
+           and blank the bottom N rows.  One 7-byte packet replaces a
+           full 2084-byte screen blast at ~115200 baud. */
+        if (packet->length != 1) {
+            fprintf(stderr, "  VDP SCROLL ignored: expected 1 byte, got %u\n", packet->length);
+            return false;
+        }
+        uint8_t rows = packet->payload[0];
+        if (rows == 0 || rows > 23) {
+            fprintf(stderr, "  VDP SCROLL ignored: invalid rows %u\n", rows);
+            return false;
+        }
+        /* Column-major traversal needs only one byte of temporary storage.
+           WriteAddr is a two-step protocol: low byte, then (high | 0x40). */
+        for (int x = 0; x < 80; ++x) {
+            for (int y = 0; y < 24 - (int)rows; ++y) {
+                uint16_t src = 0x3800 + (uint16_t)((y + rows) * 80 + x);
+                uint16_t dst = 0x3800 + (uint16_t)(y * 80 + x);
+                uint8_t ch = vrEmuTms9918VramValue(impl->tms9918, src);
+                vrEmuTms9918WriteAddr(impl->tms9918, (uint8_t)(dst & 0xFF));
+                vrEmuTms9918WriteAddr(impl->tms9918, (uint8_t)(((dst >> 8) & 0x3F) | 0x40));
+                vrEmuTms9918WriteData(impl->tms9918, ch);
+            }
+            for (int y = 24 - (int)rows; y < 24; ++y) {
+                uint16_t dst = 0x3800 + (uint16_t)(y * 80 + x);
+                vrEmuTms9918WriteAddr(impl->tms9918, (uint8_t)(dst & 0xFF));
+                vrEmuTms9918WriteAddr(impl->tms9918, (uint8_t)(((dst >> 8) & 0x3F) | 0x40));
+                vrEmuTms9918WriteData(impl->tms9918, 0x20);
+            }
+        }
+        video_device_update_mark_full(device, update);
+        return true;
+    }
     case PACKET_RESET:
         if (!vdrip9928_reset(device)) {
             return false;
         }
-        printf("  VDP reset (%s)\n", device->info.name);
+        /* printf("  VDP reset (%s)\n", device->info.name); */
         video_device_update_mark_full(device, update);
         return true;
     default:
-        printf("  VDP no-op for %s\n", packet_type_name(packet->type));
+        /* printf("  VDP no-op for %s\n", packet_type_name(packet->type)); */
         return true;
     }
 }

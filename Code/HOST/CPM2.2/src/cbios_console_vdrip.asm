@@ -107,6 +107,8 @@ PACKET_SYNC0		= 0xa5
 PACKET_SYNC1		= 0x5a
 PACKET_VDP_CTRL_WRITE	= 0x01
 PACKET_VDP_DATA_WRITE	= 0x02
+PACKET_VDP_DATA_BLOCK	= 0x0b
+PACKET_VDP_SCROLL	= 0x0c
 ; Obsolete for proxy->Z80 keyboard input. Raw terminal bytes now feed textq.
 PACKET_TERMINAL_INPUT	= 0x05
 PACKET_RESET		= 0x06
@@ -196,9 +198,13 @@ CSI_SGR			= 'm	; select graphic rendition
 ; ANSI maximum parameter count.
 CSI_MAX_PARAMS		= 2
 
-; Max payload = 16, plus LEN + TYPE + CRC = 3.
+; Max payload for the obsolete RX parser buffer (kept small).
 VDRIP_PACKET_PAYLOAD_MAX = 0x10
-VDRIP_PACKET_BODY_MAX	 = VDRIP_PACKET_PAYLOAD_MAX + VDRIP_WIRE_OVERHEAD
+VDRIP_PACKET_BODY_MAX    = VDRIP_PACKET_PAYLOAD_MAX + VDRIP_WIRE_OVERHEAD
+
+; Max payload per PACKET_VDP_DATA_BLOCK chunk for bulk VDP writes.
+; 240 bytes ≈ 3 rows of 80-column text; proxy accepts up to 252.
+VDRIP_DATA_BLOCK_MAX = 240
 
 ; Console input queue (CONIN FIFO, interrupt-fed).
 TEXTQ_SIZE		= 0x80
@@ -372,6 +378,12 @@ vdrip_init_skip_handshake:
 
 vdrip_console_const:
 	push hl
+
+	; Check for proxy reconnection: sequence count > 1.
+	ld a,(vdrip_ready_seq_count)
+	cp #0x02
+	call nc,vdrip_handle_reconnect
+
 	ld a,#SIO_CH_CONSOLE
 	call sio_rx_kick
 	ld a,(textq_count)
@@ -422,6 +434,12 @@ vdrip_console_conin:
 	push bc
 	push de
 	push hl
+
+	; Check for proxy reconnection before blocking.
+	ld a,(vdrip_ready_seq_count)
+	cp #0x02
+	call nc,vdrip_handle_reconnect
+
 vdrip_console_conin_wait:
 	ld a,#SIO_CH_CONSOLE
 	call sio_rx_kick
@@ -617,6 +635,7 @@ vdrip_rx_init:
 	ld (rts_assert_count),a
 		ld (vdrip_terminal_ready_flag),a
 		ld (vdrip_terminal_ready_state),a
+	ld (vdrip_ready_seq_count),a
 	ld (esc_press_count),a
 	ld (text_view_col),a
 	ld (term_state),a
@@ -662,32 +681,37 @@ vdrip_register_rx_sink:
 ; VDrip traffic:
 ;   Must not emit VDP or cursor traffic. This routine can run inside the SIO ISR.
 ; Behavior:
-;   Only SIO_CH_CONSOLE bytes are accepted. Before terminal readiness, bytes feed
-;   the tiny readiness recognizer. After readiness, every received byte is
-;   enqueued unchanged into textq. The old framed PACKET_TERMINAL_INPUT parser is
-;   not active in the keyboard input path.
+;   Only SIO_CH_CONSOLE bytes are accepted.  The readiness recognizer runs
+;   on every byte — even after the first handshake — so a second
+;   ESC [ ? 1 ; 0 c from a reconnecting proxy is detected and flagged.
 vdrip_rx_sink:
-		; ISR-safe entry: consume startup readiness bytes until ready, then enqueue
-		; every byte unchanged into textq.
-		push af
-		push bc
-		push de
+	; ISR-safe: always feed bytes to the readiness parser.
+	; Bytes are only enqueued when the parser is idle AND ready.
+	push af
+	push bc
+	push de
 	push hl
 
-		cp #SIO_CH_CONSOLE
-		jr nz,vdrip_rx_sink_done
+	cp #SIO_CH_CONSOLE
+	jr nz,vdrip_rx_sink_done
 
-		ld a,(vdrip_terminal_ready_flag)
-		or a
-		jr z,vdrip_rx_sink_ready_byte
+	ld a,c
+	call vdrip_terminal_ready_parse_byte
 
-		ld a,c
-		call textq_put_ascii
-		jr vdrip_rx_sink_done
+	; If the parser is tracking a sequence (state != WAIT_ESC),
+	; consume the byte silently — don't enqueue.
+	ld a,(vdrip_terminal_ready_state)
+	cp #VDRIP_READY_WAIT_ESC
+	jr nz,vdrip_rx_sink_done
 
-vdrip_rx_sink_ready_byte:
-		ld a,c
-		call vdrip_terminal_ready_parse_byte
+	; Parser is idle.  Only enqueue if ready and not in
+	; reconnection-reset window (flag may be zeroed by reconnect).
+	ld a,(vdrip_terminal_ready_flag)
+	or a
+	jr z,vdrip_rx_sink_done
+
+	ld a,c
+	call textq_put_ascii
 
 vdrip_rx_sink_done:
 	pop hl
@@ -814,8 +838,20 @@ vdrip_ready_wait_c:
 	jr vdrip_ready_restart
 
 vdrip_ready_complete:
+	; Increment the sequence counter on every completion.
+	; Cold boot: vdrip_wait_for_terminal_ready sees count > 0.
+	; Reconnect: CONST sees count > 1.
+	ld a,(vdrip_ready_seq_count)
+	inc a
+	ld (vdrip_ready_seq_count),a
+
+	; Keep the readiness flag for the cold-boot wait loop.
 	ld a,#0x01
 	ld (vdrip_terminal_ready_flag),a
+
+	; Reset parser state so we can detect the next sequence.
+	xor a
+	ld (vdrip_terminal_ready_state),a
 	ret
 
 vdrip_ready_restart:
@@ -1681,29 +1717,26 @@ term_cursor_end:
 ; ---------------------------------------------------------------------------
 
 text_clear_screen_runtime:
-	; Clear VDP name table.
-	ld hl,#NAME_TABLE
-	call vdp_set_vram_write_addr
-
-	ld bc,#TEXT_PHYS_CELLS
-text_clear_runtime_vdp_loop:
-	ld a,#0x20
-	call vdp_write_data_byte
-	dec bc
-	ld a,b
-	or c
-	jr nz,text_clear_runtime_vdp_loop
-
-	; Clear shadow buffer.
+	; Clear shadow buffer to spaces.
 	ld hl,#text_shadow
 	ld bc,#TEXT_SHADOW_SIZE
+	ld a,#0x20
 text_clear_runtime_shadow_loop:
-	ld (hl),#0x20
+	ld (hl),a
 	inc hl
 	dec bc
 	ld a,b
 	or c
+	ld a,#0x20
 	jr nz,text_clear_runtime_shadow_loop
+
+	; Blast shadow to VDP.
+	ld hl,#NAME_TABLE
+	call vdp_set_vram_write_addr
+
+	ld hl,#text_shadow
+	ld bc,#TEXT_PHYS_CELLS
+	call vdp_write_data_block
 
 	; Reset cursor and viewport.
 	xor a
@@ -1720,43 +1753,36 @@ text_clear_runtime_shadow_loop:
 ; ---------------------------------------------------------------------------
 
 text_clear_to_eol:
-	; Compute VDP address of cursor.
-	call text_cursor_to_vram
-
-	; Write spaces from cursor to end of physical row.
+	; Clear shadow bytes from cursor to end of logical row.
+	call text_shadow_addr_current	; HL = shadow addr for cursor
 	ld a,(text_col)
 	ld e,a
 	ld a,#TEXT_LOG_COLUMNS
-	sub e			; A = columns remaining
+	sub e				; A = columns remaining
 	jr z,text_clear_to_eol_done
 	ld b,a
-
-text_clear_to_eol_vdp_loop:
-	ld a,#0x20
-	call vdp_write_data_byte
-	call vdrip_tx_pace
-	djnz text_clear_to_eol_vdp_loop
-
-text_clear_to_eol_done:
-	; Clear corresponding shadow buffer bytes.
-	ld a,(text_col)
-	ld e,a
-	ld a,#TEXT_LOG_COLUMNS
-	sub e
-	jr z,text_clear_to_eol_shadow_done
-	ld b,a
-
-	push bc
-	call text_shadow_addr_current	; HL = shadow addr for cursor
-	pop bc
-
+	push hl				; save shadow start
 text_clear_to_eol_shadow_loop:
 	ld (hl),#0x20
 	inc hl
 	djnz text_clear_to_eol_shadow_loop
+
+	; Now blast the cleared portion to VDP from the shadow buffer.
+	call text_cursor_to_vram	; set VDP write address
+	pop hl				; HL = shadow source
+	ld a,(text_col)
+	ld e,a
+	ld a,#TEXT_LOG_COLUMNS
+	sub e
+	ld c,a
+	ld b,#0x00			; BC = count
+	call vdp_write_data_block
+
+	; FRAME_MARK so the proxy renders the updated row.
+	call vdrip_send_frame_mark
 	ret
 
-text_clear_to_eol_shadow_done:
+text_clear_to_eol_done:
 	ret
 
 
@@ -2213,14 +2239,9 @@ text_redraw_view_shadow_row_done:
 	ld d,#0
 	add hl,de
 
-		; Write one physical row from shadow to VDP with pacing.
-	ld b,#TEXT_PHYS_COLUMNS
-text_redraw_view_byte_loop:
-	ld a,(hl)
-	call vdp_write_data_byte
-	call vdrip_tx_pace
-	inc hl
-	djnz text_redraw_view_byte_loop
+		; Write one physical row from shadow to VDP as a block.
+	ld bc,#TEXT_PHYS_COLUMNS
+	call vdp_write_data_block
 
 	; Next row.
 	pop af
@@ -2285,9 +2306,18 @@ text_scroll_blank_loop:
 	pop de
 	pop bc
 
-		; Redraw the 80-column viewport from the 80-column shadow.
-	; text_view_col is reset to 0 after scroll.
-	call text_redraw_view
+	; Hardware scroll: tell the proxy to shift its name table up
+	; by one row.  One 7-byte packet instead of a 2084-byte screen
+	; blast — scroll becomes nearly instant at 115200 baud.
+	ld a,#0x01
+	call vdrip_send_scroll
+	call vdrip_send_frame_mark
+
+	; The proxy scroll handler moved the VDP address pointer; our
+	; auto-increment tracking is now stale.  Force a full address
+	; setup on the next VDP write.
+	xor a
+	ld (vdp_addr_valid),a
 
 	; Cursor to bottom row, col 0.
 	xor a
@@ -2301,6 +2331,51 @@ text_scroll_blank_loop:
 	; but the scroll just finished — input MUST resume.
 	call vdrip_rts_assert_raw
 	xor a
+	ld (vdrip_rx_rts_released),a
+	ret
+
+
+; ===========================================================================
+; Proxy reconnection handler
+; ===========================================================================
+;
+; Called from CONST when vdrip_reinit_requested is set (the readiness
+; parser saw a second ESC [ ? 1 ; 0 c mid-session).  Reinitializes the
+; VDP, blasts the current shadow buffer to the screen, and resumes
+; normal operation.
+;
+; Clobbers: AF, BC, DE, HL.  Emits VDrip traffic; RTS is released
+; during the burst.
+
+vdrip_handle_reconnect:
+	; Reset the sequence counter so we don't re-enter.
+	ld a,#0x01
+	ld (vdrip_ready_seq_count),a
+
+	; Release RTS for the burst.  rts_release_raw returns A=0.
+	call vdrip_rts_release_raw
+	inc a
+	ld (vdrip_rx_rts_released),a
+
+	; Reinitialize VDP mode and font.  No RESET/PING needed — the
+	; proxy restarted from scratch so its emulator is already fresh.
+	call text_init_vdp
+	call text_load_font
+
+	; Blast the current shadow buffer to the name table.
+	ld hl,#NAME_TABLE
+	call vdp_set_vram_write_addr
+	ld hl,#text_shadow
+	ld bc,#TEXT_PHYS_CELLS
+	call vdp_write_data_block
+
+	; Restore the cursor at its current position.
+	; vdrip_cursor_init already calls set_position_current.
+	call vdrip_cursor_init
+	call vdrip_send_frame_mark
+
+	; Re-assert RTS.  ready_flag is already 1 from the parser.
+	call vdrip_rts_assert_raw
 	ld (vdrip_rx_rts_released),a
 	ret
 
@@ -2419,30 +2494,29 @@ text_load_font:
 ; ---------------------------------------------------------------------------
 
 text_clear_screen:
-		; Clear VDP name table (80x24).
-	ld hl,#NAME_TABLE
-	call vdp_set_vram_write_addr
-
-	ld bc,#TEXT_PHYS_CELLS
-text_clear_vdp_loop:
-	ld a,#0x20
-	call vdp_write_data_byte
-	dec bc
-	ld a,b
-	or c
-	jr nz,text_clear_vdp_loop
-
-	; Clear 80-column shadow buffer.
+	; Clear the 80-column shadow buffer to spaces first, then blast
+	; the entire shadow to the VDP name table in large DATA_BLOCK
+	; chunks (VDRIP_DATA_BLOCK_MAX bytes each).  This eliminates the
+	; need for a separate space-fill buffer.
 	ld hl,#text_shadow
 	ld bc,#TEXT_SHADOW_SIZE
+	ld a,#0x20
 text_clear_shadow_loop:
-	ld (hl),#0x20
+	ld (hl),a
 	inc hl
 	dec bc
 	ld a,b
 	or c
+	ld a,#0x20
 	jr nz,text_clear_shadow_loop
 
+	; VDP name table ← shadow buffer.
+	ld hl,#NAME_TABLE
+	call vdp_set_vram_write_addr
+
+	ld hl,#text_shadow
+	ld bc,#TEXT_PHYS_CELLS
+	call vdp_write_data_block
 	ret
 
 
@@ -2484,29 +2558,81 @@ vdp_write_data_byte:
 	jp vdrip_data_write
 
 
-; Write BC bytes from HL to current TMS9928A data port address.
+; Write BC bytes from HL to current TMS9928A data port.
+; Sends data as one or more PACKET_VDP_DATA_BLOCK packets, each at most
+; VDRIP_DATA_BLOCK_MAX bytes. This amortises the per-packet framing
+; overhead (sync, LEN, TYPE, CRC) over multiple data bytes and dramatically
+; reduces serial traffic for font upload, screen clear, scroll redraw, and
+; other bulk VDP writes.
+;
+; Input:
+;   HL = source pointer
+;   BC = byte count
+; Output:
+;   All bytes sent as PACKET_VDP_DATA_BLOCK chunk(s).
+; Clobbers:
+;   AF, BC, DE, HL.
+; Preserves:
+;   None promised.
+; ---------------------------------------------------------------------------
 vdp_write_data_block:
+	jp vdrip_data_write_block
+
+vdrip_data_write_block:
+	; Quick exit for zero-byte request.
+	ld a,b
+	or c
+	ret z
+
+	; Save source pointer and remaining count for the chunk loop.
 	ld (block_ptr_store),hl
 	ld (block_count_store),bc
 
-vdp_write_data_block_loop:
+vdrip_data_block_chunk:
+	; If remaining count == 0, all bytes sent.
 	ld hl,(block_count_store)
 	ld a,h
 	or l
 	ret z
 
+	; B = min(remaining, VDRIP_DATA_BLOCK_MAX)
+	; 16-bit compare: if H != 0 then remaining >= 256 > max.
+	ld a,h
+	or a
+	jr nz,vdrip_data_block_use_max
+	ld a,l
+	cp #VDRIP_DATA_BLOCK_MAX
+	jr nc,vdrip_data_block_use_max
+	; remaining < max — use exact remaining count (fits in 8 bits).
+	ld b,a
+	jr vdrip_data_block_send
+
+vdrip_data_block_use_max:
+	ld b,#VDRIP_DATA_BLOCK_MAX
+
+vdrip_data_block_send:
+	; B = chunk size (payload length for vdrip_send_packet).
+	; Send PACKET_VDP_DATA_BLOCK with HL pointing at current source data.
+	push bc				; save chunk size
+	ld a,#PACKET_VDP_DATA_BLOCK
 	ld hl,(block_ptr_store)
-	ld a,(hl)
-	inc hl
+	call vdrip_send_packet		; preserves BC, DE, HL
+	pop bc				; B = chunk size just sent
+
+	; Advance source pointer by chunk size.
+	ld e,b
+	ld d,#0x00
+	ld hl,(block_ptr_store)
+	add hl,de
 	ld (block_ptr_store),hl
 
-	call vdp_write_data_byte
-
+	; Decrement remaining count by chunk size.
 	ld hl,(block_count_store)
-	dec hl
+	or a				; clear carry
+	sbc hl,de
 	ld (block_count_store),hl
 
-	jr vdp_write_data_block_loop
+	jr vdrip_data_block_chunk
 
 
 ; ===========================================================================
@@ -2556,6 +2682,15 @@ vdrip_send_ping:
 vdrip_send_frame_mark:
 	ld a,#PACKET_FRAME_MARK
 	jp vdrip_send_packet0
+
+
+; Send PACKET_VDP_SCROLL with one payload byte (row count).
+; Input:  A = number of rows to scroll up (1-23).
+; Clobbers: AF, BC, DE, HL (via vdrip_send_packet1).
+vdrip_send_scroll:
+	ld e,a
+	ld a,#PACKET_VDP_SCROLL
+	jp vdrip_send_packet1
 
 
 ; ===========================================================================
@@ -2882,6 +3017,11 @@ vdrip_terminal_ready_state:
 
 ; Set after first successful terminal readiness handshake; survives warm boot.
 vdrip_handshake_done:
+	.db 0x00
+
+; Incremented on every ESC [ ? 1 ; 0 c completion by the readiness parser.
+; 0 = never seen.  1 = cold-boot readiness done.  >1 = proxy reconnected.
+vdrip_ready_seq_count:
 	.db 0x00
 
 ; VDrip RX parser state.

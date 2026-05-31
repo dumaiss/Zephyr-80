@@ -73,14 +73,14 @@ static void tms9928_write_control(Tms9928Device *impl, uint8_t value)
 {
     ++impl->control_writes;
     vrEmuTms9918WriteAddr(impl->tms9918, value);
-    printf("  VDP CTRL write value=0x%02X (vrEmuTms9918, count=%zu)\n", value, impl->control_writes);
+    /* printf("  VDP CTRL write value=0x%02X (vrEmuTms9918, count=%zu)\n", value, impl->control_writes); */
 }
 
 static void tms9928_write_data(Tms9928Device *impl, uint8_t value)
 {
     ++impl->data_writes;
     vrEmuTms9918WriteData(impl->tms9918, value);
-    printf("  VDP DATA write value=0x%02X (vrEmuTms9918, count=%zu)\n", value, impl->data_writes);
+    /* printf("  VDP DATA write value=0x%02X (vrEmuTms9918, count=%zu)\n", value, impl->data_writes); */
 }
 
 static bool tms9928_handle_packet(VideoDevice *device, const Packet *packet, VideoDeviceUpdate *update)
@@ -106,16 +106,27 @@ static bool tms9928_handle_packet(VideoDevice *device, const Packet *packet, Vid
         /* VRAM writes may affect any rendered pixel, so mark conservatively. */
         video_device_update_mark_full(device, update);
         return true;
+    case PACKET_VDP_DATA_BLOCK:
+        if (packet->length == 0 || packet->length > MAX_PACKET_PAYLOAD) {
+            fprintf(stderr, "  VDP DATA BLOCK ignored: invalid payload length %u\n", packet->length);
+            return false;
+        }
+        for (uint8_t i = 0; i < packet->length; ++i) {
+            tms9928_write_data(impl, packet->payload[i]);
+        }
+        /* Do not mark framebuffer dirty — FRAME_MARK triggers the render
+           so multi-packet bursts (scroll, clear) produce a single update. */
+        return true;
     case PACKET_RESET:
         if (!tms9928_reset(device)) {
             return false;
         }
-        printf("  VDP reset (%s)\n", device->info.name);
+        /* printf("  VDP reset (%s)\n", device->info.name); */
         video_device_update_mark_full(device, update);
         return true;
     default:
         /* PING, FRAME_MARK, TERMINAL_INPUT, and read requests are no-ops here today. */
-        printf("  VDP no-op for %s\n", packet_type_name(packet->type));
+        /* printf("  VDP no-op for %s\n", packet_type_name(packet->type)); */
         return true;
     }
 }
