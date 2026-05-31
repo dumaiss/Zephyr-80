@@ -8,6 +8,7 @@
 	.globl init_page_zero
 	.globl prepare_runnable_bank
 	.globl restore_ccp_from_rom
+	.globl restore_font_from_rom
 	.globl runtime_set_default_dma
 	.globl runtime_clear_default_dma
 	.globl console_init
@@ -95,6 +96,7 @@ wboot_resident:
 	ld sp,#CBIOS_STACK_TOP
 	call ctc_disable_interrupts
 	call sio_core_init
+	call restore_font_from_rom
 	call console_init
 	call restore_ccp_from_rom
 	call prepare_runnable_bank

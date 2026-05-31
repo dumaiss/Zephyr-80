@@ -85,6 +85,7 @@
 	.globl vdrip_rx_sink
 	.globl vdrip_send_packet,vdrip_rts_assert_raw,crc8_update
 	.globl vdrip_rx_rts_released
+	.globl restore_font_from_rom
 	.globl VDRIP_CONSOLE_CODE_START,VDRIP_CONSOLE_CODE_END
 
 	; SIO core services — real BIOS symbols, not stale map addresses.
@@ -213,6 +214,8 @@ CSI_SAVE		= 's	; save cursor
 CSI_RESTORE		= 'u	; restore cursor
 CSI_DECSET		= 'h	; DEC private mode set
 CSI_DECRST		= 'l	; DEC private mode reset
+CSI_IL			= 'L	; insert line(s)
+CSI_DL			= 'M	; delete line(s)
 
 ; ANSI maximum parameter count.
 CSI_MAX_PARAMS		= 2
@@ -1243,6 +1246,8 @@ vdrip_terminal_enqueue_loop:
 ;   ESC [ 1 K          erase from start of line through cursor
 ;   ESC [ 2 K          erase entire current line
 ;   ESC [ n X          erase n characters from cursor position
+;   ESC [ n L          insert n blank lines (IL); default n=1; full-screen region
+;   ESC [ n M          delete n lines (DL); default n=1; full-screen region
 ;   ESC [ m / 0 m      reset SGR attributes (no visual effect)
 ;   ESC [ 1/4/5 m      bold/underline/blink consumed, no visual effect
 ;   ESC [ 7/27 m       reverse on/off tracked, not rendered
@@ -1256,9 +1261,11 @@ vdrip_terminal_enqueue_loop:
 ;
 ; Unsupported CSI / DEC private sequences are consumed safely.
 ; CSI parser supports '?' prefix for DEC private sequences.
-; Scroll regions, insert/delete line, insert/delete character, tab clearing,
-; origin mode, 132-column mode, and DEC special graphics rendering are deferred
-; and are consumed where their ESC/CSI forms are recognized.
+; IL/DL (insert/delete line) use the full screen as the scroll region; per-command
+; scroll regions are not yet implemented.
+; Scroll regions, insert/delete character, tab clearing, origin mode, 132-column
+; mode, and DEC special graphics rendering are deferred and are consumed where
+; their ESC/CSI forms are recognized.
 ; ANSI coordinates are 1-based; internal coordinates are 0-based.
 ; Tab stops are 8 columns (VT100 standard).
 ; Text80 cannot render font effects; reverse video, bold, underline, blink, and
@@ -1618,6 +1625,10 @@ ansi_dispatch_public:
 	jp z,ansi_save_cursor
 	cp #CSI_RESTORE
 	jp z,ansi_restore_cursor
+	cp #CSI_IL
+	jp z,ansi_insert_lines
+	cp #CSI_DL
+	jp z,ansi_delete_lines
 	; Unsupported CSI / DEC private fallthrough — consume.
 	ret
 
@@ -1898,6 +1909,279 @@ ansi_decrst:
 
 ansi_hide_cursor:
 	call vdrip_cursor_hide
+	ret
+
+
+; ---- CSI IL: insert n blank lines (ESC [ n L) ----
+;
+; Inputs:
+;   CSI param0 = n (default/0 -> 1)
+;   text_row = current cursor row
+; Outputs:
+;   Shadow buffer and VDP updated; n blank lines inserted at cursor row.
+; Clobbers:
+;   AF, BC, DE, HL.
+; Preserved registers:
+;   none (caller saves BC/DE/HL around CONOUT dispatch)
+; VDrip traffic:
+;   Releases RTS, emits PACKET_VDP_DATA_BLOCK packets, emits FRAME_MARK.
+; Cursor position:
+;   Unchanged.
+; Scroll region:
+;   Full screen (rows 0..TEXT_ROWS-1); no per-command scroll region yet.
+
+ansi_insert_lines:
+	call ansi_param0_default_1	; A = n (at least 1)
+	ld (il_dl_n),a
+
+	ld a,(text_row)
+	ld (il_dl_row),a
+
+	; available_rows = TEXT_ROWS - row. Clamp n to available_rows.
+	ld b,a
+	ld a,#TEXT_ROWS
+	sub b				; A = TEXT_ROWS - row
+	ld b,a				; B = available
+	ld a,(il_dl_n)
+	cp b
+	jr c,ansi_il_n_ok
+	jr z,ansi_il_n_ok
+	ld a,b
+	ld (il_dl_n),a
+ansi_il_n_ok:
+	or a
+	ret z				; n == 0: nothing to do
+
+	; rows_to_shift = TEXT_ROWS - row - n (rows that slide down)
+	ld b,a				; B = n (clamped)
+	ld a,(il_dl_row)
+	ld c,a				; C = row
+	ld a,#TEXT_ROWS
+	sub c				; A = TEXT_ROWS - row
+	sub b				; A = rows_to_shift
+	ld (il_dl_shift),a
+
+	call vdrip_rts_release_raw
+	ld a,#0x01
+	ld (vdrip_rx_rts_released),a
+
+	; --- Backwards copy: rows [row..TEXT_ROWS-n-1] -> [row+n..TEXT_ROWS-1] ---
+	; src_end = shadow + (TEXT_ROWS-n)*80 - 1
+	; dst_end = shadow + TEXT_SHADOW_SIZE - 1
+	; count   = rows_to_shift * 80
+
+	ld a,(il_dl_shift)
+	or a
+	jr z,ansi_il_fill		; no rows to shift
+
+	call il_dl_mul80		; HL = rows_to_shift * 80
+	ld b,h
+	ld c,l				; BC = byte count
+
+	ld a,#TEXT_ROWS
+	ld e,a
+	ld a,(il_dl_n)
+	sub e				; A = n - TEXT_ROWS (negative)
+	neg				; A = TEXT_ROWS - n
+	call il_dl_mul80		; HL = (TEXT_ROWS-n)*80
+	ld de,#text_shadow
+	add hl,de			; HL = shadow + (TEXT_ROWS-n)*80
+	dec hl				; HL = src_end
+
+	ld de,#(text_shadow + TEXT_SHADOW_SIZE - 1)	; DE = dst_end
+
+ansi_il_copy_loop:
+	ld a,(hl)
+	ld (de),a
+	dec hl
+	dec de
+	dec bc
+	ld a,b
+	or c
+	jr nz,ansi_il_copy_loop
+
+ansi_il_fill:
+	; Fill n rows at row with ASCII space.
+	ld a,(il_dl_n)
+	call il_dl_mul80		; HL = n*80
+	ld b,h
+	ld c,l				; BC = fill byte count
+
+	ld a,(il_dl_row)
+	call il_dl_mul80		; HL = row*80
+	ld de,#text_shadow
+	add hl,de			; HL = &shadow[row*80]
+
+	ld a,#0x20
+ansi_il_fill_loop:
+	ld (hl),a
+	inc hl
+	dec bc
+	ld a,b
+	or c
+	ld a,#0x20
+	jr nz,ansi_il_fill_loop
+
+	; Redraw rows [row..TEXT_ROWS-1] to VDP.
+	ld a,(il_dl_row)
+	ld b,a
+	ld c,#(TEXT_ROWS - 1)
+	call text_redraw_rows		; emits FRAME_MARK
+
+	call app_maybe_resume_rts
+	ret
+
+
+; ---- CSI DL: delete n lines (ESC [ n M) ----
+;
+; Inputs:
+;   CSI param0 = n (default/0 -> 1)
+;   text_row = current cursor row
+; Outputs:
+;   Shadow buffer and VDP updated; n lines deleted at cursor row.
+; Clobbers:
+;   AF, BC, DE, HL.
+; Preserved registers:
+;   none (caller saves BC/DE/HL around CONOUT dispatch)
+; VDrip traffic:
+;   Releases RTS, emits PACKET_VDP_DATA_BLOCK packets, emits FRAME_MARK.
+; Cursor position:
+;   Unchanged.
+; Scroll region:
+;   Full screen (rows 0..TEXT_ROWS-1); no per-command scroll region yet.
+
+ansi_delete_lines:
+	call ansi_param0_default_1	; A = n (at least 1)
+	ld (il_dl_n),a
+
+	ld a,(text_row)
+	ld (il_dl_row),a
+
+	; available_rows = TEXT_ROWS - row. Clamp n to available_rows.
+	ld b,a
+	ld a,#TEXT_ROWS
+	sub b				; A = TEXT_ROWS - row
+	ld b,a				; B = available
+	ld a,(il_dl_n)
+	cp b
+	jr c,ansi_dl_n_ok
+	jr z,ansi_dl_n_ok
+	ld a,b
+	ld (il_dl_n),a
+ansi_dl_n_ok:
+	or a
+	ret z				; n == 0: nothing to do
+
+	; rows_to_shift = TEXT_ROWS - row - n (rows that slide up)
+	ld b,a				; B = n (clamped)
+	ld a,(il_dl_row)
+	ld c,a				; C = row
+	ld a,#TEXT_ROWS
+	sub c				; A = TEXT_ROWS - row
+	sub b				; A = rows_to_shift
+	ld (il_dl_shift),a
+
+	call vdrip_rts_release_raw
+	ld a,#0x01
+	ld (vdrip_rx_rts_released),a
+
+	; --- Forward copy: rows [row+n..TEXT_ROWS-1] -> [row..TEXT_ROWS-n-1] ---
+	; src = shadow + (row+n)*80
+	; dst = shadow + row*80
+	; count = rows_to_shift * 80
+
+	ld a,(il_dl_shift)
+	or a
+	jr z,ansi_dl_fill		; no rows to shift
+
+	call il_dl_mul80		; HL = rows_to_shift * 80
+	ld b,h
+	ld c,l				; BC = byte count
+
+	ld a,(il_dl_row)
+	ld e,a
+	ld a,(il_dl_n)
+	add a,e				; A = row + n
+	call il_dl_mul80		; HL = (row+n)*80
+	ld de,#text_shadow
+	add hl,de			; HL = src
+
+	push hl				; save src
+	push bc				; save count
+	ld a,(il_dl_row)
+	call il_dl_mul80		; HL = row*80
+	ld de,#text_shadow
+	add hl,de			; HL = dst
+	ex de,hl			; DE = dst
+	pop bc				; restore count
+	pop hl				; restore HL = src
+
+ansi_dl_copy_loop:
+	ld a,(hl)
+	ld (de),a
+	inc hl
+	inc de
+	dec bc
+	ld a,b
+	or c
+	jr nz,ansi_dl_copy_loop
+
+ansi_dl_fill:
+	; Fill bottom n rows with ASCII space.
+	; Start = shadow + (TEXT_ROWS-n)*80, count = n*80.
+	ld a,(il_dl_n)
+	call il_dl_mul80		; HL = n*80
+	ld b,h
+	ld c,l				; BC = fill byte count
+
+	ld a,#TEXT_ROWS
+	ld e,a
+	ld a,(il_dl_n)
+	sub e				; A = n - TEXT_ROWS (negative)
+	neg				; A = TEXT_ROWS - n
+	call il_dl_mul80		; HL = (TEXT_ROWS-n)*80
+	ld de,#text_shadow
+	add hl,de			; HL = &shadow[(TEXT_ROWS-n)*80]
+
+	ld a,#0x20
+ansi_dl_fill_loop:
+	ld (hl),a
+	inc hl
+	dec bc
+	ld a,b
+	or c
+	ld a,#0x20
+	jr nz,ansi_dl_fill_loop
+
+	; Redraw rows [row..TEXT_ROWS-1] to VDP.
+	ld a,(il_dl_row)
+	ld b,a
+	ld c,#(TEXT_ROWS - 1)
+	call text_redraw_rows		; emits FRAME_MARK
+
+	call app_maybe_resume_rts
+	ret
+
+
+; ---- il_dl_mul80 — multiply A by 80 into HL ----
+;
+; Input:  A = value (0..24)
+; Output: HL = A * 80
+; Clobbers: DE
+; Preserves: A, BC
+
+il_dl_mul80:
+	ld l,a
+	ld h,#0x00
+	add hl,hl		; *2
+	add hl,hl		; *4
+	add hl,hl		; *8
+	add hl,hl		; *16
+	ld d,h
+	ld e,l			; DE = A*16
+	add hl,hl		; *32
+	add hl,hl		; *64
+	add hl,de		; *64 + *16 = *80
 	ret
 
 
@@ -2776,6 +3060,77 @@ text_scroll_blank_loop:
 	ret
 
 
+; ---------------------------------------------------------------------------
+; text_redraw_rows
+;
+; Redraw shadow buffer rows B..C (inclusive) to the VDP name table.
+; Uses batched PACKET_VDP_DATA_BLOCK writes. Sends one FRAME_MARK after all
+; rows are written.
+;
+; Used by ansi_insert_lines and ansi_delete_lines to show the result of a
+; shadow buffer shift without redrawing the entire screen.
+;
+; Input:
+;   B = first row to redraw (0-based)
+;   C = last row to redraw (inclusive, 0-based)
+; Output:
+;   VDP name table updated for rows B..C.
+; Clobbers:
+;   AF, BC, DE, HL.
+; VDrip traffic:
+;   Emits PACKET_VDP_DATA_BLOCK packets and one FRAME_MARK.
+; Cursor position:
+;   Unchanged.
+; ---------------------------------------------------------------------------
+
+text_redraw_rows:
+	ld d,b			; D = current row
+	ld e,c			; E = end row
+
+text_redraw_rows_loop:
+	; VDP write address = NAME_TABLE + row * TEXT_PHYS_COLUMNS
+	ld a,d
+	ld hl,#NAME_TABLE
+	or a
+	jr z,text_redraw_rows_vdp_done
+	push de
+	ld b,a
+	ld de,#TEXT_PHYS_COLUMNS
+text_redraw_rows_vdp_r_loop:
+	add hl,de
+	djnz text_redraw_rows_vdp_r_loop
+	pop de
+text_redraw_rows_vdp_done:
+	call vdp_set_vram_write_addr	; DE preserved by vdrip_ctrl_write
+
+	; Shadow source = text_shadow + row * TEXT_LOG_COLUMNS
+	push de				; save current/end rows across block write
+	ld a,d
+	ld hl,#text_shadow
+	or a
+	jr z,text_redraw_rows_shadow_done
+	ld b,a
+	ld de,#TEXT_LOG_COLUMNS
+text_redraw_rows_shadow_r_loop:
+	add hl,de
+	djnz text_redraw_rows_shadow_r_loop
+text_redraw_rows_shadow_done:
+	ld bc,#TEXT_PHYS_COLUMNS
+	call vdp_write_data_block	; clobbers DE
+	pop de				; restore current/end rows
+
+	; Advance to next row.
+	ld a,d
+	cp e
+	jr z,text_redraw_rows_done
+	inc d
+	jr text_redraw_rows_loop
+
+text_redraw_rows_done:
+	call vdrip_send_frame_mark
+	ret
+
+
 ; ===========================================================================
 ; Proxy reconnection handler
 ; ===========================================================================
@@ -2923,19 +3278,58 @@ text_init_vdp:
 
 
 ; ---------------------------------------------------------------------------
-; Load font into pattern table.
+; text_load_font
 ;
-; If the font blob starts at ASCII 20h, load it at pattern 20h * 8
-; so writing ASCII bytes directly into the name table works.
+; Send the 96-glyph ASCII font to the VDP pattern table.
+; The font lives at VDRIP_FONT_ROM_BASE (0x8000) in the bank 0 firmware image.
+; The boot shadow copy writes it to SRAM bank 0 on cold boot. At warm boot,
+; restore_font_from_rom has already refreshed it from ROM using COPY_LATCH0.
+; This routine reads directly from VDRIP_FONT_ROM_BASE in the current bank.
+;
+; Clobbers: AF, BC, DE, HL.
+; VDrip traffic: emits PACKET_VDP_DATA_BLOCK packets for the font bytes.
+; Bank on entry: bank 0 (normal).
+; Bank on exit:  bank 0 (normal, unchanged).
 ; ---------------------------------------------------------------------------
 
 text_load_font:
 	ld hl,#(PATTERN_TABLE + (FONT_FIRST_CHAR * 8))
 	call vdp_set_vram_write_addr
 
-	ld hl,#msx_font_20_7f
+	ld hl,#VDRIP_FONT_ROM_BASE	; font at 0x8000 in bank 0 SRAM
 	ld bc,#FONT_BYTES
 	call vdp_write_data_block
+	ret
+
+
+; ---------------------------------------------------------------------------
+; restore_font_from_rom
+;
+; Called from wboot_resident (cbios_boot.asm) before console_init to refresh
+; the font data at VDRIP_FONT_ROM_BASE (0x8000) in SRAM bank 0 from ROM.
+; Transient programs may have overwritten the TPA area containing the font.
+;
+; Uses COPY_LATCH0 (= SHADOW_BIT): reads come from ROM bank 0 low area,
+; writes go to SRAM bank 0. This is the same technique used by the shadow
+; copy and restore_ccp_from_rom for their respective ROM regions.
+;
+; Inputs:  None.
+; Outputs: SRAM bank 0 [VDRIP_FONT_ROM_BASE .. +FONT_BYTES-1] refreshed.
+; Clobbers: AF, BC, DE, HL.
+; Interrupts: Safe to call with interrupts disabled (wboot context); matches
+;   the convention of restore_ccp_from_rom which is called without di/ei.
+; VDrip traffic: None.
+; ---------------------------------------------------------------------------
+
+restore_font_from_rom:
+	ld a,#COPY_LATCH0		; ROM bank 0 low area visible, writes to SRAM
+	out (BANK_PORT),a
+	ld hl,#VDRIP_FONT_ROM_BASE	; ROM bank 0 source (0x8000)
+	ld de,#VDRIP_FONT_ROM_BASE	; SRAM bank 0 destination (0x8000)
+	ld bc,#FONT_BYTES
+	ldir
+	ld a,#RAM_ONLY_BANK0
+	out (BANK_PORT),a
 	ret
 
 
@@ -3581,6 +3975,15 @@ ansi_tmp_col:
 ansi_tmp_row:
 	.db 0x00
 
+; IL/DL (insert/delete line) temporaries.
+; Shared between ansi_insert_lines and ansi_delete_lines; not reentrant.
+il_dl_n:
+	.db 0x00
+il_dl_row:
+	.db 0x00
+il_dl_shift:
+	.db 0x00
+
 ; VDP address tracking — skip redundant address setup when writing
 ; sequential characters (auto-increment handles it).
 vdp_addr_next:
@@ -3625,14 +4028,20 @@ esc_press_count:
 	.db 0x00
 
 
+VDRIP_CONSOLE_CODE_END:
+
 ; ---------------------------------------------------------------------------
-; Font include.
+; Font data — bank 0 TPA, VDRIP_FONT_ROM_BASE (0x8000).
 ;
-; Expected label:
-;   msx_font_20_7f:
-;     96 chars * 8 bytes, for ASCII 20h-7Fh
+; Placed in a separate absolute area so the driver CODE area ends cleanly at
+; VDRIP_CONSOLE_CODE_END. The 96-glyph MSX font lands in the bank 0 firmware
+; image at 0x8000. The boot shadow copy transfers it to SRAM bank 0.
+; restore_font_from_rom refreshes it from ROM using COPY_LATCH0 at warm boot.
+; Programs may overwrite this TPA address after init; the warm-boot restore
+; always refreshes it before text_load_font is called.
 ; ---------------------------------------------------------------------------
+
+	.area FONT_DATA (ABS)
+	.org VDRIP_FONT_ROM_BASE
 
 	.include "msxfont.inc"
-
-VDRIP_CONSOLE_CODE_END:

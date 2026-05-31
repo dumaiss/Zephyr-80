@@ -9,10 +9,10 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 41108 bytes |
-| Pre-swap image | `build/zephyr80.pre-swap.bin` | 524288 bytes |
-| Final burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Layout manifest | `build/layout.manifest` | 643 bytes |
+| Firmware symbol map | `build/firmware.map` | 42100 bytes |
+| Pre-swap image | `build/zephyr80.pre-swap.bin` | 131072 bytes |
+| Final burnable image | `build/zephyr80.bin` | 131072 bytes |
+| Layout manifest | `build/layout.manifest` | 273 bytes |
 
 ## Reset And CP/M Common Symbols
 
@@ -83,13 +83,13 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `wboot` | `DAD9h` | Warm boot trampoline. |
 | `wboot_resident` | `DADCh` | Protected warm boot implementation; returns to the CP/M CCP. |
 | `WBOOT_RESIDENT_START` | `DADCh` | Resident warm boot body start. |
-| `WBOOT_RESIDENT_END` | `DB04h` | Resident warm boot body end. |
-| `restore_ccp_from_rom` | `DB04h` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
-| `ctc_disable_interrupts` | `DB1Ch` | CTC interrupt disable helper. |
-| `prepare_runnable_bank` | `DB27h` | Page-zero and DMA preparation helper. |
-| `init_page_zero` | `DB31h` | Installs `JP WBOOT` and `JP FBASE`. |
-| `runtime_set_default_dma` | `DB46h` | Sets default DMA to `0080h`. |
-| `runtime_clear_default_dma` | `DB54h` | Clears command tail/default DMA area. |
+| `WBOOT_RESIDENT_END` | `DB07h` | Resident warm boot body end. |
+| `restore_ccp_from_rom` | `DB07h` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
+| `ctc_disable_interrupts` | `DB1Fh` | CTC interrupt disable helper. |
+| `prepare_runnable_bank` | `DB2Ah` | Page-zero and DMA preparation helper. |
+| `init_page_zero` | `DB34h` | Installs `JP WBOOT` and `JP FBASE`. |
+| `runtime_set_default_dma` | `DB49h` | Sets default DMA to `0080h`. |
+| `runtime_clear_default_dma` | `DB57h` | Clears command tail/default DMA area. |
 | `CONSOLE_CODE_START` | `DB79h` | Console BIOS facade start. |
 | `console_init` | `DB79h` | Installs and initializes the default console driver. |
 | `console_set_driver` | `DB82h` | Installs an alternate console driver table. |
@@ -145,7 +145,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E00Eh` | Virtual Drip console init, proxy handshake, VDP setup. |
-| `VDRIP_CONSOLE_CODE_END` | `F7E2h` | Virtual Drip console driver code end. |
+| `VDRIP_CONSOLE_CODE_END` | `F660h` | Virtual Drip console driver code end. |
 | `BANKING_CODE_START` | `DC00h` | Banking extension implementation start. |
 | `SELMEM` | `DC00h` | Select RAM bank. |
 | `SETBNK` | `DC0Ah` | Record future DMA bank. |

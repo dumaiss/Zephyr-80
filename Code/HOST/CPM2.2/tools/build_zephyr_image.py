@@ -15,7 +15,7 @@ APP_BASE = 0x0100
 COMMON_BASE = 0xC000
 BANK_SIZE = 0x10000
 MAX_BANK = 7
-IMAGE_BANK_COUNT = MAX_BANK + 1
+IMAGE_BANK_COUNT = 2  # bank 0 = firmware/CP/M; banks 1-7 empty
 REQUIRED_SYMBOLS = ("MOVE", "XMOVE", "SELMEM", "SETBNK")
 DEFAULT_DEFS_PATH = Path("src/cbios_defs.inc")
 
@@ -219,8 +219,6 @@ def payloads_from_config(path: Path) -> list[Payload]:
         seen_banks.add(bank)
         payloads.append(payload)
 
-    if not payloads:
-        raise SystemExit(f"No [payload.*] sections found in {path}")
     return payloads
 
 
@@ -475,7 +473,12 @@ def main() -> int:
     args = parse_args()
     require_file(args.firmware, "firmware image")
 
-    payloads = payloads_from_config(args.payload_config) if args.payload_config else legacy_payloads(args)
+    if args.payload_config:
+        payloads = payloads_from_config(args.payload_config)
+    elif args.monitor and args.bbcbasic:
+        payloads = legacy_payloads(args)
+    else:
+        payloads = []
     if args.payload_config and config_has_section(args.payload_config, "ramdisk"):
         raise SystemExit("RAM disk embedding has been replaced by VDrip proxy storage; remove [ramdisk]")
     ramdisk = None
@@ -487,7 +490,8 @@ def main() -> int:
     symbol_status = validate_symbols(args.symbols)
 
     firmware = args.firmware.read_bytes()
-    image_size = max(BANK_SIZE * IMAGE_BANK_COUNT, BANK_SIZE * (max(payload.bank for payload in payloads) + 1), len(firmware))
+    max_payload_bank = max((payload.bank for payload in payloads), default=-1)
+    image_size = max(BANK_SIZE * IMAGE_BANK_COUNT, BANK_SIZE * (max_payload_bank + 1), len(firmware))
     if ramdisk is not None:
         image_size = max(image_size, BANK_SIZE * (ramdisk.geometry.last_bank + 1))
     image = bytearray([0x00] * image_size)

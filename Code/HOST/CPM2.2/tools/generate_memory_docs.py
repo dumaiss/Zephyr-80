@@ -621,7 +621,7 @@ def payload_rows(values: dict[str, str]) -> list[str]:
             f"`{values[f'payload.{payload_id}.path']}` |"
         )
     if not rows:
-        raise SystemExit("No payload entries found in layout manifest")
+        rows = ["| *(none — firmware only, no bank payloads)* | | | | | |"]
     return rows
 
 

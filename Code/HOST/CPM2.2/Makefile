@@ -9,7 +9,6 @@ SRC_DIR ?= src
 DOCS_DIR ?= docs
 
 CPM22_SRC ?= cpm-2.2/src/cpm22.asm
-PAYLOAD_CONFIG ?= images/banks.ini
 CPMTOOLS_DISKDEF ?= images/diskdef
 
 ASFLAGS ?= -o -l -s
@@ -77,7 +76,6 @@ check-inputs: $(BUILD_DIR) $(FIRMWARE_BIN) $(SYMBOLS_FILE)
 	@test -f "$(CPM22_SRC)" || { echo "Missing CP/M source input: $(CPM22_SRC)"; exit 1; }
 	@test -f "$(FIRMWARE_BIN)" || { echo "Missing firmware image: $(FIRMWARE_BIN)"; exit 1; }
 	@test -f "$(SYMBOLS_FILE)" || { echo "Missing firmware symbol map: $(SYMBOLS_FILE)"; exit 1; }
-	@test -f "$(PAYLOAD_CONFIG)" || { echo "Missing payload configuration: $(PAYLOAD_CONFIG)"; exit 1; }
 	@test -f "$(CPMTOOLS_DISKDEF)" || { echo "Missing cpmtools disk definition: $(CPMTOOLS_DISKDEF)"; exit 1; }
 	@test -f "$(SRC_DIR)/cbios_defs.inc" || { echo "Missing CBIOS definitions: $(SRC_DIR)/cbios_defs.inc"; exit 1; }
 	@test -f "$(IMAGE_TOOL)" || { echo "Missing image tool: $(IMAGE_TOOL)"; exit 1; }
@@ -108,10 +106,9 @@ $(FIRMWARE_BIN): $(FIRMWARE_IHX)
 $(SYMBOLS_FILE): $(FIRMWARE_REL)
 	cp "$(FIRMWARE_SYM)" "$@"
 
-$(PRE_SWAP_IMAGE): check-inputs $(PAYLOAD_CONFIG) $(IMAGE_TOOL) $(SRC_DIR)/cbios_defs.inc
+$(PRE_SWAP_IMAGE): check-inputs $(IMAGE_TOOL) $(SRC_DIR)/cbios_defs.inc
 	$(PYTHON) $(IMAGE_TOOL) \
 		--firmware "$(FIRMWARE_BIN)" \
-		--payload-config "$(PAYLOAD_CONFIG)" \
 		--defs "$(SRC_DIR)/cbios_defs.inc" \
 		--output "$(PRE_SWAP_IMAGE)" \
 		--manifest "$(LAYOUT_MANIFEST)" \

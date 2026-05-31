@@ -67,6 +67,8 @@ add_executable(virtual-vdp
     src/protocol_debug.c
     src/serial_port.c
     src/serial_reader.c
+    src/storage_backend.c
+    src/storage_protocol.c
     src/video_device.c
     src/video_device_tms9928.c
     src/video_device_vdrip9928.c

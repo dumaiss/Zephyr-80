@@ -232,6 +232,15 @@ CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x0550                  ; DF50h
 
+; VDrip font placement in bank 0 TPA.
+; Font data lives at VDRIP_FONT_ROM_BASE in the firmware binary (bank 0 ROM).
+; The boot shadow copy writes it to SRAM bank 0. text_load_font reads from
+; this address in bank 0 SRAM. restore_font_from_rom uses COPY_LATCH0 to
+; re-copy from ROM to SRAM bank 0 at warm boot (same technique as CCP restore).
+; Programs may overwrite this TPA address after boot; the warm-boot restore
+; refreshes it from ROM before text_load_font is called.
+VDRIP_FONT_ROM_BASE             = 0x8000                ; font start in bank 0 TPA
+
 ; Resident code region ends before scratch.
 ; LIMIT is one byte past the end.
 CBIOS_CODE_LIMIT                = CBIOS_DRIVER_SLOT5_LIMIT

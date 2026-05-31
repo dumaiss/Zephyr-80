@@ -68,7 +68,7 @@ CMAKE_BINARY_DIR = /home/kitamura/Documents/Z80HomeBrew/Code/MODERN/VirtualDrip
 # Special rule for the target edit_cache
 edit_cache:
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Running CMake cache editor..."
-	/home/kitamura/.renesas/platform/cmake/3.31.8/cmake-3.31.8-linux-x86_64/bin/ccmake -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR)
+	/snap/cmake/1544/bin/ccmake -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR)
 .PHONY : edit_cache
 
 # Special rule for the target edit_cache
@@ -441,6 +441,54 @@ src/serial_reader.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/serial_reader.c.s
 .PHONY : src/serial_reader.c.s
 
+src/storage_backend.o: src/storage_backend.c.o
+.PHONY : src/storage_backend.o
+
+# target to build an object file
+src/storage_backend.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/storage_backend.c.o
+.PHONY : src/storage_backend.c.o
+
+src/storage_backend.i: src/storage_backend.c.i
+.PHONY : src/storage_backend.i
+
+# target to preprocess a source file
+src/storage_backend.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/storage_backend.c.i
+.PHONY : src/storage_backend.c.i
+
+src/storage_backend.s: src/storage_backend.c.s
+.PHONY : src/storage_backend.s
+
+# target to generate assembly for a file
+src/storage_backend.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/storage_backend.c.s
+.PHONY : src/storage_backend.c.s
+
+src/storage_protocol.o: src/storage_protocol.c.o
+.PHONY : src/storage_protocol.o
+
+# target to build an object file
+src/storage_protocol.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/storage_protocol.c.o
+.PHONY : src/storage_protocol.c.o
+
+src/storage_protocol.i: src/storage_protocol.c.i
+.PHONY : src/storage_protocol.i
+
+# target to preprocess a source file
+src/storage_protocol.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/storage_protocol.c.i
+.PHONY : src/storage_protocol.c.i
+
+src/storage_protocol.s: src/storage_protocol.c.s
+.PHONY : src/storage_protocol.s
+
+# target to generate assembly for a file
+src/storage_protocol.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/storage_protocol.c.s
+.PHONY : src/storage_protocol.c.s
+
 src/video_device.o: src/video_device.c.o
 .PHONY : src/video_device.o
 
@@ -585,6 +633,12 @@ help:
 	@echo "... src/serial_reader.o"
 	@echo "... src/serial_reader.i"
 	@echo "... src/serial_reader.s"
+	@echo "... src/storage_backend.o"
+	@echo "... src/storage_backend.i"
+	@echo "... src/storage_backend.s"
+	@echo "... src/storage_protocol.o"
+	@echo "... src/storage_protocol.i"
+	@echo "... src/storage_protocol.s"
 	@echo "... src/video_device.o"
 	@echo "... src/video_device.i"
 	@echo "... src/video_device.s"
