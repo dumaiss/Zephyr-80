@@ -44,3 +44,17 @@ fp-info-cache
 **/.vscode/**
 **/build/**
 **/backups/**
+Code/MODERN/VirtualDrip/CMakeCache.txt
+Code/MODERN/VirtualDrip/Makefile
+Code/MODERN/VirtualDrip/CMakeFiles/CMakeConfigureLog.yaml
+Code/MODERN/VirtualDrip/CMakeFiles/Makefile.cmake
+Code/MODERN/VirtualDrip/CMakeFiles/Makefile2
+Code/MODERN/VirtualDrip/CMakeFiles/virtual-vdp.dir/progress.make
+Code/MODERN/VirtualDrip/src/protocol.h
+Code/MODERN/VirtualDrip/external/vDrip9928/lib/libvdrip_vdp.so
+Code/MODERN/VirtualDrip/CMakeFiles/virtual-vdp.dir/progress.make
+Code/MODERN/VirtualDrip/CMakeFiles/virtual-vdp.dir/link.txt
+Code/MODERN/VirtualDrip/CMakeFiles/virtual-vdp.dir/progress.make
+Code/MODERN/VirtualDrip/CMakeFiles/virtual-vdp.dir/link.txt
+Code/MODERN/VirtualDrip/CMakeFiles/virtual-vdp.dir/build.make
+Code/MODERN/VirtualDrip/CMakeFiles/virtual-vdp.dir/cmake_clean.cmake
