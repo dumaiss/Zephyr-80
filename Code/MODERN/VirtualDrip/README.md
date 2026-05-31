@@ -169,11 +169,20 @@ Minimal key mapping:
 # Live serial input
 ./build/virtual-vdp --serial /dev/ttyUSB0 115200
 
+# Live serial input with an explicit drive A image
+./build/virtual-vdp --serial /dev/ttyUSB0 115200 --disk-a zephyr_a.img
+
+# Live serial input with storage transaction logging
+./build/virtual-vdp --serial /dev/ttyUSB0 115200 --disk-a zephyr_a.img --log-storage
+
 # No input: serve a blank VNC framebuffer
 ./build/virtual-vdp
 ```
 
 Supported baud rates: **9600, 19200, 38400, 57600, 115200, 230400**.
+
+In serial mode, `--disk-a PATH` selects the local flat 8 MiB image backing CP/M drive A.
+A missing image is created and filled with `0xE5`; an existing image with any other size is rejected.
 
 ---
 
@@ -315,6 +324,8 @@ Code/MODERN/VirtualDrip/
 │   ├── protocol_debug.c / .h     # Human-readable packet logging
 │   ├── serial_port.c / .h        # POSIX serial port with TX mutex
 │   ├── serial_reader.c / .h      # Threaded serial byte consumer
+│   ├── storage_backend.c / .h    # Flat 8 MiB drive A image backend
+│   ├── storage_protocol.c / .h   # Virtual Drip storage request handling
 │   ├── video_device.c / .h       # Backend abstraction interface
 │   └── video_device_tms9928.c / .h  # vrEmuTms9918 concrete backend
 ├── tests/
@@ -378,6 +389,9 @@ cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/libvncserver
 
 # Live serial input at 115200 baud
 ./build/virtual-vdp --serial /dev/ttyUSB0 115200
+
+# Live serial input with an explicit drive A disk image
+./build/virtual-vdp --serial /dev/ttyUSB0 115200 --disk-a zephyr_a.img
 
 # Custom VNC port with keyboard debug logging
 ./build/virtual-vdp --serial /dev/ttyUSB0 115200 --vnc-port 5901 --log-keys
