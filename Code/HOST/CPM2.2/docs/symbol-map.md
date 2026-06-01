@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 42416 bytes |
+| Firmware symbol map | `build/firmware.map` | 41326 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 131072 bytes |
 | Final burnable image | `build/zephyr80.bin` | 131072 bytes |
 | Layout manifest | `build/layout.manifest` | 273 bytes |
@@ -139,13 +139,13 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `sio_core_isr` | `DEAFh` | BIOS-owned SIO interrupt service routine. |
 | `sio_console_isr` | `DF4Dh` | Compatibility label that jumps to `sio_core_isr`. |
 | `SIO_CORE_CODE_END` | `DF50h` | BIOS-owned SIO core code end. |
-| `IOCTRL_CODE_START` | `F680h` | IOCALL transaction code start in core BIOS. |
-| `IOCALL` | `F680h` | Zephyr extended BIOS IO Controller transaction call. |
-| `IOCTRL_CODE_END` | `F716h` | IOCALL transaction code end. |
+| `IOCTRL_CODE_START` | `DF7Bh` | IOCALL transaction code start in core BIOS. |
+| `IOCALL` | `DF7Bh` | Zephyr extended BIOS IO Controller transaction call. |
+| `IOCTRL_CODE_END` | `DFFCh` | IOCALL transaction code end. |
 | `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E00Eh` | Virtual Drip console init, proxy handshake, VDP setup. |
-| `VDRIP_CONSOLE_CODE_END` | `F680h` | Virtual Drip console driver code end. |
+| `VDRIP_CONSOLE_CODE_END` | `F52Bh` | Virtual Drip console driver code end. |
 | `BANKING_CODE_START` | `DC00h` | Banking extension implementation start. |
 | `SELMEM` | `DC00h` | Select RAM bank. |
 | `SETBNK` | `DC0Ah` | Record future DMA bank. |

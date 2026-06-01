@@ -140,9 +140,6 @@ CURSOR_SET_COLOR	= 0x08
 CURSOR_STYLE_UNDERLINE	= 0x01
 VDRIP_WIRE_OVERHEAD	= 0x03
 
-; Inter-byte pacing for scroll redraw (~1 ms at 4 MHz).
-VDRIP_TX_PACE_DELAY	= 0x0001
-
 ; TMS9928A / Virtual Drip Text80 layout.
 ;
 ; The proxy exposes a 9928-like Text 2 display for an 80-column terminal. The
@@ -221,9 +218,8 @@ CSI_DL			= 'M	; delete line(s)
 ; ANSI maximum parameter count.
 CSI_MAX_PARAMS		= 2
 
-; Max payload for the obsolete RX parser buffer (kept small).
+; Max payload for a single framed packet (used by VIDEO_SEND validation).
 VDRIP_PACKET_PAYLOAD_MAX = 0x10
-VDRIP_PACKET_BODY_MAX    = VDRIP_PACKET_PAYLOAD_MAX + VDRIP_WIRE_OVERHEAD
 
 ; Max payload per PACKET_VDP_DATA_BLOCK chunk for bulk VDP writes.
 ; 240 bytes ≈ 3 rows of 80-column text; proxy accepts up to 252.
@@ -593,26 +589,6 @@ vdrip_console_listst:
 
 
 ; ===========================================================================
-; Inter-byte pacing for scroll redraw
-; ===========================================================================
-;
-; Prevents the VDP data write burst from reaching the proxy too fast
-; before the FRAME_MARK.  Adjust VDRIP_TX_PACE_DELAY if needed.
-
-vdrip_tx_pace:
-	push bc
-	ld bc,#VDRIP_TX_PACE_DELAY
-
-vdrip_tx_pace_loop:
-	dec bc
-	ld a,b
-	or c
-	jr nz,vdrip_tx_pace_loop
-	pop bc
-	ret
-
-
-; ===========================================================================
 ; Terminal readiness handshake
 ; ===========================================================================
 ;
@@ -645,20 +621,10 @@ vdrip_wait_for_terminal_ready_loop:
 
 vdrip_rx_init:
 		xor a
-	ld (vdrip_parse_state),a
-	ld (vdrip_parse_len_store),a
-	ld (vdrip_parse_remaining),a
-	ld (vdrip_parse_payload_index),a
 	ld (vdrip_rx_rts_released),a
 	ld (textq_head),a
 	ld (textq_tail),a
 	ld (textq_count),a
-	ld (textq_drop_count),a
-	ld (crc_fail_count),a
-	ld (packet_ok_count),a
-	ld (key_echo_count),a
-	ld (rts_release_count),a
-	ld (rts_assert_count),a
 		ld (vdrip_terminal_ready_flag),a
 		ld (vdrip_terminal_ready_state),a
 	ld (vdrip_ready_seq_count),a
@@ -911,16 +877,7 @@ vdrip_ready_restart_after_esc:
 ; where serial bandwidth is dominated by Z80-to-proxy display traffic. RTS is
 ; asserted again when the input queue drains to the low-water mark or after a
 ; burst completes.
-;
-; Existing counters:
-;   rts_assert_count and rts_release_count are pre-existing state counters used
-;   to observe RTS transitions. This documentation pass does not add new
-;   diagnostics or change how they are updated.
 vdrip_rts_assert_raw:
-	ld a,(rts_assert_count)
-	inc a
-	ld (rts_assert_count),a
-
 	ld a,#0x05
 	out (VDRIP_CTRL),a
 	ld a,#SIO0B_WR5_RTS_ON
@@ -930,10 +887,6 @@ vdrip_rts_assert_raw:
 
 
 vdrip_rts_release_raw:
-	ld a,(rts_release_count)
-	inc a
-	ld (rts_release_count),a
-
 	ld a,#0x05
 	out (VDRIP_CTRL),a
 	ld a,#SIO0B_WR5_RTS_OFF
@@ -941,264 +894,6 @@ vdrip_rts_release_raw:
 	xor a
 	ret
 
-
-; ===========================================================================
-; Obsolete proxy-to-Z80 framed input parser
-; ===========================================================================
-;
-; This code is no longer active in the keyboard input path. Proxy-to-Z80
-; keyboard input is raw terminal bytes after the VT100-style readiness response,
-; and vdrip_rx_sink does not call vdrip_parse_rx_byte. The framed packet sender
-; below remains active for Z80-to-proxy display/control output.
-;
-; The old parser is left here temporarily to keep the diff focused while the
-; input protocol changes. Do not reintroduce PACKET_TERMINAL_INPUT as a normal
-; keyboard input path.
-;
-; State machine:
-;
-;   WAIT_SYNC0:
-;     wait for A5.
-;
-;   WAIT_SYNC1:
-;     wait for 5A. If another A5 arrives, remain one byte into sync so repeated
-;     sync bytes can still lock onto a frame.
-;
-;   LEN:
-;     validate packet length and initialize body buffer / counters.
-;
-;   BODY:
-;     collect TYPE, PAYLOAD, and CRC bytes into vdrip_packet_body.
-;
-;   COMPLETE:
-;     validate CRC, dispatch packet type, then reset parser state.
-;
-; Wire format:
-;   A5 5A LEN TYPE PAYLOAD... CRC
-;
-; LEN semantics:
-;   LEN includes LEN itself, TYPE, PAYLOAD, and CRC. A zero-payload packet has
-;   LEN = VDRIP_WIRE_OVERHEAD = 3.
-;
-; vdrip_packet_body layout after LEN has been accepted:
-;   +0 = LEN
-;   +1 = TYPE
-;   +2... = PAYLOAD bytes, if any
-;   final collected byte = received CRC
-;
-; CRC semantics:
-;   CRC covers LEN, TYPE, and PAYLOAD. It does not include A5/5A sync bytes and
-;   does not include the received CRC byte itself.
-;
-; Obsolete BIOS-consumed proxy-to-Z80 packet types:
-;   PACKET_PROXY_READY used to set a framed ready flag.
-;   PACKET_TERMINAL_INPUT used to enqueue payload bytes into textq.
-;
-; Other packet types:
-;   Valid packets with unhandled types are ignored after CRC validation.
-;
-; CRC failure:
-;   crc_fail_count is incremented and the parser resets to WAIT_SYNC0.
-;
-; Historical ISR rule:
-;   This parser used to be called from vdrip_rx_sink. If this code is ever
-;   repurposed, it still must not emit VDP/display traffic, call CONOUT, block on
-;   serial TX, redraw the screen, or touch CP/M/BDOS state directly.
-
-vdrip_parse_rx_byte:
-	ld c,a
-
-	ld a,(vdrip_parse_state)
-	cp #VDRIP_RX_WAIT_SYNC0
-	jr z,vdrip_parse_wait_sync0
-
-	cp #VDRIP_RX_WAIT_SYNC1
-	jr z,vdrip_parse_wait_sync1
-
-	cp #VDRIP_RX_LEN
-	jr z,vdrip_parse_len
-
-	cp #VDRIP_RX_BODY
-	jr z,vdrip_parse_body
-
-	xor a
-	ld (vdrip_parse_state),a
-	ret
-
-
-vdrip_parse_wait_sync0:
-	ld a,c
-	cp #PACKET_SYNC0
-	ret nz
-
-	ld a,#VDRIP_RX_WAIT_SYNC1
-	ld (vdrip_parse_state),a
-	ret
-
-
-vdrip_parse_wait_sync1:
-	ld a,c
-	cp #PACKET_SYNC1
-	jr z,vdrip_parse_wait_sync_have
-
-	cp #PACKET_SYNC0
-	jr z,vdrip_parse_wait_sync_keep
-
-	xor a
-	ld (vdrip_parse_state),a
-	ret
-
-vdrip_parse_wait_sync_keep:
-	ld a,#VDRIP_RX_WAIT_SYNC1
-	ld (vdrip_parse_state),a
-	ret
-
-vdrip_parse_wait_sync_have:
-	ld a,#VDRIP_RX_LEN
-	ld (vdrip_parse_state),a
-	ret
-
-
-vdrip_parse_len:
-	ld a,c
-	cp #VDRIP_WIRE_OVERHEAD
-	jp c,vdrip_parse_reset
-
-	cp #VDRIP_PACKET_BODY_MAX + 1
-	jp nc,vdrip_parse_reset
-
-	; body[0] = LEN
-	ld hl,#vdrip_packet_body
-	ld (hl),c
-
-	ld (vdrip_parse_len_store),a
-	dec a
-	ld (vdrip_parse_remaining),a
-
-	ld a,#0x01
-	ld (vdrip_parse_payload_index),a
-
-	ld a,#VDRIP_RX_BODY
-	ld (vdrip_parse_state),a
-	ret
-
-
-vdrip_parse_body:
-	ld hl,#vdrip_packet_body
-	ld a,(vdrip_parse_payload_index)
-	ld e,a
-	ld d,#0x00
-	add hl,de
-	ld (hl),c
-
-	ld a,(vdrip_parse_payload_index)
-	inc a
-	ld (vdrip_parse_payload_index),a
-
-	ld a,(vdrip_parse_remaining)
-	dec a
-	ld (vdrip_parse_remaining),a
-	jr z,vdrip_parse_body_done
-	ret
-
-
-vdrip_parse_body_done:
-	call vdrip_packet_crc_valid
-	jp nz,vdrip_parse_crc_failed
-
-	ld a,(packet_ok_count)
-	inc a
-	ld (packet_ok_count),a
-
-	; Check for proxy-ready packet first.
-	ld a,(vdrip_packet_body + 1)
-	cp #PACKET_PROXY_READY
-	jr z,vdrip_handle_proxy_ready
-
-	; Otherwise dispatch as terminal input.
-	call vdrip_parse_apply_terminal_input
-	jr vdrip_parse_reset
-
-
-vdrip_handle_proxy_ready:
-		; Obsolete framed READY path. This parser is inactive for keyboard input,
-		; but if reached accidentally, do not enqueue the packet.
-		ld a,#0x01
-		ld (vdrip_terminal_ready_flag),a
-		jr vdrip_parse_reset
-
-
-vdrip_packet_crc_valid:
-	ld c,#0x00
-	ld hl,#vdrip_packet_body
-	ld a,(vdrip_parse_len_store)
-	dec a
-	ld b,a
-
-vdrip_packet_crc_loop:
-	ld a,(hl)
-	call crc8_update
-	inc hl
-	djnz vdrip_packet_crc_loop
-
-	; HL points at received CRC.
-	ld a,(hl)
-	cp c
-	ret
-
-
-vdrip_parse_reset:
-	xor a
-	ld (vdrip_parse_state),a
-	ret
-
-
-; ===========================================================================
-; Obsolete terminal input packet handling
-; ===========================================================================
-;
-; PACKET_TERMINAL_INPUT / keyboard input packets
-;   This is no longer active for keyboard input. Raw terminal bytes now bypass
-;   the framed packet parser and enqueue directly from vdrip_rx_sink.
-;
-; Payload semantics:
-;   Payload bytes are raw terminal input bytes. The input path does not translate
-;   or interpret them. Examples:
-;     Ctrl-X   -> 18h
-;     Enter    -> 0Dh
-;     Arrow-up -> 1Bh 5Bh 41h
-
-vdrip_parse_apply_terminal_input:
-	ld a,(vdrip_packet_body + 1)
-	cp #PACKET_TERMINAL_INPUT
-	ret nz
-
-	; payload_count = LEN - (LEN + TYPE + CRC)
-	ld a,(vdrip_packet_body)
-	sub #VDRIP_WIRE_OVERHEAD
-	ret z
-
-	ld (terminal_payload_count),a
-
-	ld hl,#(vdrip_packet_body + 2)
-	ld (terminal_payload_ptr),hl
-
-vdrip_terminal_enqueue_loop:
-	ld hl,(terminal_payload_ptr)
-	ld a,(hl)
-	inc hl
-	ld (terminal_payload_ptr),hl
-
-	call textq_put_ascii
-	ld a,(key_echo_count)
-	inc a
-	ld (key_echo_count),a
-
-	ld a,(terminal_payload_count)
-	dec a
-	ld (terminal_payload_count),a
-	jr nz,vdrip_terminal_enqueue_loop
-	ret
 
 
 ; ===========================================================================
@@ -1490,8 +1185,7 @@ term_csi_not_qmark:
 	cp #';
 	jr nz,term_csi_final
 
-	call ansi_store_param
-	ret
+	jp ansi_store_param
 
 term_csi_final:
 	; Final command byte — store any pending param, then dispatch.
@@ -1505,8 +1199,7 @@ term_csi_final:
 
 	pop af
 
-	call ansi_dispatch_csi
-	ret
+	jp ansi_dispatch_csi
 
 
 ; ---------------------------------------------------------------------------
@@ -1752,12 +1445,10 @@ ansi_ed:
 	ret
 
 ansi_ed_to_eos:
-	call text_clear_from_cursor_to_eos
-	ret
+	jp text_clear_from_cursor_to_eos
 
 ansi_ed_from_start:
-	call text_clear_from_start_to_cursor
-	ret
+	jp text_clear_from_start_to_cursor
 
 
 ; ---- CSI EL: erase in line ----
@@ -1777,16 +1468,13 @@ ansi_el:
 	jr z,ansi_el_from_start		; ESC [ 1 K
 
 ansi_el_whole_line:
-	call text_clear_line
-	ret
+	jp text_clear_line
 
 ansi_el_to_eol:
-	call text_clear_to_eol
-	ret
+	jp text_clear_to_eol
 
 ansi_el_from_start:
-	call text_clear_from_sol_to_cursor
-	ret
+	jp text_clear_from_sol_to_cursor
 
 
 ; ---- CSI ECH: erase n characters from cursor to the right ----
@@ -2617,10 +2305,6 @@ textq_put_ascii:
 	ret
 
 textq_full:
-	ld a,(textq_drop_count)
-	inc a
-	ld (textq_drop_count),a
-
 	; Output renderer cannot keep up. Stop host.
 	call vdrip_rts_release_raw
 	ld a,#0x01
@@ -3272,8 +2956,8 @@ vdrip_reset_display:
 
 text_init_vdp:
 	; R0 = 0
-	ld b,#0x00
-	ld a,#0x00
+	xor a
+	ld b,a
 	call vdp_write_register
 
 	; R1:
@@ -3809,14 +3493,6 @@ vdrip_transport_wait_tx_empty:
 	xor a
 	ret
 
-vdrip_parse_crc_failed:
-	ld a,(crc_fail_count)
-	inc a
-	ld (crc_fail_count),a
-
-	jp vdrip_parse_reset
-
-
 ; ===========================================================================
 ; CRC-8 (polynomial 0x07) — matches proxy
 ;
@@ -3908,25 +3584,6 @@ vdrip_handshake_done:
 ; 0 = never seen.  1 = cold-boot readiness done.  >1 = proxy reconnected.
 vdrip_ready_seq_count:
 	.db 0x00
-
-; VDrip RX parser state.
-; vdrip_packet_body contains LEN at +0, TYPE at +1, then payload bytes and the
-; received CRC byte as they arrive. This parser state is obsolete for keyboard
-; input and is not touched by vdrip_rx_sink in raw-input mode.
-vdrip_parse_state:
-	.db VDRIP_RX_WAIT_SYNC0
-
-vdrip_parse_len_store:
-	.db 0x00
-
-vdrip_parse_remaining:
-	.db 0x00
-
-vdrip_parse_payload_index:
-	.db 0x00
-
-vdrip_packet_body:
-	.ds VDRIP_PACKET_BODY_MAX
 
 ; Text cursor state.
 ; text_col/text_row are internal 0-based logical coordinates. text_view_col is
@@ -4024,38 +3681,6 @@ vdp_addr_next:
 	.dw 0x0000
 vdp_addr_valid:
 	.db 0x00
-
-; Obsolete terminal-input packet payload iterator.
-; Used only by the inactive PACKET_TERMINAL_INPUT helper.
-terminal_payload_ptr:
-	.dw 0x0000
-
-terminal_payload_count:
-	.db 0x00
-
-; Existing trace counters.
-; These counters already existed before this documentation pass. They are useful
-; when inspecting whether bytes reached CRC validation, terminal-input dispatch,
-; queue overflow, and RTS transitions. No new diagnostics are added here.
-textq_drop_count:
-	.db 0x00
-
-crc_fail_count:
-	.db 0x00
-
-packet_ok_count:
-	.db 0x00
-
-key_echo_count:
-	.db 0x00
-
-rts_release_count:
-	.db 0x00
-
-rts_assert_count:
-	.db 0x00
-
-; Obsolete framed-input readiness storage was removed from the active path.
 
 ; Triple-Esc VDP reset counter.
 esc_press_count:

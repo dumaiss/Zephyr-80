@@ -38,39 +38,33 @@ IOCALL:
 	cp #0x81
 	jr nc,IOCALL_BAD_LEN
 
-	ld l,IOCALL_TX_PTR(ix)
-	ld h,IOCALL_TX_PTR + 1(ix)
-
 	call sio1_ioc_rts_assert
 	or a
 	jr nz,IOCALL_FAIL_WITH_RTS
 
-	; Send request header: CHAN CMD TX_LEN.
-	ld c,IOCALL_CHAN(ix)
+	; Send request header: CHAN CMD TX_LEN (bytes 0-2 of request block).
+	; sio1_ioc_put_byte clobbers AF and DE only; B and HL are preserved.
+	push ix
+	pop hl
+	ld b,#0x03
+IOCALL_HDR_LOOP:
+	ld c,(hl)
 	call sio1_ioc_put_byte
 	or a
 	jr nz,IOCALL_FAIL_WITH_RTS
-	ld c,IOCALL_CMD(ix)
-	call sio1_ioc_put_byte
-	or a
-	jr nz,IOCALL_FAIL_WITH_RTS
-	ld c,IOCALL_TX_LEN(ix)
-	call sio1_ioc_put_byte
-	or a
-	jr nz,IOCALL_FAIL_WITH_RTS
+	inc hl
+	djnz IOCALL_HDR_LOOP
 
 	; Send caller-owned TX payload directly from application memory.
 	ld a,IOCALL_TX_LEN(ix)
 	or a
 	jr z,IOCALL_TX_DONE
+	ld l,IOCALL_TX_PTR(ix)
+	ld h,IOCALL_TX_PTR + 1(ix)
 	ld b,a
 IOCALL_TX_LOOP:
 	ld c,(hl)
-	push bc
-	push hl
 	call sio1_ioc_put_byte
-	pop hl
-	pop bc
 	or a
 	jr nz,IOCALL_FAIL_WITH_RTS
 	inc hl
@@ -93,21 +87,17 @@ IOCALL_TX_DONE:
 	jr c,IOCALL_BAD_REPLY_WITH_RTS
 
 	; Receive reply payload directly into caller-owned application memory.
+	; sio1_ioc_get_byte clobbers AF and DE only; B and HL are preserved; result in C.
 	ld l,IOCALL_RX_PTR(ix)
 	ld h,IOCALL_RX_PTR + 1(ix)
 	ld a,b
 	or a
 	jr z,IOCALL_RX_DONE
 IOCALL_RX_LOOP:
-	push bc
-	push hl
 	call sio1_ioc_get_byte
-	ld e,c
-	pop hl
-	pop bc
 	or a
 	jr nz,IOCALL_FAIL_WITH_RTS
-	ld (hl),e
+	ld (hl),c
 	inc hl
 	djnz IOCALL_RX_LOOP
 IOCALL_RX_DONE:
