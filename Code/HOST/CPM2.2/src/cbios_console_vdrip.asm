@@ -335,6 +335,7 @@ vdrip_init_skip_handshake:
 	; to textq instead of the readiness parser.
 	ld a,#0x01
 	ld (vdrip_terminal_ready_flag),a
+	ld (term_auto_wrap),a		; auto-wrap enabled at init
 
 	; Release RTS and begin VDP initialization.
 		call vdrip_rts_release_raw
@@ -1256,9 +1257,11 @@ vdrip_terminal_enqueue_loop:
 ;   ESC [ 30-37/40-47 m  colors consumed, no visual effect
 ;   ESC [ c / 0 c      device attributes consumed; response deferred
 ;   ESC [ 5 n / 6 n    device status consumed; response deferred
+;   ESC [ ? 7 h        DECAWM auto-wrap on  (default: enabled; immediate wrap)
+;   ESC [ ? 7 l        DECAWM auto-wrap off (clamps/overwrites last column)
 ;   ESC [ ? 25 h       show cursor (DEC private)
 ;   ESC [ ? 25 l       hide cursor
-;   ESC [ ? 1/3/6/7 h/l  DEC private modes consumed safely
+;   ESC [ ? 1/3/6 h/l  DEC private modes consumed safely
 ;
 ; Unsupported CSI / DEC private sequences are consumed safely.
 ; CSI parser supports '?' prefix for DEC private sequences.
@@ -1891,25 +1894,38 @@ ansi_decset:
 	or a
 	ret z
 	ld a,(csi_param0)
+	cp #7
+	jr z,ansi_decawm_on
 	cp #25
 	jr z,ansi_show_cursor
-	ret		; ?7h etc — consume
+	ret		; other DEC private — consume
 
 ansi_show_cursor:
-	call vdrip_cursor_show
-	ret
+	jp vdrip_cursor_show
 
 ansi_decrst:
 	ld a,(csi_param_count)
 	or a
 	ret z
 	ld a,(csi_param0)
+	cp #7
+	jr z,ansi_decawm_off
 	cp #25
 	jr z,ansi_hide_cursor
-	ret		; ?7l etc — consume
+	ret		; other DEC private — consume
 
 ansi_hide_cursor:
-	call vdrip_cursor_hide
+	jp vdrip_cursor_hide
+
+; ---- DECAWM auto-wrap mode (ESC [ ? 7 h/l) ----
+
+ansi_decawm_on:
+	ld a,#0x01
+	jr ansi_decawm_set
+ansi_decawm_off:
+	xor a
+ansi_decawm_set:
+	ld (term_auto_wrap),a
 	ret
 
 
@@ -2623,6 +2639,16 @@ text_advance_cursor:
 	cp #TEXT_LOG_COLUMNS
 	jr c,text_advance_store_col
 
+	; At last column (text_col was TEXT_LOG_COLUMNS-1).
+	ld b,a			; save A=TEXT_LOG_COLUMNS
+	ld a,(term_auto_wrap)
+	or a
+	ld a,b			; restore A=TEXT_LOG_COLUMNS
+	jr nz,text_advance_do_wrap	; wrap enabled: existing behavior
+	dec a			; clamp to TEXT_LOG_COLUMNS-1
+	jr text_advance_store_col
+
+text_advance_do_wrap:
 	xor a
 	ld (text_col),a
 	; Reset viewport to column 0 on wrap.  Redraw only if it changed.
@@ -3200,6 +3226,7 @@ vdrip_reset_display:
 	call vdrip_rts_release_raw
 	ld a,#0x01
 	ld (vdrip_rx_rts_released),a
+	ld (term_auto_wrap),a		; auto-wrap re-enabled on RIS
 
 	call vdrip_send_reset
 	call vdrip_send_ping
@@ -3548,8 +3575,7 @@ vdrip_cursor_init:
 	call vdrip_cursor_set_blink_default
 	call vdrip_cursor_enable
 	call vdrip_cursor_set_position_current
-	call vdrip_cursor_show
-	ret
+	jp vdrip_cursor_show
 
 
 vdrip_cursor_enable:
@@ -3941,6 +3967,13 @@ text_shadow:
 ; Applies only to CONOUT bytes. Keyboard input must not use this state machine.
 term_state:
 	.db TERM_STATE_NORMAL
+
+; DECAWM auto-wrap mode.  1 = auto-wrap enabled (default), 0 = disabled.
+; Printable character output at the right margin wraps when enabled,
+; clamps/overwrites when disabled.  ESC [ ? 7 h/l set/clear this flag.
+; Reset to enabled by vdrip_console_init and ESC c (vdrip_reset_display).
+term_auto_wrap:
+	.db 0x01
 
 ; ANSI/CSI parser state.
 csi_param0:
