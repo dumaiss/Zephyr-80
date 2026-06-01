@@ -26,8 +26,8 @@
 ;   FA80h │   MOVE_BUFFER                                │
 ;         ├──────────────────────────────────────────────┤
 ;   FA7Fh │ Driver slot 5 end                            │
-;   F7EBh │   VDrip storage backend, ending at code limit │
-;   F680h │ Driver slot 5 start: console tail / storage  │
+;   F7EBh │   VDrip storage backend                      │
+;   F680h │ Driver slot 5 start: IOCALL / storage        │
 ;         │                                              │
 ;   F3FFh │ Driver slot 4 end                            │
 ;   F000h │ Driver slot 4 start: Virtual Drip console    │
@@ -45,9 +45,9 @@
 ;   E000h │ Driver slot 0 start: Virtual Drip console    │
 ;         ├──────────────────────────────────────────────┤
 ;   DFFFh │ Core BIOS end                                │
-;   DF50h │   IOCALL transaction transport               │
+;   DF50h │   VIDEO_SEND (BIOS display extension)         │
 ;   DD10h │   SIO core + exact IM2 vector entry          │
-;   DC00h │   banking / XMOVE / LAUNCH                   │
+;   DC00h │   banking / XMOVE                            │
 ;   DBC0h │   storage facade                             │
 ;   DB79h │   console facade                             │
 ;   DA00h │ CBIOS_BASE / jump table / boot / WBOOT       │
@@ -230,7 +230,8 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 CBIOS_STORAGE_VDRIP_CODE_BASE         = 0xf7eb                                ; ends at FA80h
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
-CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x0550                  ; DF50h
+CBIOS_BIOS_EXT_CODE_BASE        = CBIOS_BASE + 0x0550                  ; DF50h
+CBIOS_IOCTRL_CODE_BASE          = CBIOS_DRIVER_SLOT5_BASE              ; F680h
 
 ; VDrip font placement in bank 0 TPA.
 ; Font data lives at VDRIP_FONT_ROM_BASE in the firmware binary (bank 0 ROM).
@@ -404,9 +405,9 @@ RESERVED_RUNTIME_STATE_END      = CBIOS_RUNTIME_STATE_END
 ; Current VDrip build:
 ;   Slots 0-4 and the start of slot 5 contain the Virtual Drip console driver
 ;   (code, font, shadow, packet buffers, and terminal input queue).
-;   Slot 5 also contains the VDrip storage backend.
+;   Slot 5 also contains IOCALL (at CBIOS_DRIVER_SLOT5_BASE) and the VDrip
+;   storage backend (at CBIOS_STORAGE_VDRIP_CODE_BASE).
 ;   SIO core is part of core BIOS, not a driver slot occupant.
-;   IOCALL is part of core BIOS, not a driver slot occupant.
 ;   The legacy SIO console driver (cbios_console_sio.asm) is preserved in the
 ;   repository but not linked in the active VDrip-console build.
 

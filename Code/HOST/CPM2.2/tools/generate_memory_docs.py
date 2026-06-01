@@ -44,8 +44,8 @@ EXTENDED_TABLE = [
     ("03h", "XMOVE"),
     ("06h", "SELMEM"),
     ("09h", "SETBNK"),
-    ("0Ch", "LAUNCH"),
-    ("0Fh", "IOCALL"),
+    ("0Ch", "IOCALL"),
+    ("0Fh", "VIDEO_SEND"),
 ]
 
 IMPLEMENTATION_SYMBOLS = [
@@ -129,9 +129,11 @@ IMPLEMENTATION_SYMBOLS = [
     (("SETBNK",), "Record future DMA bank."),
     (("XMOVE",), "Set source/destination banks for next `MOVE`."),
     (("MOVE",), "Same-bank or cross-bank memory move."),
-    (("LAUNCH",), "Launch application bank from high memory."),
     (("BANKING_CODE_END",), "Banking extension implementation end."),
-    (("BIOS_CODE_END",), "End of generated BIOS code."),
+    (("VIDEO_SEND",), "Extended BIOS call: raw VDrip display/VDP packet send."),
+    (("BIOS_EXT_CODE_START",), "BIOS extension code start."),
+    (("BIOS_EXT_CODE_END",), "BIOS extension code end."),
+    (("BIOS_CODE_END",), "End of core BIOS code."),
 ]
 
 RUNTIME_STATE = [
@@ -144,7 +146,6 @@ RUNTIME_STATE = [
     ("XMOVE_SRC_BANK", 1),
     ("XMOVE_DST_BANK", 1),
     ("XMOVE_PENDING", 1),
-    ("APP_LAUNCH_BANK", 1),
     ("MOVE_SRC_PTR", 2),
     ("MOVE_DST_PTR", 2),
     ("MOVE_REMAIN", 2),
@@ -183,7 +184,7 @@ DRIVER_SLOT_OWNERS = {
     2: "Virtual Drip console driver",
     3: "Virtual Drip console driver",
     4: "Virtual Drip console driver",
-    5: "Virtual Drip console tail and VDrip storage backend",
+    5: "IOCALL transport and VDrip storage backend",
 }
 
 DRIVER_DECLARATIONS = [
@@ -195,9 +196,9 @@ CORE_RANGES = [
     ("BIOS jump table and boot glue", "BIOS_CODE_START", "CONSOLE_CODE_START"),
     ("console facade", "CONSOLE_CODE_START", "CONSOLE_CODE_END"),
     ("storage facade", "STORAGE_STUB_CODE_START", "STORAGE_STUB_CODE_END"),
-    ("banking/XMOVE/LAUNCH", "BANKING_CODE_START", "BANKING_CODE_END"),
+    ("banking/XMOVE", "BANKING_CODE_START", "BANKING_CODE_END"),
     ("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END"),
-    ("IOCALL transport", "IOCTRL_CODE_START", "IOCTRL_CODE_END"),
+    ("BIOS extensions", "BIOS_EXT_CODE_START", "BIOS_EXT_CODE_END"),
 ]
 
 VALIDATION_NOTES = [
@@ -747,7 +748,6 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             symbol_row(symbols, ("XMOVE_SRC_BANK",), "Source bank for pending cross-bank move."),
             symbol_row(symbols, ("XMOVE_DST_BANK",), "Destination bank for pending cross-bank move."),
             symbol_row(symbols, ("XMOVE_PENDING",), "Pending cross-bank move flag."),
-            symbol_row(symbols, ("APP_LAUNCH_BANK",), "Target bank for `LAUNCH`."),
             symbol_row(symbols, ("MOVE_SRC_PTR",), "Cross-bank move source pointer."),
             symbol_row(symbols, ("MOVE_DST_PTR",), "Cross-bank move destination pointer."),
             symbol_row(symbols, ("MOVE_REMAIN",), "Cross-bank move remaining byte count."),
@@ -830,9 +830,9 @@ def write_memory_map(
         ),
         range_row(span(require_symbol(symbols, "CBASE"), require_symbol(symbols, "CCPSTACK")), "CP/M CCP", f"`CBASE` is `{h4(require_symbol(symbols, 'CBASE'))}`."),
         range_row(span(require_symbol(symbols, "FBASE"), cbios_base - 1), "CP/M BDOS and state", f"`FBASE` is `{h4(require_symbol(symbols, 'FBASE'))}` in the current assembled image."),
-        range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, LAUNCH, SIO core, and IOCALL transport."),
+        range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, SIO core, and VIDEO_SEND extension."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END")), "Driver slots 0-4", "Virtual Drip console driver (code, font, shadow buffer, queues, state)."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slot 5", "Virtual Drip console tail plus VDrip storage backend."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slot 5", "IOCALL transport and VDrip storage backend."),
         range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch/storage buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `VDRIP_STORAGE_DPHDPB` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DPHDPB_BASE'))}`; `VDRIP_STORAGE_DIRBUF` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DIRBUF'))}`; `VDRIP_STORAGE_ALV` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_ALV'))}`."),
         range_row(span(runtime_start, runtime_end), "BIOS runtime state", "Current bank, DMA address, banking state, storage state, SIO core state, and console driver state."),
         range_row(span(stack_guard, area_end), "Protected firmware stack and work window", f"Stack top is `{h4(stack_top)}`; console backend stack top is `{h4(console_stack_top)}`; stack guard is `{h4(stack_guard)}`."),
@@ -851,9 +851,9 @@ def write_memory_map(
         f"| `{span(require_symbol(symbols, 'boot'), require_symbol(symbols, 'CONSOLE_CODE_START') - 1)}` | Cold boot, warm boot, CCP restore, page-zero, DMA, CTC helpers, and alignment gap. |",
         f"| `{span(require_symbol(symbols, 'CONSOLE_CODE_START'), require_symbol(symbols, 'CONSOLE_CODE_END') - 1)}` | Console BIOS facade. |",
         f"| `{span(require_symbol(symbols, 'STORAGE_STUB_CODE_START'), require_symbol(symbols, 'STORAGE_STUB_CODE_END') - 1)}` | Storage BIOS facade. |",
-        f"| `{span(require_symbol(symbols, 'BANKING_CODE_START'), require_symbol(symbols, 'BANKING_CODE_END') - 1)}` | Banking and high-memory `LAUNCH` implementation. |",
+        f"| `{span(require_symbol(symbols, 'BANKING_CODE_START'), require_symbol(symbols, 'BANKING_CODE_END') - 1)}` | Banking and XMOVE implementation. |",
         f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core and exact IM2 vector entry. |",
-        f"| `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` | IOCALL transaction transport. |",
+        f"| `{span(require_symbol(symbols, 'BIOS_EXT_CODE_START'), require_symbol(symbols, 'BIOS_EXT_CODE_END') - 1)}` | BIOS extension: `VIDEO_SEND`. |",
         "",
         "## Driver Slot Table",
         "",
@@ -865,7 +865,7 @@ def write_memory_map(
         owner = DRIVER_SLOT_OWNERS[slot]
         if slot == 5:
             contents = (
-                f"Console tail through `{h4(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_END') - 1)}`; "
+                f"`{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` IOCALL transport; "
                 f"`{span(require_symbol(symbols, 'VDRIP_STORAGE_CODE_START'), require_symbol(symbols, 'VDRIP_STORAGE_CODE_END') - 1)}` VDrip storage backend."
             )
         elif slot == 0:
@@ -896,7 +896,7 @@ def write_memory_map(
             f"| `{span(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'), require_symbol(symbols, 'VDRIP_CONSOLE_CODE_END') - 1)}` | Virtual Drip console driver | CP/M console semantics, Virtual Drip packet transport, VDP text rendering, font, shadow buffer, input queue, and cursor/viewport state. |",
             "",
             "SIO_CH_IOCTRL is the BIOS-owned SIO1/A synchronous IO Controller link. SIO1/A uses external clock and external sync from the MCU, with RTS as the service-request signal. SIO1/A interrupts are disabled in this build.",
-            f"`IOCALL` is core BIOS code at `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` and does not occupy driver slot space.",
+            f"`IOCALL` code is at `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` in driver slot 5.",
             "",
         "## BIOS Jump Table Layout",
         "",
@@ -1007,10 +1007,10 @@ def write_memory_map(
             f"- `CBIOS_BASE` is `{h4(cbios_base)}`; CBIOS layout constants are derived from this base.",
             f"- `CBIOS_CODE_LIMIT` is `{h4(code_limit)}`; no resident code may cross into scratch/staging.",
             f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the Virtual Drip console driver starts at `{h4(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'))}` and the VDrip storage backend starts at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_CODE_START'))}`.",
-            f"- `IOCALL` code starts at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` inside core BIOS and uses the BIOS-owned SIO1/A synchronous IO Controller transport.",
-            f"- `LAUNCH` code resides at `{h4(require_symbol(symbols, 'LAUNCH'))}`, inside protected high BIOS memory.",
+            f"- `IOCALL` code is at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` in driver slot 5 and uses the BIOS-owned SIO1/A synchronous IO Controller transport.",
+            f"- `VIDEO_SEND` code is at `{h4(require_symbol(symbols, 'BIOS_EXT_CODE_START'))}` in core BIOS; raw VDP/display writes may desynchronize the console shadow buffer.",
             f"- `WBOOT` resident code starts at `{h4(require_symbol(symbols, 'WBOOT_RESIDENT_START'))}`, inside protected high BIOS memory.",
-            f"- `ZBIOS_EXT_BASE` is at `{h4(ext_base)}` and exposes `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `LAUNCH`, and `IOCALL`.",
+            f"- `ZBIOS_EXT_BASE` is at `{h4(ext_base)}` and exposes `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `IOCALL`, and `VIDEO_SEND`.",
             f"- The final bit-swapped image is `{args.final_image}`.",
             "",
         ]

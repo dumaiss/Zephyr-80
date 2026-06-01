@@ -84,6 +84,7 @@
 	.globl vdrip_console_conin,vdrip_console_conout
 	.globl vdrip_rx_sink
 	.globl vdrip_send_packet,vdrip_rts_assert_raw,crc8_update
+	.globl vdrip_reset_display,vdrip_data_write_block
 	.globl vdrip_rx_rts_released
 	.globl restore_font_from_rom
 	.globl VDRIP_CONSOLE_CODE_START,VDRIP_CONSOLE_CODE_END

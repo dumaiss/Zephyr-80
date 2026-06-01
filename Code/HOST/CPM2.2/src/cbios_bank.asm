@@ -1,19 +1,19 @@
-; Local Zephyr-80 banking and launch BIOS extensions.
+; Local Zephyr-80 banking BIOS extensions.
 ;
 ; This module is owned by the CPM2.2 port and implements the extended BIOS
 ; ABI exposed after ZBIOS_EXT_BASE.
 ;
-; These services are core BIOS, not drivers. CP/M storage and application
-; launch paths depend on a single authoritative view of CURRENT_BANK, DMA_BANK,
-; and pending XMOVE state. A replaceable device driver may call these services,
-; but must not own the bank latch policy.
+; These services are core BIOS, not drivers. CP/M storage paths depend on a
+; single authoritative view of CURRENT_BANK, DMA_BANK, and pending XMOVE
+; state. A replaceable device driver may call these services, but must not
+; own the bank latch policy.
 
-	.globl MOVE,XMOVE,SELMEM,SETBNK,LAUNCH
+	.globl MOVE,XMOVE,SELMEM,SETBNK
 	.globl BIOS_CODE_END
 	.globl BANKING_CODE_START,BANKING_CODE_END
 	.globl BANKING_STATE_START,BANKING_STATE_END
 	.globl SAVED_BANK,DMA_BANK,XMOVE_SRC_BANK,XMOVE_DST_BANK,XMOVE_PENDING
-	.globl MOVE_BUFFER,APP_LAUNCH_BANK
+	.globl MOVE_BUFFER
 	.globl CURRENT_BANK,cbios_dma_addr
 	.globl WBOOT,FBASE
 	
@@ -164,70 +164,6 @@ MOVE_CROSS_DONE:
 	out (BANK_PORT),a
 	ret
 
-; LAUNCH
-; Purpose:
-;   Restore a low-memory application bank from its ROM payload page and enter it
-;   at MONITOR_ENTRY with CP/M-compatible page-zero vectors installed.
-; Input:
-;   A = target application bank.
-; Output:
-;   Does not return.
-; Clobbers:
-;   All primary registers and SP are consumed by the launch handoff.
-; Important invariants:
-;   The high/common BIOS remains executable while the low 48 KiB bank is copied.
-;   Page zero is rebuilt with JP WBOOT at 0000h and JP FBASE at 0005h, and the
-;   default DMA buffer at 0080h is cleared before jumping to the application.
-LAUNCH:
-	di
-	and #BANK_MASK
-	ld (APP_LAUNCH_BANK),a
-
-	; Restore the selected low-memory bank from the matching ROM page while
-	; continuing to execute from protected high/common memory.
-	ld e,a
-	add a,a
-	add a,a
-	add a,a
-	add a,a
-	add a,a
-	or #SHADOW_BIT
-	or e
-	out (BANK_PORT),a
-	ld hl,#PAGE_COPY_START
-	ld de,#PAGE_COPY_START
-	ld bc,#PAGE_COPY_LEN
-	ldir
-
-	ld a,(APP_LAUNCH_BANK)
-	and #BANK_MASK
-	ld (CURRENT_BANK),a
-	or #ROMDIS_BIT
-	out (BANK_PORT),a
-
-	ld a,#0xc3
-	ld (PZWBOOT),a
-	ld hl,#WBOOT
-	ld (PZWBOOT + 1),hl
-	ld (PZBDOS),a
-	ld hl,#FBASE
-	ld (PZBDOS + 1),hl
-
-	xor a
-	ld hl,#DEFAULT_DMA
-	ld b,#DEFAULT_DMA_LEN
-LAUNCH_CLEAR_DMA:
-	ld (hl),a
-	inc hl
-	djnz LAUNCH_CLEAR_DMA
-
-	ld bc,#DEFAULT_DMA
-	ld (cbios_dma_addr),bc
-	ld sp,#APP_STACK_TOP
-	ld hl,#WBOOT
-	push hl
-	jp MONITOR_ENTRY
-
 BANKING_CODE_END:
 
 	.area WORK (ABS)
@@ -242,8 +178,6 @@ XMOVE_SRC_BANK:
 XMOVE_DST_BANK:
 	.db 0x00
 XMOVE_PENDING:
-	.db 0x00
-APP_LAUNCH_BANK:
 	.db 0x00
 MOVE_SRC_PTR:
 	.dw 0x0000

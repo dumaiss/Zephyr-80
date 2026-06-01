@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 42100 bytes |
+| Firmware symbol map | `build/firmware.map` | 42267 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 131072 bytes |
 | Final burnable image | `build/zephyr80.bin` | 131072 bytes |
 | Layout manifest | `build/layout.manifest` | 273 bytes |
@@ -64,8 +64,8 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `ZBIOS_EXT_BASE + 03h` | `DA36h` | `XMOVE` |
 | `ZBIOS_EXT_BASE + 06h` | `DA39h` | `SELMEM` |
 | `ZBIOS_EXT_BASE + 09h` | `DA3Ch` | `SETBNK` |
-| `ZBIOS_EXT_BASE + 0Ch` | `DA3Fh` | `LAUNCH` |
-| `ZBIOS_EXT_BASE + 0Fh` | `DA42h` | `IOCALL` |
+| `ZBIOS_EXT_BASE + 0Ch` | `DA3Fh` | `IOCALL` |
+| `ZBIOS_EXT_BASE + 0Fh` | `DA42h` | `VIDEO_SEND` |
 
 ## BIOS Implementation Symbols
 
@@ -139,9 +139,9 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `sio_core_isr` | `DEAFh` | BIOS-owned SIO interrupt service routine. |
 | `sio_console_isr` | `DF4Dh` | Compatibility label that jumps to `sio_core_isr`. |
 | `SIO_CORE_CODE_END` | `DF50h` | BIOS-owned SIO core code end. |
-| `IOCTRL_CODE_START` | `DF50h` | IOCALL transaction code start in core BIOS. |
-| `IOCALL` | `DF50h` | Zephyr extended BIOS IO Controller transaction call. |
-| `IOCTRL_CODE_END` | `DFE6h` | IOCALL transaction code end. |
+| `IOCTRL_CODE_START` | `F680h` | IOCALL transaction code start in core BIOS. |
+| `IOCALL` | `F680h` | Zephyr extended BIOS IO Controller transaction call. |
+| `IOCTRL_CODE_END` | `F716h` | IOCALL transaction code end. |
 | `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E00Eh` | Virtual Drip console init, proxy handshake, VDP setup. |
@@ -151,9 +151,11 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `SETBNK` | `DC0Ah` | Record future DMA bank. |
 | `XMOVE` | `DC10h` | Set source/destination banks for next `MOVE`. |
 | `MOVE` | `DC22h` | Same-bank or cross-bank memory move. |
-| `LAUNCH` | `DCAEh` | Launch application bank from high memory. |
-| `BANKING_CODE_END` | `DD05h` | Banking extension implementation end. |
-| `BIOS_CODE_END` | `DFE6h` | End of generated BIOS code. |
+| `BANKING_CODE_END` | `DCAEh` | Banking extension implementation end. |
+| `VIDEO_SEND` | `DF50h` | Extended BIOS call: raw VDrip display/VDP packet send. |
+| `BIOS_EXT_CODE_START` | `DF50h` | BIOS extension code start. |
+| `BIOS_EXT_CODE_END` | `DF7Bh` | BIOS extension code end. |
+| `BIOS_CODE_END` | `DF7Bh` | End of core BIOS code. |
 
 ## Runtime State Symbols
 
@@ -173,12 +175,11 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `XMOVE_SRC_BANK` | `FE22h` | Source bank for pending cross-bank move. |
 | `XMOVE_DST_BANK` | `FE23h` | Destination bank for pending cross-bank move. |
 | `XMOVE_PENDING` | `FE24h` | Pending cross-bank move flag. |
-| `APP_LAUNCH_BANK` | `FE25h` | Target bank for `LAUNCH`. |
-| `MOVE_SRC_PTR` | `FE26h` | Cross-bank move source pointer. |
-| `MOVE_DST_PTR` | `FE28h` | Cross-bank move destination pointer. |
-| `MOVE_REMAIN` | `FE2Ah` | Cross-bank move remaining byte count. |
-| `MOVE_CHUNK_LEN` | `FE2Ch` | Current cross-bank chunk length. |
-| `BANKING_STATE_END` | `FE2Eh` | Banking state end. |
+| `MOVE_SRC_PTR` | `FE25h` | Cross-bank move source pointer. |
+| `MOVE_DST_PTR` | `FE27h` | Cross-bank move destination pointer. |
+| `MOVE_REMAIN` | `FE29h` | Cross-bank move remaining byte count. |
+| `MOVE_CHUNK_LEN` | `FE2Bh` | Current cross-bank chunk length. |
+| `BANKING_STATE_END` | `FE2Dh` | Banking state end. |
 | `STORAGE_STATE_START` | `FE40h` | Storage state start. |
 | `vdrip_storage_selected_drive` | `FE40h` | Selected storage drive, or `FFh` for unsupported. |
 | `vdrip_storage_track` | `FE41h` | Selected CP/M track. |

@@ -13,11 +13,14 @@ HEX_ORIGIN ?= 8000h
 
 SWAPBITS := $(TOOLS_DIR)/swapbits.py
 LISTING_TO_IHEX := $(TOOLS_DIR)/listing_to_ihex.py
+IHX_TO_COM := $(TOOLS_DIR)/ihx_to_com.py
 
 ASXXXX_TARGETS := vdrip_checkerboard vdrip_smiley shadow_copy_test shadow_copy_low vdrip_text_mode_test
+COM_TARGETS := video_smiley
 ASXXXX_SRCS := $(addprefix $(SRC_DIR)/,$(addsuffix .asm,$(ASXXXX_TARGETS)))
+COM_SRCS := $(addprefix $(SRC_DIR)/,$(addsuffix .asm,$(COM_TARGETS)))
 ASXXXX_INCS := $(wildcard $(SRC_DIR)/*.inc)
-ASM_SRCS := $(filter-out $(ASXXXX_SRCS),$(wildcard $(SRC_DIR)/*.asm))
+ASM_SRCS := $(filter-out $(ASXXXX_SRCS) $(COM_SRCS),$(wildcard $(SRC_DIR)/*.asm))
 TARGETS := $(basename $(notdir $(ASM_SRCS)))
 
 RAW_BIN_DIR := $(BUILD_DIR)/raw
@@ -34,15 +37,20 @@ HEXS := $(Z80ASM_HEXS) $(ASXXXX_HEXS)
 HEX_SRCS := $(addprefix $(HEX_SRC_DIR)/,$(addsuffix .asm,$(TARGETS)))
 HEX_LSTS := $(addprefix $(HEX_LST_DIR)/,$(addsuffix .lst,$(TARGETS)))
 ASXXXX_RELS := $(addprefix $(ASXXXX_DIR)/,$(addsuffix .rel,$(ASXXXX_TARGETS)))
+COM_RELS := $(addprefix $(ASXXXX_DIR)/,$(addsuffix .rel,$(COM_TARGETS)))
+COM_IHXS := $(addprefix $(BUILD_DIR)/,$(addsuffix .ihx,$(COM_TARGETS)))
+COM_BINS := $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(COM_TARGETS)))
 
-.PHONY: all clean bins hex
-.SECONDARY: $(HEX_SRCS) $(HEX_LSTS) $(ASXXXX_RELS) $(ASXXXX_IHXS)
+.PHONY: all clean bins hex com
+.SECONDARY: $(HEX_SRCS) $(HEX_LSTS) $(ASXXXX_RELS) $(ASXXXX_IHXS) $(COM_RELS) $(COM_IHXS)
 
-all: bins hex
+all: bins hex com
 
 bins: $(BINS)
 
 hex: $(HEXS)
+
+com: $(COM_BINS)
 
 $(BUILD_DIR) $(RAW_BIN_DIR) $(HEX_SRC_DIR) $(HEX_RAW_DIR) $(HEX_LST_DIR) $(ASXXXX_DIR):
 	mkdir -p $@
@@ -70,6 +78,12 @@ $(ASXXXX_IHXS): $(BUILD_DIR)/%.ihx: $(ASXXXX_DIR)/%.rel | $(BUILD_DIR)
 
 $(ASXXXX_HEXS): $(BUILD_DIR)/%.hex: $(BUILD_DIR)/%.ihx | $(BUILD_DIR)
 	cp $< $@
+
+$(COM_IHXS): $(BUILD_DIR)/%.ihx: $(ASXXXX_DIR)/%.rel | $(BUILD_DIR)
+	$(SDLDZ80) $(ASXXXX_LDFLAGS) $@ $<
+
+$(COM_BINS): $(BUILD_DIR)/%.com: $(BUILD_DIR)/%.ihx $(IHX_TO_COM) | $(BUILD_DIR)
+	$(PYTHON) $(IHX_TO_COM) $< $@
 
 clean:
 	rm -rf "$(BUILD_DIR)"/*

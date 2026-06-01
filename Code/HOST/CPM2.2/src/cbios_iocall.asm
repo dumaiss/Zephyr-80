@@ -6,7 +6,7 @@
 ; buffers, or persistent IOCALL pointer state.
 
 	.globl IOCALL
-	.globl IOCTRL_CODE_START,IOCTRL_CODE_END,BIOS_CODE_END
+	.globl IOCTRL_CODE_START,IOCTRL_CODE_END
 	.globl sio1_ioc_rts_assert,sio1_ioc_rts_release
 	.globl sio1_ioc_put_byte,sio1_ioc_get_byte
 
@@ -129,6 +129,5 @@ IOCALL_FAIL_WITH_RTS:
 	ret
 
 IOCTRL_CODE_END:
-BIOS_CODE_END:
 
 	.area CODE (ABS)

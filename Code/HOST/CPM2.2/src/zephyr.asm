@@ -13,7 +13,7 @@
 	.globl bdos_entry_shim
 	.globl const,conin,conout,list,punch,reader,listst
 	.globl home,seldsk,settrk,setsec,setdma,read,write,sectran
-	.globl MOVE,XMOVE,SELMEM,SETBNK,LAUNCH,IOCALL
+	.globl MOVE,XMOVE,SELMEM,SETBNK,IOCALL,VIDEO_SEND
 	.globl ZBIOS_EXT_BASE
 
 	.area RESET (ABS)
@@ -40,11 +40,11 @@ cpm:
 ;   MOVE                  copy bytes, honoring a pending XMOVE if one exists
 ;   XMOVE                 set source/destination banks for the next MOVE
 ;   SELMEM/SETBNK         select execution bank / record disk DMA bank
-;   LAUNCH                restore and enter an application bank
 ;   IOCALL                perform a BIOS-owned SIO1 IO Controller transaction
+;   VIDEO_SEND            send a raw VDrip display/VDP packet
 ;
-; Banking, XMOVE, and LAUNCH live in the core BIOS range because they define
-; how CP/M itself crosses banks. They are not replaceable card drivers.
+; Banking and XMOVE live in the core BIOS range because they define how CP/M
+; itself crosses banks. They are not replaceable card drivers.
 	.area CODE (ABS)
 	.org CBIOS_BASE
 
@@ -89,8 +89,8 @@ ZBIOS_EXT_BASE:
 	jp XMOVE
 	jp SELMEM
 	jp SETBNK
-	jp LAUNCH
 	jp IOCALL
+	jp VIDEO_SEND
 bdos_entry_shim:
 	jp FBASE
 
@@ -99,6 +99,7 @@ bdos_entry_shim:
 	.include "cbios_boot.asm"
 	.include "cbios_console.asm"
 	.include "sio_core.asm"
+	.include "cbios_bios_ext.asm"
 	.include "cbios_iocall.asm"
 	.include "cbios_console_vdrip.asm"
 	.include "cbios_storage.asm"
