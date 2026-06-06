@@ -933,7 +933,7 @@
         "uuid": "db33a8e4-587d-4e74-8d3f-b68910957121"
       }
     ],
-    "used_designators": "R35-41,C26,#PWR9,#PWR11-12,#PWR21,#PWR29,U1-2",
+    "used_designators": "R39",
     "variants": []
   },
   "sheets": [
