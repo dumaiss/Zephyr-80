@@ -90,6 +90,10 @@
           "Purposefully put SMD under the socket"
         ],
         [
+          "lib_footprint_mismatch|94707500|55583750|9c749c8d-dab0-4341-a6aa-3f935548072d|00000000-0000-0000-0000-000000000000",
+          ""
+        ],
+        [
           "silk_edge_clearance|76530200|57934901|3ff83b68-926b-46e5-be17-ffcfb9a4715a|9690f384-68e3-4a07-a1a0-17bf681562f7",
           "USB Connector needs to extend slightly off the board"
         ],

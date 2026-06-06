@@ -50,7 +50,23 @@
         "silk_text_thickness": 0.1,
         "silk_text_upright": false,
         "zones": {
-          "min_clearance": 0.5
+          "border_display_style": 2,
+          "border_hatch_pitch": 0.5,
+          "corner_radius": 0.0,
+          "corner_smoothing": 0,
+          "fill_mode": 0,
+          "hatch_gap": 1.5,
+          "hatch_orientation": 0.0,
+          "hatch_smoothing_level": 0,
+          "hatch_smoothing_value": 0.1,
+          "hatch_thickness": 1.0,
+          "min_clearance": 0.5,
+          "min_island_area": 10.0,
+          "min_thickness": 0.25,
+          "pad_connection": 1,
+          "remove_islands": 0,
+          "thermal_relief_gap": 0.5,
+          "thermal_relief_spoke_width": 0.5
         }
       },
       "diff_pair_dimensions": [
@@ -63,6 +79,14 @@
       "drc_exclusions": [
         [
           "lib_footprint_mismatch|426278401|208866400|18996127-3118-42df-99d9-b4141c63f278|00000000-0000-0000-0000-000000000000",
+          ""
+        ],
+        [
+          "starved_thermal|432848400|202476400|a090e4d4-0c76-44b4-acfb-9770f414f1a6|16bba023-b182-42d6-adb5-24fb90a4d9dc|F.Cu",
+          ""
+        ],
+        [
+          "starved_thermal|443466713|147402199|a090e4d4-0c76-44b4-acfb-9770f414f1a6|bb0a4a73-64dd-4da2-8a5c-49afb559770b|F.Cu",
           ""
         ]
       ],
@@ -786,7 +810,7 @@
         "uuid": "d6d8aa35-1d9d-4c27-8a6c-fa24f1b19dce"
       }
     ],
-    "used_designators": "",
+    "used_designators": "R1-6,J1-5,U1-4,F1-4,C1-15,#FLG1-4,H1-8,Y1-2,#PWR1-41,#PWR66-67",
     "variants": []
   },
   "sheets": [

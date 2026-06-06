@@ -12935,7 +12935,7 @@
 		)
 		(uuid "e7042180-e357-4bf2-81ec-46f7d6a0e2b0")
 	)
-	(label "IO_MOSI"
+	(label "IO_MISO"
 		(at 124.46 266.7 180)
 		(effects
 			(font

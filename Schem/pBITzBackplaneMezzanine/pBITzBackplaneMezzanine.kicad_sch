@@ -387,26 +387,6 @@
 				(justify right)
 			)
 		)
-		(pin "~{USB_CS}" output
-			(at 144.78 123.19 90)
-			(uuid "3b6e72ad-d19a-493f-93c0-6ee16829df54")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-		(pin "~{SD_CS}" output
-			(at 149.86 123.19 90)
-			(uuid "87ca4022-5aaa-4d4d-80d8-7de7e6da0260")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
 		(pin "MOSI" output
 			(at 139.7 123.19 90)
 			(uuid "6096dbce-0e8b-4a51-a8be-354f3a9e806a")
@@ -430,6 +410,26 @@
 		(pin "~{SD_PRESENT}" input
 			(at 152.4 123.19 90)
 			(uuid "14c96113-a54e-4e1e-bda0-43d3f07a7f54")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "SPI_CS0" output
+			(at 149.86 123.19 90)
+			(uuid "e7ee768b-712a-4bad-857a-62f1adab7a11")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "SPI_CS1" output
+			(at 144.78 123.19 90)
+			(uuid "8850d25b-b618-4c3d-a149-0f46bb6f4099")
 			(effects
 				(font
 					(size 1.27 1.27)
