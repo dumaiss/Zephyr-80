@@ -98,27 +98,19 @@
           "USB Connector needs to extend slightly off the board"
         ],
         [
-          "silk_over_copper|198629008|57525395|c97fe98c-2510-49b7-bb23-9c3b374953a2|00000000-0000-0000-0000-000000000000",
+          "silk_over_copper|191860000|74650000|4d51a749-128d-4d9f-b47f-3fca7e454f2d|3f19f084-b542-48cc-ac31-6c28cfbfc925",
           ""
         ],
         [
-          "silk_over_copper|198979807|63500924|89bd8b1c-0e7c-44cb-863b-4ef50c9a6156|00000000-0000-0000-0000-000000000000",
+          "silk_over_copper|191860000|82270000|4d51a749-128d-4d9f-b47f-3fca7e454f2d|4b35c528-bfac-48ec-bcf2-8961ef304d47",
           ""
         ],
         [
-          "silk_over_copper|199691172|65857500|bdc404fa-8c01-4457-a289-1c92ee45a798|00000000-0000-0000-0000-000000000000",
+          "silk_over_copper|199480000|74650000|4d51a749-128d-4d9f-b47f-3fca7e454f2d|8f076bea-d525-4e02-87e6-54cf036b7805",
           ""
         ],
         [
-          "silk_over_copper|199872600|54319767|8788a5da-464c-444f-83b5-2856b7c9d3be|00000000-0000-0000-0000-000000000000",
-          ""
-        ],
-        [
-          "silk_over_copper|200089878|81911981|47f10619-b17e-4cbe-84ba-e2b2f5e7603e|00000000-0000-0000-0000-000000000000",
-          ""
-        ],
-        [
-          "silk_over_copper|200094044|75355999|47f10619-b17e-4cbe-84ba-e2b2f5e7603e|00000000-0000-0000-0000-000000000000",
+          "silk_over_copper|199480000|82270000|4d51a749-128d-4d9f-b47f-3fca7e454f2d|eee77984-af7d-4ed9-ae0c-f8fe17144844",
           ""
         ],
         [
@@ -937,7 +929,7 @@
         "uuid": "db33a8e4-587d-4e74-8d3f-b68910957121"
       }
     ],
-    "used_designators": "",
+    "used_designators": "R35-41,C26,#PWR9,#PWR11-12,#PWR21,#PWR29,U1-2",
     "variants": []
   },
   "sheets": [

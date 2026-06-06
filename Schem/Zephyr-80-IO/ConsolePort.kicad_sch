@@ -1320,17 +1320,6 @@
 			(embedded_fonts no)
 		)
 	)
-	(text "Configure the FT230 so that \nCBUS0 (PWREN#) is asserted \n(low) to signal that a terminal\nis connected (DTR)"
-		(exclude_from_sim no)
-		(at 185.42 75.184 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "f4d03a52-c82d-44b6-9837-1c07536f4a45")
-	)
 	(junction
 		(at 148.59 124.46)
 		(diameter 0)
@@ -1398,6 +1387,10 @@
 	(no_connect
 		(at 171.45 74.93)
 		(uuid "c7631ff0-dccb-4adf-ac06-ac365cdcebf5")
+	)
+	(no_connect
+		(at 171.45 69.85)
+		(uuid "cb514a24-d83f-434d-8d49-c9d67056befa")
 	)
 	(wire
 		(pts
@@ -1821,16 +1814,6 @@
 	)
 	(wire
 		(pts
-			(xy 171.45 69.85) (xy 185.42 69.85)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "cbb44be7-78d1-43da-98c4-961fd56c7151")
-	)
-	(wire
-		(pts
 			(xy 171.45 72.39) (xy 185.42 72.39)
 		)
 		(stroke
@@ -2039,17 +2022,6 @@
 			(justify left)
 		)
 		(uuid "1b3c6a93-b36f-470c-a551-bbbd5c7d5b25")
-	)
-	(hierarchical_label "CONSOLE_DTR"
-		(shape output)
-		(at 185.42 69.85 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "400f7f2e-6d87-48bf-9113-92a2874bae53")
 	)
 	(hierarchical_label "CONSOLE_RX"
 		(shape input)

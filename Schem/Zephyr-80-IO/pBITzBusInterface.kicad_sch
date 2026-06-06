@@ -3434,7 +3434,7 @@
 		)
 		(uuid "0365c57c-5d0a-41d5-9e7b-7295ee640d07")
 	)
-	(hierarchical_label "~{POWER_OFF_RQ}"
+	(hierarchical_label "~{SHUTDOWN_RQ}"
 		(shape output)
 		(at 223.52 147.32 180)
 		(effects
@@ -3599,7 +3599,7 @@
 		)
 		(uuid "85dc77f8-aa52-4437-afbe-dd6a28ae96f8")
 	)
-	(hierarchical_label "SPI_MISO"
+	(hierarchical_label "IOI_MISO"
 		(shape output)
 		(at 95.25 227.33 180)
 		(effects
@@ -3709,7 +3709,7 @@
 		)
 		(uuid "d4681c69-f0db-44a2-8beb-44a8e4169134")
 	)
-	(hierarchical_label "~{POWER_OFF}"
+	(hierarchical_label "~{PWR_OFF}"
 		(shape input)
 		(at 279.4 147.32 0)
 		(effects
@@ -3720,7 +3720,7 @@
 		)
 		(uuid "d89e6270-5a97-4984-af52-fcd33334d804")
 	)
-	(hierarchical_label "SPI_MOSI"
+	(hierarchical_label "IO_MOSI"
 		(shape input)
 		(at 146.05 227.33 0)
 		(effects
