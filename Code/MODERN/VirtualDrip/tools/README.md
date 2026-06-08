@@ -21,3 +21,7 @@ Serial mode requires `pyserial`:
 ```bash
 python3 -m pip install pyserial
 ```
+
+Hardware RTS/CTS flow control is enabled by default to match the live proxy
+serial path. Use `--no-rtscts` only for adapters or pseudo-terminals that cannot
+support modem-control handshaking.

@@ -86,7 +86,8 @@ LF                              = 0x0a
 SIO_CH_CONSOLE                  = 0x00
 SIO_CH_IOCTRL                   = 0x01
 
-; IOCALL caller-provided request block offsets.
+; IOCALL caller-provided request block offsets (legacy variable-length protocol).
+; Retained for reference; the active IOCALL now uses the fixed-frame contract.
 IOCALL_CHAN                     = 0x00
 IOCALL_CMD                      = 0x01
 IOCALL_TX_LEN                   = 0x02
@@ -104,6 +105,74 @@ IOC_STATUS_BAD_CHAN             = 0x01
 IOC_STATUS_BAD_CMD              = 0x02
 IOC_STATUS_BAD_LEN              = 0x03
 IOC_STATUS_BUSY                 = 0x04
+
+; ------------------------------------------------------------------------------
+; IOC Fixed-Frame Transport Constants
+; ------------------------------------------------------------------------------
+; Command channel = SIO1/B (ports 32h data, 33h ctrl).
+; Bulk    channel = SIO1/A (ports 30h data, 31h ctrl) — inactive in Phase 1.
+;
+; Naming convention matches the Z80 SIO channel letters (A/B), not the MCU
+; KiCad schematic net names (SIO_PORTA_CS / SIO_PORTB_CS).
+
+SIO_COMMAND_DATA_PORT           = SIO1B_DATA      ; 32h — Command channel data
+SIO_COMMAND_CTRL_PORT           = SIO1B_CTRL      ; 33h — Command channel control
+SIO_BULK_DATA_PORT              = SIO1A_DATA      ; 30h — Bulk channel data
+SIO_BULK_CTRL_PORT              = SIO1A_CTRL      ; 31h — Bulk channel control
+
+; All IOC Command-channel frames are exactly 32 bytes.
+; Frame layout (owned by callers/consumers — BIOS transport does not decode):
+;   byte 0      class / command / response type
+;   byte 1      sequence number
+;   byte 2      status / flags
+;   byte 3      payload length (consumer-defined)
+;   bytes 4-19  payload bytes
+;   bytes 20-31 reserved / command-specific
+IOC_FRAME_SIZE                  = 0x20
+
+; BIOS transport status codes returned by IOCALL.
+; These are transport-layer codes; MCU command status is in the 32-byte frame.
+IOC_XPORT_OK                    = 0x00
+IOC_XPORT_TIMEOUT               = 0x01
+IOC_XPORT_BAD_FRAME             = 0x02
+IOC_XPORT_HW_ERROR              = 0x03
+
+; SIO1/B Command channel register values — External Sync mode.
+; MCU is the synchronous clock master; Z80 SIO1/B is externally clocked x1.
+;
+; SDLC mode cannot be used on this board: SIO1/B /SYNCB is wired to an
+; MCU-owned net (it also gates the SIO->MCU MISO buffer), and SDLC/Monosync/
+; Bisync drive /SYNC as an OUTPUT, contending with the MCU.  External Sync mode
+; makes /SYNC an INPUT (MCU-owned), so the MCU drives it low for the whole
+; transaction with no contention.  Framing (preamble + 32-byte frame + CRC) is
+; handled in software on both sides; the SIO's hardware CRC is disabled.
+;
+; WR4 = 0x30:  bits 5:4 = 11 = External Sync mode, bits 7:6 = 00 = x1 clock
+; WR3 = 0xD1:  8-bit RX, enter hunt, RX enable, RX CRC disabled
+; WR5 = 0x68:  8-bit TX, TX enable, TX CRC disabled, RTS inactive
+; WR5 = 0x6A:  same with RTS asserted (to request MCU service)
+; WR7 = 0x7E:  receive sync char / transmit underrun fill (not used for
+;              detection in External Sync; sync is via the /SYNC pin)
+SIO_WR4_CMD_EXTSYNC             = 0x30
+SIO_WR3_CMD_RX                  = 0xd1
+SIO_WR5_CMD_TX_RTS_OFF          = 0x68
+SIO_WR5_CMD_TX_RTS_ON           = 0x6a
+SIO_SDLC_FLAG                   = 0x7e
+
+; External Sync framing: software byte-alignment preamble.  Sent as the first
+; byte of every frame; the receiver hunts for it to find the frame boundary.
+; (Mostly-zero PING/RESET payloads cannot contain this pattern.)
+IOC_SYNC_PREAMBLE               = 0x7e
+
+; Timeout for Command channel polled byte operations.
+; The MCU only clocks during active transactions; timeout prevents indefinite hang
+; if the MCU is absent or not clocking.
+SIO_COMMAND_TIMEOUT             = 0xffff
+
+; Code placement for IOC Command-channel transport helpers.
+; VDrip console driver ends at F52Bh (VDRIP_CONSOLE_CODE_END).
+; F52Ch is the first free byte in the gap before driver slot 5 (F680h).
+CBIOS_IOC_COMMAND_CODE_BASE     = 0xf52c
 
 ; ------------------------------------------------------------------------------
 ; CP/M Page Zero & Environment Setup

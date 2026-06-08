@@ -1,7 +1,10 @@
+#define _DEFAULT_SOURCE
+
 #include "storage_protocol.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #define STORAGE_STATUS_SUCCESS 0x00u
 #define STORAGE_STATUS_ERROR 0x01u
@@ -11,6 +14,8 @@
 #define STORAGE_WRITE_REQUEST_LENGTH (6u + STORAGE_RECORD_SIZE)
 #define STORAGE_WRITE_REPLY_LENGTH 2u
 #define STORAGE_REPLY_INTER_BYTE_DELAY_US 100u
+#define STORAGE_REPLY_DRAIN_TIMEOUT_MS 1000
+#define STORAGE_REPLY_TURNAROUND_DELAY_US 5000u
 
 bool storage_protocol_is_request_type(uint8_t type)
 {
@@ -200,10 +205,30 @@ static void storage_handle_write_request(
     }
 }
 
+static void storage_wait_for_reply_turnaround(SerialPort *serial_port)
+{
+    if (serial_port == NULL) {
+        return;
+    }
+
+    if (!serial_port_wait_output_drained(serial_port, STORAGE_REPLY_DRAIN_TIMEOUT_MS)) {
+        fprintf(stderr, "Storage reply output did not fully drain before console input was ungated\n");
+    }
+
+    /*
+     * tc/TIOCOUTQ drainage proves the host driver is clear, not that the Z80 has
+     * already run storage_end and restored the console RX sink. Keep the input
+     * gate closed briefly so held keys cannot queue a TERMINAL_RX packet into
+     * the tail of a storage transaction.
+     */
+    usleep(STORAGE_REPLY_TURNAROUND_DELAY_US);
+}
+
 bool storage_protocol_handle_packet(
     const Packet *packet,
     SerialPort *serial_port,
     KeyboardTransport *keyboard_transport,
+    PtyConsole *pty_console,
     StorageBackend *storage_backend,
     bool log_storage)
 {
@@ -212,6 +237,7 @@ bool storage_protocol_handle_packet(
     }
 
     keyboard_transport_set_storage_active(keyboard_transport, true);
+    pty_console_set_storage_active(pty_console, true);
 
     if (serial_port == NULL || storage_backend == NULL) {
         fprintf(stderr, "Storage request ignored: serial storage backend is not configured\n");
@@ -221,6 +247,9 @@ bool storage_protocol_handle_packet(
         storage_handle_write_request(packet, serial_port, storage_backend, log_storage);
     }
 
+    storage_wait_for_reply_turnaround(serial_port);
+
     keyboard_transport_set_storage_active(keyboard_transport, false);
+    pty_console_set_storage_active(pty_console, false);
     return true;
 }

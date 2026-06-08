@@ -393,6 +393,30 @@ src/protocol_debug.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/protocol_debug.c.s
 .PHONY : src/protocol_debug.c.s
 
+src/pty_console.o: src/pty_console.c.o
+.PHONY : src/pty_console.o
+
+# target to build an object file
+src/pty_console.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/pty_console.c.o
+.PHONY : src/pty_console.c.o
+
+src/pty_console.i: src/pty_console.c.i
+.PHONY : src/pty_console.i
+
+# target to preprocess a source file
+src/pty_console.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/pty_console.c.i
+.PHONY : src/pty_console.c.i
+
+src/pty_console.s: src/pty_console.c.s
+.PHONY : src/pty_console.s
+
+# target to generate assembly for a file
+src/pty_console.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/virtual-vdp.dir/build.make CMakeFiles/virtual-vdp.dir/src/pty_console.c.s
+.PHONY : src/pty_console.c.s
+
 src/serial_port.o: src/serial_port.c.o
 .PHONY : src/serial_port.o
 
@@ -627,6 +651,9 @@ help:
 	@echo "... src/protocol_debug.o"
 	@echo "... src/protocol_debug.i"
 	@echo "... src/protocol_debug.s"
+	@echo "... src/pty_console.o"
+	@echo "... src/pty_console.i"
+	@echo "... src/pty_console.s"
 	@echo "... src/serial_port.o"
 	@echo "... src/serial_port.i"
 	@echo "... src/serial_port.s"

@@ -10,6 +10,17 @@ DOCS_DIR ?= docs
 
 CPM22_SRC ?= cpm-2.2/src/cpm22.asm
 CPMTOOLS_DISKDEF ?= images/diskdef
+CONSOLE_DRIVER ?= vdrip
+
+ifeq ($(CONSOLE_DRIVER),vdrip)
+CONSOLE_DRIVER_SRC := $(SRC_DIR)/cbios_console_vdrip.asm
+CONSOLE_DRIVER_INCLUDE := cbios_console_vdrip.asm
+else ifeq ($(CONSOLE_DRIVER),pt_vdrip)
+CONSOLE_DRIVER_SRC := $(SRC_DIR)/cbios_console_pt_vdrip.asm
+CONSOLE_DRIVER_INCLUDE := cbios_console_pt_vdrip.asm
+else
+$(error Unsupported CONSOLE_DRIVER=$(CONSOLE_DRIVER). Use vdrip or pt_vdrip)
+endif
 
 ASFLAGS ?= -o -l -s
 LDFLAGS ?= -i
@@ -25,7 +36,7 @@ RUNTIME_SRCS ?= \
 	$(SRC_DIR)/cbios_console.asm \
 	$(SRC_DIR)/sio_core.asm \
 	$(SRC_DIR)/cbios_iocall.asm \
-	$(SRC_DIR)/cbios_console_vdrip.asm \
+	$(CONSOLE_DRIVER_SRC) \
 	$(SRC_DIR)/cbios_storage.asm \
 	$(SRC_DIR)/cbios_storage_vdrip.asm \
 	$(SRC_DIR)/cbios_bank_select.asm \
@@ -39,6 +50,7 @@ FIRMWARE_REL ?= $(BUILD_DIR)/firmware.rel
 FIRMWARE_IHX ?= $(BUILD_DIR)/firmware.ihx
 FIRMWARE_LST ?= $(BUILD_DIR)/firmware.lst
 FIRMWARE_SYM ?= $(BUILD_DIR)/firmware.sym
+CONSOLE_DRIVER_STAMP ?= $(BUILD_DIR)/console-driver-$(CONSOLE_DRIVER).stamp
 
 PRE_SWAP_IMAGE ?= $(BUILD_DIR)/zephyr80.pre-swap.bin
 FINAL_IMAGE ?= $(BUILD_DIR)/zephyr80.bin
@@ -91,8 +103,14 @@ runtime-sources-check:
 $(CPM22_ASXXXX_SRC): $(CPM22_SRC) $(CPM22_CONVERT_TOOL) | $(BUILD_DIR)
 	$(PYTHON) $(CPM22_CONVERT_TOOL) "$<" "$@"
 
-$(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm $(CPM22_ASXXXX_SRC) | $(BUILD_DIR)
-	sed 's|\.include "../cpm-2.2/src/cpm22.asm"|.include "cpm22_asxxxx.asm"|' "$<" > "$@"
+$(CONSOLE_DRIVER_STAMP): | $(BUILD_DIR)
+	printf '%s\n' "$(CONSOLE_DRIVER)" > "$@"
+
+$(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm $(CPM22_ASXXXX_SRC) $(CONSOLE_DRIVER_STAMP) Makefile | $(BUILD_DIR)
+	sed \
+		-e 's|\.include "../cpm-2.2/src/cpm22.asm"|.include "cpm22_asxxxx.asm"|' \
+		-e 's|\.include "cbios_console_vdrip.asm"|.include "$(CONSOLE_DRIVER_INCLUDE)"|' \
+		"$<" > "$@"
 
 $(FIRMWARE_REL): $(FIRMWARE_SRC) $(RUNTIME_SRCS) $(CPM22_ASXXXX_SRC) $(CPM22_SRC) | $(BUILD_DIR)
 	$(SDASZ80) -I$(SRC_DIR) -I$(BUILD_DIR) $(ASFLAGS) $@ $(FIRMWARE_SRC)

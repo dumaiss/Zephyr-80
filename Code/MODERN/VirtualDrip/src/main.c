@@ -19,6 +19,7 @@
 #include "input_keyboard.h"
 #include "keyboard_transport.h"
 #include "packet_dispatch.h"
+#include "pty_console.h"
 #include "serial_port.h"
 #include "serial_reader.h"
 #include "storage_backend.h"
@@ -94,8 +95,9 @@ int main(int argc, char **argv)
     SerialPort *serial_port = NULL;
     SerialReader *serial_reader = NULL;
     KeyboardTransport *keyboard_transport = NULL;
+    PtyConsole *pty_console = NULL;
     InputKeyboardContext keyboard;
-    input_keyboard_init(&keyboard, NULL, config.keyboard_enabled, config.log_keys);
+    input_keyboard_init(&keyboard, NULL, config.keyboard_enabled && !config.console_pty, config.log_keys);
 
     int input_status = 0;
     if (config.input_mode == INPUT_FILE_REPLAY) {
@@ -128,20 +130,36 @@ int main(int argc, char **argv)
         }
         packet_dispatch_set_storage_backend(&dispatch, &storage_backend, serial_port, config.log_storage);
 
-        keyboard_transport = keyboard_transport_create(serial_port);
-        if (keyboard_transport == NULL || !keyboard_transport_start(keyboard_transport)) {
-            keyboard_transport_destroy(keyboard_transport);
-            serial_port_close(serial_port);
-            storage_backend_close(&storage_backend);
-            packet_dispatch_destroy(&dispatch);
-            free(framebuffer);
-            video_device_destroy(video_device);
-            return 1;
-        }
-        packet_dispatch_set_keyboard_transport(&dispatch, keyboard_transport);
-        input_keyboard_init(&keyboard, keyboard_transport, config.keyboard_enabled, config.log_keys);
-        if (config.raw_terminal_input) {
-            fprintf(stderr, "Keyboard input mode: raw-terminal\n");
+        if (config.console_pty) {
+            pty_console = pty_console_create(serial_port, config.log_packets, app_runtime_should_stop, NULL);
+            if (pty_console == NULL || !pty_console_start(pty_console)) {
+                pty_console_destroy(pty_console);
+                serial_port_close(serial_port);
+                storage_backend_close(&storage_backend);
+                packet_dispatch_destroy(&dispatch);
+                free(framebuffer);
+                video_device_destroy(video_device);
+                return 1;
+            }
+            packet_dispatch_set_pty_console(&dispatch, pty_console);
+            printf("Console PTY: %s\n", pty_console_slave_path(pty_console));
+            printf("Connect with: picocom %s\n", pty_console_slave_path(pty_console));
+        } else {
+            keyboard_transport = keyboard_transport_create(serial_port);
+            if (keyboard_transport == NULL || !keyboard_transport_start(keyboard_transport)) {
+                keyboard_transport_destroy(keyboard_transport);
+                serial_port_close(serial_port);
+                storage_backend_close(&storage_backend);
+                packet_dispatch_destroy(&dispatch);
+                free(framebuffer);
+                video_device_destroy(video_device);
+                return 1;
+            }
+            packet_dispatch_set_keyboard_transport(&dispatch, keyboard_transport);
+            input_keyboard_init(&keyboard, keyboard_transport, config.keyboard_enabled, config.log_keys);
+            if (config.raw_terminal_input) {
+                fprintf(stderr, "Keyboard input mode: raw-terminal\n");
+            }
         }
 
         SerialReaderConfig reader_config = {
@@ -154,6 +172,8 @@ int main(int argc, char **argv)
         /* Serial callbacks run on the reader thread and enter PacketDispatch. */
         serial_reader = serial_reader_start(&reader_config);
         if (serial_reader == NULL) {
+            app_runtime_request_stop();
+            pty_console_destroy(pty_console);
             keyboard_transport_destroy(keyboard_transport);
             serial_port_close(serial_port);
             storage_backend_close(&storage_backend);
@@ -167,7 +187,12 @@ int main(int argc, char **argv)
          * Signal to the Z80 only after the serial reader is active, so the
          * first framed storage/display packet cannot beat the proxy RX path.
          */
-        {
+        if (config.console_pty) {
+            bool ready_sent = serial_port_send_packet(serial_port, PACKET_PROXY_READY, NULL, 0);
+            fprintf(stderr,
+                "Sent packetized proxy readiness: PROXY_READY (%s)\n",
+                ready_sent ? "ok" : "failed");
+        } else {
             bool ready_sent = serial_port_send_raw(
                 serial_port,
                 RAW_TERMINAL_READY,
@@ -195,6 +220,7 @@ int main(int argc, char **argv)
         if (display == NULL) {
             app_runtime_request_stop();
             serial_reader_join(serial_reader);
+            pty_console_destroy(pty_console);
             keyboard_transport_destroy(keyboard_transport);
             serial_port_close(serial_port);
             storage_backend_close(&storage_backend);
@@ -235,6 +261,7 @@ int main(int argc, char **argv)
     app_runtime_request_stop();
     serial_reader_join(serial_reader);
     display_libvncserver_destroy(display);
+    pty_console_destroy(pty_console);
     keyboard_transport_destroy(keyboard_transport);
     serial_port_close(serial_port);
     storage_backend_close(&storage_backend);

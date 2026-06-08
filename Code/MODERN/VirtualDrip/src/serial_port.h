@@ -5,11 +5,12 @@
  * @file serial_port.h
  * POSIX serial port ownership and transmit helpers.
  *
- * Virtual Drip opens serial devices read/write: VDP operation packets arrive
- * from Zephyr as framed packets, while keyboard input is sent back to Zephyr as
- * raw terminal bytes. The implementation configures raw mode and protects writes
- * with a mutex because keyboard callbacks may transmit while the serial reader
- * thread is active.
+ * Virtual Drip opens serial devices read/write: VDP, storage, and optional PTY
+ * console packets are framed, while the default built-in console path still
+ * sends VNC keyboard input back to Zephyr as raw terminal bytes. The
+ * implementation configures raw mode with hardware RTS/CTS flow control and
+ * protects writes with a mutex because multiple transmit paths may share the
+ * serial fd while the reader thread is active.
  */
 
 #include <stdbool.h>
@@ -44,8 +45,8 @@ int serial_port_baud_rate(const SerialPort *port);
  *
  * The packet bytes are SYNC0, SYNC1, LEN, TYPE, PAYLOAD, CRC8. LEN counts the
  * complete packet body after the sync bytes, including LEN itself and CRC8.
- * The call drains the serial transmitter before returning so keyboard packets
- * are observable during pseudo-terminal tests.
+ * With CRTSCTS enabled, the kernel gates physical transmission on peer CTS.
+ * The userspace call returns after bytes are accepted into the serial driver.
  */
 bool serial_port_send_packet(SerialPort *port, uint8_t type, const uint8_t *payload, uint8_t length);
 
@@ -64,10 +65,20 @@ bool serial_port_send_packet_paced(
     unsigned inter_byte_delay_us);
 
 /**
+ * Wait until pending host-to-Z80 bytes have left the serial driver.
+ *
+ * This is intentionally not part of normal packet/keyboard sends; it is used
+ * after storage replies so console input cannot be released while the Z80
+ * storage parser may still own the RX sink.
+ */
+bool serial_port_wait_output_drained(SerialPort *port, int timeout_ms);
+
+/**
  * Write raw bytes under the TX mutex.
  *
- * Used for proxy->Z80 terminal input and readiness. Bytes are not wrapped in
- * Virtual Drip framing and no CRC is appended.
+ * Used for the default proxy->Z80 terminal input and readiness path. Bytes are
+ * not wrapped in Virtual Drip framing and no CRC is appended. PTY console mode
+ * uses serial_port_send_packet() with TERMINAL_RX instead.
  */
 bool serial_port_send_raw(SerialPort *port, const uint8_t *bytes, size_t length);
 

@@ -29,6 +29,8 @@ void print_packet_detail(const Packet *packet)
         }
         break;
     case PACKET_TERMINAL_INPUT:
+    case PACKET_TERMINAL_TX:
+    case PACKET_TERMINAL_RX:
         printf(" terminal_bytes=");
         print_payload_hex(packet->payload, packet->length);
         break;

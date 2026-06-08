@@ -24,6 +24,7 @@ void print_usage(const char *program_name)
     fprintf(stderr, "  --log-keys: log RFB key events, mappings, and raw serial terminal input bytes\n");
     fprintf(stderr, "  --log-storage: log storage request/reply summaries\n");
     fprintf(stderr, "  --log-packets: log decoded non-storage packets\n");
+    fprintf(stderr, "  --console-pty, --pty-console: expose packetized console through a Linux PTY in serial mode\n");
     fprintf(stderr, "  --no-keyboard: disable VNC keyboard capture\n");
     fprintf(stderr, "  --raw-terminal-input: send proxy->Z80 keyboard bytes raw (default)\n");
 }
@@ -53,6 +54,7 @@ bool parse_args(int argc, char **argv, AppConfig *config)
     config->log_keys = false;
     config->log_storage = false;
     config->log_packets = false;
+    config->console_pty = false;
     config->raw_terminal_input = true;
     config->video_backend = DEFAULT_VIDEO_BACKEND;
 
@@ -73,6 +75,10 @@ bool parse_args(int argc, char **argv, AppConfig *config)
         }
         if (strcmp(arg, "--log-packets") == 0) {
             config->log_packets = true;
+            continue;
+        }
+        if (strcmp(arg, "--console-pty") == 0 || strcmp(arg, "--pty-console") == 0) {
+            config->console_pty = true;
             continue;
         }
         if (strcmp(arg, "--no-keyboard") == 0) {
@@ -157,6 +163,11 @@ bool parse_args(int argc, char **argv, AppConfig *config)
         }
         config->input_mode = INPUT_FILE_REPLAY;
         config->file_path = arg;
+    }
+
+    if (config->console_pty && config->input_mode != INPUT_SERIAL) {
+        fprintf(stderr, "--console-pty requires --serial\n");
+        return false;
     }
 
     return true;

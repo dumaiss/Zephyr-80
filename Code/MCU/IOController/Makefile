@@ -2,14 +2,20 @@ DEVICE ?= PIC18F57Q84
 TARGET := io_controller
 
 BUILD_DIR := build
-SRC_DIR := src
-INC_DIR := include
+SRC_DIR   := src
+INC_DIR   := include
 
 XC8_DIR ?= /opt/microchip/xc8/v3.10/bin
-XC8 ?= $(XC8_DIR)/xc8-cc
-DFP ?= /home/kitamura/Downloads/xc8
+XC8     ?= $(XC8_DIR)/xc8-cc
+DFP     ?= /home/kitamura/Downloads/xc8
 
-FIRMWARE_SRCS := $(SRC_DIR)/main.c
+FIRMWARE_SRCS := \
+    $(SRC_DIR)/main.c       \
+    $(SRC_DIR)/trace.c      \
+    $(SRC_DIR)/crc_ccitt.c  \
+    $(SRC_DIR)/sdlc.c       \
+    $(SRC_DIR)/dispatch.c   \
+    $(SRC_DIR)/handlers.c
 
 FIRMWARE_HEX := $(BUILD_DIR)/$(TARGET).hex
 
@@ -26,7 +32,7 @@ $(FIRMWARE_HEX): $(FIRMWARE_SRCS) | $(BUILD_DIR)
 	$(XC8) $(XC8FLAGS) $^ -o $(BUILD_DIR)/$(TARGET)
 
 test:
-	@echo "No host tests: firmware only drives the boot reset pulse."
+	@echo "No host tests yet: firmware only."
 
 size: $(FIRMWARE_HEX)
 	@ls -lh "$(BUILD_DIR)"

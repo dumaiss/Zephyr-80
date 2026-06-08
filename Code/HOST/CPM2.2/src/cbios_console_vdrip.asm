@@ -129,6 +129,8 @@ PACKET_STORAGE_READ_REQ	= 0x0d
 PACKET_STORAGE_READ_REPLY = 0x0e
 PACKET_STORAGE_WRITE_REQ = 0x0f
 PACKET_STORAGE_WRITE_REPLY = 0x10
+PACKET_TERMINAL_TX	= 0x11
+PACKET_TERMINAL_RX	= 0x12
 
 CURSOR_ENABLE		= 0x01
 CURSOR_SHOW		= 0x02
@@ -228,8 +230,10 @@ VDRIP_DATA_BLOCK_MAX = 240
 ; Console input queue (CONIN FIFO, interrupt-fed).
 TEXTQ_SIZE		= 0x80
 TEXTQ_MASK		= TEXTQ_SIZE - 1
-TEXTQ_RTS_HIGH_WATER	= 0x40
-TEXTQ_RTS_LOW_WATER	= 0x00
+; Leave substantial in-flight headroom after releasing RTS so multi-byte keys
+; such as ESC [ A/B are less likely to be split by byte-level FIFO overflow.
+TEXTQ_RTS_HIGH_WATER	= 0x20
+TEXTQ_RTS_LOW_WATER	= 0x10
 
 ; Stub return values for auxiliary CP/M devices.
 CONSOLE_EOF		= 0x1a
@@ -2295,7 +2299,7 @@ textq_put_ascii:
 	inc a
 	ld (textq_count),a
 
-	; If output queue is getting full, stop host input.
+	; If the input queue is getting full, stop host input.
 	cp #TEXTQ_RTS_HIGH_WATER
 	ret c
 
@@ -2305,7 +2309,7 @@ textq_put_ascii:
 	ret
 
 textq_full:
-	; Output renderer cannot keep up. Stop host.
+	; Foreground input consumption cannot keep up. Stop host input.
 	call vdrip_rts_release_raw
 	ld a,#0x01
 	ld (vdrip_rx_rts_released),a

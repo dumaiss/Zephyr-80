@@ -379,8 +379,11 @@ vdrip_storage_rx_done:
 	ret
 
 ; Transaction-scoped framed reply parser.
-; Unexpected raw bytes before A5 are ignored. Once a frame starts, bad length,
-; CRC, type, sequence, status, or payload size marks the transaction failed.
+; Unexpected raw bytes before A5 are ignored. Valid PACKET_TERMINAL_RX packets
+; that slip into the transaction window are ignored after CRC validation;
+; in-flight console input must not turn into BDOS disk errors. Malformed frames
+; or storage replies with bad length, type, sequence, status, or payload size
+; still fail the transaction.
 vdrip_storage_parse_byte:
 	ld c,a
 	ld a,(storage_rx_state)
@@ -504,11 +507,16 @@ storage_parse_crc:
 	jr nz,storage_parse_error
 
 	ld a,(storage_rx_type)
+	cp #PACKET_TERMINAL_RX
+	jr z,storage_parse_crc_reset
 	ld b,a
 	ld a,(storage_expected_type)
 	cp b
 	jr nz,storage_parse_error
 
+	; Console packets can already be in flight when storage_begin swaps the RX
+	; sink. PACKET_TERMINAL_RX is ignored above after CRC validation so the
+	; parser keeps waiting for the real storage reply.
 	ld a,(storage_rx_payload_len)
 	ld b,a
 	ld a,(storage_expected_len)
@@ -527,6 +535,7 @@ storage_parse_crc:
 
 	ld a,#0x01
 	ld (storage_rx_complete),a
+storage_parse_crc_reset:
 	xor a
 	ld (storage_rx_state),a
 	ret

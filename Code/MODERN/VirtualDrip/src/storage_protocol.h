@@ -7,6 +7,7 @@
  */
 
 #include "keyboard_transport.h"
+#include "pty_console.h"
 #include "protocol.h"
 #include "serial_port.h"
 #include "storage_backend.h"
@@ -19,6 +20,7 @@ bool storage_protocol_handle_packet(
     const Packet *packet,
     SerialPort *serial_port,
     KeyboardTransport *keyboard_transport,
+    PtyConsole *pty_console,
     StorageBackend *storage_backend,
     bool log_storage);
 

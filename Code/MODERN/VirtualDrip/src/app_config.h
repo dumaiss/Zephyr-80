@@ -49,6 +49,8 @@ typedef struct {
     bool log_storage;
     /** Print decoded non-storage packets for live protocol debugging. */
     bool log_packets;
+    /** Bridge packetized console TX/RX through a Linux PTY in serial mode. */
+    bool console_pty;
     /** Proxy->Z80 keyboard input is raw terminal bytes. */
     bool raw_terminal_input;
     /** Video backend selector. Currently only "tms9928" is accepted. */

@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 41326 bytes |
+| Firmware symbol map | `build/firmware.map` | 34872 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 131072 bytes |
 | Final burnable image | `build/zephyr80.bin` | 131072 bytes |
 | Layout manifest | `build/layout.manifest` | 273 bytes |
@@ -117,7 +117,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `vdrip_storage_write` | `F83Eh` | Writes one 128-byte record to VDrip proxy storage. |
 | `VDRIP_STORAGE_DPH` | `FB40h` | Drive A disk parameter header. |
 | `VDRIP_STORAGE_DPB` | `FB50h` | Drive A disk parameter block. |
-| `VDRIP_STORAGE_CODE_END` | `FA7Bh` | VDrip storage backend code end. |
+| `VDRIP_STORAGE_CODE_END` | `FA7Fh` | VDrip storage backend code end. |
 | `SIO_CORE_CODE_START` | `DD10h` | BIOS-owned SIO core code start in core BIOS. |
 | `CONSOLE_IM2_VECTOR_ENTRY` | `DD10h` | SIO core exact IM2 vector table entry address. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |
@@ -141,11 +141,11 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `SIO_CORE_CODE_END` | `DF50h` | BIOS-owned SIO core code end. |
 | `IOCTRL_CODE_START` | `DF7Bh` | IOCALL transaction code start in core BIOS. |
 | `IOCALL` | `DF7Bh` | Zephyr extended BIOS IO Controller transaction call. |
-| `IOCTRL_CODE_END` | `DFFCh` | IOCALL transaction code end. |
+| `IOCTRL_CODE_END` | `DFC8h` | IOCALL transaction code end. |
 | `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E00Eh` | Virtual Drip console init, proxy handshake, VDP setup. |
-| `VDRIP_CONSOLE_CODE_END` | `F52Bh` | Virtual Drip console driver code end. |
+| `VDRIP_CONSOLE_CODE_END` | `E3E9h` | Virtual Drip console driver code end. |
 | `BANKING_CODE_START` | `DC00h` | Banking extension implementation start. |
 | `SELMEM` | `DC00h` | Select RAM bank. |
 | `SETBNK` | `DC0Ah` | Record future DMA bank. |

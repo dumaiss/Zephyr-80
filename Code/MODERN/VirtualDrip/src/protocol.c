@@ -55,6 +55,8 @@ const char *packet_type_name(uint8_t type)
         return "FRAME_MARK";
     case PACKET_CURSOR_COMMAND:
         return "CURSOR_COMMAND";
+    case PACKET_PROXY_READY:
+        return "PROXY_READY";
     case PACKET_VDP_DATA_BLOCK:
         return "VDP_DATA_BLOCK";
     case PACKET_VDP_SCROLL:
@@ -67,6 +69,10 @@ const char *packet_type_name(uint8_t type)
         return "STORAGE_WRITE_REQ";
     case PACKET_STORAGE_WRITE_REPLY:
         return "STORAGE_WRITE_REPLY";
+    case PACKET_TERMINAL_TX:
+        return "TERMINAL_TX";
+    case PACKET_TERMINAL_RX:
+        return "TERMINAL_RX";
     default:
         return "UNKNOWN";
     }

@@ -137,6 +137,15 @@ Virtual Drip uses a **packetized serial protocol** carrying VDP semantics.
 | 0x07  | `PING`            | Debug / keepalive                    |
 | 0x08  | `FRAME_MARK`      | Frame boundary marker (replay pacing)|
 | 0x09  | `CURSOR_COMMAND`  | Proxy-side text cursor overlay command |
+| 0x0A  | `PROXY_READY`     | Proxy startup readiness marker       |
+| 0x0B  | `VDP_DATA_BLOCK`  | Block write to VDP data port         |
+| 0x0C  | `VDP_SCROLL`      | Proxy-assisted text scroll command   |
+| 0x0D  | `STORAGE_READ_REQ` | Read a 128-byte storage record      |
+| 0x0E  | `STORAGE_READ_REPLY` | Reply to a storage read request   |
+| 0x0F  | `STORAGE_WRITE_REQ` | Write a 128-byte storage record    |
+| 0x10  | `STORAGE_WRITE_REPLY` | Reply to a storage write request |
+| 0x11  | `TERMINAL_TX`     | PTY console output: Z80 -> proxy PTY |
+| 0x12  | `TERMINAL_RX`     | PTY console input: proxy PTY -> Z80  |
 
 👉 Important design choice:
 
@@ -146,7 +155,30 @@ The protocol transports VDP operations, NOT pixels.
 
 ### `TERMINAL_INPUT` payload
 
-Payload is 1..N raw terminal input bytes. Key-up events generate no packet.
+Legacy packetized keyboard payload. The current default live proxy path sends
+VNC keyboard bytes as raw serial terminal input for the built-in VDrip console.
+PTY console mode uses `TERMINAL_RX` instead.
+
+### PTY console packets
+
+`TERMINAL_TX` payload bytes are written unchanged to the PTY master. `TERMINAL_RX`
+payload bytes are raw bytes read from the PTY master and wrapped unchanged for
+the Z80 console input FIFO. The proxy does not parse ANSI/VT100, translate keys,
+track a cursor, or maintain a terminal screen buffer in PTY console mode.
+
+The matching CP/M BIOS backend is selected at build time:
+
+```bash
+make CONSOLE_DRIVER=pt_vdrip
+```
+
+The default CP/M build remains:
+
+```bash
+make CONSOLE_DRIVER=vdrip
+```
+
+For the default VNC keyboard path, key-down events map to raw terminal bytes:
 
 Minimal key mapping:
 
@@ -175,11 +207,19 @@ Minimal key mapping:
 # Live serial input with storage transaction logging
 ./build/virtual-vdp --serial /dev/ttyUSB0 115200 --disk-a zephyr_a.img --log-storage
 
+# Packetized PTY console bridge for a PTY-console CP/M BIOS build
+./build/virtual-vdp --serial /dev/ttyUSB0 115200 --console-pty
+
 # No input: serve a blank VNC framebuffer
 ./build/virtual-vdp
 ```
 
 Supported baud rates: **9600, 19200, 38400, 57600, 115200, 230400**.
+
+Serial mode uses kernel-managed hardware RTS/CTS flow control. Virtual Drip
+enables `CRTSCTS` and disables software XON/XOFF; the serial driver gates
+physical proxy-to-Z80 transmission on peer CTS. Storage replies also use an
+inter-byte delay for the Z80-side parser.
 
 In serial mode, `--disk-a PATH` selects the local flat 8 MiB image backing CP/M drive A.
 A missing image is created and filled with `0xE5`; an existing image with any other size is rejected.
@@ -198,7 +238,12 @@ A missing image is created and filled with `0xE5`; an existing image with any ot
 ## ⌨️ Input Model
 
 ```text
-VNC Client → LibVNCServer callback → Keyboard mapper → TERMINAL_INPUT packet → Keyboard queue/writer → Serial → Zephyr
+Default VNC mode:
+VNC Client → LibVNCServer callback → Keyboard mapper → raw terminal bytes → Serial → Zephyr
+
+PTY console mode:
+terminal emulator → PTY master → TERMINAL_RX packet → Serial → Zephyr
+Zephyr → TERMINAL_TX packet → PTY master → terminal emulator
 ```
 
 * Immediate key events (no block mode)
@@ -207,6 +252,7 @@ VNC Client → LibVNCServer callback → Keyboard mapper → TERMINAL_INPUT pack
 * Arrow keys use minimal ANSI CSI sequences
 * Enable/disable with `--no-keyboard`
 * Debug with `--log-keys` (logs terminal packet payload bytes)
+* Enable PTY console bridging with `--console-pty` in serial mode
 
 ---
 

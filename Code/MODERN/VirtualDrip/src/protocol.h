@@ -40,6 +40,9 @@
  * RESET and PING are Virtual Drip control packets, not TMS9928A port writes.
  * FRAME_MARK is a replay/pacing marker for animation tests; it is not a
  * hardware VBlank signal.
+ * TERMINAL_TX and TERMINAL_RX are the packetized PTY console byte stream:
+ * TX flows from Z80 console output to the proxy PTY, RX flows from PTY input
+ * back to the Z80 console input FIFO.
  */
 typedef enum {
     PACKET_VDP_CTRL_WRITE = 0x01,
@@ -59,6 +62,8 @@ typedef enum {
     PACKET_STORAGE_READ_REPLY = 0x0e,
     PACKET_STORAGE_WRITE_REQ = 0x0f,
     PACKET_STORAGE_WRITE_REPLY = 0x10,
+    PACKET_TERMINAL_TX = 0x11,
+    PACKET_TERMINAL_RX = 0x12,
 } PacketType;
 
 /** CURSOR_COMMAND payload byte 0 subcommands. */

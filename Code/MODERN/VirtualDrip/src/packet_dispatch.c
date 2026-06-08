@@ -29,6 +29,7 @@ void packet_dispatch_init(
     dispatch->frame_changed = NULL;
     dispatch->frame_changed_userdata = NULL;
     dispatch->keyboard_transport = NULL;
+    dispatch->pty_console = NULL;
     dispatch->serial_port = NULL;
     dispatch->storage_backend = NULL;
     dispatch->log_storage = false;
@@ -49,6 +50,11 @@ void packet_dispatch_set_frame_changed_callback(
 void packet_dispatch_set_keyboard_transport(PacketDispatch *dispatch, KeyboardTransport *keyboard_transport)
 {
     dispatch->keyboard_transport = keyboard_transport;
+}
+
+void packet_dispatch_set_pty_console(PacketDispatch *dispatch, PtyConsole *pty_console)
+{
+    dispatch->pty_console = pty_console;
 }
 
 void packet_dispatch_set_storage_backend(
@@ -115,6 +121,7 @@ void packet_dispatch_handle_packet(const Packet *packet, size_t offset, void *us
             packet,
             dispatch->serial_port,
             dispatch->keyboard_transport,
+            dispatch->pty_console,
             dispatch->storage_backend,
             dispatch->log_storage)) {
         return;
@@ -124,6 +131,10 @@ void packet_dispatch_handle_packet(const Packet *packet, size_t offset, void *us
     dispatch->packet_count++;
     if (dispatch->log_packets) {
         print_packet(dispatch->packet_count, offset, packet);
+    }
+
+    if (pty_console_handle_packet(dispatch->pty_console, packet)) {
+        return;
     }
 
     if (packet->type == PACKET_FRAME_MARK) {

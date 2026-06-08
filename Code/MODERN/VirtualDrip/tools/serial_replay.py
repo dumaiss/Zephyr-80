@@ -9,6 +9,7 @@ socat-created PTYs when the proxy is running on the other side.
 Examples:
   python3 tools/serial_replay.py tests/sprite-moving.bin --port /dev/ttyUSB0 --baud 1000000 --frame-delay-ms 16.67 --verbose
   python3 tools/serial_replay.py tests/sprite-moving.bin --port /dev/pts/5 --baud 115200 --loop --read-back
+  python3 tools/serial_replay.py tests/sprite-moving.bin --port /dev/pts/5 --baud 115200 --no-rtscts
   python3 tools/serial_replay.py tests/sprite-moving.bin --dry-run --verbose
 """
 
@@ -23,7 +24,8 @@ from pathlib import Path
 from typing import Iterable
 
 
-SYNC_BYTE = 0xA5
+SYNC0 = 0xA5
+SYNC1 = 0x5A
 FALLBACK_FRAME_MARK_TYPE = 0x08
 
 
@@ -98,20 +100,32 @@ def parse_packets(path: Path) -> list[Packet]:
 
     while offset < len(data):
         packet_offset = offset
-        if data[offset] != SYNC_BYTE:
+        if data[offset] != SYNC0:
             raise ReplayError(
-                f"bad sync byte at offset {packet_offset}: "
-                f"expected 0x{SYNC_BYTE:02X}, got 0x{data[offset]:02X}"
+                f"bad first sync byte at offset {packet_offset}: "
+                f"expected 0x{SYNC0:02X}, got 0x{data[offset]:02X}"
             )
 
-        if len(data) - offset < 4:
+        if len(data) - offset < 5:
             raise ReplayError(
                 f"truncated packet header at offset {packet_offset}: "
                 f"{len(data) - offset} byte(s) remain"
             )
 
-        payload_length = data[offset + 1]
-        total_length = 4 + payload_length
+        if data[offset + 1] != SYNC1:
+            raise ReplayError(
+                f"bad second sync byte at offset {packet_offset + 1}: "
+                f"expected 0x{SYNC1:02X}, got 0x{data[offset + 1]:02X}"
+            )
+
+        wire_length = data[offset + 2]
+        if wire_length < 3:
+            raise ReplayError(
+                f"invalid LEN at offset {packet_offset + 2}: "
+                f"expected at least 3, got {wire_length}"
+            )
+
+        total_length = 2 + wire_length
         if len(data) - offset < total_length:
             raise ReplayError(
                 f"truncated packet at offset {packet_offset}: "
@@ -123,8 +137,8 @@ def parse_packets(path: Path) -> list[Packet]:
             Packet(
                 index=len(packets) + 1,
                 offset=packet_offset,
-                packet_type=packet_data[2],
-                payload_length=payload_length,
+                packet_type=packet_data[3],
+                payload_length=wire_length - 3,
                 data=packet_data,
             )
         )
@@ -173,7 +187,7 @@ def packets_for_replay(packets: Iterable[Packet], frame_mark_type: int, max_fram
                 return
 
 
-def open_serial(port: str, baud: int, read_back: bool):
+def open_serial(port: str, baud: int, read_back: bool, rtscts: bool):
     """Open a pyserial endpoint; read-back uses nonblocking reads."""
 
     try:
@@ -186,7 +200,13 @@ def open_serial(port: str, baud: int, read_back: bool):
 
     try:
         timeout = 0 if read_back else 1
-        return serial.Serial(port=port, baudrate=baud, timeout=timeout, write_timeout=1)
+        return serial.Serial(
+            port=port,
+            baudrate=baud,
+            timeout=timeout,
+            write_timeout=1,
+            rtscts=rtscts,
+        )
     except serial.SerialException as exc:
         raise ReplayError(f"failed to open serial port {port}: {exc}") from exc
 
@@ -326,6 +346,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--loop", action="store_true", help="continuously replay the file")
     parser.add_argument("--verbose", action="store_true", help="print packet and delay details")
     parser.add_argument("--read-back", action="store_true", help="print bytes received from the serial port while replaying")
+    parser.add_argument(
+        "--no-rtscts",
+        action="store_false",
+        dest="rtscts",
+        help="disable hardware RTS/CTS flow control for adapters or PTYs that cannot support it",
+    )
     parser.add_argument("--start-delay-ms", type=parse_non_negative_float, default=0.0, help="delay after opening serial before streaming")
     parser.add_argument("--inter-packet-delay-ms", type=parse_non_negative_float, default=0.0, help="debug delay after each packet")
     parser.add_argument("--max-frames", type=int, help="stop after N FRAME_MARK packets")
@@ -371,7 +397,7 @@ def main(argv: list[str]) -> int:
             )
             return 0
 
-        serial_port = open_serial(args.port, args.baud, args.read_back)
+        serial_port = open_serial(args.port, args.baud, args.read_back, args.rtscts)
         with serial_port:
             if args.start_delay_ms > 0:
                 if args.verbose:

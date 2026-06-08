@@ -13,6 +13,7 @@
 #include "protocol.h"
 #include "video_device.h"
 #include "keyboard_transport.h"
+#include "pty_console.h"
 #include "serial_port.h"
 #include "storage_backend.h"
 #include "virtual_text_cursor.h"
@@ -34,6 +35,7 @@ typedef struct {
     FrameChangedCallback frame_changed;
     void *frame_changed_userdata;
     KeyboardTransport *keyboard_transport;
+    PtyConsole *pty_console;
     SerialPort *serial_port;
     StorageBackend *storage_backend;
     bool log_storage;
@@ -59,6 +61,9 @@ void packet_dispatch_set_frame_changed_callback(
 
 /** Register optional keyboard transport gate updates for incoming serial packets. */
 void packet_dispatch_set_keyboard_transport(PacketDispatch *dispatch, KeyboardTransport *keyboard_transport);
+
+/** Register optional packetized PTY console bridge for TERMINAL_TX packets. */
+void packet_dispatch_set_pty_console(PacketDispatch *dispatch, PtyConsole *pty_console);
 
 /** Register optional drive-image storage handling for incoming serial packets. */
 void packet_dispatch_set_storage_backend(

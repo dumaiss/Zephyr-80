@@ -7,17 +7,19 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
-#include <poll.h>
 
 /*
  * This module owns all POSIX serial details. The rest of the proxy deals in a
- * SerialPort handle and either framed packet bytes or raw terminal input bytes;
- * raw termios setup, write completion, and transmit locking stay here.
+ * SerialPort handle and either framed packet bytes or default-mode raw terminal
+ * input bytes; raw termios setup, kernel-managed RTS/CTS flow control, write
+ * completion, and transmit locking stay here.
  */
 
 struct SerialPort {
@@ -75,7 +77,12 @@ static bool configure_serial_port(int fd, int baud_rate)
     options.c_cflag &= ~PARENB;
     options.c_cflag &= ~CSTOPB;
 
+#ifdef CRTSCTS
     options.c_cflag |= CRTSCTS;
+#else
+    fprintf(stderr, "Hardware RTS/CTS flow control is not supported by this termios implementation\n");
+    return false;
+#endif
 
     options.c_iflag &= ~(IXON | IXOFF | IXANY | IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
     options.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
@@ -87,6 +94,17 @@ static bool configure_serial_port(int fd, int baud_rate)
         perror("tcsetattr");
         return false;
     }
+
+    if (tcgetattr(fd, &options) != 0) {
+        perror("tcgetattr");
+        return false;
+    }
+#ifdef CRTSCTS
+    if ((options.c_cflag & CRTSCTS) == 0) {
+        fprintf(stderr, "Failed to enable hardware RTS/CTS flow control\n");
+        return false;
+    }
+#endif
 
     tcflush(fd, TCIOFLUSH);
     return true;
@@ -314,6 +332,53 @@ bool serial_port_send_packet_paced(
     pthread_mutex_unlock(&port->tx_mutex);
 
     return sent;
+}
+
+bool serial_port_wait_output_drained(SerialPort *port, int timeout_ms)
+{
+    if (port == NULL || port->fd < 0) {
+        return false;
+    }
+    if (timeout_ms < 0) {
+        timeout_ms = 0;
+    }
+
+#ifdef TIOCOUTQ
+    int elapsed_ms = 0;
+    for (;;) {
+        int pending = 0;
+        if (ioctl(port->fd, TIOCOUTQ, &pending) == 0) {
+            if (pending <= 0) {
+                return true;
+            }
+        } else if (errno == EINTR) {
+            continue;
+        } else if (errno == ENOTTY || errno == EINVAL) {
+            break;
+        } else {
+            perror("ioctl TIOCOUTQ");
+            return false;
+        }
+
+        if (elapsed_ms >= timeout_ms) {
+            fprintf(stderr, "serial drain timeout with output bytes pending\n");
+            return false;
+        }
+        usleep(1000);
+        ++elapsed_ms;
+    }
+#else
+    (void)timeout_ms;
+#endif
+
+    if (tcdrain(port->fd) != 0) {
+        if (errno == EINTR) {
+            return true;
+        }
+        perror("tcdrain");
+        return false;
+    }
+    return true;
 }
 
 bool serial_port_send_raw(SerialPort *port, const uint8_t *bytes, size_t length)
