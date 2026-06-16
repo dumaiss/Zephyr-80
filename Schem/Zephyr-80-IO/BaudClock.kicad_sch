@@ -1175,7 +1175,7 @@
 		)
 		(uuid "f280d999-27bc-4009-867e-57a5cdd93195")
 	)
-	(hierarchical_label "CLK_1M8441"
+	(hierarchical_label "CLK_1M8432"
 		(shape output)
 		(at 158.75 67.31 0)
 		(effects
@@ -1186,7 +1186,7 @@
 		)
 		(uuid "58cc5b9a-3bf7-4a85-9d29-65c4c051936e")
 	)
-	(hierarchical_label "CLK_7M3764"
+	(hierarchical_label "CLK_7M3728"
 		(shape output)
 		(at 158.75 62.23 0)
 		(effects
@@ -1197,7 +1197,7 @@
 		)
 		(uuid "8a5bbee8-39e5-4ec6-abc3-236c3f2cc2d2")
 	)
-	(hierarchical_label "CLK_3M6882"
+	(hierarchical_label "CLK_3M6864"
 		(shape output)
 		(at 158.75 64.77 0)
 		(effects

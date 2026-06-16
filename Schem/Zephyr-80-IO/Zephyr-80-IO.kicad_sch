@@ -726,26 +726,6 @@
 				(justify left top)
 			)
 		)
-		(pin "CLK_3M6882" output
-			(at 392.43 175.26 180)
-			(uuid "bb99de01-cff7-4d13-a969-0ae5a4f347ce")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(pin "CLK_1M8441" output
-			(at 392.43 177.8 180)
-			(uuid "7dbb79c6-8ed9-4e42-8333-290ac50773b1")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
 		(pin "RESET_HIGH" input
 			(at 392.43 180.34 180)
 			(uuid "0c813f08-79dc-42b9-be93-8a8914f15b5f")
@@ -756,9 +736,29 @@
 				(justify left)
 			)
 		)
-		(pin "CLK_7M3764" output
+		(pin "CLK_7M3728" output
 			(at 392.43 172.72 180)
-			(uuid "83bb5aa7-178f-4e08-95e9-dd2ce3637da9")
+			(uuid "dce01be1-e723-45f6-9cf3-d47cace80849")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "CLK_3M6864" output
+			(at 392.43 175.26 180)
+			(uuid "e6912576-35e9-469e-a06b-6b3b02228635")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "CLK_1M8432" output
+			(at 392.43 177.8 180)
+			(uuid "585fa8c3-4d15-4525-8866-184f22c4e23d")
 			(effects
 				(font
 					(size 1.27 1.27)

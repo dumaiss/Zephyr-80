@@ -78,8 +78,24 @@
       ],
       "drc_exclusions": [
         [
+          "courtyards_overlap|127544600|99622800|71647ba4-11e9-4d51-a4b9-eea63c558235|b7f54bb6-4048-4528-b2dc-28a487e37177",
+          ""
+        ],
+        [
           "courtyards_overlap|129855000|64305000|5d3f8cf7-d4fc-4aec-ab54-2d002ac828c7|71647ba4-11e9-4d51-a4b9-eea63c558235",
           "Purposefully put SMD under the socket"
+        ],
+        [
+          "courtyards_overlap|135189000|99597400|71647ba4-11e9-4d51-a4b9-eea63c558235|db326a4a-b59b-456f-8027-8b7937ee8ed5",
+          ""
+        ],
+        [
+          "courtyards_overlap|135341400|97159000|71647ba4-11e9-4d51-a4b9-eea63c558235|8053d31c-de48-4391-a38a-bcefe21433ae",
+          ""
+        ],
+        [
+          "courtyards_overlap|147521200|99622800|c4748436-34d1-4c6c-b599-6f7550a9d146|f3e0edea-52ae-477b-afe3-5f76cc7962bf",
+          ""
         ],
         [
           "courtyards_overlap|153585000|67545000|09e78ecb-1a66-4991-ac71-c9c7adf3c452|f3e0edea-52ae-477b-afe3-5f76cc7962bf",
@@ -106,23 +122,15 @@
           ""
         ],
         [
-          "silk_over_copper|191860000|82270000|4d51a749-128d-4d9f-b47f-3fca7e454f2d|4b35c528-bfac-48ec-bcf2-8961ef304d47",
+          "silk_over_copper|191860000|82832000|4d51a749-128d-4d9f-b47f-3fca7e454f2d|4b35c528-bfac-48ec-bcf2-8961ef304d47",
           ""
         ],
         [
-          "silk_over_copper|199480000|74650000|4d51a749-128d-4d9f-b47f-3fca7e454f2d|8f076bea-d525-4e02-87e6-54cf036b7805",
+          "silk_over_copper|199480000|82832000|4d51a749-128d-4d9f-b47f-3fca7e454f2d|eee77984-af7d-4ed9-ae0c-f8fe17144844",
           ""
         ],
         [
-          "silk_over_copper|199480000|82270000|4d51a749-128d-4d9f-b47f-3fca7e454f2d|eee77984-af7d-4ed9-ae0c-f8fe17144844",
-          ""
-        ],
-        [
-          "silk_overlap|107764718|79974718|2368f4e9-6d54-4851-b515-80ce294d7bf7|d7cba1c2-e3d7-4706-b980-af38f5d5d622",
-          ""
-        ],
-        [
-          "silk_overlap|109716333|81926333|2368f4e9-6d54-4851-b515-80ce294d7bf7|871ef351-d5c3-4c64-9ea4-a35411abf023",
+          "silk_over_copper|200084000|75254000|4d51a749-128d-4d9f-b47f-3fca7e454f2d|8f076bea-d525-4e02-87e6-54cf036b7805",
           ""
         ]
       ],
@@ -933,7 +941,7 @@
         "uuid": "db33a8e4-587d-4e74-8d3f-b68910957121"
       }
     ],
-    "used_designators": "R39",
+    "used_designators": "",
     "variants": []
   },
   "sheets": [
