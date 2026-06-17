@@ -6434,6 +6434,12 @@
 		(uuid "71e016e3-387e-46f2-a98a-eae47b51218c")
 	)
 	(junction
+		(at 22.86 238.76)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "7b438b6f-d51c-453e-8068-0d96b1a9ba39")
+	)
+	(junction
 		(at 113.03 100.33)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -8421,6 +8427,16 @@
 	)
 	(wire
 		(pts
+			(xy 15.24 250.19) (xy 15.24 281.94)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "545069e6-61f9-4281-baa8-9a5f5a8da45d")
+	)
+	(wire
+		(pts
 			(xy 233.68 219.71) (xy 243.84 219.71)
 		)
 		(stroke
@@ -9141,6 +9157,16 @@
 	)
 	(wire
 		(pts
+			(xy 15.24 281.94) (xy 124.46 281.94)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "861a0e52-7b2d-402f-95d7-39f30b86f288")
+	)
+	(wire
+		(pts
 			(xy 302.26 99.06) (xy 316.23 99.06)
 		)
 		(stroke
@@ -9228,6 +9254,16 @@
 			(type default)
 		)
 		(uuid "878dfd11-1d67-44eb-8ed3-bca1cb0908f3")
+	)
+	(wire
+		(pts
+			(xy 15.24 242.57) (xy 15.24 238.76)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "8835ba4b-0dab-4e72-ac4e-30d62a85ea17")
 	)
 	(wire
 		(pts
@@ -9558,6 +9594,16 @@
 			(type default)
 		)
 		(uuid "99ec6b4d-ba0c-428f-b827-ed5fefab07bd")
+	)
+	(wire
+		(pts
+			(xy 15.24 238.76) (xy 22.86 238.76)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9ab70d8f-93e8-4bc2-9bfc-48e6bb5af822")
 	)
 	(wire
 		(pts
@@ -13628,6 +13674,17 @@
 			(justify left)
 		)
 		(uuid "65786656-6c83-4287-a4d8-a13ba6b395cf")
+	)
+	(hierarchical_label "~{SHUTDOWN_RQ}"
+		(shape input)
+		(at 124.46 281.94 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "70c41c24-0d9d-4e44-bd34-860e17effad4")
 	)
 	(hierarchical_label "~{WAIT}"
 		(shape passive)
@@ -21916,6 +21973,120 @@
 			(project "Zephyr-80-IO"
 				(path "/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe"
 					(reference "R6")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:R")
+		(at 15.24 246.38 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(uuid "ddf076e0-3068-4465-a9d8-2cc463d08bb1")
+		(property "Reference" "R42"
+			(at 16.256 245.364 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "10k"
+			(at 16.256 247.904 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0603_1608Metric"
+			(at 13.462 246.38 90)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 15.24 246.38 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor"
+			(at 15.24 246.38 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "KLC_S4.2_3V3OUT" ""
+			(at 15.24 246.38 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "KLC_S4.2_VCC" ""
+			(at 15.24 246.38 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "RC0603FR-0710KL"
+			(at 15.24 246.38 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "6c42707b-9e03-4ca5-ae94-f186e00b0ee0")
+		)
+		(pin "2"
+			(uuid "8889362c-222b-4430-8749-01822d72a192")
+		)
+		(instances
+			(project "Zephyr-80-IO"
+				(path "/db33a8e4-587d-4e74-8d3f-b68910957121/40aeb9cf-7834-4efc-b850-38b27b4487fe"
+					(reference "R42")
 					(unit 1)
 				)
 			)

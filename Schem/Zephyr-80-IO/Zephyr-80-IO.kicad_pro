@@ -130,7 +130,7 @@
           ""
         ],
         [
-          "silk_over_copper|200084000|75254000|4d51a749-128d-4d9f-b47f-3fca7e454f2d|8f076bea-d525-4e02-87e6-54cf036b7805",
+          "silk_over_copper|199509743|74529526|4d51a749-128d-4d9f-b47f-3fca7e454f2d|8f076bea-d525-4e02-87e6-54cf036b7805",
           ""
         ]
       ],
@@ -941,7 +941,7 @@
         "uuid": "db33a8e4-587d-4e74-8d3f-b68910957121"
       }
     ],
-    "used_designators": "",
+    "used_designators": "R42",
     "variants": []
   },
   "sheets": [
