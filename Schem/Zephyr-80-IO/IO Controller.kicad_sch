@@ -18939,7 +18939,7 @@
 		(in_bom yes)
 		(on_board yes)
 		(in_pos_files yes)
-		(dnp no)
+		(dnp yes)
 		(uuid "83882df0-8c31-4527-9703-b1597429f4f4")
 		(property "Reference" "R4"
 			(at 61.976 245.11 0)
