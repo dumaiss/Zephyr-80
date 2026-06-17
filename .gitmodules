@@ -1,6 +1,6 @@
 [submodule "Code/MODERN/Emulator/mame"]
 	path = Code/MODERN/Emulator/mame
 	url = https://github.com/mamedev/mame.git
-[submodule "Code/HOST/CPM3/cpm-2.2"]
-	path = Code/HOST/CPM3/cpm-2.2
+[submodule "Code/HOST/CPM2.2/cpm-2.2"]
+	path = Code/HOST/CPM2.2/cpm-2.2
 	url = https://github.com/Z80-Retro/cpm-2.2.git
