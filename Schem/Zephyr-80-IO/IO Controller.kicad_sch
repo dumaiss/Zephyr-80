@@ -15791,6 +15791,17 @@
 				)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74AHCT125QPWRQ1"
+			(at 234.95 205.74 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(pin "4"
 			(uuid "cb849fa6-433a-43dd-94bc-e2c189312854")
 		)
@@ -16691,6 +16702,17 @@
 				)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74AHCT125QPWRQ1"
+			(at 146.05 228.6 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(pin "4"
 			(uuid "cb849fa6-433a-43dd-94bc-e2c189312855")
 		)
@@ -16797,6 +16819,17 @@
 			)
 		)
 		(property "Description" "Single Buffer Gate Tri-State, Low-Voltage CMOS"
+			(at 160.02 311.15 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74AHCT1G125DBVR"
 			(at 160.02 311.15 0)
 			(hide yes)
 			(show_name no)
@@ -17192,6 +17225,17 @@
 			)
 		)
 		(property "Description" "Quadruple Bus Buffer Gates With 3-State Outputs"
+			(at 226.06 219.71 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74AHCT125QPWRQ1"
 			(at 226.06 219.71 0)
 			(hide yes)
 			(show_name no)
@@ -18851,7 +18895,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100k"
+		(property "Value" "10k"
 			(at 61.976 247.65 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -19652,6 +19696,17 @@
 				)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74AHCT125QPWRQ1"
+			(at 223.52 185.42 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(pin "4"
 			(uuid "cb849fa6-433a-43dd-94bc-e2c189312857")
 		)
@@ -20245,7 +20300,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100k"
+		(property "Value" "10k"
 			(at 23.876 247.904 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -20469,6 +20524,17 @@
 			)
 		)
 		(property "Description" "Quadruple Bus Buffer Gates With 3-State Outputs"
+			(at 228.6 168.91 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MANUFACTURER_PART_NUMBER" "SN74AHCT125QPWRQ1"
 			(at 228.6 168.91 0)
 			(hide yes)
 			(show_name no)
@@ -20744,7 +20810,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100k"
+		(property "Value" "10k"
 			(at 31.75 247.65 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -22396,7 +22462,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100k"
+		(property "Value" "10k"
 			(at 39.116 247.65 0)
 			(show_name no)
 			(do_not_autoplace no)
