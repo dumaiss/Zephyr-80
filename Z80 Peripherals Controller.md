@@ -1,5 +1,8 @@
 Here is the updated **Z80 Peripherals Controller** document, revised to match the hardware implementation found in the provided KiCad schematics.
 
+# TODO: update to reflect changes in architecture
+
+
 ### **Z80 I/O Subsystem — SD + Dual-USB-HID via SIO + PIC18 Micro Controller**
 
 ## **1) Overall Architecture**

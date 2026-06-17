@@ -1,8 +1,6 @@
-Here is the complete architectural summary for the pBITz clock system, capturing the "Parallel Clock" design using the 24.576 MHz oscillator.
-
----
-
 # Homebrew Z80 Clock Distribution Architecture
+
+# TODO: update with new architectre
 
 ## 1. Design Overview
 
