@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 35117 bytes |
+| Firmware symbol map | `build/firmware.map` | 43529 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 131072 bytes |
 | Final burnable image | `build/zephyr80.bin` | 131072 bytes |
 | Layout manifest | `build/layout.manifest` | 273 bytes |
@@ -118,10 +118,10 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `VDRIP_STORAGE_CODE_START` | `F900h` | VDrip storage backend code start. |
 | `vdrip_storage_seldsk` | `F911h` | Selects CP/M drive A and returns its DPH. |
 | `vdrip_storage_read` | `F925h` | Reads one 128-byte record from VDrip proxy storage. |
-| `vdrip_storage_write` | `F95Fh` | Writes one 128-byte record to VDrip proxy storage. |
+| `vdrip_storage_write` | `F963h` | Writes one 128-byte record to VDrip proxy storage. |
 | `VDRIP_STORAGE_DPH` | `FB40h` | Drive A disk parameter header. |
 | `VDRIP_STORAGE_DPB` | `FB50h` | Drive A disk parameter block. |
-| `VDRIP_STORAGE_CODE_END` | `FA52h` | VDrip storage backend code end. |
+| `VDRIP_STORAGE_CODE_END` | `FA56h` | VDrip storage backend code end. |
 | `SIO_CORE_CODE_START` | `DD10h` | BIOS-owned SIO core code start in core BIOS. |
 | `CONSOLE_IM2_VECTOR_ENTRY` | `DD10h` | SIO core exact IM2 vector table entry address. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |
@@ -149,7 +149,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E00Eh` | Virtual Drip console init, proxy handshake, VDP setup. |
-| `VDRIP_CONSOLE_CODE_END` | `E1DFh` | Virtual Drip console driver code end. |
+| `VDRIP_CONSOLE_CODE_END` | `EC50h` | Virtual Drip console driver code end. |
 | `BANKING_CODE_START` | `DC00h` | Banking extension implementation start. |
 | `SELMEM` | `DC00h` | Select RAM bank. |
 | `SETBNK` | `DC0Ah` | Record future DMA bank. |

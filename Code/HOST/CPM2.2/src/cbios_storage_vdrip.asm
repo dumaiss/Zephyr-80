@@ -43,6 +43,7 @@
 	.globl vdrip_transport_wait_ready
 	.globl vdrip_transport_begin_storage,vdrip_transport_end_storage
 	.globl vdrip_transport_wait_reply
+	.globl vdrip_proxy_online
 
 STORAGE_READ_REQ_LEN	= 0x06
 STORAGE_READ_REPLY_LEN	= 0x82
@@ -143,8 +144,10 @@ vdrip_storage_read:
 	call vdrip_storage_wait_reply
 	call vdrip_storage_end
 	or a
-	ret nz
-
+	jr z,vdrip_storage_read_reply_ok
+	ld a,#BIOS_ERR
+	ret
+vdrip_storage_read_reply_ok:
 	call vdrip_storage_copy_read_to_dma
 	xor a
 	ret

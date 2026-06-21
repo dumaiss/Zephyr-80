@@ -1,5 +1,11 @@
 # Virtual Drip Protocol
 
+The active `vdrip` display backend is V9958 GRAPHIC 6. Terminal output uses
+`PACKET_COMMAND_STREAM` (`1Ah`) with the V9958 text/cell opcodes documented by
+the matching Virtual Drip proxy. Legacy low-level packet values remain stable
+for common infrastructure and tests; the BIOS console no longer uses the
+TMS9928 name-table, scroll, or proxy-cursor paths.
+
 This note documents the BIOS-side protocol used by the Zephyr-80 CP/M console
 and storage drivers.
 

@@ -1,8 +1,9 @@
-; Zephyr-80 Virtual Drip text console BIOS driver.
+; Zephyr-80 Virtual Drip V9958 GRAPHIC 6 console BIOS driver.
 ;
 ; This module replaces the legacy SIO console driver as the active CP/M
-; console backend. It owns VDP text rendering, proxy cursor control, and the
-; terminal input queue. The shared vdrip_transport module owns framing.
+; console backend. It owns terminal parsing, buffered semantic display
+; commands, the V9958 sprite cursor, and the terminal input queue. The shared
+; vdrip_transport module owns framing.
 ;
 ; Major subsystems:
 ;   - CP/M console dispatch table consumed by cbios_console.asm.
@@ -11,8 +12,8 @@
 ;   - Input path: proxy-to-Z80 bytes are raw terminal input bytes after
 ;     readiness and are enqueued into textq, the CP/M CONIN FIFO.
 ;   - Output path: CP/M CONOUT bytes are interpreted by an ANSI/VT100-light
-;     parser and rendered to the text shadow buffer / VDP name table.
-;   - Virtual cursor command helpers for the proxy renderer.
+;     parser and emitted as V9958 logical-cell accelerator commands.
+;   - BIOS-owned steady block cursor implemented as a mode-2 V9958 sprite.
 ;   - RTS flow control for host-to-Z80 keyboard traffic and large VDP bursts.
 ;
 ; Input path, intended final design:
@@ -39,9 +40,8 @@
 ;     CP/M calls CONOUT
 ;     -> vdrip_console_conout
 ;     -> ANSI/VT100-light parser
-;     -> text shadow / VDP name table updates
-;     -> VDrip VDP packets to proxy
-;     -> proxy renders display
+;     -> buffered text/cell command stream
+;     -> logical cells and G6 bitmap in V9958 VRAM
 ;
 ; Input and output are deliberately separate. Keyboard packet payloads are raw
 ; terminal input bytes and must not be interpreted by the output parser. Output
@@ -67,7 +67,7 @@
 ;   1. sio_core_init has already run; SIO0/B is configured but RTS is released.
 ;   2. Register raw callback/common RX sink, enable interrupts, assert RTS.
 ;   3. Wait for packetized PROXY_READY.
-;   4. Once ready, release RTS and send RESET/PING/VDP init/font/cursor.
+;   4. Once ready, initialize G6/interlace, upload CP850 atlas, and cursor.
 ;   5. Assert RTS and enter normal interactive mode.
 ;
 ; Does not contain:
@@ -106,43 +106,39 @@ VDRIP_CTRL		= SIOB_CTRL
 SIO_RR0_TX_EMPTY	= 0x04
 SIO_RR0_CTS		= 0x20
 
-CURSOR_ENABLE		= 0x01
-CURSOR_SHOW		= 0x02
-CURSOR_HIDE		= 0x03
-CURSOR_SET_POSITION	= 0x04
-CURSOR_SET_STYLE	= 0x06
-CURSOR_SET_BLINK	= 0x07
-CURSOR_SET_COLOR	= 0x08
-CURSOR_STYLE_UNDERLINE	= 0x01
-; TMS9928A / Virtual Drip Text80 layout.
-;
-; The proxy exposes a 9928-like Text 2 display for an 80-column terminal. The
-; logical console and physical name-table view are both 80 columns by 24 rows in
-; this build, so horizontal panning constants collapse to zero-width movement.
-; The font is ASCII 20h-7Fh: 96 glyphs, 8 bytes per glyph.
-PATTERN_TABLE		= 0x0000
-NAME_TABLE		= 0x3800
-TEXT_PHYS_COLUMNS	= 80
+; V9958 GRAPHIC 6 console layout. The 512x212 source bitmap is woven into
+; 512x424 output by R#9 IL+LN. Logical cells and the glyph atlas are stored
+; outside the visible bitmap in the V9958's 128 KiB VRAM.
 TEXT_LOG_COLUMNS	= 80
 TEXT_ROWS		= 24
-TEXT_PHYS_CELLS		= TEXT_PHYS_COLUMNS * TEXT_ROWS	; 1920
-TEXT_VIEW_COLUMNS	= TEXT_PHYS_COLUMNS
-TEXT_VIEW_MAX_COL	= TEXT_LOG_COLUMNS - TEXT_PHYS_COLUMNS	; 0
-
-; Text scrolling / shadow constants.
 TEXT_SCROLL_TOP		= 0
 TEXT_SCROLL_BOTTOM	= TEXT_ROWS - 1
 TEXT_SCROLL_ROWS	= TEXT_ROWS
-TEXT_SHADOW_SIZE	= TEXT_LOG_COLUMNS * TEXT_ROWS	; 1920
+TEXT_CELL_WIDTH		= 6
+TEXT_CELL_HEIGHT	= 8
+TEXT_DISPLAY_OFFSET	= 8		; 192-line text area at source lines 8..199
 
-; Horizontal pan hysteresis.
-TEXT_PAN_RIGHT_TARGET	= 0
-TEXT_PAN_LEFT_MARGIN	= 0
+G6_BITMAP_BASE		= 0x00000
+G6_BITMAP_BYTES		= 256 * 212
+V9958_CELL_BASE		= 0x0d400
+V9958_CELL_BYTES	= TEXT_LOG_COLUMNS * TEXT_ROWS * 3
+V9958_ATLAS_BASE	= 0x10000
+V9958_ATLAS_COLS	= 32
+V9958_ATLAS_ROWS	= 8
+V9958_ATLAS_PITCH	= 256
+V9958_ATLAS_BYTES	= V9958_ATLAS_ROWS * 8 * V9958_ATLAS_PITCH
 
-; Font assumptions: 96 chars, ASCII 20h-7Fh, 8 bytes each.
-FONT_FIRST_CHAR		= 0x20
-FONT_CHAR_COUNT		= 0x60
-FONT_BYTES		= FONT_CHAR_COUNT * 8
+; Sprite-mode-2 cursor allocations. SAT includes sprite zero plus terminator.
+V9958_CURSOR_COLOR_BASE	= 0x1f000
+V9958_CURSOR_SAT_BASE	= 0x1f200
+V9958_CURSOR_PATTERN_BASE = 0x1f800
+V9958_CURSOR_PATTERN_INDEX = 0x3f
+V9958_CURSOR_HIDE_Y	= 0xd8
+V9958_CURSOR_COLOR	= 0x0b
+
+FONT_BYTES		= 2048
+PRINT_RUN_SIZE		= 64
+ATLAS_ROW_BYTES		= V9958_ATLAS_COLS * 3
 
 ; Terminal parser states (for ANSI/VT-100 output processing).
 TERM_STATE_NORMAL	= 0x00
@@ -239,7 +235,7 @@ vdrip_console_driver:
 ;   Initialize the Virtual Drip console backend selected by cbios_console.asm.
 ;   Clears driver-owned parser/FIFO/display state, registers vdrip_rx_sink for
 ;   SIO_CH_CONSOLE, enables SIO RX interrupts, waits for raw VT100-style terminal
-;   readiness bytes, initializes the remote VDP/Text80 state, and enters
+;   readiness bytes, initializes the remote V9958 G6 state, and enters
 ;   interactive mode.
 ;
 ; Inputs:
@@ -277,7 +273,7 @@ vdrip_console_init:
 	call vdrip_rx_init
 	ld hl,#textq_put_ascii
 	call vdrip_transport_set_raw_callback
-	xor a
+	xor a				; proxy keyboard path sends raw terminal bytes
 	call vdrip_transport_set_idle_mode
 	call vdrip_transport_register_sink
 	call sio_core_enable_interrupts
@@ -294,26 +290,26 @@ vdrip_console_init:
 	ld (term_auto_wrap),a		; auto-wrap enabled at init
 
 	; Release RTS and begin VDP initialization.
-		call vdrip_rts_release_raw
+	call vdrip_rts_release_raw
 	ld a,#0x01
 	ld (vdrip_rx_rts_released),a
 
-	call vdrip_send_reset
-	call vdrip_send_ping
-	call text_init_vdp
-	call text_load_font
-	call text_clear_screen
+	call v9958_init_g6
+	call v9958_upload_font_atlas
+	call v9958_configure_accelerator
+	call v9958_clear_screen
 
-	; Cursor starts at row 0, col 0 (full-screen scrolling).
+	; Cursor starts at row 0, col 0. It is a steady mode-2 sprite.
 	xor a
 	ld (current_attr),a
 	ld (text_attr_saved),a
 	ld (text_col),a
 	ld (text_row),a
-	ld (text_view_col),a
-
-	call vdrip_cursor_init
-	call vdrip_send_frame_mark
+	ld (print_run_count),a
+	ld a,#0x01
+	ld (cursor_visible),a
+	call v9958_cursor_init
+	call v9958_present
 
 	; Ready for interactive mode — assert RTS.
 	call vdrip_rts_assert_raw
@@ -360,6 +356,18 @@ vdrip_console_init:
 
 vdrip_console_const:
 	push hl
+
+	; Publish pending output before input polling. Programs such as TP3 poll
+	; CONST between echoed characters without necessarily entering CONIN, so a
+	; flush without OP_PRESENT would leave each character invisible until the
+	; next keypress. Idle CONST polling emits no traffic.
+	ld a,(print_run_count)
+	or a
+	jr z,vdrip_console_const_output_done
+	call v9958_flush_print_run
+	call v9958_cursor_write_sat
+	call v9958_present
+vdrip_console_const_output_done:
 
 	; Check for proxy reconnection: sequence count > 1.
 	ld a,(vdrip_ready_seq_count)
@@ -421,6 +429,22 @@ vdrip_console_conin:
 	ld a,(vdrip_ready_seq_count)
 	cp #0x02
 	call nc,vdrip_handle_reconnect
+
+	; Commit the completed output burst before blocking for input. Printable
+	; runs deliberately defer cursor traffic, so publish the final SAT
+	; coordinates and present the completed frame here.
+	call v9958_flush_print_run
+	call v9958_cursor_write_sat
+	call v9958_present
+
+	; Ensure the proxy is permitted to transmit input before we block. A prior
+	; storage transaction or flow-control release can leave RTS deasserted,
+	; which deadlocks the keyboard under hardware RTS/CTS: CONIN waits for a byte
+	; that the proxy is not allowed to send, and RTS is only re-asserted after a
+	; successful dequeue that can never happen.
+	call vdrip_rts_assert_raw
+	xor a
+	ld (vdrip_rx_rts_released),a
 
 vdrip_console_conin_wait:
 	ld a,#SIO_CH_CONSOLE
@@ -564,8 +588,8 @@ vdrip_rx_init:
 	ld (textq_count),a
 	ld (vdrip_ready_seq_count),a
 	ld (esc_press_count),a
-	ld (text_view_col),a
 	ld (term_state),a
+	ld (print_run_count),a
 
 	; Zero the text input queue buffer so phantom bytes
 	; cannot appear if textq_count is ever corrupted.
@@ -889,8 +913,8 @@ vdrip_rts_release_raw:
 ; their ESC/CSI forms are recognized.
 ; ANSI coordinates are 1-based; internal coordinates are 0-based.
 ; Tab stops are 8 columns (VT100 standard).
-; Text80 cannot render font effects; reverse video, bold, underline, blink, and
-; color are parsed/consumed but intentionally have no visual effect.
+; Reverse video is rendered. Bold, underline, blink, and color-selection
+; extensions remain consumed without adding a larger ANSI implementation.
 ;
 ; Output parser states:
 ;   NORMAL -> ESC (on 0x1b) -> CSI (on '[')
@@ -949,11 +973,9 @@ term_process_byte:
 	jp z,term_lf
 
 	cp #0x20
-	ret c
-	cp #0x7f
-	ret nc
-
-	jp text_put_printable
+	jp nc,text_put_printable
+	call v9958_flush_print_run
+	ret
 
 
 ; ---------------------------------------------------------------------------
@@ -961,6 +983,7 @@ term_process_byte:
 ; ---------------------------------------------------------------------------
 
 term_enter_esc:
+	call v9958_flush_print_run
 	; Increment the triple-Esc counter.
 	ld a,(esc_press_count)
 	inc a
@@ -1403,43 +1426,42 @@ ansi_el_from_start:
 
 ansi_ech:
 	call ansi_param0_default_1
-	ld e,a				; requested count
+	ld e,a
 	ld a,(text_col)
 	ld d,a
 	ld a,#TEXT_LOG_COLUMNS
-	sub d				; remaining columns
+	sub d
 	ret z
 	cp e
 	jr nc,ansi_ech_count_ok
 	ld e,a
 ansi_ech_count_ok:
-	call text_shadow_addr_current
-	push hl
-	ld b,e
-	ld a,#0x20
-ansi_ech_shadow_loop:
+	call v9958_flush_print_run
+	ld hl,#command_buffer
+	ld (hl),#OP_CELL_FILL
+	inc hl
+	ld a,(text_col)
 	ld (hl),a
 	inc hl
-	djnz ansi_ech_shadow_loop
-
-	ld a,e
-	push af
-	call text_cursor_to_vram
-	pop af
-	pop hl
-	ld c,a
-	ld b,#0x00
-	call vdp_write_data_block
-	call vdrip_send_frame_mark
-	ret
+	ld a,(text_row)
+	ld (hl),a
+	inc hl
+	ld (hl),e
+	inc hl
+	ld (hl),#0x01
+	inc hl
+	ld (hl),#0x20
+	ld b,#0x06
+	jp v9958_send_command
 
 
 ; ---- CSI SGR: select graphic rendition ----
 
 ansi_sgr:
+	call v9958_flush_print_run
 	; Consume SGR.  Track reverse video in current_attr.
 	; 0=reset, 7=reverse on, 27=reverse off. Other font/color
-	; parameters are consumed with no visual effect in Text80.
+	; parameters are consumed unless they affect the currently supported state.
 	ld a,(csi_param_count)
 	or a
 	jr z,ansi_sgr_reset
@@ -1558,258 +1580,61 @@ ansi_decawm_set:
 ;   Full screen (rows 0..TEXT_ROWS-1); no per-command scroll region yet.
 
 ansi_insert_lines:
-	call ansi_param0_default_1	; A = n (at least 1)
-	ld (il_dl_n),a
-
-	ld a,(text_row)
-	ld (il_dl_row),a
-
-	; available_rows = TEXT_ROWS - row. Clamp n to available_rows.
-	ld b,a
-	ld a,#TEXT_ROWS
-	sub b				; A = TEXT_ROWS - row
-	ld b,a				; B = available
-	ld a,(il_dl_n)
-	cp b
-	jr c,ansi_il_n_ok
-	jr z,ansi_il_n_ok
-	ld a,b
-	ld (il_dl_n),a
-ansi_il_n_ok:
-	or a
-	ret z				; n == 0: nothing to do
-
-	; rows_to_shift = TEXT_ROWS - row - n (rows that slide down)
-	ld b,a				; B = n (clamped)
-	ld a,(il_dl_row)
-	ld c,a				; C = row
-	ld a,#TEXT_ROWS
-	sub c				; A = TEXT_ROWS - row
-	sub b				; A = rows_to_shift
-	ld (il_dl_shift),a
-
-	call vdrip_rts_release_raw
-	ld a,#0x01
-	ld (vdrip_rx_rts_released),a
-
-	; --- Backwards copy: rows [row..TEXT_ROWS-n-1] -> [row+n..TEXT_ROWS-1] ---
-	; src_end = shadow + (TEXT_ROWS-n)*80 - 1
-	; dst_end = shadow + TEXT_SHADOW_SIZE - 1
-	; count   = rows_to_shift * 80
-
-	ld a,(il_dl_shift)
-	or a
-	jr z,ansi_il_fill		; no rows to shift
-
-	call il_dl_mul80		; HL = rows_to_shift * 80
-	ld b,h
-	ld c,l				; BC = byte count
-
-	ld a,#TEXT_ROWS
+	call ansi_param0_default_1
 	ld e,a
-	ld a,(il_dl_n)
-	sub e				; A = n - TEXT_ROWS (negative)
-	neg				; A = TEXT_ROWS - n
-	call il_dl_mul80		; HL = (TEXT_ROWS-n)*80
-	ld de,#text_shadow
-	add hl,de			; HL = shadow + (TEXT_ROWS-n)*80
-	dec hl				; HL = src_end
-
-	ld de,#(text_shadow + TEXT_SHADOW_SIZE - 1)	; DE = dst_end
-
-ansi_il_copy_loop:
-	ld a,(hl)
-	ld (de),a
-	dec hl
-	dec de
-	dec bc
-	ld a,b
-	or c
-	jr nz,ansi_il_copy_loop
-
-ansi_il_fill:
-	; Fill n rows at row with ASCII space.
-	ld a,(il_dl_n)
-	call il_dl_mul80		; HL = n*80
-	ld b,h
-	ld c,l				; BC = fill byte count
-
-	ld a,(il_dl_row)
-	call il_dl_mul80		; HL = row*80
-	ld de,#text_shadow
-	add hl,de			; HL = &shadow[row*80]
-
-	ld a,#0x20
-ansi_il_fill_loop:
+	ld a,#TEXT_ROWS
+	ld d,a
+	ld a,(text_row)
+	ld c,a
+	ld a,d
+	sub c
+	cp e
+	jr nc,ansi_il_v9958_count_ok
+	ld e,a
+ansi_il_v9958_count_ok:
+	call v9958_flush_print_run
+	ld hl,#command_buffer
+	ld (hl),#OP_INSERT_LINES
+	inc hl
+	ld a,(text_row)
 	ld (hl),a
 	inc hl
-	dec bc
-	ld a,b
-	or c
-	ld a,#0x20
-	jr nz,ansi_il_fill_loop
-
-	; Redraw rows [row..TEXT_ROWS-1] to VDP.
-	ld a,(il_dl_row)
-	ld b,a
-	ld c,#(TEXT_ROWS - 1)
-	call text_redraw_rows		; emits FRAME_MARK
-
-	call app_maybe_resume_rts
-	ret
-
-
-; ---- CSI DL: delete n lines (ESC [ n M) ----
-;
-; Inputs:
-;   CSI param0 = n (default/0 -> 1)
-;   text_row = current cursor row
-; Outputs:
-;   Shadow buffer and VDP updated; n lines deleted at cursor row.
-; Clobbers:
-;   AF, BC, DE, HL.
-; Preserved registers:
-;   none (caller saves BC/DE/HL around CONOUT dispatch)
-; VDrip traffic:
-;   Releases RTS, emits PACKET_VDP_DATA_BLOCK packets, emits FRAME_MARK.
-; Cursor position:
-;   Unchanged.
-; Scroll region:
-;   Full screen (rows 0..TEXT_ROWS-1); no per-command scroll region yet.
+	ld (hl),e
+	inc hl
+	ld (hl),#TEXT_SCROLL_TOP
+	inc hl
+	ld (hl),#TEXT_SCROLL_BOTTOM
+	ld b,#0x05
+	jp v9958_send_command
 
 ansi_delete_lines:
-	call ansi_param0_default_1	; A = n (at least 1)
-	ld (il_dl_n),a
-
+	call ansi_param0_default_1
+	ld e,a
+	ld a,#TEXT_ROWS
+	ld d,a
 	ld a,(text_row)
-	ld (il_dl_row),a
-
-	; available_rows = TEXT_ROWS - row. Clamp n to available_rows.
-	ld b,a
-	ld a,#TEXT_ROWS
-	sub b				; A = TEXT_ROWS - row
-	ld b,a				; B = available
-	ld a,(il_dl_n)
-	cp b
-	jr c,ansi_dl_n_ok
-	jr z,ansi_dl_n_ok
-	ld a,b
-	ld (il_dl_n),a
-ansi_dl_n_ok:
-	or a
-	ret z				; n == 0: nothing to do
-
-	; rows_to_shift = TEXT_ROWS - row - n (rows that slide up)
-	ld b,a				; B = n (clamped)
-	ld a,(il_dl_row)
-	ld c,a				; C = row
-	ld a,#TEXT_ROWS
-	sub c				; A = TEXT_ROWS - row
-	sub b				; A = rows_to_shift
-	ld (il_dl_shift),a
-
-	call vdrip_rts_release_raw
-	ld a,#0x01
-	ld (vdrip_rx_rts_released),a
-
-	; --- Forward copy: rows [row+n..TEXT_ROWS-1] -> [row..TEXT_ROWS-n-1] ---
-	; src = shadow + (row+n)*80
-	; dst = shadow + row*80
-	; count = rows_to_shift * 80
-
-	ld a,(il_dl_shift)
-	or a
-	jr z,ansi_dl_fill		; no rows to shift
-
-	call il_dl_mul80		; HL = rows_to_shift * 80
-	ld b,h
-	ld c,l				; BC = byte count
-
-	ld a,(il_dl_row)
+	ld c,a
+	ld a,d
+	sub c
+	cp e
+	jr nc,ansi_dl_v9958_count_ok
 	ld e,a
-	ld a,(il_dl_n)
-	add a,e				; A = row + n
-	call il_dl_mul80		; HL = (row+n)*80
-	ld de,#text_shadow
-	add hl,de			; HL = src
-
-	push hl				; save src
-	push bc				; save count
-	ld a,(il_dl_row)
-	call il_dl_mul80		; HL = row*80
-	ld de,#text_shadow
-	add hl,de			; HL = dst
-	ex de,hl			; DE = dst
-	pop bc				; restore count
-	pop hl				; restore HL = src
-
-ansi_dl_copy_loop:
-	ld a,(hl)
-	ld (de),a
+ansi_dl_v9958_count_ok:
+	call v9958_flush_print_run
+	ld hl,#command_buffer
+	ld (hl),#OP_DELETE_LINES
 	inc hl
-	inc de
-	dec bc
-	ld a,b
-	or c
-	jr nz,ansi_dl_copy_loop
-
-ansi_dl_fill:
-	; Fill bottom n rows with ASCII space.
-	; Start = shadow + (TEXT_ROWS-n)*80, count = n*80.
-	ld a,(il_dl_n)
-	call il_dl_mul80		; HL = n*80
-	ld b,h
-	ld c,l				; BC = fill byte count
-
-	ld a,#TEXT_ROWS
-	ld e,a
-	ld a,(il_dl_n)
-	sub e				; A = n - TEXT_ROWS (negative)
-	neg				; A = TEXT_ROWS - n
-	call il_dl_mul80		; HL = (TEXT_ROWS-n)*80
-	ld de,#text_shadow
-	add hl,de			; HL = &shadow[(TEXT_ROWS-n)*80]
-
-	ld a,#0x20
-ansi_dl_fill_loop:
+	ld a,(text_row)
 	ld (hl),a
 	inc hl
-	dec bc
-	ld a,b
-	or c
-	ld a,#0x20
-	jr nz,ansi_dl_fill_loop
+	ld (hl),e
+	inc hl
+	ld (hl),#TEXT_SCROLL_TOP
+	inc hl
+	ld (hl),#TEXT_SCROLL_BOTTOM
+	ld b,#0x05
+	jp v9958_send_command
 
-	; Redraw rows [row..TEXT_ROWS-1] to VDP.
-	ld a,(il_dl_row)
-	ld b,a
-	ld c,#(TEXT_ROWS - 1)
-	call text_redraw_rows		; emits FRAME_MARK
-
-	call app_maybe_resume_rts
-	ret
-
-
-; ---- il_dl_mul80 — multiply A by 80 into HL ----
-;
-; Input:  A = value (0..24)
-; Output: HL = A * 80
-; Clobbers: DE
-; Preserves: A, BC
-
-il_dl_mul80:
-	ld l,a
-	ld h,#0x00
-	add hl,hl		; *2
-	add hl,hl		; *4
-	add hl,hl		; *8
-	add hl,hl		; *16
-	ld d,h
-	ld e,l			; DE = A*16
-	add hl,hl		; *32
-	add hl,hl		; *64
-	add hl,de		; *64 + *16 = *80
-	ret
 
 
 ; ===========================================================================
@@ -1817,11 +1642,18 @@ il_dl_mul80:
 ; ===========================================================================
 
 text_put_printable:
-	; Input: A = printable ASCII
-	call text_put_char_at_cursor
+	; Input: A = printable CP850 byte. Accumulate same-row text into one
+	; OP_TEXT_RUN instead of framing one packet per character.
+	call v9958_append_printable
+	ld a,(text_col)
+	cp #(TEXT_LOG_COLUMNS - 1)
+	jr nz,text_put_printable_advance
+	call v9958_flush_print_run
 	call text_advance_cursor
-	call text_ensure_cursor_visible
-	call vdrip_cursor_set_position_current
+	call v9958_cursor_write_sat
+	jp v9958_present
+text_put_printable_advance:
+	call text_advance_cursor
 	ret
 
 text_put_newline:
@@ -1955,37 +1787,11 @@ term_cursor_end:
 ; ---------------------------------------------------------------------------
 
 text_clear_screen_runtime:
-	; Clear shadow buffer to spaces.
-	ld hl,#text_shadow
-	ld bc,#TEXT_SHADOW_SIZE
-	ld a,#0x20
-text_clear_runtime_shadow_loop:
-	ld (hl),a
-	inc hl
-	dec bc
-	ld a,b
-	or c
-	ld a,#0x20
-	jr nz,text_clear_runtime_shadow_loop
-
-	; Blast shadow to VDP.
-	ld hl,#NAME_TABLE
-	call vdp_set_vram_write_addr
-
-	ld hl,#text_shadow
-	ld bc,#TEXT_PHYS_CELLS
-	call vdp_write_data_block
-
-	; Reset cursor and viewport.
+	call v9958_clear_screen
 	xor a
 	ld (text_col),a
 	ld (text_row),a
-	ld (text_view_col),a
-
-	call vdrip_cursor_set_position_current
-	call vdrip_send_frame_mark
-	ret
-
+	jp vdrip_cursor_set_position_current
 
 ; ---------------------------------------------------------------------------
 ; text_clear_from_cursor_to_eos — ED 0: cursor through end of screen.
@@ -2065,37 +1871,18 @@ text_clear_stc_current_row:
 ; ---------------------------------------------------------------------------
 
 text_clear_to_eol:
-	; Clear shadow bytes from cursor to end of logical row.
-	call text_shadow_addr_current	; HL = shadow addr for cursor
-	ld a,(text_col)
-	ld e,a
-	ld a,#TEXT_LOG_COLUMNS
-	sub e				; A = columns remaining
-	jr z,text_clear_to_eol_done
-	ld b,a
-	push hl				; save shadow start
-text_clear_to_eol_shadow_loop:
-	ld (hl),#0x20
+	call v9958_flush_print_run
+	ld hl,#command_buffer
+	ld (hl),#OP_ERASE_EOL
 	inc hl
-	djnz text_clear_to_eol_shadow_loop
-
-	; Now blast the cleared portion to VDP from the shadow buffer.
-	call text_cursor_to_vram	; set VDP write address
-	pop hl				; HL = shadow source
 	ld a,(text_col)
-	ld e,a
-	ld a,#TEXT_LOG_COLUMNS
-	sub e
-	ld c,a
-	ld b,#0x00			; BC = count
-	call vdp_write_data_block
+	ld (hl),a
+	inc hl
+	ld a,(text_row)
+	ld (hl),a
+	ld b,#0x03
+	jp v9958_send_command
 
-	; FRAME_MARK so the proxy renders the updated row.
-	call vdrip_send_frame_mark
-	ret
-
-text_clear_to_eol_done:
-	ret
 
 
 ; ---------------------------------------------------------------------------
@@ -2123,40 +1910,25 @@ text_clear_line:
 ; Cursor position unchanged.  Uses block write.
 ; ---------------------------------------------------------------------------
 text_clear_from_sol_to_cursor:
-	ld a,(text_col)
-	ld e,a			; save original col
-
+	call v9958_flush_print_run
+	ld hl,#command_buffer
+	ld (hl),#OP_CELL_FILL
+	inc hl
 	xor a
-	ld (text_col),a
-	call text_cursor_to_vram	; VDP addr at col 0
-
-	ld a,e
-	inc a			; count = col + 1
-	ld c,a
-	ld b,#0x00
-
-	call text_shadow_addr_current	; HL = shadow[row][0]
-	push hl
-	push bc
-	ld a,#0x20
-text_clear_stc_fill:
 	ld (hl),a
 	inc hl
-	dec bc
-	ld a,b
-	or c
-	ld a,#0x20
-	jr nz,text_clear_stc_fill
-
-	pop bc
-	pop hl
-	call vdp_write_data_block
-
-	ld a,e
-	ld (text_col),a
-	call vdrip_send_frame_mark
-	ret
-
+	ld a,(text_row)
+	ld (hl),a
+	inc hl
+	ld a,(text_col)
+	inc a
+	ld (hl),a
+	inc hl
+	ld (hl),#0x01
+	inc hl
+	ld (hl),#0x20
+	ld b,#0x06
+	jp v9958_send_command
 
 ; ===========================================================================
 ; Console input queue
@@ -2245,54 +2017,21 @@ text_advance_cursor:
 	cp #TEXT_LOG_COLUMNS
 	jr c,text_advance_store_col
 
-	; At last column (text_col was TEXT_LOG_COLUMNS-1).
-	ld b,a			; save A=TEXT_LOG_COLUMNS
 	ld a,(term_auto_wrap)
 	or a
-	ld a,b			; restore A=TEXT_LOG_COLUMNS
-	jr nz,text_advance_do_wrap	; wrap enabled: existing behavior
-	dec a			; clamp to TEXT_LOG_COLUMNS-1
+	ld a,#TEXT_LOG_COLUMNS
+	jr nz,text_advance_do_wrap
+	dec a
 	jr text_advance_store_col
 
 text_advance_do_wrap:
 	xor a
 	ld (text_col),a
-	; Reset viewport to column 0 on wrap.  Redraw only if it changed.
-	ld a,(text_view_col)
-	or a
-	jr z,text_advance_wrap_no_redraw
-
-	xor a
-	ld (text_view_col),a
-	push af
-	call vdrip_rts_release_raw
-	ld a,#0x01
-	ld (vdrip_rx_rts_released),a
-	call text_redraw_view
-	call app_maybe_resume_rts
-	pop af
-
-text_advance_wrap_no_redraw:
 	jr text_newline_from_wrap
 
 
 text_newline:
-	; If viewport was panned, reset it and redraw.
-	ld a,(text_view_col)
-	or a
-	jr z,text_newline_no_redraw
-
-	xor a
-	ld (text_view_col),a
-	push af
-	call vdrip_rts_release_raw
-	ld a,#0x01
-	ld (vdrip_rx_rts_released),a
-	call text_redraw_view
-	call app_maybe_resume_rts
-	pop af
-
-text_newline_no_redraw:
+	call v9958_flush_print_run
 	xor a
 	ld (text_col),a
 
@@ -2313,59 +2052,6 @@ text_newline_store_row:
 text_advance_store_col:
 	ld (text_col),a
 	ret
-
-text_cursor_to_vram:
-	ld hl,#NAME_TABLE
-
-	ld a,(text_row)
-	or a
-	jr z,text_cursor_rows_done
-
-	ld b,a
-	ld de,#TEXT_PHYS_COLUMNS
-
-text_cursor_row_loop:
-	add hl,de
-	djnz text_cursor_row_loop
-
-text_cursor_rows_done:
-	; Compute physical column: logical_col - view_col.
-	ld a,(text_col)
-	ld e,a
-	ld a,(text_view_col)
-	sub e
-	neg
-	ld e,a
-	ld d,#0x00
-	add hl,de
-
-	; Skip VDP address setup if writing to the expected next
-	; address (auto-increment from previous write).
-	ld a,(vdp_addr_valid)
-	or a
-	jr z,text_cursor_vram_do_setup
-
-	ld de,(vdp_addr_next)
-	or a		; clear carry
-	sbc hl,de
-	jr nz,text_cursor_vram_do_setup
-
-	; Match — auto-increment handles it.  Update next-expected.
-	inc de
-	ld (vdp_addr_next),de
-	ret
-
-text_cursor_vram_do_setup:
-	; Mismatch or first write — send VDP address.
-	add hl,de	; restore HL from sbc
-	call vdp_set_vram_write_addr
-	; Track next expected address.
-	inc hl
-	ld (vdp_addr_next),hl
-	ld a,#0x01
-	ld (vdp_addr_valid),a
-	ret
-
 
 ; ===========================================================================
 ; RTS flow control
@@ -2403,365 +2089,23 @@ app_maybe_resume_rts:
 	ret
 
 
-; ===========================================================================
-; Shadow buffer and scroll routines
-; ===========================================================================
-
-; ---------------------------------------------------------------------------
-; text_shadow_addr_current
-;
-; Input:  text_row, text_col
-; Output: HL = address inside text_shadow for current cursor cell
-; ---------------------------------------------------------------------------
-
-text_shadow_addr_current:
-	push de
-	ld hl,#text_shadow
-	ld a,(text_row)
-	or a
-	jr z,text_shadow_row_done
-	ld b,a
-	ld de,#TEXT_LOG_COLUMNS
-
-text_shadow_row_loop:
-	add hl,de
-	djnz text_shadow_row_loop
-
-text_shadow_row_done:
-	ld a,(text_col)
-	ld e,a
-	ld d,#0
-	add hl,de
-	pop de
-	ret
-
-
-; ---------------------------------------------------------------------------
-; text_shadow_put_current
-;
-; Store A into text_shadow at current row/col.
-; Preserves the character while calculating the shadow address.
-; ---------------------------------------------------------------------------
-
-text_shadow_put_current:
-	push af
-	call text_shadow_addr_current
-	pop af
-	ld (hl),a
-	ret
-
-
-; ---------------------------------------------------------------------------
-; text_put_char_at_cursor
-;
-; Write character A at current cursor position in both shadow buffer and,
-; if the cursor falls within the visible viewport, the VDP name table.
-; ---------------------------------------------------------------------------
-
-text_put_char_at_cursor:
-	push af
-	call text_shadow_put_current
-	; Compute physical column = text_col - text_view_col.
-	; If 0 <= physical_col < TEXT_PHYS_COLUMNS, write to VDP.
-	ld a,(text_col)
-	ld e,a
-	ld a,(text_view_col)
-	sub e
-	neg			; A = physical column
-	cp #TEXT_PHYS_COLUMNS
-	jr nc,text_put_char_at_cursor_done
-
-	; Visible — write to VDP.
-	call text_cursor_to_vram
-	pop af
-	call vdp_write_data_byte
-	ret
-
-text_put_char_at_cursor_done:
-	pop af
-	ret
-
-
-; ---------------------------------------------------------------------------
-; text_ensure_cursor_visible
-;
-; Pan the viewport so the logical cursor column becomes visible.
-; If text_col < text_view_col, shift left.
-; If text_col >= text_view_col + TEXT_PHYS_COLUMNS, shift right.
-; Redraws the viewport only when the view changes.
-; ---------------------------------------------------------------------------
-
 text_ensure_cursor_visible:
-	ld a,(text_col)
-	ld e,a
-	ld a,(text_view_col)
-	cp e
-	jr c,text_ensure_check_right	; view_col < text_col
-
-	; text_col <= text_view_col — check left margin.
-	; If text_col >= TEXT_PAN_LEFT_MARGIN, pan so cursor is at margin.
-	; Otherwise pan to column 0.
-	ld a,e
-	cp #TEXT_PAN_LEFT_MARGIN
-	jr c,text_ensure_pan_left_zero
-
-	; Pan to cursor - margin.
-	sub #TEXT_PAN_LEFT_MARGIN
-	jr text_ensure_store_and_redraw
-
-text_ensure_pan_left_zero:
-	xor a
-	jr text_ensure_store_and_redraw
-
-text_ensure_check_right:
-	; Compute view_col + TEXT_PHYS_COLUMNS to check right edge.
-	ld a,(text_view_col)
-	add a,#TEXT_PHYS_COLUMNS
-	cp e
-	ret nc			; text_col < view_col + 40, already visible
-
-	; Pan so cursor is at TEXT_PAN_RIGHT_TARGET.
-	ld a,e
-	sub #TEXT_PAN_RIGHT_TARGET
-	jr nc,text_ensure_clamp
-	xor a
-
-text_ensure_clamp:
-	cp #TEXT_VIEW_MAX_COL
-	jr c,text_ensure_store_and_redraw
-	ld a,#TEXT_VIEW_MAX_COL
-
-text_ensure_store_and_redraw:
-	ld e,a			; save new view_col
-	ld a,(text_view_col)
-	cp e			; compare with current
-	ret z			; skip if view didn't change
-
-	ld a,e
-	ld (text_view_col),a
-	; fall through to redraw
-
-text_ensure_redraw:
-	call vdrip_rts_release_raw
-	ld a,#0x01
-	ld (vdrip_rx_rts_released),a
-	call text_redraw_view
-	jp app_maybe_resume_rts
-
-
-; ---------------------------------------------------------------------------
-; text_redraw_view
-;
-; Redraw all visible rows (rows 0..23) from the 80-column shadow buffer
-; into the 80-column VDP viewport, using the current text_view_col.
-;
-; RTS must be released before calling this (caller's responsibility).
-; Sends one FRAME_MARK after the redraw completes.
-; ---------------------------------------------------------------------------
-
-text_redraw_view:
-	; Write each visible row from shadow to VDP.
-	ld a,#0
-	push af		; row counter on stack
-
-text_redraw_view_row_loop:
-	pop af
-	push af
-
-	; Compute VDP write address = NAME_TABLE + row * 40
-	ld hl,#NAME_TABLE
-	ld b,a
-	or a
-	jr z,text_redraw_view_vdp_row_done
-	ld de,#TEXT_PHYS_COLUMNS
-text_redraw_view_vdp_row_loop:
-	add hl,de
-	djnz text_redraw_view_vdp_row_loop
-text_redraw_view_vdp_row_done:
-	call vdp_set_vram_write_addr
-
-	; Compute shadow source = text_shadow + row * 80 + view_col
-	pop af
-	push af
-	ld hl,#text_shadow
-	ld b,a
-	or a
-	jr z,text_redraw_view_shadow_row_done
-	ld de,#TEXT_LOG_COLUMNS
-text_redraw_view_shadow_row_loop:
-	add hl,de
-	djnz text_redraw_view_shadow_row_loop
-text_redraw_view_shadow_row_done:
-	ld a,(text_view_col)
-	ld e,a
-	ld d,#0
-	add hl,de
-
-		; Write one physical row from shadow to VDP as a block.
-	ld bc,#TEXT_PHYS_COLUMNS
-	call vdp_write_data_block
-
-	; Next row.
-	pop af
-	inc a
-	push af
-	cp #TEXT_ROWS
-	jr nz,text_redraw_view_row_loop
-
-	pop af			; discard saved row counter
-	call vdrip_send_frame_mark
 	ret
-
-
-; ---------------------------------------------------------------------------
-; text_scroll_up
-;
-; Scroll the entire visible area up by one row in the shadow buffer.
-; Blank the bottom row. Redraw all rows to VDP. Cursor to bottom, col 0.
-;
-; RTS is released during the redraw burst; reasserted after FRAME_MARK.
-; ---------------------------------------------------------------------------
 
 text_scroll_up:
-	; Release RTS — we will be chatty.
-	call vdrip_rts_release_raw
-	ld a,#0x01
-	ld (vdrip_rx_rts_released),a
-
-	; Shift rows TEXT_SCROLL_TOP+1..TEXT_SCROLL_BOTTOM up by one in the
-	; shadow buffer.  Each row is TEXT_LOG_COLUMNS bytes wide.
-	push bc
-	push de
-	push hl
-
-	ld hl,#(text_shadow + TEXT_LOG_COLUMNS)
-	ld de,#text_shadow
-	ld bc,#(TEXT_SHADOW_SIZE - TEXT_LOG_COLUMNS)
-
-text_scroll_copy_loop:
-	ld a,(hl)
-	ld (de),a
+	call v9958_flush_print_run
+	ld hl,#command_buffer
+	ld (hl),#OP_SCROLL_UP
 	inc hl
-	inc de
-	dec bc
-	ld a,b
-	or c
-	jr nz,text_scroll_copy_loop
-
-	; Blank the full 80-column bottom row in the shadow buffer.
-	ld hl,#(text_shadow + (TEXT_ROWS - 1) * TEXT_LOG_COLUMNS)
-	ld bc,#TEXT_LOG_COLUMNS
-
-text_scroll_blank_loop:
-	ld (hl),#0x20
-	inc hl
-	dec bc
-	ld a,b
-	or c
-	jr nz,text_scroll_blank_loop
-
-	pop hl
-	pop de
-	pop bc
-
-	; Hardware scroll: tell the proxy to shift its name table up
-	; by one row.  One 7-byte packet instead of a 2084-byte screen
-	; blast — scroll becomes nearly instant at 115200 baud.
-	ld a,#0x01
-	call vdrip_send_scroll
-	call vdrip_send_frame_mark
-
-	; The proxy scroll handler moved the VDP address pointer; our
-	; auto-increment tracking is now stale.  Force a full address
-	; setup on the next VDP write.
-	xor a
-	ld (vdp_addr_valid),a
-
-	; Cursor to bottom row, col 0.
+	ld (hl),#0x01
+	ld b,#0x02
+	call v9958_send_command
 	xor a
 	ld (text_col),a
-	ld (text_view_col),a
-	ld a,#(TEXT_SCROLL_BOTTOM)
+	ld a,#TEXT_SCROLL_BOTTOM
 	ld (text_row),a
+	jp vdrip_cursor_set_position_current
 
-	; Reassert RTS unconditionally after a scroll burst.
-	; app_maybe_resume_rts would skip if textq has data,
-	; but the scroll just finished — input MUST resume.
-	call vdrip_rts_assert_raw
-	xor a
-	ld (vdrip_rx_rts_released),a
-	ret
-
-
-; ---------------------------------------------------------------------------
-; text_redraw_rows
-;
-; Redraw shadow buffer rows B..C (inclusive) to the VDP name table.
-; Uses batched PACKET_VDP_DATA_BLOCK writes. Sends one FRAME_MARK after all
-; rows are written.
-;
-; Used by ansi_insert_lines and ansi_delete_lines to show the result of a
-; shadow buffer shift without redrawing the entire screen.
-;
-; Input:
-;   B = first row to redraw (0-based)
-;   C = last row to redraw (inclusive, 0-based)
-; Output:
-;   VDP name table updated for rows B..C.
-; Clobbers:
-;   AF, BC, DE, HL.
-; VDrip traffic:
-;   Emits PACKET_VDP_DATA_BLOCK packets and one FRAME_MARK.
-; Cursor position:
-;   Unchanged.
-; ---------------------------------------------------------------------------
-
-text_redraw_rows:
-	ld d,b			; D = current row
-	ld e,c			; E = end row
-
-text_redraw_rows_loop:
-	; VDP write address = NAME_TABLE + row * TEXT_PHYS_COLUMNS
-	ld a,d
-	ld hl,#NAME_TABLE
-	or a
-	jr z,text_redraw_rows_vdp_done
-	push de
-	ld b,a
-	ld de,#TEXT_PHYS_COLUMNS
-text_redraw_rows_vdp_r_loop:
-	add hl,de
-	djnz text_redraw_rows_vdp_r_loop
-	pop de
-text_redraw_rows_vdp_done:
-	call vdp_set_vram_write_addr	; DE preserved by vdrip_ctrl_write
-
-	; Shadow source = text_shadow + row * TEXT_LOG_COLUMNS
-	push de				; save current/end rows across block write
-	ld a,d
-	ld hl,#text_shadow
-	or a
-	jr z,text_redraw_rows_shadow_done
-	ld b,a
-	ld de,#TEXT_LOG_COLUMNS
-text_redraw_rows_shadow_r_loop:
-	add hl,de
-	djnz text_redraw_rows_shadow_r_loop
-text_redraw_rows_shadow_done:
-	ld bc,#TEXT_PHYS_COLUMNS
-	call vdp_write_data_block	; clobbers DE
-	pop de				; restore current/end rows
-
-	; Advance to next row.
-	ld a,d
-	cp e
-	jr z,text_redraw_rows_done
-	inc d
-	jr text_redraw_rows_loop
-
-text_redraw_rows_done:
-	call vdrip_send_frame_mark
-	ret
 
 
 ; ===========================================================================
@@ -2784,22 +2128,12 @@ vdrip_handle_reconnect:
 	inc a
 	ld (vdrip_rx_rts_released),a
 
-	; Reinitialize VDP mode and font.  No RESET/PING needed — the
-	; proxy restarted from scratch so its emulator is already fresh.
-	call text_init_vdp
-	call text_load_font
-
-	; Blast the current shadow buffer to the name table.
-	ld hl,#NAME_TABLE
-	call vdp_set_vram_write_addr
-	ld hl,#text_shadow
-	ld bc,#TEXT_PHYS_CELLS
-	call vdp_write_data_block
-
-	; Restore the cursor at its current position.
-	; vdrip_cursor_init already calls set_position_current.
-	call vdrip_cursor_init
-	call vdrip_send_frame_mark
+	call v9958_init_g6
+	call v9958_upload_font_atlas
+	call v9958_configure_accelerator
+	call v9958_clear_screen
+	call v9958_cursor_init
+	call v9958_present
 
 	; Re-assert RTS.  ready_flag is already 1 from the parser.
 	call vdrip_rts_assert_raw
@@ -2832,19 +2166,19 @@ vdrip_reset_display:
 	ld (vdrip_rx_rts_released),a
 	ld (term_auto_wrap),a		; auto-wrap re-enabled on RIS
 
-	call vdrip_send_reset
-	call vdrip_send_ping
-	call text_init_vdp
-	call text_load_font
-	call text_clear_screen
+	call v9958_init_g6
+	call v9958_upload_font_atlas
+	call v9958_configure_accelerator
+	call v9958_clear_screen
 
 	xor a
 	ld (text_col),a
 	ld (text_row),a
-	ld (text_view_col),a
-
-	call vdrip_cursor_init
-	call vdrip_send_frame_mark
+	ld (print_run_count),a
+	ld a,#0x01
+	ld (cursor_visible),a
+	call v9958_cursor_init
+	call v9958_present
 
 	call vdrip_rts_assert_raw
 	xor a
@@ -2853,85 +2187,338 @@ vdrip_reset_display:
 
 
 ; ===========================================================================
-; VDP text backend
+; V9958 G6 command backend
 ; ===========================================================================
-;
-; Virtual Drip display model:
-;   The backend is an 80-column 9928-like/Text80 display. The logical text
-;   buffer and physical name table are both 80 columns by 24 rows in this build.
-;   The VDP name table stores character codes. The pattern table stores the
-;   ASCII 20h-7Fh font, 96 glyphs at 8 bytes per glyph, so writing ASCII bytes
-;   directly into the name table selects the expected glyphs.
-;
-; Shadow buffer:
-;   text_shadow mirrors the terminal text state and is the source for scroll,
-;   clear, and redraw operations. Single-character output writes both shadow and
-;   VDP when the cursor is visible.
-;
-; Serial cost:
-;   VDP writes are currently emitted as single-byte Virtual Drip data/control
-;   packets unless a helper loops over multiple bytes. Large operations are slow
-;   over 115200 baud and are paced / RTS-gated. Future block packets could reduce
-;   this cost, but this documentation pass does not implement them.
 
-text_init_vdp:
-	; R0 = 0
-	xor a
-	ld b,a
-	call vdp_write_register
+v9958_send_command:
+	ld a,#PACKET_COMMAND_STREAM
+	ld hl,#command_buffer
+	jp vdrip_send_packet
 
-	; R1:
-	;   16K mode
-	;   display on
-	;   Text 2 mode (M1=1, M2=1 for 80 columns)
-	;
-	; 0xD8 = 16K | display | Text 2
+v9958_init_g6:
+	ld hl,#command_buffer
+	ld (hl),#OP_REG_BLOCK
+	inc hl
+	ld (hl),#0x00
+	inc hl
+	ld (hl),#0x0c
+	inc hl
+	ld (hl),#0x0a		; R0: M5+M3 = GRAPHIC 6
+	inc hl
+	ld (hl),#0x40		; R1: display on, 8x8 sprites
+	inc hl
+	ld (hl),#0x00		; R2: bitmap page 0
+	inc hl
+	ld (hl),#0x00		; R3
+	inc hl
+	ld (hl),#0x00		; R4
+	inc hl
+	ld (hl),#0xe4		; R5/R11 -> SAT 1F200h
+	inc hl
+	ld (hl),#0x3f		; R6 -> sprite patterns 1F800h
+	inc hl
+	ld (hl),#0x04		; R7: blue border
+	inc hl
+	ld (hl),#0x00		; R8
+	inc hl
+	ld (hl),#0x88		; R9: 212 lines + interlace = 424
+	inc hl
+	ld (hl),#0x00		; R10
+	inc hl
+	ld (hl),#0x03		; R11
+	ld b,#0x0f
+	jp v9958_send_command
+
+v9958_configure_accelerator:
+	ld hl,#command_buffer
+	ld (hl),#OP_SET_SCREEN_BASE
+	inc hl
+	ld (hl),#0x00
+	inc hl
+	ld (hl),#0xd4
+	inc hl
+	ld (hl),#0x00
+	inc hl
+	ld (hl),#OP_SET_GLYPH_BASE
+	inc hl
+	ld (hl),#0x00
+	inc hl
+	ld (hl),#0x00
+	inc hl
+	ld (hl),#0x01
+	inc hl
+	ld (hl),#OP_SET_ATLAS_CONFIG
+	inc hl
+	ld (hl),#V9958_ATLAS_COLS
+	inc hl
+	ld (hl),#OP_SET_DISP_OFFSET
+	inc hl
+	ld (hl),#TEXT_DISPLAY_OFFSET
+	inc hl
+	ld (hl),#OP_SET_ATTR
+	inc hl
+	ld (hl),#0x0f
+	inc hl
+	ld (hl),#0x04
+	inc hl
+	ld (hl),#0x00
+	ld b,#0x10
+	jp v9958_send_command
+
+v9958_present:
+	ld hl,#command_buffer
+	ld (hl),#OP_PRESENT
 	ld b,#0x01
-	ld a,#0xd8
-	call vdp_write_register
+	jp v9958_send_command
 
-	; R2 = name table base.
-	ld b,#0x02
-	ld a,#(NAME_TABLE >> 10)
-	call vdp_write_register
+v9958_clear_screen:
+	call v9958_flush_print_run
+	ld hl,#command_buffer
+	ld (hl),#OP_CLEAR_SCREEN
+	ld b,#0x01
+	call v9958_send_command
+	jp v9958_present
 
-	; R4 = pattern table base.
-	ld b,#0x04
-	ld a,#(PATTERN_TABLE >> 11)
-	call vdp_write_register
-
-	; R7 = foreground/background color.
-	; F4h = white on blue.
-	ld b,#0x07
-	ld a,#0xf4
-	call vdp_write_register
-
+; Convert font_cp850_6x8.inc into a 32-column packed G6 mask atlas.
+v9958_upload_font_atlas:
+	xor a
+	ld (atlas_scanline),a
+v9958_atlas_scanline_loop:
+	ld hl,#command_buffer
+	ld (hl),#OP_VRAM_ADDR_WRITE
+	inc hl
+	ld (hl),#0x00
+	inc hl
+	ld a,(atlas_scanline)
+	ld (hl),a
+	inc hl
+	ld (hl),#0x01
+	inc hl
+	ld (hl),#ATLAS_ROW_BYTES
+	inc hl
+	ld (atlas_dest),hl
+	ld a,(atlas_scanline)
+	ld c,a
+	and #0x07
+	ld l,a
+	ld a,c
+	srl a
+	srl a
+	srl a
+	add a,#0x80
+	ld h,a
+	ld b,#V9958_ATLAS_COLS
+v9958_atlas_glyph_loop:
+	ld a,(hl)
+	push hl
+	call v9958_expand_font_row
+	pop hl
+	ld de,#0x0008
+	add hl,de
+	djnz v9958_atlas_glyph_loop
+	ld b,#(5 + ATLAS_ROW_BYTES)
+	call v9958_send_command
+	ld a,(atlas_scanline)
+	inc a
+	ld (atlas_scanline),a
+	cp #(V9958_ATLAS_ROWS * 8)
+	jr nz,v9958_atlas_scanline_loop
 	ret
 
-
-; ---------------------------------------------------------------------------
-; text_load_font
-;
-; Send the 96-glyph ASCII font to the VDP pattern table.
-; The font lives at VDRIP_FONT_ROM_BASE (0x8000) in the bank 0 firmware image.
-; The boot shadow copy writes it to SRAM bank 0 on cold boot. At warm boot,
-; restore_font_from_rom has already refreshed it from ROM using COPY_LATCH0.
-; This routine reads directly from VDRIP_FONT_ROM_BASE in the current bank.
-;
-; Clobbers: AF, BC, DE, HL.
-; VDrip traffic: emits PACKET_VDP_DATA_BLOCK packets for the font bytes.
-; Bank on entry: bank 0 (normal).
-; Bank on exit:  bank 0 (normal, unchanged).
-; ---------------------------------------------------------------------------
-
-text_load_font:
-	ld hl,#(PATTERN_TABLE + (FONT_FIRST_CHAR * 8))
-	call vdp_set_vram_write_addr
-
-	ld hl,#VDRIP_FONT_ROM_BASE	; font at 0x8000 in bank 0 SRAM
-	ld bc,#FONT_BYTES
-	call vdp_write_data_block
+v9958_expand_font_row:
+	ld c,a
+	ld hl,(atlas_dest)
+	ld a,c
+	rrca
+	rrca
+	rrca
+	rrca
+	rrca
+	rrca
+	and #0x03
+	call v9958_pair_to_mask
+	ld (hl),a
+	inc hl
+	ld a,c
+	rrca
+	rrca
+	rrca
+	rrca
+	and #0x03
+	call v9958_pair_to_mask
+	ld (hl),a
+	inc hl
+	ld a,c
+	rrca
+	rrca
+	and #0x03
+	call v9958_pair_to_mask
+	ld (hl),a
+	inc hl
+	ld (atlas_dest),hl
 	ret
+
+v9958_pair_to_mask:
+	push de
+	push hl
+	ld e,a
+	ld d,#0x00
+	ld hl,#v9958_pair_mask_table
+	add hl,de
+	ld a,(hl)
+
+	pop hl
+	pop de
+	ret
+
+v9958_pair_mask_table:
+	.db 0x00,0x0f,0xf0,0xff
+
+v9958_append_printable:
+	ld c,a
+	ld a,(print_run_count)
+	cp #PRINT_RUN_SIZE
+	jr nz,v9958_append_have_space
+	push bc				; preserve the pending character in C
+	call v9958_flush_print_run
+	call v9958_cursor_write_sat
+	call v9958_present
+	pop bc
+v9958_append_have_space:
+	ld a,(print_run_count)
+	or a
+	jr nz,v9958_append_have_start
+	ld a,(text_col)
+	ld (print_run_col),a
+	ld a,(text_row)
+	ld (print_run_row),a
+v9958_append_have_start:
+	ld hl,#print_run_buffer
+	ld a,(print_run_count)
+	ld e,a
+	ld d,#0x00
+	add hl,de
+	ld (hl),c
+	ld a,(print_run_count)
+	inc a
+	ld (print_run_count),a
+	ret
+
+v9958_flush_print_run:
+	ld a,(print_run_count)
+	or a
+	ret z
+	ld c,a
+	ld hl,#command_buffer
+	ld (hl),#OP_TEXT_RUN
+	inc hl
+	ld (hl),#0x01
+	inc hl
+	ld a,(print_run_col)
+	ld (hl),a
+	inc hl
+	ld a,(print_run_row)
+	ld (hl),a
+	inc hl
+	ld (hl),#0x0f
+	inc hl
+	ld (hl),#0x04
+	inc hl
+	ld a,(current_attr)
+	and #0x01
+	ld (hl),a
+	inc hl
+	ld (hl),c
+	inc hl
+	ex de,hl
+	ld hl,#print_run_buffer
+	ld b,#0x00
+	ldir
+	ld a,(print_run_count)
+	add a,#0x08
+	ld b,a
+	call v9958_send_command
+	xor a
+	ld (print_run_count),a
+	ret
+
+; Input DE=low 16 address, C=A16, B=count, HL=source.
+v9958_write_vram_small:
+	push bc
+	push de
+	push hl
+	ld ix,#command_buffer
+	ld 0(ix),#OP_VRAM_ADDR_WRITE
+	ld 1(ix),e
+	ld 2(ix),d
+	ld 3(ix),c
+	ld 4(ix),b
+	ld de,#(command_buffer + 5)
+	ld c,b
+	ld b,#0x00
+	ldir
+	pop hl
+	pop de
+	pop bc
+	ld a,b
+	add a,#0x05
+	ld b,a
+	jp v9958_send_command
+
+v9958_cursor_init:
+	ld hl,#cursor_pattern
+	ld de,#0xf800
+	ld c,#0x01
+	ld b,#0x08
+	call v9958_write_vram_small
+	ld hl,#cursor_colors
+	ld de,#0xf000
+	ld c,#0x01
+	ld b,#0x10
+	call v9958_write_vram_small
+	jp v9958_cursor_write_sat
+
+v9958_cursor_write_sat:
+	ld hl,#cursor_sat
+	ld a,(cursor_visible)
+	or a
+	jr z,v9958_cursor_hidden
+	ld a,(text_row)
+	add a,a
+	add a,a
+	add a,a
+	add a,#(TEXT_DISPLAY_OFFSET - 1)
+	jr v9958_cursor_store_y
+v9958_cursor_hidden:
+	ld a,#V9958_CURSOR_HIDE_Y
+v9958_cursor_store_y:
+	ld (hl),a
+	inc hl
+	ld a,(text_col)
+	ld e,a
+	add a,a
+	add a,e
+	ld (hl),a
+	inc hl
+	xor a
+	ld (hl),a
+	inc hl
+	ld (hl),a
+	inc hl
+	ld (hl),#V9958_CURSOR_HIDE_Y
+	inc hl
+	xor a
+	ld (hl),a
+	inc hl
+	ld (hl),a
+	inc hl
+	ld (hl),a
+	ld hl,#cursor_sat
+	ld de,#0xf200
+	ld c,#0x01
+	ld b,#0x08
+	jp v9958_write_vram_small
+
 
 
 ; ---------------------------------------------------------------------------
@@ -2969,90 +2556,6 @@ restore_font_from_rom:
 ; Clear 80x24 text screen to ASCII space — clears both VDP and shadow buffer.
 ; ---------------------------------------------------------------------------
 
-text_clear_screen:
-	; Clear the 80-column shadow buffer to spaces first, then blast
-	; the entire shadow to the VDP name table in large DATA_BLOCK
-	; chunks (VDRIP_DATA_BLOCK_MAX bytes each).  This eliminates the
-	; need for a separate space-fill buffer.
-	ld hl,#text_shadow
-	ld bc,#TEXT_SHADOW_SIZE
-	ld a,#0x20
-text_clear_shadow_loop:
-	ld (hl),a
-	inc hl
-	dec bc
-	ld a,b
-	or c
-	ld a,#0x20
-	jr nz,text_clear_shadow_loop
-
-	; VDP name table ← shadow buffer.
-	ld hl,#NAME_TABLE
-	call vdp_set_vram_write_addr
-
-	ld hl,#text_shadow
-	ld bc,#TEXT_PHYS_CELLS
-	call vdp_write_data_block
-	ret
-
-
-; ===========================================================================
-; VDP helpers over Virtual Drip
-; ===========================================================================
-
-; Write TMS9928A register B with value A.
-vdp_write_register:
-	call vdrip_ctrl_write
-	ld a,b
-	or #0x80
-	call vdrip_ctrl_write
-	ret
-
-
-; Set TMS9928A VRAM write address to HL.
-vdp_set_vram_write_addr:
-	; Invalidate sequential-address tracking — explicit address
-	; setups (clear, font load, scroll) reset the auto-increment
-	; assumption.
-	xor a
-	ld (vdp_addr_valid),a
-
-	ld a,l
-	call vdrip_ctrl_write
-
-	ld a,h
-	and #0x3f
-	or #0x40
-	call vdrip_ctrl_write
-	ret
-
-
-; Write one byte to current TMS9928A data port.
-; Input:
-;   A = data byte
-vdp_write_data_byte:
-	jp vdrip_data_write
-
-
-; Write BC bytes from HL to current TMS9928A data port.
-; Sends data as one or more PACKET_VDP_DATA_BLOCK packets, each at most
-; VDRIP_DATA_BLOCK_MAX bytes. This amortises the per-packet framing
-; overhead (sync, 16-bit LEN, TYPE) over multiple data bytes and dramatically
-; reduces serial traffic for font upload, screen clear, scroll redraw, and
-; other bulk VDP writes.
-;
-; Input:
-;   HL = source pointer
-;   BC = byte count
-; Output:
-;   All bytes sent as PACKET_VDP_DATA_BLOCK chunk(s).
-; Clobbers:
-;   AF, BC, DE, HL.
-; Preserves:
-;   None promised.
-; ---------------------------------------------------------------------------
-vdp_write_data_block:
-	jp vdrip_data_write_block
 
 vdrip_data_write_block:
 	; Quick exit for zero-byte request.
@@ -3145,138 +2648,53 @@ vdrip_data_write:
 	ret
 
 
-vdrip_send_reset:
-	ld a,#PACKET_RESET
-	jp vdrip_send_packet0
-
-
-vdrip_send_ping:
-	ld a,#PACKET_PING
-	jp vdrip_send_packet0
-
-
 vdrip_send_frame_mark:
 	ld a,#PACKET_FRAME_MARK
 	jp vdrip_send_packet0
 
 
-; Send PACKET_VDP_SCROLL with one payload byte (row count).
-; Input:  A = number of rows to scroll up (1-23).
-; Clobbers: AF, BC, DE, HL (via vdrip_send_packet1).
-vdrip_send_scroll:
-	ld e,a
-	ld a,#PACKET_VDP_SCROLL
-	jp vdrip_send_packet1
-
-
 ; ===========================================================================
-; Virtual cursor command helpers
+; BIOS-owned V9958 sprite cursor helpers
 ; ===========================================================================
 
 vdrip_cursor_init:
-	call vdrip_cursor_set_color_yellow
-	call vdrip_cursor_set_style_underline
-	call vdrip_cursor_set_blink_default
-	call vdrip_cursor_enable
-	call vdrip_cursor_set_position_current
-	jp vdrip_cursor_show
+	jp v9958_cursor_init
 
 
 vdrip_cursor_enable:
-	ld hl,#packet_payload0
-	ld (hl),#CURSOR_ENABLE
-	inc hl
-	ld (hl),#0x01
-
-	ld a,#PACKET_CURSOR_COMMAND
-	ld b,#0x02
-	ld hl,#packet_payload0
-	jp vdrip_send_packet
+	ret
 
 
 vdrip_cursor_show:
-	ld hl,#packet_payload0
-	ld (hl),#CURSOR_SHOW
-
-	ld a,#PACKET_CURSOR_COMMAND
-	ld b,#0x01
-	ld hl,#packet_payload0
-	jp vdrip_send_packet
+	call v9958_flush_print_run
+	ld a,#0x01
+	ld (cursor_visible),a
+	jp v9958_cursor_write_sat
 
 
 vdrip_cursor_hide:
-	ld hl,#packet_payload0
-	ld (hl),#CURSOR_HIDE
-
-	ld a,#PACKET_CURSOR_COMMAND
-	ld b,#0x01
-	ld hl,#packet_payload0
-	jp vdrip_send_packet
+	call v9958_flush_print_run
+	xor a
+	ld (cursor_visible),a
+	jp v9958_cursor_write_sat
 
 
 vdrip_cursor_set_position_current:
-	; Send physical cursor column (logical_col - view_col).
-	ld hl,#packet_payload0
-	ld (hl),#CURSOR_SET_POSITION
-	inc hl
-	ld a,(text_col)
-	ld e,a
-	ld a,(text_view_col)
-	sub e
-	neg
-	ld (hl),a		; physical column
-	inc hl
-	ld a,(text_row)
-	ld (hl),a
-
-	ld a,#PACKET_CURSOR_COMMAND
-	ld b,#0x03
-	ld hl,#packet_payload0
-	jp vdrip_send_packet
+	call v9958_flush_print_run
+	call v9958_cursor_write_sat
+	jp v9958_present
 
 
 vdrip_cursor_set_style_underline:
-	ld hl,#packet_payload0
-	ld (hl),#CURSOR_SET_STYLE
-	inc hl
-	ld (hl),#CURSOR_STYLE_UNDERLINE
-
-	ld a,#PACKET_CURSOR_COMMAND
-	ld b,#0x02
-	ld hl,#packet_payload0
-	jp vdrip_send_packet
+	ret
 
 
 vdrip_cursor_set_blink_default:
-	ld hl,#packet_payload0
-	ld (hl),#CURSOR_SET_BLINK
-	inc hl
-	ld (hl),#0x01
-	inc hl
-	ld (hl),#0xf4
-	inc hl
-	ld (hl),#0x01
-
-	ld a,#PACKET_CURSOR_COMMAND
-	ld b,#0x04
-	ld hl,#packet_payload0
-	jp vdrip_send_packet
+	ret
 
 
 vdrip_cursor_set_color_yellow:
-	ld hl,#packet_payload0
-	ld (hl),#CURSOR_SET_COLOR
-	inc hl
-	ld (hl),#0xff
-	inc hl
-	ld (hl),#0xff
-	inc hl
-	ld (hl),#0x00
-
-	ld a,#PACKET_CURSOR_COMMAND
-	ld b,#0x04
-	ld hl,#packet_payload0
-	jp vdrip_send_packet
+	ret
 
 
 ; ===========================================================================
@@ -3322,18 +2740,11 @@ vdrip_ready_seq_count:
 	.db 0x00
 
 ; Text cursor state.
-; text_col/text_row are internal 0-based logical coordinates. text_view_col is
-; the horizontal viewport offset into the 80-column logical buffer. In this
-; Text80 build the physical and logical widths are both 80, so the offset should
-; normally remain zero.
+; text_col/text_row are internal 0-based logical coordinates.
 text_col:
 	.db 0x00
 
 text_row:
-	.db 0x00
-
-; Horizontal viewport offset into the 80-column logical buffer.
-text_view_col:
 	.db 0x00
 
 ; CONIN FIFO / textq.
@@ -3351,10 +2762,34 @@ textq_count:
 textq_buffer:
 	.ds TEXTQ_SIZE
 
-; Text shadow buffer — source of truth for visible text.
-; Updated on every character write; redrawn to VDP on scroll.
-text_shadow:
-	.ds TEXT_SHADOW_SIZE
+command_buffer:
+	.ds 0x80
+
+print_run_count:
+	.db 0x00
+print_run_col:
+	.db 0x00
+print_run_row:
+	.db 0x00
+print_run_buffer:
+	.ds PRINT_RUN_SIZE
+
+cursor_visible:
+	.db 0x01
+cursor_sat:
+	.ds 0x08
+cursor_pattern:
+	.db 0xe0,0xe0,0xe0,0xe0,0xe0,0xe0,0xe0,0xe0
+cursor_colors:
+	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
+	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
+	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
+	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
+
+atlas_scanline:
+	.db 0x00
+atlas_dest:
+	.dw 0x0000
 
 ; ANSI output parser state.
 ; Applies only to CONOUT bytes. Keyboard input must not use this state machine.
@@ -3429,14 +2864,14 @@ VDRIP_CONSOLE_CODE_END:
 ; Font data — bank 0 TPA, VDRIP_FONT_ROM_BASE (0x8000).
 ;
 ; Placed in a separate absolute area so the driver CODE area ends cleanly at
-; VDRIP_CONSOLE_CODE_END. The 96-glyph MSX font lands in the bank 0 firmware
-; image at 0x8000. The boot shadow copy transfers it to SRAM bank 0.
+; VDRIP_CONSOLE_CODE_END. The 256-glyph CP850 font lands in the bank 0
+; firmware image at 0x8000. The boot shadow copy transfers it to SRAM bank 0.
 ; restore_font_from_rom refreshes it from ROM using COPY_LATCH0 at warm boot.
 ; Programs may overwrite this TPA address after init; the warm-boot restore
-; always refreshes it before text_load_font is called.
+; always refreshes it before the G6 atlas upload is performed.
 ; ---------------------------------------------------------------------------
 
 	.area FONT_DATA (ABS)
 	.org VDRIP_FONT_ROM_BASE
 
-	.include "msxfont.inc"
+	.include "font_cp850_6x8.inc"

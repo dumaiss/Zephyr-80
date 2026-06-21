@@ -104,9 +104,11 @@ vdrip_transport_begin_storage:
 	ld a,c
 	ld (vdrip_pending_seq),a
 	xor a
+	; RX diagnostics describe the previous receive history. Do not let a
+	; stale error abort a new transaction before its reply is pumped.
+	ld (SIO0B_LAST_RX_ERROR),a
 	ld (vdrip_reply_ready),a
 	ld (vdrip_reply_error),a
-	ld (vdrip_reply_status),a
 	ld (vdrip_rx_state),a
 	ld a,#VDRIP_MODE_STORAGE
 	ld (vdrip_rx_mode),a

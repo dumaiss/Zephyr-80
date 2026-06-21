@@ -170,8 +170,8 @@ IOC_SYNC_PREAMBLE               = 0x7e
 SIO_COMMAND_TIMEOUT             = 0xffff
 
 ; Code placement for IOC Command-channel transport helpers.
-; VDrip console driver ends at F52Bh (VDRIP_CONSOLE_CODE_END).
-; F52Ch is the first free byte in the gap before driver slot 5 (F680h).
+; The generated map is authoritative for VDRIP_CONSOLE_CODE_END.
+; IOC command helpers retain their established placement before slot 5.
 CBIOS_IOC_COMMAND_CODE_BASE     = 0xf52c
 
 ; ------------------------------------------------------------------------------
@@ -293,8 +293,8 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ;   Slot 5:
 ;     F7EBh... VDrip storage backend, deliberately packed against FA80h
 ;
-;   Slots 0-5 tail:
-;     E000h... Virtual Drip console driver (code, font, shadow, queues)
+;   Slots 0-4:
+;     E000h... Virtual Drip V9958 console (no BIOS screen mirror)
 ;
 CBIOS_STORAGE_VDRIP_CODE_BASE         = 0xf900                                ; follows common VDrip transport
 CBIOS_VDRIP_TRANSPORT_CODE_BASE       = CBIOS_DRIVER_SLOT5_BASE              ; F680h
@@ -303,7 +303,7 @@ CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_BIOS_EXT_CODE_BASE        = CBIOS_BASE + 0x0550                  ; DF50h
 CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x057B                  ; DF7Bh — immediately after VIDEO_SEND
 
-; VDrip font placement in bank 0 TPA.
+; VDrip CP850 font placement in bank 0 TPA.
 ; Font data lives at VDRIP_FONT_ROM_BASE in the firmware binary (bank 0 ROM).
 ; The boot shadow copy writes it to SRAM bank 0. text_load_font reads from
 ; this address in bank 0 SRAM. restore_font_from_rom uses COPY_LATCH0 to

@@ -97,9 +97,13 @@ wboot_resident:
 	call ctc_disable_interrupts
 	call sio_core_init
 	call restore_font_from_rom
-	call console_init
 	call restore_ccp_from_rom
 	call prepare_runnable_bank
+	; Console initialization temporarily enables SIO RX interrupts for the
+	; READY handshake and finishes by asserting RTS. Keep it after all
+	; bank-sensitive CCP/page-zero restoration so queued terminal input cannot
+	; interrupt the WBOOT critical section.
+	call console_init
 	call sio_core_enable_interrupts
 	ld a,(TDRIVE)
 	ld c,a
