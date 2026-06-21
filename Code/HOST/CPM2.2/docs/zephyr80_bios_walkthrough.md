@@ -205,14 +205,14 @@ CP/M CONOUT byte
 Keyboard input bytes do not draw characters inside the driver. Programs that
 echo input do so by calling `CONIN` and then `CONOUT`.
 
-The startup handshake is a raw terminal readiness response:
+The startup handshake is a packetized proxy readiness frame:
 
 ```text
-ESC [ ? 1 ; 0 c
+A5 5A 01 00 0A
 ```
 
-The BIOS also accepts `ESC [ ? 1 ; 2 c`. Normal VDP traffic is held until this
-readiness recognizer completes.
+This is a zero-payload `PROXY_READY`. Normal VDP traffic is held until the
+common transport parser completes the handshake.
 
 ## SIO Core
 

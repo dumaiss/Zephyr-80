@@ -21,11 +21,10 @@
 ;   1. Validate selected drive, track, and sector.
 ;   2. Compute LBA = track * 4 + sector.
 ;   3. Allocate a nonzero sequence byte and build the request header.
-;   4. Temporarily register vdrip_storage_rx_sink on SIO_CH_CONSOLE.
-;   5. Send the framed storage request through vdrip_send_packet.
-;   6. Wait for a framed reply with matching type, length, sequence, and
-;      success status.
-;   7. Restore the normal console RX sink and saved RTS state.
+;   4. Enter common transport STORAGE_FRAME receive mode.
+;   5. Send the framed storage request through the common sender.
+;   6. Wait for common dispatch to validate type, length, sequence, and status.
+;   7. Restore raw/PTY idle receive mode and saved RTS state.
 ;
 ; The backend is deliberately not a RAM disk. The old banked RAM disk backend
 ; is preserved separately in cbios_storage_ramdisk.asm and is not linked by the
@@ -39,25 +38,18 @@
 	.globl VDRIP_STORAGE_DPH,VDRIP_STORAGE_DPB,VDRIP_STORAGE_CSV,VDRIP_STORAGE_ALV
 	.globl vdrip_storage_selected_drive,vdrip_storage_track,vdrip_storage_sector
 	.globl CURRENT_BANK,DMA_BANK,cbios_dma_addr
-	.globl sio_register_rx_sink,sio_rx_kick
-	.globl vdrip_rx_sink,vdrip_send_packet,vdrip_rts_assert_raw,crc8_update
+	.globl vdrip_send_packet,vdrip_rts_assert_raw
 	.globl vdrip_rx_rts_released
-
-STORAGE_RX_WAIT_SYNC0	= 0x00
-STORAGE_RX_WAIT_SYNC1	= 0x01
-STORAGE_RX_LEN		= 0x02
-STORAGE_RX_TYPE		= 0x03
-STORAGE_RX_PAYLOAD	= 0x04
-STORAGE_RX_CRC		= 0x05
+	.globl vdrip_transport_wait_ready
+	.globl vdrip_transport_begin_storage,vdrip_transport_end_storage
+	.globl vdrip_transport_wait_reply
 
 STORAGE_READ_REQ_LEN	= 0x06
 STORAGE_READ_REPLY_LEN	= 0x82
 STORAGE_WRITE_REQ_LEN	= 0x86
 STORAGE_WRITE_REPLY_LEN	= 0x02
-STORAGE_REPLY_MAX_LEN	= STORAGE_READ_REPLY_LEN
 STORAGE_WRITE_DATA_OFF	= 0x06
 STORAGE_READ_DATA_OFF	= 0x02
-STORAGE_TIMEOUT		= 0xffff
 
 	.area CODE (ABS)
 	.org CBIOS_STORAGE_VDRIP_CODE_BASE
@@ -129,12 +121,14 @@ vdrip_storage_read:
 	call vdrip_storage_compute_lba
 	or a
 	ret nz
+	call vdrip_transport_wait_ready
+	or a
+	ret nz
 	call vdrip_storage_next_seq
 	ld (vdrip_storage_active_seq),a
 	call vdrip_storage_build_request_header
 
 	ld a,#PACKET_STORAGE_READ_REPLY
-	ld b,#STORAGE_READ_REPLY_LEN
 	call vdrip_storage_begin
 
 	or a
@@ -144,6 +138,8 @@ vdrip_storage_read:
 	ld b,#STORAGE_READ_REQ_LEN
 	ld hl,#MOVE_BUFFER
 	call vdrip_send_packet
+	or a
+	jr nz,vdrip_storage_read_send_error
 	call vdrip_storage_wait_reply
 	call vdrip_storage_end
 	or a
@@ -151,6 +147,10 @@ vdrip_storage_read:
 
 	call vdrip_storage_copy_read_to_dma
 	xor a
+	ret
+vdrip_storage_read_send_error:
+	call vdrip_storage_end
+	ld a,#BIOS_ERR
 	ret
 
 ; WRITE backend.
@@ -163,21 +163,32 @@ vdrip_storage_write:
 	call vdrip_storage_compute_lba
 	or a
 	ret nz
+	call vdrip_transport_wait_ready
+	or a
+	ret nz
 	call vdrip_storage_next_seq
 	ld (vdrip_storage_active_seq),a
 	call vdrip_storage_build_request_header
 	call vdrip_storage_copy_dma_to_write
 
 	ld a,#PACKET_STORAGE_WRITE_REPLY
-	ld b,#STORAGE_WRITE_REPLY_LEN
 	call vdrip_storage_begin
+
+	or a
+	ret nz
 
 	ld a,#PACKET_STORAGE_WRITE_REQ
 	ld b,#STORAGE_WRITE_REQ_LEN
 	ld hl,#MOVE_BUFFER
 	call vdrip_send_packet
+	or a
+	jr nz,vdrip_storage_write_send_error
 	call vdrip_storage_wait_reply
 	call vdrip_storage_end
+	ret
+vdrip_storage_write_send_error:
+	call vdrip_storage_end
+	ld a,#BIOS_ERR
 	ret
 
 ; Compute canonical LBA = track * 4 + zero-based sector.
@@ -212,15 +223,11 @@ vdrip_storage_lba_error:
 	ld a,#BIOS_ERR
 	ret
 
-; Increment the storage sequence byte. Zero is skipped so completion diagnostics
-; and reply matching never use the all-clear sentinel value.
+; Increment the storage sequence byte with natural FFh -> 00h wrap.
 ; Output: A = new sequence.
 vdrip_storage_next_seq:
 	ld a,(vdrip_storage_seq)
 	inc a
-	jr nz,vdrip_storage_next_seq_store
-	inc a
-vdrip_storage_next_seq_store:
 	ld (vdrip_storage_seq),a
 	ret
 
@@ -269,283 +276,42 @@ vdrip_storage_copy_read_to_dma:
 	ld a,(VDRIP_STORAGE_SAVED_BANK)
 	jp vdrip_storage_select_bank_a
 
-; Enter transaction-scoped storage receive mode.
-; Input: A = expected reply packet type, B = expected reply payload length.
+; Enter transaction-scoped common framed receive mode.
+; Input: A = expected reply packet type.
 ; Output: A = BIOS_OK / BIOS_ERR.
 vdrip_storage_begin:
-	ld (storage_expected_type),a
-	ld a,b
-	ld (storage_expected_len),a
-	ld a,(vdrip_storage_active_seq)
-	ld (storage_expected_seq),a
-	xor a
-	ld (storage_rx_state),a
-	ld (storage_rx_complete),a
-	ld (storage_rx_error),a
-
-    ; Save console RTS state before we take the channel
-    ld a,(vdrip_rx_rts_released)
-    ld (vdrip_storage_saved_rts_state),a	
-
-	di
-	ld hl,#vdrip_storage_rx_sink
-	ld a,#SIO_CH_CONSOLE
-	call sio_register_rx_sink
-	ei
-	or a
-	ret nz
-
+	ld b,a
+	ld a,(vdrip_rx_rts_released)
+	ld (vdrip_storage_saved_rts_state),a
 	call vdrip_rts_assert_raw
+	ld a,(vdrip_storage_active_seq)
+	ld c,a
+	ld a,b
+	call vdrip_transport_begin_storage
 	xor a
 	ret
 
-; Restore the normal raw keyboard RX sink after a storage transaction.
+; Restore the console backend's idle receive mode after a storage transaction.
 ; Preserves A so callers keep the transaction status.
 vdrip_storage_end:
-	di
 	push af
-	ld hl,#vdrip_rx_sink
-	ld a,#SIO_CH_CONSOLE
-	call sio_register_rx_sink
-	ei
-    ; Restore pre-transaction RTS state instead of blindly clearing
-    ld a,(vdrip_storage_saved_rts_state)
-    ld (vdrip_rx_rts_released),a
-    or a
-    jr nz,vdrip_storage_end_was_released
-    call vdrip_rts_assert_raw      ; console said RTS was asserted, re-assert
-    jr vdrip_storage_end_done
+	call vdrip_transport_end_storage
+	ld a,(vdrip_storage_saved_rts_state)
+	ld (vdrip_rx_rts_released),a
+	or a
+	jr nz,vdrip_storage_end_was_released
+	call vdrip_rts_assert_raw
+	jr vdrip_storage_end_done
 vdrip_storage_end_was_released:
-    call vdrip_rts_release_raw     ; console had released RTS, restore that state
+	call vdrip_rts_release_raw
 vdrip_storage_end_done:
-    pop af
-    ret
-
-; Wait for the storage RX sink to complete the expected reply.
-; Output: A = BIOS_OK or BIOS_ERR.
-vdrip_storage_wait_reply:
-	ld de,#STORAGE_TIMEOUT
-
-vdrip_storage_wait_loop:
-	ld a,(storage_rx_error)
-	or a
-	jr nz,vdrip_storage_wait_error
-	ld a,(storage_rx_complete)
-	or a
-	jr nz,vdrip_storage_wait_ok
-
-	ld a,#SIO_CH_CONSOLE
-	call sio_rx_kick
-
-	ld a,(storage_rx_error)
-	or a
-	jr nz,vdrip_storage_wait_error
-	ld a,(storage_rx_complete)
-	or a
-	jr nz,vdrip_storage_wait_ok
-
-	dec de
-	ld a,d
-	or e
-	jr nz,vdrip_storage_wait_loop
-
-vdrip_storage_wait_error:
-	ld a,#BIOS_ERR
-	ret
-
-vdrip_storage_wait_ok:
-	xor a
-	ret
-
-; Storage reply RX sink. Runs from SIO ISR or foreground sio_rx_kick.
-; Inputs: A = SIO channel id, C = received byte.
-; ISR-safe: does bounded parser work only; no VDrip output and no bank switch.
-vdrip_storage_rx_sink:
-	push af
-	push bc
-	push de
-	push hl
-
-	cp #SIO_CH_CONSOLE
-	jr nz,vdrip_storage_rx_done
-	ld a,c
-	call vdrip_storage_parse_byte
-
-vdrip_storage_rx_done:
-	pop hl
-	pop de
-	pop bc
 	pop af
 	ret
 
-; Transaction-scoped framed reply parser.
-; Unexpected raw bytes before A5 are ignored. Valid PACKET_TERMINAL_RX packets
-; that slip into the transaction window are ignored after CRC validation;
-; in-flight console input must not turn into BDOS disk errors. Malformed frames
-; or storage replies with bad length, type, sequence, status, or payload size
-; still fail the transaction.
-vdrip_storage_parse_byte:
-	ld c,a
-	ld a,(storage_rx_state)
-	cp #STORAGE_RX_WAIT_SYNC0
-	jr z,storage_parse_wait_sync0
-	cp #STORAGE_RX_WAIT_SYNC1
-	jr z,storage_parse_wait_sync1
-	cp #STORAGE_RX_LEN
-	jr z,storage_parse_len
-	cp #STORAGE_RX_TYPE
-	jr z,storage_parse_type
-	cp #STORAGE_RX_PAYLOAD
-	jr z,storage_parse_payload
-	cp #STORAGE_RX_CRC
-	jp z,storage_parse_crc
-	xor a
-	ld (storage_rx_state),a
-	ret
-
-storage_parse_wait_sync0:
-	ld a,c
-	cp #PACKET_SYNC0
-	ret nz
-	ld a,#STORAGE_RX_WAIT_SYNC1
-	ld (storage_rx_state),a
-	ret
-
-storage_parse_wait_sync1:
-	ld a,c
-	cp #PACKET_SYNC1
-	jr z,storage_parse_sync_done
-	cp #PACKET_SYNC0
-	jr z,storage_parse_keep_sync1
-	xor a
-	ld (storage_rx_state),a
-	ret
-
-storage_parse_keep_sync1:
-	ld a,#STORAGE_RX_WAIT_SYNC1
-	ld (storage_rx_state),a
-	ret
-
-storage_parse_sync_done:
-	ld a,#STORAGE_RX_LEN
-	ld (storage_rx_state),a
-	ret
-
-storage_parse_len:
-	ld a,c
-	cp #VDRIP_WIRE_OVERHEAD
-	jp c,storage_parse_error
-	ld (storage_rx_len),a
-	ld c,#0x00
-	call crc8_update
-	ld a,c
-	ld (storage_rx_crc),a
-
-	ld a,(storage_rx_len)
-	sub #VDRIP_WIRE_OVERHEAD
-	cp #(STORAGE_REPLY_MAX_LEN + 1)
-	jp nc,storage_parse_error
-	ld (storage_rx_payload_len),a
-	ld (storage_rx_remaining),a
-	xor a
-	ld (storage_rx_index),a
-	ld a,#STORAGE_RX_TYPE
-	ld (storage_rx_state),a
-	ret
-
-storage_parse_type:
-	ld a,c
-	ld (storage_rx_type),a
-	ld e,a
-	ld a,(storage_rx_crc)
-	ld c,a
-	ld a,e
-	call crc8_update
-	ld a,c
-	ld (storage_rx_crc),a
-
-	ld a,(storage_rx_payload_len)
-	or a
-	jr z,storage_parse_expect_crc
-	ld a,#STORAGE_RX_PAYLOAD
-	ld (storage_rx_state),a
-	ret
-
-storage_parse_expect_crc:
-	ld a,#STORAGE_RX_CRC
-	ld (storage_rx_state),a
-	ret
-
-storage_parse_payload:
-	ld hl,#MOVE_BUFFER
-	ld a,(storage_rx_index)
-	ld e,a
-	ld d,#0x00
-	add hl,de
-	ld (hl),c
-
-	ld e,c
-	ld a,(storage_rx_crc)
-	ld c,a
-	ld a,e
-	call crc8_update
-	ld a,c
-	ld (storage_rx_crc),a
-
-	ld a,(storage_rx_index)
-	inc a
-	ld (storage_rx_index),a
-	ld a,(storage_rx_remaining)
-	dec a
-	ld (storage_rx_remaining),a
-	jr z,storage_parse_expect_crc
-	ret
-
-storage_parse_crc:
-	ld a,(storage_rx_crc)
-	cp c
-	jr nz,storage_parse_error
-
-	ld a,(storage_rx_type)
-	cp #PACKET_TERMINAL_RX
-	jr z,storage_parse_crc_reset
-	ld b,a
-	ld a,(storage_expected_type)
-	cp b
-	jr nz,storage_parse_error
-
-	; Console packets can already be in flight when storage_begin swaps the RX
-	; sink. PACKET_TERMINAL_RX is ignored above after CRC validation so the
-	; parser keeps waiting for the real storage reply.
-	ld a,(storage_rx_payload_len)
-	ld b,a
-	ld a,(storage_expected_len)
-	cp b
-	jr nz,storage_parse_error
-
-	ld a,(MOVE_BUFFER)
-	ld b,a
-	ld a,(storage_expected_seq)
-	cp b
-	jr nz,storage_parse_error
-
-	ld a,(MOVE_BUFFER + 1)
-	or a
-	jr nz,storage_parse_error
-
-	ld a,#0x01
-	ld (storage_rx_complete),a
-storage_parse_crc_reset:
-	xor a
-	ld (storage_rx_state),a
-	ret
-
-storage_parse_error:
-	ld a,#0x01
-	ld (storage_rx_error),a
-	xor a
-	ld (storage_rx_state),a
-	ret
+; Wait for common transport dispatch to complete the expected reply.
+; Output: A = BIOS_OK or BIOS_ERR.
+vdrip_storage_wait_reply:
+	jp vdrip_transport_wait_reply
 
 ; Select a RAM bank and update CURRENT_BANK.
 ; Input: A = bank number.
@@ -629,30 +395,8 @@ vdrip_storage_active_seq:
 	.db 0x00
 vdrip_storage_lba:
 	.dw 0x0000
-storage_expected_type:
-	.db 0x00
-storage_expected_len:
-	.db 0x00
-storage_expected_seq:
-	.db 0x00
-storage_rx_state:
-	.db STORAGE_RX_WAIT_SYNC0
-storage_rx_len:
-	.db 0x00
-storage_rx_type:
-	.db 0x00
-storage_rx_payload_len:
-	.db 0x00
-storage_rx_remaining:
-	.db 0x00
-storage_rx_index:
-	.db 0x00
-storage_rx_crc:
-	.db 0x00
-storage_rx_complete:
-	.db 0x00
-storage_rx_error:
-	.db 0x00
+
+	.org CBIOS_STORAGE_CALLER_SP
 storage_caller_sp:
 	.dw 0x0000
 VDRIP_STORAGE_CSV:

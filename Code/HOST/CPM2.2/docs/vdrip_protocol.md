@@ -1,243 +1,131 @@
 # Virtual Drip Protocol
 
-This note documents the BIOS-side Virtual Drip protocol split used by the
-Zephyr-80 CP/M 2.2 VDrip console and storage drivers.
-
-## Channel Split
-
-The current build uses one SIO0/B serial link but separates traffic by
-direction and transaction state:
-
-```text
-Proxy -> Z80, normal console mode:
-    raw terminal input bytes
-
-Z80 -> proxy, display/control/storage requests:
-    framed Virtual Drip packets
-
-Proxy -> Z80, storage transaction mode:
-    framed storage reply packets
-```
-
-Keyboard input is raw after startup readiness. Storage replies are framed while
-the storage backend owns the receive sink. Display/control packets are always
-framed.
-
-## Startup Readiness
-
-The proxy sends a raw terminal readiness response before the BIOS emits normal
-VDP display traffic:
-
-```text
-ESC [ ? 1 ; 0 c
-```
-
-Accepted byte sequence:
-
-```text
-1B 5B 3F 31 3B 30 63
-```
-
-The BIOS also accepts `ESC [ ? 1 ; 2 c`. These bytes are consumed by the
-readiness recognizer and are not enqueued as CP/M console input.
+This note documents the BIOS-side protocol used by the Zephyr-80 CP/M console
+and storage drivers.
 
 ## Frame Format
 
-Framed Virtual Drip packets use:
-
 ```text
-A5 5A LEN TYPE PAYLOAD... CRC
+Offset  Size  Field
+0       1     SYNC0 = A5h
+1       1     SYNC1 = 5Ah
+2       1     LEN_LO
+3       1     LEN_HI
+4       1     TYPE
+5..     N     PAYLOAD
 ```
 
-`LEN` is the byte count from `LEN` through `CRC`, inclusive:
+- `LEN` is a 16-bit little-endian count of `TYPE + PAYLOAD`.
+- Minimum declared length is 1.
+- The proxy supports payloads through 1,024 bytes.
+- There is no CRC, checksum, or trailing integrity byte.
+- A zero-payload packet has declared length 1.
+
+The Phase 0 BIOS receive parser accepts declared lengths 1 through 131 because
+the largest required proxy-to-Z80 packet is a 130-byte storage read payload.
+The sender supports the proxy's full 1,024-byte payload limit.
+
+## Receive Ownership
+
+SIO core is the only hardware reader:
 
 ```text
-LEN = 1 byte LEN + 1 byte TYPE + payload bytes + 1 byte CRC
+SIO0/B byte
+-> sio_core ISR or sio_rx_kick
+-> common vdrip_rx_sink
+-> raw console callback or framed parser
 ```
 
-A zero-payload frame therefore has `LEN = 3`.
+Storage does not replace the SIO RX sink and does not read the SIO directly.
 
-CRC is the existing `crc8_update` algorithm used by `vdrip_send_packet` and the
-storage reply parser. The CRC is accumulated over `LEN`, `TYPE`, and payload
-bytes, then compared with the final CRC byte. Do not change the CRC algorithm
-or its covered byte range unless both BIOS and proxy change together.
+## Receive Modes
+
+| Mode | Behavior |
+|---|---|
+| Raw | Default VDrip console bytes are enqueued unchanged. |
+| Packet | PTY console `TERMINAL_RX` packets are parsed and their payload bytes are enqueued. |
+| Readiness | Frames are parsed until zero-payload `PROXY_READY` is received. |
+| Storage | Frames are parsed until the active storage request succeeds or explicitly fails. |
+
+The default console uses raw mode after startup. The PTY console uses packet
+mode after startup.
+
+## Startup Readiness
+
+Cold boot initializes the common receive path and waits for:
+
+```text
+A5 5A 01 00 0A
+```
+
+This is a zero-payload `PROXY_READY` packet. No normal Virtual Drip output or
+storage request is sent before readiness.
+
+Warm boot reuses the online state. Phase 0 does not detect a proxy restart while
+the BIOS is idle in raw/PTY input mode. After an idle-time proxy restart, reboot
+Zephyr-80 so cold-start readiness consumes the proxy's one-time packet.
 
 ## Packet Types
 
-Existing packet type values are stable ABI between BIOS and proxy.
-
-| Type | Name | Direction | Status |
+| Type | Name | Direction | Payload |
 |---:|---|---|---|
-| `01h` | `PACKET_VDP_CTRL_WRITE` | Z80 -> proxy | Active |
-| `02h` | `PACKET_VDP_DATA_WRITE` | Z80 -> proxy | Active |
-| `03h` | `PACKET_VDP_STATUS_READ` | Historical include value | Not used by current BIOS driver |
-| `04h` | `PACKET_VDP_DATA_READ` | Historical include value | Not used by current BIOS driver |
-| `05h` | `PACKET_TERMINAL_INPUT` / `PACKET_KEY_EVENT` | Proxy -> Z80 | Obsolete for keyboard input |
-| `06h` | `PACKET_RESET` | Z80 -> proxy | Active |
-| `07h` | `PACKET_PING` | Z80 -> proxy | Active |
-| `08h` | `PACKET_FRAME_MARK` | Z80 -> proxy | Active |
-| `09h` | `PACKET_CURSOR_COMMAND` | Z80 -> proxy | Active |
-| `0Ah` | `PACKET_PROXY_READY` | Proxy -> Z80 | Obsolete; readiness is raw |
-| `0Bh` | `PACKET_VDP_DATA_BLOCK` | Z80 -> proxy | Active |
-| `0Ch` | `PACKET_VDP_SCROLL` | Z80 -> proxy | Active |
-| `0Dh` | `PACKET_STORAGE_READ_REQ` | Z80 -> proxy | Active |
-| `0Eh` | `PACKET_STORAGE_READ_REPLY` | Proxy -> Z80 | Active |
-| `0Fh` | `PACKET_STORAGE_WRITE_REQ` | Z80 -> proxy | Active |
-| `10h` | `PACKET_STORAGE_WRITE_REPLY` | Proxy -> Z80 | Active |
-
-The obsolete framed keyboard parser remains in `cbios_console_vdrip.asm` as
-inactive compatibility/debug source. Normal keyboard input must not depend on
-`PACKET_TERMINAL_INPUT`.
-
-## Console Output Packets
-
-The VDrip console driver emits display/control packets through
-`vdrip_send_packet`.
-
-Common active packets:
-
-| Packet | Payload |
-|---|---|
-| `PACKET_RESET` | none |
-| `PACKET_PING` | none |
-| `PACKET_FRAME_MARK` | none |
-| `PACKET_VDP_CTRL_WRITE` | one VDP control byte |
-| `PACKET_VDP_DATA_WRITE` | one VDP data byte |
-| `PACKET_VDP_DATA_BLOCK` | up to 240 bytes in the current BIOS chunking |
-| `PACKET_VDP_SCROLL` | one row-count byte |
-| `PACKET_CURSOR_COMMAND` | command-specific cursor payload |
-
-The console driver owns ANSI/VT100-light output parsing, the text shadow
-buffer, cursor state, scroll behavior, and VDP packet emission.
-
-## Console Input
-
-After readiness, proxy-to-Z80 console input is a raw byte stream:
-
-```text
-proxy terminal byte
--> SIO0/B RX
--> vdrip_rx_sink
--> textq FIFO
--> CONST / CONIN
-```
-
-Input bytes are not interpreted by the output parser. ESC sequences from the
-keyboard, such as arrow-key sequences, are queued byte-for-byte for CP/M
-software to consume.
+| `01h` | `VDP_CTRL_WRITE` | Z80 to proxy | 1 byte |
+| `02h` | `VDP_DATA_WRITE` | Z80 to proxy | 1 byte |
+| `05h` | `TERMINAL_INPUT` | Proxy to Z80 | Legacy terminal bytes |
+| `06h` | `RESET` | Z80 to proxy | none |
+| `07h` | `PING` | Z80 to proxy | none; no reply |
+| `08h` | `FRAME_MARK` | Z80 to proxy | none |
+| `09h` | `CURSOR_COMMAND` | Z80 to proxy | command-specific |
+| `0Ah` | `PROXY_READY` | Proxy to Z80 | none |
+| `0Bh` | `VDP_DATA_BLOCK` | Z80 to proxy | 1..1,024 bytes |
+| `0Ch` | `VDP_SCROLL` | Z80 to proxy | 1 byte |
+| `0Dh` | `STORAGE_READ_REQ` | Z80 to proxy | 6 bytes |
+| `0Eh` | `STORAGE_READ_REPLY` | Proxy to Z80 | 130 bytes |
+| `0Fh` | `STORAGE_WRITE_REQ` | Z80 to proxy | 134 bytes |
+| `10h` | `STORAGE_WRITE_REPLY` | Proxy to Z80 | 2 bytes |
+| `11h` | `TERMINAL_TX` | Z80 to proxy | terminal bytes |
+| `12h` | `TERMINAL_RX` | Proxy to Z80 | terminal bytes |
+| `19h` | `PROTOCOL_ERROR` | Proxy to Z80 | error code |
 
 ## Storage Packets
 
-Storage packets use the same frame format and CRC semantics. Payload sizes are
-larger than the obsolete small keyboard packet buffer.
+Read request payload:
 
-### Read Request
+```text
+sequence, drive, LBA0, LBA1, LBA2, LBA3
+```
 
-Packet type: `PACKET_STORAGE_READ_REQ` (`0Dh`)
+Write request payload:
 
-Payload length: 6 bytes.
+```text
+sequence, drive, LBA0, LBA1, LBA2, LBA3, 128 record bytes
+```
 
-| Offset | Size | Meaning |
-|---:|---:|---|
-| 0 | 1 | sequence byte |
-| 1 | 1 | drive number |
-| 2 | 1 | LBA byte 0, least significant |
-| 3 | 1 | LBA byte 1 |
-| 4 | 1 | LBA byte 2 |
-| 5 | 1 | LBA byte 3, most significant |
+Read reply payload:
 
-### Read Reply
+```text
+sequence, status, 128 record bytes
+```
 
-Packet type: `PACKET_STORAGE_READ_REPLY` (`0Eh`)
+Write reply payload:
 
-Payload length: 130 bytes.
+```text
+sequence, status
+```
 
-| Offset | Size | Meaning |
-|---:|---:|---|
-| 0 | 1 | sequence byte |
-| 1 | 1 | status |
-| 2 | 128 | record data |
+LBA is little-endian. Only a matching sequence, exact payload length, and zero
+status complete a request successfully. Wrong-sequence replies are consumed as
+stale traffic. A malformed matching reply, nonzero status, SIO error, or
+`PROTOCOL_ERROR` fails the active BIOS call.
 
-On success, status is `00h` and exactly 128 data bytes follow.
+Storage waits indefinitely after request transmission because the configured
+drive depends on the synchronous proxy.
 
-### Write Request
+## Parser Recovery
 
-Packet type: `PACKET_STORAGE_WRITE_REQ` (`0Fh`)
-
-Payload length: 134 bytes.
-
-| Offset | Size | Meaning |
-|---:|---:|---|
-| 0 | 1 | sequence byte |
-| 1 | 1 | drive number |
-| 2 | 1 | LBA byte 0, least significant |
-| 3 | 1 | LBA byte 1 |
-| 4 | 1 | LBA byte 2 |
-| 5 | 1 | LBA byte 3, most significant |
-| 6 | 128 | record data |
-
-On success, the proxy writes exactly 128 bytes.
-
-### Write Reply
-
-Packet type: `PACKET_STORAGE_WRITE_REPLY` (`10h`)
-
-Payload length: 2 bytes.
-
-| Offset | Size | Meaning |
-|---:|---:|---|
-| 0 | 1 | sequence byte |
-| 1 | 1 | status |
-
-Status `00h` means success. Any nonzero status is an error.
-
-## Storage Transaction Rules
-
-The current BIOS backend supports only drive A (`drive=0`). Other drive values
-are errors at the proxy protocol level and are not selected by the CP/M BIOS
-facade.
-
-The LBA field is unsigned little-endian. The current image uses valid LBAs
-`0..65535`.
-
-The BIOS sequence byte skips zero when it allocates a new transaction sequence.
-Reply parsing requires:
-
-- valid frame sync
-- valid CRC
-- expected packet type
-- expected payload length
-- matching sequence byte
-- status byte equal to `00h`
-
-Any mismatch sets the transaction error flag and returns CP/M BIOS error.
-
-During storage transactions, the backend temporarily replaces the normal
-console RX sink with the storage reply parser. After completion or error it
-restores the console sink and the saved RTS state.
-
-## Size Requirements
-
-The proxy and parser must accept at least:
-
-| Packet | Payload bytes | Framed bytes including sync |
-|---|---:|---:|
-| Read request | 6 | 11 |
-| Read reply | 130 | 135 |
-| Write request | 134 | 139 |
-| Write reply | 2 | 7 |
-
-The BIOS uses `MOVE_BUFFER` as transaction scratch. It is currently 192 bytes,
-which covers the largest current storage request payload.
-
-## Maintenance Notes
-
-Protocol changes must be synchronized across:
-
-- `src/cbios_console_vdrip.asm`
-- `src/cbios_storage_vdrip.asm`
-- `src/virtual_drip_protocol.inc`
-- the Virtual Drip proxy implementation
-
-Do not reuse existing packet type values. Append new values after the current
-range unless there is an explicit compatibility plan.
+- Bytes before `A5h` are ignored in framed modes.
+- `A5 A5 5A` treats the second `A5` as the new first sync byte.
+- Declared lengths below 1 or above 131 are rejected.
+- Type-only packets dispatch immediately.
+- Unknown accepted-size packets are fully consumed and ignored.
+- Every complete or rejected frame returns to sync search.

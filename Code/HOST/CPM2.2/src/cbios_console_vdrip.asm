@@ -1,19 +1,17 @@
 ; Zephyr-80 Virtual Drip text console BIOS driver.
 ;
 ; This module replaces the legacy SIO console driver as the active CP/M
-; console backend. It owns the Virtual Drip packet transport, VDP text
-; rendering, proxy cursor control, and terminal input queue.
+; console backend. It owns VDP text rendering, proxy cursor control, and the
+; terminal input queue. The shared vdrip_transport module owns framing.
 ;
 ; Major subsystems:
 ;   - CP/M console dispatch table consumed by cbios_console.asm.
-;   - Startup VT100-style terminal readiness recognizer before normal VDP output
-;     traffic.
-;   - SIO0/B RX sink registration with the BIOS SIO core.
+;   - Packetized PROXY_READY synchronization before normal VDP output traffic.
+;   - Raw-byte callback registration with the shared transport.
 ;   - Input path: proxy-to-Z80 bytes are raw terminal input bytes after
 ;     readiness and are enqueued into textq, the CP/M CONIN FIFO.
 ;   - Output path: CP/M CONOUT bytes are interpreted by an ANSI/VT100-light
 ;     parser and rendered to the text shadow buffer / VDP name table.
-;   - Obsolete framed RX parser retained inactive during the raw-input change.
 ;   - Virtual cursor command helpers for the proxy renderer.
 ;   - RTS flow control for host-to-Z80 keyboard traffic and large VDP bursts.
 ;
@@ -28,10 +26,10 @@
 ;     -> CONIN dequeues oldest byte
 ;
 ; Startup readiness input:
-;     proxy sends raw ESC [ ? 1 ; 0 c
-;     -> vdrip_rx_sink
-;     -> vdrip_terminal_ready_parse_byte
-;     -> vdrip_terminal_ready_flag = 1
+;     proxy sends framed PROXY_READY
+;     -> common vdrip_rx_sink
+;     -> common frame parser
+;     -> vdrip_proxy_online = 1
 ;
 ; Proxy-to-Z80 input is raw bytes. Z80-to-proxy display/control output remains
 ; framed Virtual Drip packets. Storage or future structured commands should stay
@@ -61,14 +59,14 @@
 ;   vdrip_console_conout  — Output byte in A to the text console
 ;
 ; Input architecture (interrupt-fed):
-;   SIO RX ISR → vdrip_rx_sink → textq_put_ascii
+;   SIO RX ISR → common vdrip_rx_sink → textq_put_ascii
 ;   CONST: check textq_count — no RX polling, kicking, or parsing
 ;   CONIN: block until textq_count > 0, dequeue oldest byte
 ;
 ; Startup sequence:
 ;   1. sio_core_init has already run; SIO0/B is configured but RTS is released.
-;   2. Register RX sink, enable interrupts, assert RTS.
-;   3. Wait for raw terminal readiness bytes: ESC [ ? 1 ; 0 c.
+;   2. Register raw callback/common RX sink, enable interrupts, assert RTS.
+;   3. Wait for packetized PROXY_READY.
 ;   4. Once ready, release RTS and send RESET/PING/VDP init/font/cursor.
 ;   5. Assert RTS and enter normal interactive mode.
 ;
@@ -82,8 +80,8 @@
 	.globl vdrip_console_driver
 	.globl vdrip_console_init,vdrip_console_const
 	.globl vdrip_console_conin,vdrip_console_conout
-	.globl vdrip_rx_sink
-	.globl vdrip_send_packet,vdrip_rts_assert_raw,crc8_update
+	.globl vdrip_send_packet,vdrip_send_packet0,vdrip_send_packet1
+	.globl vdrip_rts_assert_raw
 	.globl vdrip_reset_display,vdrip_data_write_block
 	.globl vdrip_rx_rts_released
 	.globl restore_font_from_rom
@@ -94,6 +92,9 @@
 	.globl sio_send_byte
 	.globl sio0b_rts_assert,sio0b_rts_release
 	.globl SIO_CH_CONSOLE
+	.globl vdrip_transport_register_sink
+	.globl vdrip_transport_set_raw_callback,vdrip_transport_set_idle_mode
+	.globl vdrip_transport_wait_ready
 
 ; ===========================================================================
 ; Constants
@@ -105,33 +106,6 @@ VDRIP_CTRL		= SIOB_CTRL
 SIO_RR0_TX_EMPTY	= 0x04
 SIO_RR0_CTS		= 0x20
 
-; Virtual Drip packet protocol.
-; Wire format:  A5 5A LEN TYPE PAYLOAD... CRC
-; LEN = LEN + TYPE + PAYLOAD + CRC  (zero-payload LEN = 3)
-; Storage packets share this framing but are parsed by cbios_storage_vdrip.asm
-; while the storage backend temporarily owns the SIO RX sink. The small inactive
-; console RX parser below is not sized for storage replies.
-PACKET_SYNC0		= 0xa5
-PACKET_SYNC1		= 0x5a
-PACKET_VDP_CTRL_WRITE	= 0x01
-PACKET_VDP_DATA_WRITE	= 0x02
-PACKET_VDP_DATA_BLOCK	= 0x0b
-PACKET_VDP_SCROLL	= 0x0c
-; Obsolete for proxy->Z80 keyboard input. Raw terminal bytes now feed textq.
-PACKET_TERMINAL_INPUT	= 0x05
-PACKET_RESET		= 0x06
-PACKET_PING		= 0x07
-PACKET_FRAME_MARK	= 0x08
-PACKET_CURSOR_COMMAND	= 0x09
-; Obsolete proxy->Z80 readiness packet. Readiness is now raw ESC [ ? 1 ; 0 c.
-PACKET_PROXY_READY	= 0x0a
-PACKET_STORAGE_READ_REQ	= 0x0d
-PACKET_STORAGE_READ_REPLY = 0x0e
-PACKET_STORAGE_WRITE_REQ = 0x0f
-PACKET_STORAGE_WRITE_REPLY = 0x10
-PACKET_TERMINAL_TX	= 0x11
-PACKET_TERMINAL_RX	= 0x12
-
 CURSOR_ENABLE		= 0x01
 CURSOR_SHOW		= 0x02
 CURSOR_HIDE		= 0x03
@@ -140,8 +114,6 @@ CURSOR_SET_STYLE	= 0x06
 CURSOR_SET_BLINK	= 0x07
 CURSOR_SET_COLOR	= 0x08
 CURSOR_STYLE_UNDERLINE	= 0x01
-VDRIP_WIRE_OVERHEAD	= 0x03
-
 ; TMS9928A / Virtual Drip Text80 layout.
 ;
 ; The proxy exposes a 9928-like Text 2 display for an 80-column terminal. The
@@ -172,17 +144,15 @@ FONT_FIRST_CHAR		= 0x20
 FONT_CHAR_COUNT		= 0x60
 FONT_BYTES		= FONT_CHAR_COUNT * 8
 
-; Packet parser states.
-VDRIP_RX_WAIT_SYNC0	= 0x00
-VDRIP_RX_WAIT_SYNC1	= 0x01
-VDRIP_RX_LEN		= 0x02
-VDRIP_RX_BODY		= 0x03
+; Terminal parser states (for ANSI/VT-100 output processing).
+TERM_STATE_NORMAL	= 0x00
+TERM_STATE_ESC		= 0x01
+TERM_STATE_CSI		= 0x02
+TERM_STATE_ESC_HASH	= 0x03
+TERM_STATE_CHARSET	= 0x04
 
-; VT100-style terminal readiness recognizer.
-; Expected raw bytes from proxy:
-;   ESC [ ? 1 ; 0 c
-; Optional accepted variant:
-;   ESC [ ? 1 ; 2 c
+; Legacy raw-readiness recognizer constants retained only for dead compatibility
+; code below; startup now uses packetized PROXY_READY in vdrip_transport.
 VDRIP_READY_WAIT_ESC	= 0x00
 VDRIP_READY_WAIT_LBRACKET = 0x01
 VDRIP_READY_WAIT_QMARK	= 0x02
@@ -190,13 +160,6 @@ VDRIP_READY_WAIT_1	= 0x03
 VDRIP_READY_WAIT_SEMI	= 0x04
 VDRIP_READY_WAIT_MODE	= 0x05
 VDRIP_READY_WAIT_C	= 0x06
-
-; Terminal parser states (for ANSI/VT-100 output processing).
-TERM_STATE_NORMAL	= 0x00
-TERM_STATE_ESC		= 0x01
-TERM_STATE_CSI		= 0x02
-TERM_STATE_ESC_HASH	= 0x03
-TERM_STATE_CHARSET	= 0x04
 
 ; ANSI CSI final command bytes.
 CSI_CHA			= 'G	; cursor horizontal absolute
@@ -294,12 +257,12 @@ vdrip_console_driver:
 ;   Emits RESET, PING, VDP register/font/clear packets, cursor commands, and a
 ;   FRAME_MARK after the proxy is ready.
 ; sio_rx_kick:
-;   Not used here. The readiness bytes are received by the normal SIO RX
-;   interrupt path and consumed by vdrip_terminal_ready_parse_byte.
+;   Not used directly here. The common transport sink receives packetized
+;   readiness through the normal SIO RX path.
 ;
 ; Startup sequence:
 ;   1. Release RTS, init RX, register sink, enable interrupts.
-;   2. Assert RTS and wait for raw ESC [ ? 1 ; 0 c from the proxy.
+;   2. Assert RTS and wait for packetized PROXY_READY from the proxy.
 ;   3. Once ready, release RTS and send RESET/PING/VDP init/font/cursor.
 ;   4. Assert RTS and enter normal interactive mode.
 ;
@@ -310,9 +273,13 @@ vdrip_console_init:
 	; Release RTS — we are not ready yet.
 	call vdrip_rts_release_raw
 
-	; Initialize RX state and register the sink.
+	; Initialize queue state and the shared transport.
 	call vdrip_rx_init
-	call vdrip_register_rx_sink
+	ld hl,#textq_put_ascii
+	call vdrip_transport_set_raw_callback
+	xor a
+	call vdrip_transport_set_idle_mode
+	call vdrip_transport_register_sink
 	call sio_core_enable_interrupts
 
 	; Assert RTS so the proxy can send.
@@ -320,21 +287,10 @@ vdrip_console_init:
 	xor a
 	ld (vdrip_rx_rts_released),a
 
-	; Terminal readiness handshake — skip on warm boot.
-	ld a,(vdrip_handshake_done)
-	or a
-	jr nz,vdrip_init_skip_handshake
-
-	call vdrip_wait_for_terminal_ready
+	; Cold boot waits for PROXY_READY; warm boot returns immediately while the
+	; shared online flag remains set.
+	call vdrip_transport_wait_ready
 	ld a,#0x01
-	ld (vdrip_handshake_done),a
-
-vdrip_init_skip_handshake:
-	; Warm boot — readiness was already confirmed; restore the flag
-	; that vdrip_rx_init just zeroed so vdrip_rx_sink routes bytes
-	; to textq instead of the readiness parser.
-	ld a,#0x01
-	ld (vdrip_terminal_ready_flag),a
 	ld (term_auto_wrap),a		; auto-wrap enabled at init
 
 	; Release RTS and begin VDP initialization.
@@ -596,29 +552,6 @@ vdrip_console_listst:
 ; Terminal readiness handshake
 ; ===========================================================================
 ;
-; Wait for the proxy to send a raw VT100-style Device Attributes response before
-; allowing any Virtual Drip output traffic:
-;
-;   ESC [ ? 1 ; 0 c
-;
-; The readiness bytes are raw input bytes handled by vdrip_rx_sink and consumed
-; by vdrip_terminal_ready_parse_byte. They are not enqueued into textq.
-;
-; Must be called after RX is initialized, sink registered, interrupts
-; enabled, and RTS asserted so the proxy can send the readiness bytes.
-
-vdrip_wait_for_terminal_ready:
-vdrip_wait_for_terminal_ready_loop:
-	; Kick SIO to move available bytes through the ISR path.
-	ld a,#SIO_CH_CONSOLE
-	call sio_rx_kick
-
-	ld a,(vdrip_terminal_ready_flag)
-	or a
-	jr z,vdrip_wait_for_terminal_ready_loop
-	ret
-
-
 ; ===========================================================================
 ; SIO RX integration
 ; ===========================================================================
@@ -629,8 +562,6 @@ vdrip_rx_init:
 	ld (textq_head),a
 	ld (textq_tail),a
 	ld (textq_count),a
-		ld (vdrip_terminal_ready_flag),a
-		ld (vdrip_terminal_ready_state),a
 	ld (vdrip_ready_seq_count),a
 	ld (esc_press_count),a
 	ld (text_view_col),a
@@ -651,16 +582,8 @@ vdrip_rx_init_ztextq:
 	ret
 
 
-vdrip_register_rx_sink:
-	di
-	ld a,#SIO_CH_CONSOLE
-	ld hl,#vdrip_rx_sink
-	call sio_register_rx_sink
-	ei
-	ret
-
-
-; SIO RX sink registered with sio_core for SIO_CH_CONSOLE.
+; Legacy local RX sink retained only as dead reference documentation. The
+; shared transport sink is the registered owner.
 ;
 ; Called from:
 ;   - sio_core_isr, the real interrupt-fed RX path.
@@ -677,36 +600,31 @@ vdrip_register_rx_sink:
 ; VDrip traffic:
 ;   Must not emit VDP or cursor traffic. This routine can run inside the SIO ISR.
 ; Behavior:
-;   Only SIO_CH_CONSOLE bytes are accepted. Before the initial terminal-ready
-;   handshake, bytes feed the readiness recognizer and are consumed. After the
-;   handshake, every byte is raw terminal input and is enqueued unchanged.
-;   This is important for the ESC key: a standalone 1Bh must reach CONIN, not
-;   remain trapped as the first byte of a possible readiness sequence.
-vdrip_rx_sink:
+;   Inactive legacy raw-readiness path retained for a later console-cleanup
+;   phase. The shared vdrip_rx_sink is the registered owner.
+vdrip_console_legacy_rx_sink:
 	push af
 	push bc
 	push de
 	push hl
 
 	cp #SIO_CH_CONSOLE
-	jr nz,vdrip_rx_sink_done
+	jr nz,vdrip_console_legacy_rx_done
 
-	; Once ready, bypass the readiness recognizer entirely.  It is not a
-	; general input parser and would otherwise eat ESC while waiting to see
-	; whether ESC starts ESC [ ? 1 ; 0 c.
+	; Legacy raw-readiness behavior retained inactive.
 	ld a,(vdrip_terminal_ready_flag)
 	or a
 	jr z,vdrip_rx_sink_wait_ready
 
 	ld a,c
 	call textq_put_ascii
-	jr vdrip_rx_sink_done
+	jr vdrip_console_legacy_rx_done
 
 vdrip_rx_sink_wait_ready:
 	ld a,c
 	call vdrip_terminal_ready_parse_byte
 
-vdrip_rx_sink_done:
+vdrip_console_legacy_rx_done:
 	pop hl
 	pop de
 	pop bc
@@ -717,7 +635,7 @@ vdrip_rx_sink_done:
 ; ---------------------------------------------------------------------------
 ; vdrip_terminal_ready_parse_byte
 ;
-; Tiny boot-time recognizer for raw VT100-style readiness:
+; Inactive legacy recognizer for raw VT100-style readiness:
 ;   ESC [ ? 1 ; 0 c
 ;
 ; Also accepts:
@@ -2850,10 +2768,8 @@ text_redraw_rows_done:
 ; Proxy reconnection handler
 ; ===========================================================================
 ;
-; Called from CONST when vdrip_reinit_requested is set (the readiness
-; parser saw a second ESC [ ? 1 ; 0 c mid-session).  Reinitializes the
-; VDP, blasts the current shadow buffer to the screen, and resumes
-; normal operation.
+; Inactive Phase 0 legacy reconnect helper. Packetized cold-start readiness is
+; owned by vdrip_transport; idle proxy restart recovery requires reboot.
 ;
 ; Clobbers: AF, BC, DE, HL.  Emits VDrip traffic; RTS is released
 ; during the burst.
@@ -3121,7 +3037,7 @@ vdp_write_data_byte:
 ; Write BC bytes from HL to current TMS9928A data port.
 ; Sends data as one or more PACKET_VDP_DATA_BLOCK packets, each at most
 ; VDRIP_DATA_BLOCK_MAX bytes. This amortises the per-packet framing
-; overhead (sync, LEN, TYPE, CRC) over multiple data bytes and dramatically
+; overhead (sync, 16-bit LEN, TYPE) over multiple data bytes and dramatically
 ; reduces serial traffic for font upload, screen clear, scroll redraw, and
 ; other bulk VDP writes.
 ;
@@ -3363,172 +3279,6 @@ vdrip_cursor_set_color_yellow:
 	jp vdrip_send_packet
 
 
-; Send zero-payload packet.
-; Input:
-;   A = type
-vdrip_send_packet0:
-	ld b,#0x00
-	ld hl,#packet_payload0
-	jp vdrip_send_packet
-
-
-; Send one-byte payload packet.
-; Input:
-;   A = type
-;   E = payload byte
-vdrip_send_packet1:
-	push af
-	ld a,e
-	ld (packet_payload0),a
-	pop af
-
-	ld b,#0x01
-	ld hl,#packet_payload0
-	jp vdrip_send_packet
-
-
-; Send Virtual Drip packet.
-;
-; Input:
-;   A  = packet type
-;   B  = payload length
-;   HL = payload pointer
-;
-; Wire:
-;   A5 5A LEN TYPE PAYLOAD CRC
-;
-; CRC covers:
-;   LEN TYPE PAYLOAD
-vdrip_send_packet:
-	ld (packet_type_store),a
-
-	ld a,b
-	ld (packet_len_store),a
-	add a,#VDRIP_WIRE_OVERHEAD
-	ld (packet_wire_len_store),a
-
-	ld (packet_ptr_store),hl
-
-	push bc
-	push de
-	push hl
-
-	; Calculate CRC.
-	ld c,#0x00
-
-	ld a,(packet_wire_len_store)
-	call crc8_update
-
-	ld a,(packet_type_store)
-	call crc8_update
-
-	ld hl,(packet_ptr_store)
-	ld a,(packet_len_store)
-	or a
-	jr z,vdrip_send_packet_crc_done
-
-	ld b,a
-vdrip_send_packet_crc_loop:
-	ld a,(hl)
-	call crc8_update
-	inc hl
-	djnz vdrip_send_packet_crc_loop
-
-vdrip_send_packet_crc_done:
-	ld a,c
-	ld (packet_crc_store),a
-
-	; Send packet.
-	ld a,#PACKET_SYNC0
-	call vdrip_transport_putc
-
-	ld a,#PACKET_SYNC1
-	call vdrip_transport_putc
-
-	ld a,(packet_wire_len_store)
-	call vdrip_transport_putc
-
-	ld a,(packet_type_store)
-	call vdrip_transport_putc
-
-	ld hl,(packet_ptr_store)
-	ld a,(packet_len_store)
-	or a
-	jr z,vdrip_send_packet_send_crc
-
-	ld b,a
-vdrip_send_packet_payload_loop:
-	ld a,(hl)
-	call vdrip_transport_putc
-	inc hl
-	djnz vdrip_send_packet_payload_loop
-
-vdrip_send_packet_send_crc:
-	ld a,(packet_crc_store)
-	call vdrip_transport_putc
-
-	pop hl
-	pop de
-	pop bc
-	ret
-
-
-vdrip_transport_putc:
-	ld c,a
-	; Ensure SIO register pointer is at RR0 before the shared sender reads
-	; status. RTS toggles also write the SIO control port.
-	xor a
-	out (VDRIP_CTRL),a
-	ld a,#SIO_CH_CONSOLE
-	call sio_send_byte
-	or a
-	ret z
-
-	; Last-resort escape from a stuck CTS line. Normal traffic still uses
-	; sio_send_byte above and therefore preserves hardware flow control.
-	xor a
-	out (VDRIP_CTRL),a
-vdrip_transport_wait_tx_empty:
-	in a,(VDRIP_CTRL)
-	and #SIO_RR0_TX_EMPTY
-	jr z,vdrip_transport_wait_tx_empty
-	ld a,c
-	out (VDRIP_DATA),a
-	xor a
-	ret
-
-; ===========================================================================
-; CRC-8 (polynomial 0x07) — matches proxy
-;
-; Input:  C = current CRC, A = next byte
-; Output: C = updated CRC
-; Clobbers: AF, E
-; ===========================================================================
-
-crc8_update:
-	xor c
-	ld c,a
-	ld e,#0x08
-
-crc8_update_bit:
-	bit 7,c
-	jr z,crc8_update_shift
-
-	sla c
-	ld a,c
-	xor #0x07
-	ld c,a
-	jr crc8_update_next
-
-crc8_update_shift:
-	sla c
-
-crc8_update_next:
-	dec e
-	jr nz,crc8_update_bit
-	ret
-
-
 ; ===========================================================================
 ; Data / buffers / font include
 ; ===========================================================================
@@ -3537,26 +3287,8 @@ crc8_update_next:
 ; These live in the driver slot area with the code and are part of the current
 ; memory layout.
 
-; Packet output temporary storage.
-; Used by vdrip_send_packet* while constructing outbound Virtual Drip frames:
-;   A5 5A LEN TYPE PAYLOAD... CRC
-packet_len_store:
-	.db 0x00
-
-packet_wire_len_store:
-	.db 0x00
-
-packet_type_store:
-	.db 0x00
-
-packet_crc_store:
-	.db 0x00
-
 packet_payload0:
 	.ds 0x05
-
-packet_ptr_store:
-	.dw 0x0000
 
 block_ptr_store:
 	.dw 0x0000

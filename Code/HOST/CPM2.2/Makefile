@@ -10,7 +10,7 @@ DOCS_DIR ?= docs
 
 CPM22_SRC ?= cpm-2.2/src/cpm22.asm
 CPMTOOLS_DISKDEF ?= images/diskdef
-CONSOLE_DRIVER ?= vdrip
+CONSOLE_DRIVER ?= pt_vdrip
 
 ifeq ($(CONSOLE_DRIVER),vdrip)
 CONSOLE_DRIVER_SRC := $(SRC_DIR)/cbios_console_vdrip.asm
@@ -35,6 +35,7 @@ RUNTIME_SRCS ?= \
 	$(SRC_DIR)/cbios_boot.asm \
 	$(SRC_DIR)/cbios_console.asm \
 	$(SRC_DIR)/sio_core.asm \
+	$(SRC_DIR)/vdrip_transport.asm \
 	$(SRC_DIR)/cbios_iocall.asm \
 	$(CONSOLE_DRIVER_SRC) \
 	$(SRC_DIR)/cbios_storage.asm \
@@ -117,6 +118,7 @@ $(FIRMWARE_REL): $(FIRMWARE_SRC) $(RUNTIME_SRCS) $(CPM22_ASXXXX_SRC) $(CPM22_SRC
 
 $(FIRMWARE_IHX): $(FIRMWARE_REL)
 	$(SDLDZ80) $(LDFLAGS) $@ $<
+	$(PYTHON) $(TOOLS_DIR)/check_overlap.py "$@" --symbols "$(FIRMWARE_SYM)"
 
 $(FIRMWARE_BIN): $(FIRMWARE_IHX)
 	$(MAKEBIN) $(MAKEBIN_FLAGS) $< $@

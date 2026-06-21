@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 34872 bytes |
+| Firmware symbol map | `build/firmware.map` | 35117 bytes |
 | Pre-swap image | `build/zephyr80.pre-swap.bin` | 131072 bytes |
 | Final burnable image | `build/zephyr80.bin` | 131072 bytes |
 | Layout manifest | `build/layout.manifest` | 273 bytes |
@@ -111,13 +111,17 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `write` | `DBE2h` | Storage WRITE facade; transfers to VDrip proxy storage. |
 | `sectran` | `DBFCh` | Returns untranslated 0-based logical sector for no-skew media. |
 | `STORAGE_STUB_CODE_END` | `DBFFh` | Storage BIOS facade end. |
-| `VDRIP_STORAGE_CODE_START` | `F7EBh` | VDrip storage backend code start. |
-| `vdrip_storage_seldsk` | `F7FCh` | Selects CP/M drive A and returns its DPH. |
-| `vdrip_storage_read` | `F810h` | Reads one 128-byte record from VDrip proxy storage. |
-| `vdrip_storage_write` | `F83Eh` | Writes one 128-byte record to VDrip proxy storage. |
+| `VDRIP_TRANSPORT_CODE_START` | `F680h` | Shared Virtual Drip transport start. |
+| `vdrip_send_frame` | `F721h` | Current no-CRC Virtual Drip frame sender. |
+| `vdrip_rx_sink` | `F79Bh` | Single SIO0/B Virtual Drip receive sink. |
+| `VDRIP_TRANSPORT_CODE_END` | `F900h` | Shared Virtual Drip transport end. |
+| `VDRIP_STORAGE_CODE_START` | `F900h` | VDrip storage backend code start. |
+| `vdrip_storage_seldsk` | `F911h` | Selects CP/M drive A and returns its DPH. |
+| `vdrip_storage_read` | `F925h` | Reads one 128-byte record from VDrip proxy storage. |
+| `vdrip_storage_write` | `F95Fh` | Writes one 128-byte record to VDrip proxy storage. |
 | `VDRIP_STORAGE_DPH` | `FB40h` | Drive A disk parameter header. |
 | `VDRIP_STORAGE_DPB` | `FB50h` | Drive A disk parameter block. |
-| `VDRIP_STORAGE_CODE_END` | `FA7Fh` | VDrip storage backend code end. |
+| `VDRIP_STORAGE_CODE_END` | `FA52h` | VDrip storage backend code end. |
 | `SIO_CORE_CODE_START` | `DD10h` | BIOS-owned SIO core code start in core BIOS. |
 | `CONSOLE_IM2_VECTOR_ENTRY` | `DD10h` | SIO core exact IM2 vector table entry address. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |
@@ -145,7 +149,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E00Eh` | Virtual Drip console init, proxy handshake, VDP setup. |
-| `VDRIP_CONSOLE_CODE_END` | `E3E9h` | Virtual Drip console driver code end. |
+| `VDRIP_CONSOLE_CODE_END` | `E1DFh` | Virtual Drip console driver code end. |
 | `BANKING_CODE_START` | `DC00h` | Banking extension implementation start. |
 | `SELMEM` | `DC00h` | Select RAM bank. |
 | `SETBNK` | `DC0Ah` | Record future DMA bank. |
@@ -154,8 +158,8 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `BANKING_CODE_END` | `DCAEh` | Banking extension implementation end. |
 | `VIDEO_SEND` | `DF50h` | Extended BIOS call: raw VDrip display/VDP packet send. |
 | `BIOS_EXT_CODE_START` | `DF50h` | BIOS extension code start. |
-| `BIOS_EXT_CODE_END` | `DF7Bh` | BIOS extension code end. |
-| `BIOS_CODE_END` | `DF7Bh` | End of core BIOS code. |
+| `BIOS_EXT_CODE_END` | `DF78h` | BIOS extension code end. |
+| `BIOS_CODE_END` | `DF78h` | End of core BIOS code. |
 
 ## Runtime State Symbols
 
@@ -188,22 +192,27 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `vdrip_storage_seq` | `FE47h` | VDrip storage sequence byte. |
 | `vdrip_storage_active_seq` | `FE48h` | Sequence byte for the active storage transaction. |
 | `vdrip_storage_lba` | `FE49h` | Computed little-endian 16-bit LBA for the active request. |
-| `storage_expected_type` | `FE4Bh` | Expected storage reply packet type. |
-| `storage_expected_len` | `FE4Ch` | Expected storage reply payload length. |
-| `storage_expected_seq` | `FE4Dh` | Expected storage reply sequence byte. |
-| `storage_rx_state` | `FE4Eh` | Transaction-scoped storage reply parser state. |
-| `storage_rx_len` | `FE4Fh` | Received storage reply LEN byte. |
-| `storage_rx_type` | `FE50h` | Received storage reply packet type. |
-| `storage_rx_payload_len` | `FE51h` | Received storage reply payload length. |
-| `storage_rx_remaining` | `FE52h` | Storage reply payload bytes remaining. |
-| `storage_rx_index` | `FE53h` | Storage reply payload write index. |
-| `storage_rx_crc` | `FE54h` | Storage reply CRC accumulator. |
-| `storage_rx_complete` | `FE55h` | Storage reply completion flag. |
-| `storage_rx_error` | `FE56h` | Storage reply error flag. |
-| `storage_caller_sp` | `FE57h` | Saved caller stack pointer while storage backends run on the BIOS stack. |
-| `VDRIP_STORAGE_CSV` | `FE59h` | Zero-length fixed-disk check vector label. |
+| `VDRIP_TRANSPORT_STATE_START` | `FE4Bh` | Shared Virtual Drip transport state start. |
+| `vdrip_rx_mode` | `FE4Bh` | Current raw/readiness/storage/PTY receive mode. |
+| `vdrip_idle_mode` | `FE4Ch` | Console backend idle receive mode. |
+| `vdrip_proxy_online` | `FE4Dh` | Packetized PROXY_READY online flag. |
+| `vdrip_raw_callback` | `FE4Eh` | Selected console raw-byte callback. |
+| `vdrip_rx_state` | `FE50h` | Shared frame parser state. |
+| `vdrip_declared_len` | `FE51h` | Current 16-bit declared frame length. |
+| `vdrip_payload_len` | `FE53h` | Current decoded payload length. |
+| `vdrip_rx_type` | `FE54h` | Current received packet type. |
+| `vdrip_payload_remaining` | `FE55h` | Payload bytes remaining. |
+| `vdrip_payload_index` | `FE56h` | Payload staging index. |
+| `vdrip_pending_type` | `FE57h` | Expected storage reply type. |
+| `vdrip_pending_seq` | `FE58h` | Expected storage reply sequence. |
+| `vdrip_reply_ready` | `FE59h` | Matching storage reply completion flag. |
+| `vdrip_reply_error` | `FE5Ah` | Storage reply/protocol error flag. |
+| `vdrip_reply_status` | `FE5Bh` | Decoded storage or protocol status. |
+| `VDRIP_TRANSPORT_STATE_END` | `FE62h` | Shared Virtual Drip transport state end. |
+| `storage_caller_sp` | `FE68h` | Saved caller stack pointer while storage backends run on the BIOS stack. |
+| `VDRIP_STORAGE_CSV` | `FE6Ah` | Zero-length fixed-disk check vector label. |
 | `VDRIP_STORAGE_ALV` | `FC00h` | VDrip storage allocation vector. |
-| `STORAGE_STATE_END` | `FE59h` | Storage state end. |
+| `STORAGE_STATE_END` | `FE6Ah` | Storage state end. |
 | `SIO_CORE_STATE_START` | `FE70h` | BIOS-owned SIO core state start. |
 | `SIO0B_RX_SINK` | `FE70h` | Registered RX byte sink for SIO_CH_CONSOLE / SIO0/B. |
 | `SIO1_RX_SINK` | `FE72h` | Registered RX byte sink slot for SIO_CH_IOCTRL / SIO1/A. |

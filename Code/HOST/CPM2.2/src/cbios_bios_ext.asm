@@ -6,7 +6,7 @@
 	.globl VIDEO_SEND
 	.globl BIOS_EXT_CODE_START,BIOS_EXT_CODE_END,BIOS_CODE_END
 
-	.globl vdrip_send_packet
+	.globl vdrip_send_frame
 	.globl vdrip_data_write_block
 	.globl vdrip_reset_display
 
@@ -75,11 +75,8 @@ vs_single:
 	cp #VDRIP_PACKET_PAYLOAD_MAX + 1
 	jr nc, vs_err_len
 
-	ld b, c				; vdrip_send_packet: B = payload length
 	pop af				; restore packet type to A
-	call vdrip_send_packet		; A = type, B = len, HL = payload ptr
-	xor a
-	ret
+	jp vdrip_send_frame		; A = type, BC = len, HL = payload ptr
 
 vs_err_len:
 	pop af				; balance stack

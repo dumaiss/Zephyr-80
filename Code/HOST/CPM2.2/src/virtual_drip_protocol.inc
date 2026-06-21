@@ -1,54 +1,42 @@
 ; Virtual Drip wire protocol constants for Z80-side code.
 ;
 ; Packets are encoded as:
-;   A5h 5Ah LEN TYPE PAYLOAD... CRC8
+;   A5h 5Ah LEN_LO LEN_HI TYPE PAYLOAD...
 ;
-; LEN counts LEN, TYPE, PAYLOAD, and CRC8. CRC8 covers LEN, TYPE, and
-; PAYLOAD only. Cursor commands are proxy/display overlay commands; they do
-; not write emulated VDP memory or registers.
+; LEN is a 16-bit little-endian count of TYPE + PAYLOAD bytes.  The minimum
+; declared length is 1, the proxy supports up to 1024 payload bytes, and there
+; is no CRC or checksum. Cursor commands are proxy/display overlay commands;
+; they do not write emulated VDP memory or registers.
 ;
 ; Current protocol split:
-;   - proxy-to-Z80 keyboard input is raw after terminal readiness
+;   - proxy-to-Z80 keyboard input is raw after packetized readiness
 ;   - Z80-to-proxy display/control packets use this framing
-;   - storage requests/replies use this framing while the storage driver owns
-;     the SIO RX sink
+;   - one common receive sink owns framed readiness and storage replies
 ;
 ; PACKET_KEY_EVENT is the legacy name for type 05h. The active BIOS console
 ; source calls the same value PACKET_TERMINAL_INPUT and keeps it inactive for
 ; normal keyboard input.
 
-PACKET_SYNC0            EQU     0A5H
-PACKET_SYNC1            EQU     05AH
+PACKET_SYNC0            = 0xa5
+PACKET_SYNC1            = 0x5a
 
-PACKET_VDP_CTRL_WRITE   EQU     001H
-PACKET_VDP_DATA_WRITE   EQU     002H
-PACKET_VDP_STATUS_READ  EQU     003H
-PACKET_VDP_DATA_READ    EQU     004H
-PACKET_KEY_EVENT        EQU     005H
-PACKET_RESET            EQU     006H
-PACKET_PING             EQU     007H
-PACKET_FRAME_MARK       EQU     008H
-PACKET_CURSOR_COMMAND   EQU     009H
-PACKET_PROXY_READY      EQU     00AH
-PACKET_VDP_DATA_BLOCK   EQU     00BH
-PACKET_VDP_SCROLL       EQU     00CH
-PACKET_STORAGE_READ_REQ EQU     00DH
-PACKET_STORAGE_READ_REPLY EQU   00EH
-PACKET_STORAGE_WRITE_REQ EQU    00FH
-PACKET_STORAGE_WRITE_REPLY EQU  010H
-PACKET_TERMINAL_TX       EQU     011H
-PACKET_TERMINAL_RX       EQU     012H
-
-CURSOR_ENABLE           EQU     001H
-CURSOR_SHOW             EQU     002H
-CURSOR_HIDE             EQU     003H
-CURSOR_SET_POSITION     EQU     004H
-CURSOR_MOVE_RELATIVE    EQU     005H
-CURSOR_SET_STYLE        EQU     006H
-CURSOR_SET_BLINK        EQU     007H
-CURSOR_SET_COLOR        EQU     008H
-CURSOR_SET_GEOMETRY     EQU     009H
-
-CURSOR_STYLE_BLOCK      EQU     000H
-CURSOR_STYLE_UNDERLINE  EQU     001H
-CURSOR_STYLE_LEFT_BAR   EQU     002H
+PACKET_VDP_CTRL_WRITE   = 0x01
+PACKET_VDP_DATA_WRITE   = 0x02
+PACKET_VDP_STATUS_READ  = 0x03
+PACKET_VDP_DATA_READ    = 0x04
+PACKET_KEY_EVENT        = 0x05
+PACKET_TERMINAL_INPUT   = PACKET_KEY_EVENT
+PACKET_RESET            = 0x06
+PACKET_PING             = 0x07
+PACKET_FRAME_MARK       = 0x08
+PACKET_CURSOR_COMMAND   = 0x09
+PACKET_PROXY_READY      = 0x0a
+PACKET_VDP_DATA_BLOCK   = 0x0b
+PACKET_VDP_SCROLL       = 0x0c
+PACKET_STORAGE_READ_REQ = 0x0d
+PACKET_STORAGE_READ_REPLY = 0x0e
+PACKET_STORAGE_WRITE_REQ = 0x0f
+PACKET_STORAGE_WRITE_REPLY = 0x10
+PACKET_TERMINAL_TX      = 0x11
+PACKET_TERMINAL_RX      = 0x12
+PACKET_PROTOCOL_ERROR   = 0x19

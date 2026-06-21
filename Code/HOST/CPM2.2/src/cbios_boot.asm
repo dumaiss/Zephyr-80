@@ -213,12 +213,15 @@ boot_print_banner_loop:
 	inc hl
 	jr boot_print_banner_loop
 
+; NOTE: the core BIOS block (DA00h-DB78h) is packed solid against the console
+; facade at CBIOS_CONSOLE_CODE_BASE (DB79h). This banner is the last item before
+; that boundary, so it must end at DB78h or lower. Keep it <= 10 bytes including
+; the NUL terminator, or reclaim space elsewhere; check_overlap.py enforces it.
 BOOT_BANNER:
-	.db CR,LF
 	.ascii /CP/
 	.db '/'
 	.ascii /M 2.2/
-	.db CR,LF,0
+	.db LF,0
 
 ; Runtime work area. Later storage and launch units may extend this local state.
 	.area WORK (ABS)
