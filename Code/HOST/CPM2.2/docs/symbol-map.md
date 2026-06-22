@@ -121,7 +121,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `vdrip_storage_write` | `F963h` | Writes one 128-byte record to VDrip proxy storage. |
 | `VDRIP_STORAGE_DPH` | `FB40h` | Drive A disk parameter header. |
 | `VDRIP_STORAGE_DPB` | `FB50h` | Drive A disk parameter block. |
-| `VDRIP_STORAGE_CODE_END` | `FA56h` | VDrip storage backend code end. |
+| `VDRIP_STORAGE_CODE_END` | `FA64h` | VDrip storage backend code end. |
 | `SIO_CORE_CODE_START` | `DD10h` | BIOS-owned SIO core code start in core BIOS. |
 | `CONSOLE_IM2_VECTOR_ENTRY` | `DD10h` | SIO core exact IM2 vector table entry address. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |

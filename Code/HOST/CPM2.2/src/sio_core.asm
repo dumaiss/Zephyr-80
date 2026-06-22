@@ -75,8 +75,9 @@
 ;
 ; SIO0/B console / Virtual Drip link:
 ;   SIO_CH_CONSOLE uses async 115200 8N1 with RTS/CTS hardware flow control.
-;   DTR/DCD are not required. WR3 Auto Enables stay off intentionally so the
-;   BIOS does not depend on DCD. CTS is polled before TX; RTS is software-
+;   WR3 Auto Enables are ON so /CTS gates the transmitter in hardware; /DCD is
+;   tied active-low so its RX gate stays asserted. CTS is also polled before TX
+;   on the console path as a belt-and-suspenders check; RTS is software-
 ;   managed by the BIOS/client. Core init holds RTS released until the console
 ;   client clears its RX ring, registers its sink, and asserts RTS.
 
@@ -152,9 +153,10 @@ sio_init:
 ;   BIOS-owned SIO interrupts disabled.
 ; Inputs: none.
 ; Outputs:
-;   SIO0/B is configured 115200 8N1 with WR1 interrupts disabled, CTS-polled
-;   TX, software-managed RTS released until the console client is ready, Auto
-;   Enables off, and no DCD dependency.
+;   SIO0/B is configured 115200 8N1 with WR1 interrupts disabled, WR3 Auto
+;   Enables on (/CTS gates TX in hardware; /DCD tied active-low), CTS also
+;   polled before TX on the console path, and software-managed RTS released
+;   until the console client is ready.
 ;   SIO1/A is configured synchronous 8-bit, external clock/sync, no parity/CRC,
 ;   no IRQs, and RTS inactive.
 ; Clobbers: AF.
@@ -181,12 +183,15 @@ sio_core_init:
 	ld a,#0x44
 	out (SIO0B_CTRL_PORT),a
 
-	; WR3: RX enable, 8-bit RX, Auto Enables off.
-	; Auto Enables are intentionally disabled: DTR/DCD are not wired and SIO0/B
-	; must not enter a mode that depends on DCD.
+	; WR3: RX enable, 8-bit RX, Auto Enables ON.
+	; Auto Enables gate the transmitter on /CTS so the SIO holds queued data
+	; until the remote endpoint is ready. /DCD is tied active-low (permanently
+	; asserted), so the DCD-gates-RX side effect leaves the receiver enabled.
+	; Without this gate, bulk transfers overrun the host and CP/M reports
+	; "Bad Sector" errors under disk-heavy apps (TM2, WordStar).
 	ld a,#0x03
 	out (SIO0B_CTRL_PORT),a
-	ld a,#0xc1
+	ld a,#0xe1
 	out (SIO0B_CTRL_PORT),a
 
 	; WR5: preserve the existing DTR/TX-enable/8-bit-TX pattern, but hold

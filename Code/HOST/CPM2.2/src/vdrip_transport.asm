@@ -240,12 +240,15 @@ vdrip_send_done:
 
 ; Virtual Drip uses RTS/CTS hardware flow control.
 ;
-; WR3 Auto Enables is enabled:
+; WR3 Auto Enables is enabled (sio_core_init):
 ;   - /CTS gates transmission automatically.
-;   - /DCD gates reception and is tied active-low.
+;   - /DCD gates reception and is tied active-low (permanently asserted), so
+;     the receiver stays enabled.
 ;
 ; This routine therefore waits only for room in the SIO transmit buffer.
-; The SIO holds queued data until /CTS is asserted by the remote endpoint.
+; The SIO holds queued data until /CTS is asserted by the remote endpoint;
+; without that gate, bulk storage transfers overrun the host's serial RX
+; buffer and the corrupted frames surface to CP/M as "Bad Sector" errors.
 ;
 ; Input: A = byte
 ; Output: A = BIOS_OK

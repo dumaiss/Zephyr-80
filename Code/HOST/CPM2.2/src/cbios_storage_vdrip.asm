@@ -174,11 +174,18 @@ vdrip_storage_write:
 	call vdrip_storage_build_request_header
 	call vdrip_storage_copy_dma_to_write
 
-	ld a,#PACKET_STORAGE_WRITE_REPLY
-	call vdrip_storage_begin
-
-	or a
-	ret nz
+	; RTS handshake around the request transmit. This is the fix for spurious
+	; write "Bad Sector"s: MOVE_BUFFER is the transmit source, so the host must
+	; not send anything into it while we clock out the 134-byte request. The
+	; CRTSCTS host holds its output whenever our RTS is released, so save the
+	; current console RTS state and release RTS for the duration of the send.
+	; Without this, a stray console byte both scribbles the outgoing record and
+	; latches an SIO RX error that wait_reply reads as a failed reply, even
+	; though the proxy received and wrote the record successfully. Reads send
+	; only 6 bytes, so they almost never hit this window.
+	ld a,(vdrip_rx_rts_released)
+	ld (vdrip_storage_saved_rts_state),a
+	call vdrip_rts_release_raw
 
 	ld a,#PACKET_STORAGE_WRITE_REQ
 	ld b,#STORAGE_WRITE_REQ_LEN
@@ -186,6 +193,16 @@ vdrip_storage_write:
 	call vdrip_send_packet
 	or a
 	jr nz,vdrip_storage_write_send_error
+
+	; Request fully on the wire. Arm a clean STORAGE reply window (this clears
+	; any transmit-window line error and resets the parser) and only now assert
+	; RTS so the host may send its 2-byte reply.
+	ld a,(vdrip_storage_active_seq)
+	ld c,a
+	ld a,#PACKET_STORAGE_WRITE_REPLY
+	call vdrip_transport_begin_storage
+	call vdrip_rts_assert_raw
+
 	call vdrip_storage_wait_reply
 	call vdrip_storage_end
 	ret
