@@ -295,6 +295,7 @@ vdrip_console_init:
 	ld (vdrip_rx_rts_released),a
 
 	call v9958_init_g6
+	call v9958_init_palette
 	call v9958_upload_font_atlas
 	call v9958_configure_accelerator
 	call v9958_clear_screen
@@ -2129,6 +2130,7 @@ vdrip_handle_reconnect:
 	ld (vdrip_rx_rts_released),a
 
 	call v9958_init_g6
+	call v9958_init_palette
 	call v9958_upload_font_atlas
 	call v9958_configure_accelerator
 	call v9958_clear_screen
@@ -2167,6 +2169,7 @@ vdrip_reset_display:
 	ld (term_auto_wrap),a		; auto-wrap re-enabled on RIS
 
 	call v9958_init_g6
+	call v9958_init_palette
 	call v9958_upload_font_atlas
 	call v9958_configure_accelerator
 	call v9958_clear_screen
@@ -2228,6 +2231,22 @@ v9958_init_g6:
 	ld (hl),#0x03		; R11
 	ld b,#0x0f
 	jp v9958_send_command
+
+; Restore the console palette after an application has taken over the V9958.
+; R#16 selects palette entry zero; palette writes then auto-increment.
+v9958_init_palette:
+	xor a
+	call vdrip_ctrl_write
+	ld a,#0x90			; select R#16
+	call vdrip_ctrl_write
+	ld hl,#v9958_console_palette
+	ld b,#0x20
+v9958_init_palette_loop:
+	ld a,(hl)
+	inc hl
+	call vdrip_palette_write
+	djnz v9958_init_palette_loop
+	ret
 
 v9958_configure_accelerator:
 	ld hl,#command_buffer
@@ -2648,6 +2667,21 @@ vdrip_data_write:
 	ret
 
 
+vdrip_palette_write:
+	push bc
+	push de
+	push hl
+
+	ld e,a
+	ld a,#PACKET_VDP_PALETTE_WRITE
+	call vdrip_send_packet1
+
+	pop hl
+	pop de
+	pop bc
+	ret
+
+
 vdrip_send_frame_mark:
 	ld a,#PACKET_FRAME_MARK
 	jp vdrip_send_packet0
@@ -2785,6 +2819,14 @@ cursor_colors:
 	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
 	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
 	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
+
+; V9958 palette entries 0..15, encoded as RB then G.
+; Console text uses index 0 for black, 4 for blue, and 15 for white.
+v9958_console_palette:
+	.db 0x00,0x00, 0x11,0x01, 0x00,0x06, 0x00,0x07
+	.db 0x05,0x00, 0x07,0x03, 0x50,0x00, 0x06,0x06
+	.db 0x70,0x00, 0x73,0x03, 0x70,0x07, 0x74,0x07
+	.db 0x00,0x05, 0x67,0x00, 0x55,0x05, 0x77,0x07
 
 atlas_scanline:
 	.db 0x00
