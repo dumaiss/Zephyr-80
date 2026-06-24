@@ -109,14 +109,14 @@ SIO_RR0_CTS		= 0x20
 ; V9958 GRAPHIC 6 console layout. The 512x212 source bitmap is woven into
 ; 512x424 output by R#9 IL+LN. Logical cells and the glyph atlas are stored
 ; outside the visible bitmap in the V9958's 128 KiB VRAM.
-TEXT_LOG_COLUMNS	= 80
-TEXT_ROWS		= 24
+TEXT_LOG_COLUMNS	= 85
+TEXT_ROWS		= 26
 TEXT_SCROLL_TOP		= 0
 TEXT_SCROLL_BOTTOM	= TEXT_ROWS - 1
 TEXT_SCROLL_ROWS	= TEXT_ROWS
 TEXT_CELL_WIDTH		= 6
 TEXT_CELL_HEIGHT	= 8
-TEXT_DISPLAY_OFFSET	= 8		; 192-line text area at source lines 8..199
+TEXT_DISPLAY_OFFSET	= 4		; 208-line text area (26 rows) at source lines 4..211
 
 G6_BITMAP_BASE		= 0x00000
 G6_BITMAP_BYTES		= 256 * 212
