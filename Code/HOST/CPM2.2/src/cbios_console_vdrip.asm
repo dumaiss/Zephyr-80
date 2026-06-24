@@ -343,10 +343,14 @@ vdrip_console_init:
 ; Outputs:
 ;   A = CONST_HAS_CHAR (0xff) if textq_count != 0, else 0x00.
 ; Preserved registers:
-;   HL is preserved by this routine. The facade preserves DE/HL around backend
-;   dispatch as well.
+;   HL is preserved by this routine, and the console facade preserves DE/HL
+;   around backend dispatch. BC is NOT preserved: the status flush / reconnect /
+;   rx-kick helpers use it, and the facade (which has no free ROM bytes to save
+;   it) does not. This matches the CP/M convention that CONST may clobber
+;   registers other than its A result, so callers must not keep a live value in
+;   BC across a CONST call.
 ; Clobbers:
-;   AF.
+;   AF, BC.
 ; Blocking behavior:
 ;   Does not block.
 ; VDrip traffic:
@@ -2462,10 +2466,13 @@ v9958_flush_print_run:
 	ret
 
 ; Input DE=low 16 address, C=A16, B=count, HL=source.
+; IX is saved and restored here: this is the only IX user in the BIOS, and the
+; CONOUT render path that reaches this routine must not clobber a caller's IX.
 v9958_write_vram_small:
 	push bc
 	push de
 	push hl
+	push ix
 	ld ix,#command_buffer
 	ld 0(ix),#OP_VRAM_ADDR_WRITE
 	ld 1(ix),e
@@ -2476,6 +2483,7 @@ v9958_write_vram_small:
 	ld c,b
 	ld b,#0x00
 	ldir
+	pop ix
 	pop hl
 	pop de
 	pop bc

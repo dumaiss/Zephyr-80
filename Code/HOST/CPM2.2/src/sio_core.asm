@@ -30,10 +30,14 @@
 ;   In:
 ;     A = SIO channel id, for example SIO_CH_CONSOLE.
 ;     C = received byte.
-;   The registered sink may clobber AF/BC/DE/HL. The SIO ISR saves those
-;   registers before dispatching and restores them before RETI. Foreground
-;   sio_rx_kick also preserves BC/DE/HL around the sink call for callers that
-;   may keep live values in those registers.
+;   The registered sink may clobber AF/BC/DE/HL but MUST NOT clobber IX/IY. The
+;   SIO ISR saves AF/BC/DE/HL before dispatching and restores them before RETI;
+;   it does NOT save IX/IY (sio_core has no free ROM bytes for the extra
+;   push/pop), so the sink contract forbids their use. This invariant holds
+;   today: no sink-reachable code uses IX/IY, and the only IX user in the BIOS,
+;   v9958_write_vram_small, saves/restores IX itself and is never reached from a
+;   sink. Foreground sio_rx_kick likewise preserves BC/DE/HL (not IX/IY) around
+;   the sink call for callers that may keep live values in those registers.
 ;
 ; Hardware RX interrupt path:
 ;     SIO receives byte
@@ -376,8 +380,9 @@ sio_core_disable_interrupts:
 ;     never do heavy rendering. Recommended behavior is to enqueue C into the
 ;     owning driver's RX buffer, set a flag if needed, and return.
 ;   Register preservation:
-;     The callback may clobber AF/BC/DE/HL. The ISR preserves those registers
-;     around the whole interrupt frame.
+;     The callback may clobber AF/BC/DE/HL but MUST NOT clobber IX/IY. The ISR
+;     preserves AF/BC/DE/HL around the whole interrupt frame; IX/IY are not
+;     saved, so a sink that uses them would corrupt foreground state.
 ;
 ; In:  A = SIO channel id, HL = callback address.
 ; Out: A = BIOS_OK / BIOS_ERR.
@@ -584,8 +589,11 @@ sio_core_rx_unlock:
 ;
 ; Register preservation:
 ;   The ISR pushes AF, BC, DE, and HL before touching SIO state or dispatching to
-;   a registered sink. The sink callback may clobber those registers. The ISR
-;   restores them before RETI.
+;   a registered sink. The sink callback may clobber those registers but MUST NOT
+;   clobber IX/IY, which the ISR does not save (sio_core has no free bytes for the
+;   extra push/pop). This invariant holds today: no sink-reachable code uses
+;   IX/IY, and the sole IX user, v9958_write_vram_small, preserves IX itself. The
+;   ISR restores AF/BC/DE/HL before RETI.
 ;
 ; Channel serviced:
 ;   This ISR services BIOS-owned SIO0/B console RX. SIO1/A is polled by the

@@ -1,0 +1,62 @@
+DEFINITION MODULE V9958Raw;
+
+FROM V9958 IMPORT
+  Octet,
+  Result;
+
+CONST
+  VRAMPageSize = 16384;
+  VRAMPageCount = 8;
+
+TYPE
+  RegisterNumber = [0..63];
+
+  (* R#14 selects one of eight 16 KiB VRAM pages. *)
+  VRAMPage   = [0..7];
+  VRAMOffset = [0..16383];
+
+  VRAMAddress = RECORD
+    page   : VRAMPage;
+    offset : VRAMOffset;
+  END;
+
+PROCEDURE MakeAddress(
+  page   : VRAMPage;
+  offset : VRAMOffset
+): VRAMAddress;
+
+PROCEDURE WriteRegister(
+  register : RegisterNumber;
+  value    : Octet
+): Result;
+
+PROCEDURE WriteRegisters(
+  first      : RegisterNumber;
+  VAR values : ARRAY OF Octet
+): Result;
+
+PROCEDURE WriteByte(
+  address : VRAMAddress;
+  value   : Octet
+): Result;
+
+PROCEDURE WriteBlock(
+  address  : VRAMAddress;
+  VAR data : ARRAY OF Octet
+): Result;
+
+(* Write a subsection of an existing buffer. *)
+PROCEDURE WriteBlockPart(
+  address    : VRAMAddress;
+  VAR data   : ARRAY OF Octet;
+  firstByte  : CARDINAL;
+  byteCount  : CARDINAL
+): Result;
+
+PROCEDURE Fill(
+  address   : VRAMAddress;
+  byteCount : CARDINAL;
+  value     : Octet
+): Result;
+
+END V9958Raw.

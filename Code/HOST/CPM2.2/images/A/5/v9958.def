@@ -1,0 +1,66 @@
+DEFINITION MODULE V9958;
+
+TYPE
+  Octet          = [0..255];
+  ColourIndex    = [0..15];
+  ColourComponent = [0..7];
+
+  RGB3 = RECORD
+    red   : ColourComponent;
+    green : ColourComponent;
+    blue  : ColourComponent;
+  END;
+
+  Result = (
+    ok,
+    invalidArgument,
+    outOfRange,
+    unsupported,
+    transportError,
+    deviceError
+  );
+
+(* BeginUpdate and EndUpdate delimit a group of related operations.
+
+   The proxy implementation may collect these into a command stream.
+   A direct-hardware implementation may perform the operations immediately.
+
+   Update groups must not be nested.
+*)
+PROCEDURE BeginUpdate;
+
+PROCEDURE EndUpdate(
+  present : BOOLEAN
+): Result;
+
+(* Flush pending commands without declaring the end of a frame. *)
+PROCEDURE Flush(): Result;
+
+(* Make the completed update visible.
+
+   This does not wait for VBlank. On direct hardware it may amount to
+   flushing pending operations or doing nothing. On a proxy it may emit
+   OP_PRESENT or FRAME_MARK.
+*)
+PROCEDURE Present(): Result;
+
+(* Enable or blank the VDP display without changing the selected mode. *)
+PROCEDURE SetDisplayEnabled(
+  enabled : BOOLEAN
+): Result;
+
+PROCEDURE SetBackdrop(
+  colour : ColourIndex
+): Result;
+
+PROCEDURE SetPaletteEntry(
+  index  : ColourIndex;
+  colour : RGB3
+): Result;
+
+PROCEDURE SetPaletteRange(
+  first       : ColourIndex;
+  VAR colours : ARRAY OF RGB3
+): Result;
+
+END V9958.

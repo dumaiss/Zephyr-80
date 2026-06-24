@@ -12,8 +12,11 @@
 ;   +0A reader  -> reader input, A = character or CP/M EOF
 ;   +0C listst  -> A = FFh if list device ready, A = 00h otherwise
 ;
-; The facade preserves DE and HL around the indirect call. Backend routines
-; follow the CP/M register conventions for their specific entry points.
+; The facade preserves DE and HL around the indirect call, but NOT BC (the
+; packed facade region has no free bytes to save it). Backend routines follow
+; the CP/M register conventions for their specific entry points; per that
+; convention a backend such as CONST may clobber BC, so callers must not hold a
+; live value in BC across a console BIOS call.
 ;
 ; CP/M BDOS function 2 uses a small private stack while checking console
 ; status and outputting characters. The Virtual Drip backend is intentionally

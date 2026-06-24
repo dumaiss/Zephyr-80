@@ -1,0 +1,100 @@
+DEFINITION MODULE V9958G6;
+
+FROM V9958 IMPORT
+  Octet,
+  ColourIndex,
+  Result;
+
+CONST
+  WidthPixels      = 512;
+  BytesPerRow      = 256;
+  MaximumRows      = 212;
+
+TYPE
+  RasterHeight = (
+    rows192,
+    rows212
+  );
+
+  ScanMode = (
+    nonInterlaced,
+    interlaced
+  );
+
+  (* G6 can hold a screen in each 64 KiB half of 128 KiB VRAM.
+     Page-one support may initially return unsupported if the backend
+     has not yet implemented full 17-bit addressing. *)
+  BitmapPage = (
+    bitmapPage0,
+    bitmapPage1
+  );
+
+  PixelX     = [0..511];
+  ByteColumn = [0..255];
+  SourceRow  = [0..211];
+
+  Configuration = RECORD
+    height         : RasterHeight;
+    scan           : ScanMode;
+    page           : BitmapPage;
+    backdrop       : ColourIndex;
+    displayEnabled : BOOLEAN;
+  END;
+
+PROCEDURE Configure(
+  VAR configuration : Configuration
+): Result;
+
+(* Return one packed G6 byte.
+
+   left  becomes bits 7..4.
+   right becomes bits 3..0.
+*)
+PROCEDURE PackPixels(
+  left  : ColourIndex;
+  right : ColourIndex
+): Octet;
+
+PROCEDURE Clear(
+  colour : ColourIndex
+): Result;
+
+(* Data must contain exactly 256 bytes. *)
+PROCEDURE WriteScanline(
+  row      : SourceRow;
+  VAR data : ARRAY OF Octet
+): Result;
+
+(* Write a byte-aligned horizontal span.
+
+   One byte represents two adjacent pixels.
+*)
+PROCEDURE WriteSpan(
+  row        : SourceRow;
+  firstByte  : ByteColumn;
+  VAR data   : ARRAY OF Octet
+): Result;
+
+(* Write a packed rectangular image.
+
+   firstByte and widthBytes are measured in packed bytes, not pixels.
+   sourceStride is the distance between source rows in data.
+*)
+PROCEDURE BlitPacked(
+  firstByte    : ByteColumn;
+  topRow       : SourceRow;
+  widthBytes   : CARDINAL;
+  height       : CARDINAL;
+  sourceStride : CARDINAL;
+  VAR data     : ARRAY OF Octet
+): Result;
+
+PROCEDURE FillPackedRect(
+  firstByte  : ByteColumn;
+  topRow     : SourceRow;
+  widthBytes : CARDINAL;
+  height     : CARDINAL;
+  colour     : ColourIndex
+): Result;
+
+END V9958G6.
