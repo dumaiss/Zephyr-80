@@ -8,8 +8,8 @@
 ;   byte  0  command class:  CMD_PING = 01h
 ;   byte  1  sequence:       01h
 ;   byte  2  status/flags:   00h (filled by MCU in reply)
-;   byte  3  payload length: 00h
-;   bytes 4-19  payload:     zeroes (MCU echoes them in RSP_PING reply)
+;   byte  3  payload length: 10h
+;   bytes 4-19  payload:     test pattern (MCU echoes it in RSP_PING reply)
 ;   bytes 20-31 reserved:    zeroes
 ;
 ; IOCALL contract:
@@ -44,6 +44,13 @@ zero_tx:
 	ld (hl),a
 	inc hl
 	djnz zero_tx
+	ld a,#0xa5
+	ld hl,#rx_frame
+	ld b,#32
+zero_rx:
+	ld (hl),a
+	inc hl
+	djnz zero_rx
 
 	; Fill frame header.
 	ld hl,#tx_frame
@@ -52,6 +59,19 @@ zero_tx:
 	inc hl
 	ld a,#0x01
 	ld (hl),a		; byte 1: sequence number
+	inc hl			; byte 2: status/flags remains zero
+	inc hl			; byte 3: payload length
+	ld a,#0x10
+	ld (hl),a
+	inc hl			; byte 4: payload start
+	ld de,#ping_payload
+	ld b,#16
+copy_payload:
+	ld a,(de)
+	ld (hl),a
+	inc de
+	inc hl
+	djnz copy_payload
 
 	; Issue IOCALL.
 	ld hl,#tx_frame
@@ -65,6 +85,25 @@ zero_tx:
 	ld a,(rx_frame)
 	cp #RSP_PING
 	jr nz,bad_reply
+	ld a,(rx_frame + 1)
+	cp #0x01
+	jr nz,bad_reply
+	ld a,(rx_frame + 2)
+	or a
+	jr nz,bad_reply
+	ld a,(rx_frame + 3)
+	cp #0x10
+	jr nz,bad_reply
+	ld hl,#(rx_frame + 4)
+	ld de,#ping_payload
+	ld b,#16
+verify_payload:
+	ld a,(de)
+	cp (hl)
+	jr nz,bad_reply
+	inc de
+	inc hl
+	djnz verify_payload
 
 	ld de,#msg_ok
 	ld c,#BDOS_PRINT
@@ -78,9 +117,7 @@ xport_err:
 	call BDOS
 	pop af
 	call print_hex_byte
-	ld de,#msg_crlf
-	ld c,#BDOS_PRINT
-	call BDOS
+	call dump_rx_frame
 	ret
 
 bad_reply:
@@ -119,6 +156,35 @@ phx_out:
 	call BDOS
 	ret
 
+; Dump the 32-byte IOCALL RX frame buffer as hex bytes.
+; This is primarily useful after transport error 12h, where IOCALL may have
+; stored the reply start and some partial body bytes before timing out.
+; Clobbers: AF, BC, DE, HL.
+dump_rx_frame:
+	ld de,#msg_rx_dump
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld hl,#rx_frame
+	ld b,#32
+dump_rx_loop:
+	push bc
+	push hl
+	ld e,#0x20
+	ld c,#BDOS_CONOUT
+	call BDOS
+	pop hl
+	ld a,(hl)
+	push hl
+	call print_hex_byte
+	pop hl
+	inc hl
+	pop bc
+	djnz dump_rx_loop
+	ld de,#msg_crlf
+	ld c,#BDOS_PRINT
+	call BDOS
+	ret
+
 msg_banner:
 	.ascii "IOC PING"
 	.db '$'
@@ -133,6 +199,14 @@ msg_bad_reply:
 	.db '$'
 msg_crlf:
 	.db 0x0d, 0x0a, '$'
+msg_rx_dump:
+	.db 0x0d, 0x0a
+	.ascii "RX:"
+	.db '$'
+
+ping_payload:
+	.db 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88
+	.db 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xf0, 0x0f
 
 tx_frame:
 	.ds 32

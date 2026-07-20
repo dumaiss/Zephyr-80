@@ -1,6 +1,8 @@
 #include "crc_ccitt.h"
 
-/* CRC-CCITT update, bits processed LSB-first to match SDLC wire order.
+/* Legacy CRC-CCITT update.
+ *
+ * Not used by the current SIO External Sync bring-up path.
  *
  * In SDLC, each octet is transmitted bit 0 first.  The CRC engine in the Z80
  * SIO therefore feeds bit 0 of each byte into the polynomial first.  This
@@ -14,7 +16,7 @@
  *   CRC over no bytes (init only):  0xFFFF
  *   CRC over { 0x00 } with init 0xFFFF: 0xE1F0  (after XOR_OUT: 0x1E0F)
  *
- * TODO: confirm this matches what the Z80 SIO generates in SDLC mode.
+ * TODO: delete or quarantine this helper after the External Sync bring-up.
  */
 uint16_t crc_ccitt_update(uint16_t crc, uint8_t byte)
 {

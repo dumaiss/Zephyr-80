@@ -5,6 +5,24 @@
 #define _XTAL_FREQ 64000000UL
 
 /* ---------------------------------------------------------------------------
+ * Transport selection (compile-time)
+ *
+ * Define IOC_TRANSPORT_BITBANG to build the pure-GPIO bit-bang transport
+ * (sdlc_bitbang.c) on SIO channel B — RA1 sync/gate, RA5/RA6/RA7 data/clk,
+ * RF1 RTS — for protocol bring-up (PING echo) on the board whose SPI bus is
+ * mis-wired.  SIO1/A channel-A outputs failed hardware probing, so bring-up
+ * stays on the working SIO1/B side.
+ * Comment it out to build the SPI/External-Sync transport (sdlc.c) on the
+ * Command channel — RA1 sync, RF1 RTS.
+ *
+ * Only one transport is linked: each transport .c guards its body on this macro
+ * (sdlc.c with #ifndef, sdlc_bitbang.c with #ifdef), so the other compiles to
+ * an empty translation unit.  dispatch.c, handlers.c and IocFrame are identical
+ * for both; main.c flips its transport include and RTS poll pin on this macro.
+ * --------------------------------------------------------------------------- */
+#define IOC_TRANSPORT_BITBANG
+
+/* ---------------------------------------------------------------------------
  * Host reset pair (RB2 / RB5) — unchanged from original skeleton.
  *
  * HOST_RESET    RB2  active-low  — drives Z80 and bus reset low
@@ -38,6 +56,7 @@
 #define SPI_MOSI_TRIS        TRISAbits.TRISA5
 #define SPI_MOSI_ANSEL       ANSELAbits.ANSELA5
 #define SPI_MOSI_LAT         LATAbits.LATA5
+#define SPI_MOSI_PORT        PORTAbits.RA5
 
 #define SPI_MISO_TRIS        TRISAbits.TRISA6
 #define SPI_MISO_ANSEL       ANSELAbits.ANSELA6
@@ -119,6 +138,7 @@
 #pragma config FEXTOSC = OFF
 #pragma config RSTOSC = HFINTOSC_64MHZ
 #pragma config CLKOUTEN = OFF
+#pragma config JTAGEN = OFF
 #pragma config PPS1WAY = OFF
 #pragma config WDTE = OFF
 #pragma config LVP = ON

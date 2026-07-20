@@ -11,7 +11,10 @@
  */
 #define TRACE_DEPTH  32
 
-/* Event codes */
+/* Event codes.
+ * The TRACE_SDLC_* names are retained for debugger compatibility with the
+ * existing trace workflow; in this bring-up they refer to External Sync
+ * transparent byte transport events, not SDLC framing. */
 #define TRACE_BOOT_MAIN_LOOP        0x01
 #define TRACE_RTS_POLL_LOW          0x02
 #define TRACE_COMMAND_SERVICE_ENTER 0x03
@@ -32,7 +35,8 @@
 #define TRACE_SPI_XFER_TIMEOUT      0x12
 #define TRACE_SPI_CLK_GPIO_PULSE    0x13
 
-/* Debug-visible SDLC error codes */
+/* Debug-visible transport error codes.
+ * Legacy SDLC names are retained for debugger/source compatibility. */
 #define DBG_SDLC_ERR_NONE           0x00
 #define DBG_SDLC_ERR_BAD_CHANNEL    0x01
 #define DBG_SDLC_ERR_NO_OPEN_FLAG   0x02
@@ -82,11 +86,11 @@ extern volatile uint16_t dbg_rts_seen_count;
 
 /* Raw MISO receive-window diagnostics (populated by sdlc_recv_frame).
  *   dbg_rx_snapshot  — first 16 raw bytes clocked in on MISO this window.
- *   dbg_rx_nonff_count — how many of the SDLC_RX_WINDOW_BYTES were != 0xFF
+ *   dbg_rx_nonff_count — how many receive-window bytes were != 0xFF
  *                        (0 ⇒ MISO was constant idle/marking, i.e. the SIO
  *                        never drove real data, or MISO is not wired/sampled).
- *   dbg_rx_flag_count  — how many byte-aligned 0x7E flags appeared (a quick
- *                        "is the SIO emitting SDLC flags?" indicator). */
+ *   dbg_rx_flag_count  — legacy name; counts byte-aligned 0x7E software
+ *                        preamble/fill bytes in the raw receive window. */
 extern volatile uint8_t  dbg_rx_snapshot[16];
 extern volatile uint16_t dbg_rx_nonff_count;
 extern volatile uint16_t dbg_rx_flag_count;

@@ -14,12 +14,15 @@ FIRMWARE_SRCS := \
     $(SRC_DIR)/trace.c      \
     $(SRC_DIR)/crc_ccitt.c  \
     $(SRC_DIR)/sdlc.c       \
+    $(SRC_DIR)/sdlc_bitbang.c \
     $(SRC_DIR)/dispatch.c   \
     $(SRC_DIR)/handlers.c
 
 FIRMWARE_HEX := $(BUILD_DIR)/$(TARGET).hex
 
-XC8FLAGS ?= -mcpu=$(DEVICE) -mdfp=$(DFP) -I$(INC_DIR)
+# -gdwarf-3 emits DWARF debug info so build/$(TARGET).elf is source-debuggable
+# in VS Code (mplab-core-da / SNAP), matching the MPLAB CMake build flags.
+XC8FLAGS ?= -mcpu=$(DEVICE) -mdfp=$(DFP) -I$(INC_DIR) -gdwarf-3
 
 .PHONY: all clean test size
 

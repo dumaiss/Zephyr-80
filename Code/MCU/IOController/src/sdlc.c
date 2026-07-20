@@ -3,9 +3,13 @@
 #include <stdbool.h>
 #include <string.h>
 #include "sdlc.h"
-#include "crc_ccitt.h"
 #include "config.h"
 #include "trace.h"
+
+/* Built only when the SPI/External-Sync transport is selected.  When
+ * IOC_TRANSPORT_BITBANG is defined this TU is empty and sdlc_bitbang.c provides
+ * the sdlc_* symbols instead.  See config.h for the transport switch. */
+#ifndef IOC_TRANSPORT_BITBANG
 
 /* ---------------------------------------------------------------------------
  * Software (bit-banged) SPI on RA5/RA6/RA7.
@@ -24,8 +28,8 @@
  *   RA6 SPI_MISO  input    sampled at each rising edge
  *   RA7 SPI_CLK   output   idle low; one low→high→low pulse per bit
  *
- * LSB-first matches the SDLC convention and the tx_buf/rx_buf bit packing
- * below (bit 0 of each byte is the first wire bit).
+ * LSB-first matches the Z80 SIO synchronous serializer: bit 0 of each byte is
+ * the first wire bit.
  * ---------------------------------------------------------------------------*/
 
 /* Half bit period.  ~2 us each side → ~4 us/bit → ~250 kHz is the target rate.
@@ -43,7 +47,7 @@ static void spi_gpio_init(void)
     SPI_CLK_LAT  = 0;   /* idle low (CKP=0) */
     SPI_CLK_TRIS = 0;   /* output */
 
-    SPI_MOSI_LAT  = 1;  /* idle high (SDLC idle = all ones) */
+    SPI_MOSI_LAT  = 1;  /* idle high / marking */
     SPI_MOSI_TRIS = 0;  /* output */
 
     SPI_MISO_TRIS = 1;  /* input */
@@ -53,8 +57,8 @@ static void spi_gpio_init(void)
  * Bit-banged SPI byte exchange, Mode 0, LSB-first.
  *
  * Always succeeds (no hardware flag to stall on), so it returns true and the
- * SPI_TX/RX_TIMEOUT error paths are no longer reachable; the SDLC-level
- * framing/FCS errors are unchanged.
+ * SPI_TX/RX_TIMEOUT error paths are no longer reachable; receive-window
+ * framing errors are reported by the higher-level decode.
  * ---------------------------------------------------------------------------*/
 static bool spi_xfer(uint8_t out, uint8_t *in)
 {
@@ -74,8 +78,8 @@ static bool spi_xfer(uint8_t out, uint8_t *in)
         /* Sample MISO at the END of the low phase, just before the rising
          * edge.  By now the SIO's TxD has been stable for a full half-bit no
          * matter which clock edge the SIO updates it on, so this avoids
-         * sampling a same-edge transition.  Bit alignment is irrelevant: the
-         * SDLC flag hunt tolerates an arbitrary constant bit offset. */
+         * sampling a same-edge transition.  Bit alignment is recovered by the
+         * software preamble hunt, which tolerates a constant bit offset. */
         if (SPI_MISO_PORT)
             inval |= (uint8_t)(1u << i);
 
@@ -87,7 +91,7 @@ static bool spi_xfer(uint8_t out, uint8_t *in)
         SPI_CLK_LAT = 0;
     }
 
-    SPI_MOSI_LAT = 1;   /* return MOSI to SDLC idle between bytes */
+    SPI_MOSI_LAT = 1;   /* return MOSI to marking idle between bytes */
 
     *in = inval;
     dbg_last_spi_in = inval;
@@ -144,13 +148,13 @@ void sdlc_spi_init(void)
 }
 
 /* ---------------------------------------------------------------------------
- * External Sync framing (replaces SDLC)
+ * External Sync framing
  *
  * SDLC cannot be used on this board (SIO /SYNCB is an MCU-owned net that also
  * gates the MISO buffer), so the SIO runs in External Sync mode and the bytes
  * on the wire are transparent: no flags, no zero-bit stuffing, no hardware FCS.
  * Framing is just a sync preamble (for byte alignment) followed by the fixed
- * 32-byte IOC frame.  Software CRC is a planned follow-up.
+ * 32-byte IOC frame.  No CRC/FCS is used for this bring-up.
  *
  * IOC_SYNC_PREAMBLE: a byte the receiver hunts for at any bit offset to find
  * byte alignment.  PING/RESET payloads are mostly zero, so 0x7E (six
@@ -192,9 +196,9 @@ bool sdlc_send_frame(IocChannel ch, const IocFrame *frame)
 /* ---------------------------------------------------------------------------
  * RX — bit stream decode
  *
- * Clock in SDLC_RX_WINDOW_BYTES SPI bytes with MOSI held 0xFF (idle).
- * Then decode the received bit stream: hunt for opening flag, destuff,
- * collect 34 bytes (32 data + 2 FCS), validate FCS, copy to caller.
+ * Clock in SDLC_RX_WINDOW_BYTES SPI bytes with MOSI held 0xFF (marking idle).
+ * Then decode the received bit stream: hunt for the optional software preamble
+ * and copy the following 32 transparent bytes to the caller.
  * ---------------------------------------------------------------------------*/
 
 static uint8_t rx_buf[SDLC_RX_WINDOW_BYTES];
@@ -241,7 +245,7 @@ bool sdlc_recv_frame(IocChannel ch, IocFrame *frame, uint16_t timeout_bytes)
         return false;
     }
 
-    /* Clock in the receive window.  Output 0xFF (SDLC idle) on MOSI so the
+    /* Clock in the receive window.  Output 0xFF (marking idle) on MOSI so the
      * Z80 SIO's RXD sees a benign idle pattern during the receive phase. */
     sdlc_command_select();
     for (i = 0u; i < SDLC_RX_WINDOW_BYTES; i++) {
@@ -300,3 +304,5 @@ bool sdlc_recv_frame(IocChannel ch, IocFrame *frame, uint16_t timeout_bytes)
     TRACE(TRACE_SDLC_RX_GOT_FRAME, frame->bytes[IOC_OFF_CLASS], frame->bytes[IOC_OFF_SEQ], 0);
     return true;
 }
+
+#endif /* !IOC_TRANSPORT_BITBANG */

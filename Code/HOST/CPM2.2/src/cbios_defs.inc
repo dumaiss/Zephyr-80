@@ -109,14 +109,18 @@ IOC_STATUS_BUSY                 = 0x04
 ; ------------------------------------------------------------------------------
 ; IOC Fixed-Frame Transport Constants
 ; ------------------------------------------------------------------------------
-; Command channel = SIO1/B (ports 32h data, 33h ctrl).
-; Bulk    channel = SIO1/A (ports 30h data, 31h ctrl) — inactive in Phase 1.
+; Command channel (IOCALL transport) = SIO1/B (ports 32h data, 33h ctrl).
+; Bulk    channel                     = SIO1/A (ports 30h data, 31h ctrl).
+;
+; BRING-UP RETARGET: SIO1/A channel-A outputs failed hardware probing, so the
+; PIC bit-bang PING-echo bring-up uses SIO1/B.  SIO_COMMAND_*_PORT is used only
+; by cbios_iocall.asm and cbios_ioc_command.asm.
 ;
 ; Naming convention matches the Z80 SIO channel letters (A/B), not the MCU
 ; KiCad schematic net names (SIO_PORTA_CS / SIO_PORTB_CS).
 
-SIO_COMMAND_DATA_PORT           = SIO1B_DATA      ; 32h — Command channel data
-SIO_COMMAND_CTRL_PORT           = SIO1B_CTRL      ; 33h — Command channel control
+SIO_COMMAND_DATA_PORT           = SIO1B_DATA      ; 32h — Command channel data (B)
+SIO_COMMAND_CTRL_PORT           = SIO1B_CTRL      ; 33h — Command channel control (B)
 SIO_BULK_DATA_PORT              = SIO1A_DATA      ; 30h — Bulk channel data
 SIO_BULK_CTRL_PORT              = SIO1A_CTRL      ; 31h — Bulk channel control
 
@@ -136,6 +140,12 @@ IOC_XPORT_OK                    = 0x00
 IOC_XPORT_TIMEOUT               = 0x01
 IOC_XPORT_BAD_FRAME             = 0x02
 IOC_XPORT_HW_ERROR              = 0x03
+IOC_XPORT_TIMEOUT_REPLY_MARKER  = 0x11       ; bring-up diagnostic: no reply byte seen
+IOC_XPORT_TIMEOUT_REPLY_BODY    = 0x12       ; bring-up diagnostic: reply began, then stalled
+
+; IOC fixed-frame command/response class bytes used by bring-up diagnostics.
+IOC_CMD_PING                    = 0x01
+IOC_RSP_PING                    = 0x81
 
 ; SIO1/B Command channel register values — External Sync mode.
 ; MCU is the synchronous clock master; Z80 SIO1/B is externally clocked x1.
@@ -144,30 +154,60 @@ IOC_XPORT_HW_ERROR              = 0x03
 ; MCU-owned net (it also gates the SIO->MCU MISO buffer), and SDLC/Monosync/
 ; Bisync drive /SYNC as an OUTPUT, contending with the MCU.  External Sync mode
 ; makes /SYNC an INPUT (MCU-owned), so the MCU drives it low for the whole
-; transaction with no contention.  Framing (preamble + 32-byte frame + CRC) is
-; handled in software on both sides; the SIO's hardware CRC is disabled.
+; transaction with no contention.  Framing is transparent bytes: an optional
+; software preamble followed by a 32-byte frame.  No SIO hardware CRC/FCS is used.
 ;
 ; WR4 = 0x30:  bits 5:4 = 11 = External Sync mode, bits 7:6 = 00 = x1 clock
+; WR3 = 0xC0:  8-bit RX format, receiver disabled.
 ; WR3 = 0xD1:  8-bit RX, enter hunt, RX enable, RX CRC disabled
+; WR3 = 0xC1:  same, but without entering hunt.  Used while receiving the PIC
+;              reply as a raw externally-clocked byte stream during bring-up.
 ; WR5 = 0x68:  8-bit TX, TX enable, TX CRC disabled, RTS inactive
 ; WR5 = 0x6A:  same with RTS asserted (to request MCU service)
+; WR5 = 0x00:  TX DISABLED, RTS inactive — the idle/release value.
 ; WR7 = 0x7E:  receive sync char / transmit underrun fill (not used for
 ;              detection in External Sync; sync is via the /SYNC pin)
+;
+; RTS-release note (External Sync):  In External Sync the enabled transmitter
+; never goes "empty" (it streams sync/fill idle on underrun), so the SIO's
+; delayed /RTS-deassert — which waits for the transmitter to finish — never
+; completes.  Clearing only the RTS bit (0x6A -> 0x68) therefore leaves /RTS
+; latched LOW.  Releasing RTS must also DISABLE the transmitter (WR5 = 0x00) so
+; the transmit-empty condition is met and /RTS returns HIGH; sio_command_init
+; re-enables TX (0x68) at the start of the next transaction.
 SIO_WR4_CMD_EXTSYNC             = 0x30
+SIO_WR0_RESET_ERROR             = 0x30
+SIO_WR3_CMD_RX_OFF              = 0xc0
 SIO_WR3_CMD_RX                  = 0xd1
+SIO_WR3_CMD_RX_NO_HUNT          = 0xc1
 SIO_WR5_CMD_TX_RTS_OFF          = 0x68
 SIO_WR5_CMD_TX_RTS_ON           = 0x6a
-SIO_SDLC_FLAG                   = 0x7e
+SIO_WR5_CMD_IDLE                = 0x00
+SIO_EXTSYNC_FILL                = 0x7e
 
 ; External Sync framing: software byte-alignment preamble.  Sent as the first
 ; byte of every frame; the receiver hunts for it to find the frame boundary.
 ; (Mostly-zero PING/RESET payloads cannot contain this pattern.)
 IOC_SYNC_PREAMBLE               = 0x7e
 
+; Reply-marker scan budget.  The PIC bit-bang bring-up clocks a full
+; SDLC_RX_WINDOW_BYTES receive window while it is collecting the Z80 request.
+; During that full-duplex phase the Z80 RX side sees idle/fill bytes before the
+; PIC dispatches and starts sending the reply.  Keep this above the PIC receive
+; window so IOCALL does not return BAD_FRAME before the reply can begin.
+SIO_COMMAND_REPLY_SCAN_LIMIT    = 0xa0
+
 ; Timeout for Command channel polled byte operations.
 ; The MCU only clocks during active transactions; timeout prevents indefinite hang
 ; if the MCU is absent or not clocking.
+;
+; DEBUG BRING-UP: the byte-poll wait is a 24-bit countdown = SIO_COMMAND_TIMEOUT
+; (16-bit inner) repeated SIO_COMMAND_TIMEOUT_OUTER times.  This is deliberately
+; huge (order of minutes at a few MHz) so the PIC side can be single-stepped in
+; the debugger without the Z80 giving up; it still returns IOC_XPORT_TIMEOUT
+; instead of hanging forever.  For production, drop OUTER back to 1.
 SIO_COMMAND_TIMEOUT             = 0xffff
+SIO_COMMAND_TIMEOUT_OUTER       = 0x20
 
 ; Code placement for IOC Command-channel transport helpers.
 ; The generated map is authoritative for VDRIP_CONSOLE_CODE_END.

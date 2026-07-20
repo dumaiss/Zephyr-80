@@ -64,7 +64,7 @@ SIO_CH_CONSOLE is the BIOS-owned SIO0/B async console link used by the Virtual D
 | `E000h-EC9Fh` | Virtual Drip V9958 console driver | CP/M console semantics, G6 command streams, CP850 atlas upload, input queue, printable-run buffer, and sprite-cursor state. |
 | `F680h-F8FFh` | Shared Virtual Drip transport | Current no-CRC frame sender, packetized readiness, single RX sink, parser, PTY dispatch, and storage reply dispatch. |
 
-SIO_CH_IOCTRL is the legacy BIOS-owned SIO1/A synchronous helper path. Phase 1 IOCALL uses the SIO1/B Command-channel SDLC transport; SIO1/A remains inactive for Bulk in this phase.
+SIO_CH_IOCTRL is the legacy BIOS-owned SIO1/A synchronous helper path. Phase 1 IOCALL uses the SIO1/B Command-channel External Sync transport; SIO1/A remains inactive for Bulk in this phase.
 `IOCALL` code is at `DF7Bh-DFC7h` in core BIOS.
 
 ## BIOS Jump Table Layout
@@ -212,7 +212,7 @@ Additional notes:
 - `CBIOS_BASE` is `DA00h`; CBIOS layout constants are derived from this base.
 - `CBIOS_CODE_LIMIT` is `FA80h`; no resident code may cross into scratch/staging.
 - SIO core code starts at `DD10h` inside core BIOS; the Virtual Drip console driver starts at `E000h`, the shared transport starts at `F680h`, and the VDrip storage backend starts at `F900h`.
-- `IOCALL` code is at `DF7Bh` in core BIOS and uses the SIO1/B Command-channel SDLC transport.
+- `IOCALL` code is at `DF7Bh` in core BIOS and uses the SIO1/B Command-channel External Sync transport.
 - `VIDEO_SEND` code is at `DF50h` in core BIOS; raw VDP/display writes may desynchronize the V9958 logical-cell state.
 - `WBOOT` resident code starts at `DADCh`, inside protected high BIOS memory.
 - `ZBIOS_EXT_BASE` is at `DA33h` and exposes `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `IOCALL`, and `VIDEO_SEND`.

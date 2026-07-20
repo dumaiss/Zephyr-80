@@ -17,14 +17,16 @@
 ; other command.  Callers decode the 32-byte frame themselves.
 ;
 ; Channel:
-;   Command channel = SIO1/B, DATA port 32h, CTRL port 33h.
+;   Command channel = SIO1/B, DATA port 32h, CTRL port 33h (bring-up retarget;
+;   SIO1/A channel-A outputs failed hardware probing).
 ;   The MCU is the synchronous clock master.  Z80 SIO1/B is externally clocked.
-;   Clocking alone is not sufficient; the MCU must deliver a valid SDLC frame.
+;   Framing is transparent External Sync (preamble + 32-byte frame); the MCU
+;   drives /SYNCB and clocks the exchange.
 ;   No WAIT/READY; no INIR/OTIR; foreground polled byte I/O only.
 ;   No SIO1/B interrupts in Phase 1.
 ;
 ; sio_command_init:
-;   Initialises SIO1/B for SDLC.  Defined here in the IOCTRL code area because
+;   Initialises SIO1/B for External Sync.  Defined here in the IOCTRL code area because
 ;   sio_core.asm and cbios_boot.asm have no room for additional code in Phase 1.
 ;   Phase 1 workaround: IOCALL calls sio_command_init at the start of each
 ;   transaction to ensure clean SIO state.  In a future phase, when space is
@@ -50,7 +52,7 @@ IOCTRL_CODE_START:
 ; IOCALL — fixed-frame Command-channel transport entry point
 ; ---------------------------------------------------------------------------
 IOCALL:
-	call sio_command_init		; (re)init SIO1/B SDLC — Phase 1 workaround
+	call sio_command_init		; (re)init SIO1/B External Sync — Phase 1 workaround
 
 	push de				; save caller RX frame pointer across send
 
@@ -80,10 +82,10 @@ IOCALL_FAIL_RTS:
 
 
 ; ---------------------------------------------------------------------------
-; sio_command_init — initialise SIO1/B for Command-channel SDLC
+; sio_command_init — initialise SIO1/B for Command-channel External Sync
 ; ---------------------------------------------------------------------------
 ; Purpose:
-;   Configure SIO1/B for SDLC mode with external clock.  Idempotent.
+;   Configure SIO1/B for External Sync mode with external clock.  Idempotent.
 ;   Called at the start of each IOCALL in Phase 1 (see header note).
 ;
 ; Command channel = SIO1/B, CTRL port 33h.
@@ -95,11 +97,11 @@ IOCALL_FAIL_RTS:
 ;   WR1 0x00  no interrupts, no WAIT/DMA
 ;   WR4 0x30  External Sync mode, x1 clock, no parity
 ;   WR7 0x7E  receive sync char / TX underrun fill (sync is via /SYNC pin)
-;   WR3 0xD1  8-bit RX, enter hunt, RX enable, RX CRC disabled
+;   WR3 0xC0  8-bit RX format, receiver disabled during request TX
 ;   WR5 0x68  8-bit TX, TX enable, TX CRC disabled, RTS inactive
-;   WR9 via SIO1A_CTRL: SIO1 master interrupt disabled (chip-wide, already 0)
+;   WR9 via SIO1B_CTRL: SIO1 master interrupt disabled (chip-wide, already 0)
 ;
-; SIO1 master interrupt (WR9 via SIO1A_CTRL port 31h) is already disabled by
+; SIO1 master interrupt (WR9 via SIO1B_CTRL port 33h) is already disabled by
 ; sio1_ioc_init which runs during sio_core_init.  Not rewritten here.
 ;
 ; Out: A = 0.
@@ -122,20 +124,21 @@ sio_command_init:
 	ld a,#SIO_WR4_CMD_EXTSYNC
 	out (SIO_COMMAND_CTRL_PORT),a
 
-	; WR7: SDLC flag byte = 7Eh.
+	; WR7: External Sync fill/preamble byte = 7Eh.
 	ld a,#0x07
 	out (SIO_COMMAND_CTRL_PORT),a
-	ld a,#SIO_SDLC_FLAG
+	ld a,#SIO_EXTSYNC_FILL
 	out (SIO_COMMAND_CTRL_PORT),a
 
-	; WR3: 8-bit RX, enter hunt mode (search for opening flag), RX CRC enable,
-	; RX enabled.
+	; WR3: 8-bit RX format, receiver disabled during request TX.  The BIOS does
+	; not need SIO RX while the PIC captures the Z80 request; leaving RX off
+	; avoids full-duplex junk bytes and overrun before the real reply.
 	ld a,#0x03
 	out (SIO_COMMAND_CTRL_PORT),a
-	ld a,#SIO_WR3_CMD_RX
+	ld a,#SIO_WR3_CMD_RX_OFF
 	out (SIO_COMMAND_CTRL_PORT),a
 
-	; WR5: 8-bit TX, TX enable, CRC-CCITT polynomial, TX CRC enable, RTS inactive.
+	; WR5: 8-bit TX, TX enable, TX CRC disabled, RTS inactive.
 	; RTS is managed separately by sio_command_rts_assert/release.
 	ld a,#0x05
 	out (SIO_COMMAND_CTRL_PORT),a

@@ -1,0 +1,67 @@
+# clangd configuration for this XC8 (PIC18F57Q84) project.
+#
+# Why this file exists:
+#   The MPLAB VS Code extension drives IntelliSense with clangd, reading the
+#   compile database at _build/IOController/default/compile_commands.json.  That
+#   database invokes xc8-cc with xc8-only flags (-mcpu, -mdfp, -mstack, ...) and
+#   relies on xc8's *implicit* system include dirs and built-in types
+#   (__int24/__uint24).  Stock clangd knows none of that, so every file lit up
+#   with "xc.h not found" / "undeclared identifier LATAbits" / "unknown type
+#   __int24".  It also could not see sdlc_bitbang.c at all, because the generated
+#   file.cmake (hence the compile DB) predates that file.
+#
+#   This config makes clangd self-sufficient regardless of the DB: it strips the
+#   xc8-only flags, adds xc8's include dirs explicitly, defines the device-select
+#   macros xc8-cc would define implicitly, and maps xc8's built-in types to
+#   clang equivalents.  The real firmware is still built by xc8-cc (Makefile /
+#   MPLAB CMake); these substitutions only affect IntelliSense parsing.
+#
+# If XC8 or the DFP version changes, update the paths below.
+
+CompileFlags:
+  Compiler: clang
+  Add:
+    - -std=c99
+    - -ferror-limit=0
+    # Project headers
+    - -I/home/kitamura/Documents/Zephyr-80/Code/MCU/IOController/include
+    # XC8 compiler system includes (xc.h, c99/ variants)
+    - -I/opt/microchip/xc8/v3.10/pic/include
+    - -I/opt/microchip/xc8/v3.10/pic/include/c99
+    # Device family pack (proc/pic18f57q84.h and friends)
+    - -I/home/kitamura/.mchp_packs/Microchip/PIC18F-Q_DFP/1.30.487/xc8/pic/include
+    - -I/home/kitamura/.mchp_packs/Microchip/PIC18F-Q_DFP/1.30.487/xc8/pic/include/proc
+    # Device-select macros xc8-cc defines implicitly for -mcpu=18F57Q84
+    - -D__XC8
+    - -D__PICC18__
+    - -D_18F57Q84
+    - -D__18F57Q84__
+    - -D_XTAL_FREQ=64000000UL
+    # xc8 built-in types/qualifiers that stock clang does not know
+    - -D__int24=int
+    - -D__uint24=unsigned int
+    - -D__bit=unsigned
+    - -D__persistent=
+    - -D__near=
+    - -D__far=
+  Remove:
+    - -mcpu=*
+    - -mdfp=*
+    - -memi=*
+    - -maddrqual=*
+    - -mwarn=*
+    - -msummary=*
+    - -mstack=*
+    - -mno-*
+    - -mext=*
+    - -ginhx32
+    - -gdwarf*
+    - -fno-short-double
+    - -fno-short-float
+    - -Wl,*
+
+Diagnostics:
+  Suppress:
+    - incompatible-library-redeclaration   # xc8 stdlib prototypes vs clang builtins
+    - builtin-requires-header
+    - implicit-function-declaration        # __delay_us/_ms are xc8 pragma-driven macros

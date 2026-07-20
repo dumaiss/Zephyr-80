@@ -4,9 +4,21 @@
 
 #include "config.h"
 #include "ioc_frame.h"
-#include "sdlc.h"
+#ifdef IOC_TRANSPORT_BITBANG
+#include "sdlc_bitbang.h"   /* GPIO bit-bang transport, SIO channel B */
+#else
+#include "sdlc.h"           /* SPI/External-Sync transport, Command channel */
+#endif
 #include "dispatch.h"
 #include "trace.h"
+
+#define DIAG_PORTD_GPIO_PROOF 0
+
+/* Test-channel RTS poll pin.  The command/bit-bang bring-up now uses SIO1/B,
+ * whose RTS is RF1 (SIO_CMD_RTS).  The transport functions are called with
+ * IO_CH_COMMAND (the active-channel sentinel). */
+#define TEST_RTS_PORT    SIO_CMD_RTS_PORT
+#define TEST_RTS_ACTIVE  SIO_CMD_RTS_ACTIVE
 
 volatile uint8_t boot_pcon0;
 
@@ -113,7 +125,7 @@ static uint8_t rts_prev_level = 1u;   /* RF1 idle high */
 
 static bool command_request_active(void)
 {
-    uint8_t now = SIO_CMD_RTS_PORT;
+    uint8_t now = TEST_RTS_PORT;
     dbg_rts_sample = now;
 
     /* Edge-triggered: service exactly once per RF1 high->low transition.
@@ -122,8 +134,8 @@ static bool command_request_active(void)
      * captured window was usually a later idle one that missed the frame.
      * One window per falling edge stays aligned with the Z80's transmit (the
      * two self-synchronize via the SIO TBE flag and the MCU clock). */
-    bool falling = (rts_prev_level != SIO_CMD_RTS_ACTIVE) &&
-                   (now == SIO_CMD_RTS_ACTIVE);
+    bool falling = (rts_prev_level != TEST_RTS_ACTIVE) &&
+                   (now == TEST_RTS_ACTIVE);
     rts_prev_level = now;
 
     if (falling) {
@@ -137,8 +149,8 @@ static bool command_request_active(void)
 /* ---------------------------------------------------------------------------
  * Command request service
  *
- * Configure SPI for Command channel, receive one SDLC frame, dispatch it,
- * and send the reply (if any).
+ * Configure the Command channel transport, receive one External Sync byte
+ * frame, dispatch it, and send the reply (if any).
  * ---------------------------------------------------------------------------*/
 static void kernel_service_command_request(void)
 {
@@ -191,6 +203,30 @@ int main(void)
      * All CS lines were deasserted in platform_init(); sdlc_spi_init()
      * deasserts them again as a belt-and-suspenders measure. */
     sdlc_spi_init();
+
+#if DIAG_PORTD_GPIO_PROOF
+    /* Temporary hardware proof: drive all of Port D, RA5/MOSI, and RA7/CLK
+     * directly as GPIO forever.  Scope RD0/RD7, RA5, and RA7.  RA7 is the
+     * known-moving reference.
+     */
+    ANSELD = 0x00;
+    LATD = 0x00;
+    TRISD = 0x00;
+    SPI_MOSI_ANSEL = 0;
+    SPI_MOSI_TRIS = 0;
+    SPI_CLK_ANSEL = 0;
+    SPI_CLK_TRIS = 0;
+    for (;;) {
+        LATD = 0xFF;
+        SPI_MOSI_LAT = 1    ;
+        SPI_CLK_LAT = 1;
+        __delay_ms(1);
+        LATD = 0x00;
+        SPI_MOSI_LAT = 0;
+        SPI_CLK_LAT = 0;
+        __delay_ms(1);
+    }
+#endif
 
     TRACE(TRACE_BOOT_MAIN_LOOP, 0, 0, 0);
 
