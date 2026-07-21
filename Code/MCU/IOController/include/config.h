@@ -5,24 +5,6 @@
 #define _XTAL_FREQ 64000000UL
 
 /* ---------------------------------------------------------------------------
- * Transport selection (compile-time)
- *
- * Define IOC_TRANSPORT_BITBANG to build the pure-GPIO bit-bang transport
- * (sdlc_bitbang.c) on SIO channel B — RA1 sync/gate, RA5/RA6/RA7 data/clk,
- * RF1 RTS — for protocol bring-up (PING echo) on the board whose SPI bus is
- * mis-wired.  SIO1/A channel-A outputs failed hardware probing, so bring-up
- * stays on the working SIO1/B side.
- * Comment it out to build the SPI/External-Sync transport (sdlc.c) on the
- * Command channel — RA1 sync, RF1 RTS.
- *
- * Only one transport is linked: each transport .c guards its body on this macro
- * (sdlc.c with #ifndef, sdlc_bitbang.c with #ifdef), so the other compiles to
- * an empty translation unit.  dispatch.c, handlers.c and IocFrame are identical
- * for both; main.c flips its transport include and RTS poll pin on this macro.
- * --------------------------------------------------------------------------- */
-#define IOC_TRANSPORT_BITBANG
-
-/* ---------------------------------------------------------------------------
  * Host reset pair (RB2 / RB5) — unchanged from original skeleton.
  *
  * HOST_RESET    RB2  active-low  — drives Z80 and bus reset low
@@ -42,53 +24,45 @@
 #define HOST_RESET_HIGH_IDLE     0
 
 /* ---------------------------------------------------------------------------
- * Shared SPI bus (RA5/RA6/RA7)
+ * IO Controller External Sync serial pins
  *
- * All four SPI consumers (SIO Command, SIO Bulk, USB bridge, SD card) share
- * these three pins.  Each consumer asserts its own CS pin exclusively.
- * SPI clock rate and mode are reconfigured before each consumer's CS is
- * asserted.
- *
- * RA5  SPI_MOSI   output   SPI data out to all devices
- * RA6  SPI_MISO   input    SPI data in from all devices
- * RA7  SPI_CLK    output   SPI clock to all devices (also TXC/RXC to SIO1)
+ * RA5  IOC_TXD   output   PIC -> Z80 SIO1/B RXDB
+ * RA6  IOC_RXD   input    PIC <- Z80 SIO1/B TXDB
+ * RA7  IOC_CLK   output   PIC -> Z80 SIO1/B RXTXCB
  * --------------------------------------------------------------------------- */
-#define SPI_MOSI_TRIS        TRISAbits.TRISA5
-#define SPI_MOSI_ANSEL       ANSELAbits.ANSELA5
-#define SPI_MOSI_LAT         LATAbits.LATA5
-#define SPI_MOSI_PORT        PORTAbits.RA5
+#define IOC_TXD_TRIS         TRISAbits.TRISA5
+#define IOC_TXD_ANSEL        ANSELAbits.ANSELA5
+#define IOC_TXD_LAT          LATAbits.LATA5
+#define IOC_TXD_PORT         PORTAbits.RA5
 
-#define SPI_MISO_TRIS        TRISAbits.TRISA6
-#define SPI_MISO_ANSEL       ANSELAbits.ANSELA6
-#define SPI_MISO_PORT        PORTAbits.RA6
+#define IOC_RXD_TRIS         TRISAbits.TRISA6
+#define IOC_RXD_ANSEL        ANSELAbits.ANSELA6
+#define IOC_RXD_PORT         PORTAbits.RA6
 
-#define SPI_CLK_TRIS         TRISAbits.TRISA7
-#define SPI_CLK_ANSEL        ANSELAbits.ANSELA7
-#define SPI_CLK_LAT          LATAbits.LATA7
-#define SPI_CLK_PORT         PORTAbits.RA7
+#define IOC_CLK_TRIS         TRISAbits.TRISA7
+#define IOC_CLK_ANSEL        ANSELAbits.ANSELA7
+#define IOC_CLK_LAT          LATAbits.LATA7
+#define IOC_CLK_PORT         PORTAbits.RA7
 
 /* ---------------------------------------------------------------------------
- * SPI chip selects (RA0–RA4) — one per consumer, all active-low.
+ * Shared control pins on Port A
  *
- * Rule: assert exactly one CS at a time.  Always deassert (idle) before
- * switching to a different consumer or reconfiguring the SPI clock rate.
+ * RA1 is the active command-link control pin.  It drives both the SIO1/B
+ * /SYNCB External Sync input and the 74HC125 /OE for SIO TXDB -> PIC RXD.
  *
- * RA0  BULK_CS        SIO1/A — Bulk channel (bulk data transfers)
- * RA1  CMD_CS         SIO1/B — Command channel (command/control/events)
- * RA3  USB_BRIDGE_CS  USB-to-SPI bridge (keyboard HID reports)
- * RA4  SD_CS          SD card (sector read/write)
+ * The other Port A selects are held idle so inactive hardware never sees an
+ * accidental select while RA7 is clocking SIO1/B.
  * --------------------------------------------------------------------------- */
-#define BULK_CS_TRIS    TRISAbits.TRISA0
-#define BULK_CS_ANSEL   ANSELAbits.ANSELA0
-#define BULK_CS_LAT     LATAbits.LATA0
-#define BULK_CS_ASSERTED 0
-#define BULK_CS_IDLE     1
+#define UNUSED_RA0_TRIS       TRISAbits.TRISA0
+#define UNUSED_RA0_ANSEL      ANSELAbits.ANSELA0
+#define UNUSED_RA0_LAT        LATAbits.LATA0
+#define UNUSED_RA0_IDLE       1
 
-#define CMD_CS_TRIS    TRISAbits.TRISA1
-#define CMD_CS_ANSEL   ANSELAbits.ANSELA1
-#define CMD_CS_LAT     LATAbits.LATA1
-#define CMD_CS_ASSERTED 0
-#define CMD_CS_IDLE     1
+#define IOC_SYNC_TRIS         TRISAbits.TRISA1
+#define IOC_SYNC_ANSEL        ANSELAbits.ANSELA1
+#define IOC_SYNC_LAT          LATAbits.LATA1
+#define IOC_SYNC_ASSERTED     0
+#define IOC_SYNC_IDLE         1
 
 #define USB_BRIDGE_CS_TRIS   TRISAbits.TRISA3
 #define USB_BRIDGE_CS_ANSEL  ANSELAbits.ANSELA3
@@ -115,23 +89,14 @@
 #define USB_INT_ACTIVE       0   /* low = bridge has data ready */
 
 /* ---------------------------------------------------------------------------
- * Z80 SIO RTS inputs (RF1, RF2) — active-low inputs
+ * Z80 SIO1/B RTS input (RF1) — active-low
  *
- * The Z80 SIO asserts RTS (pin goes low) when it wants the MCU to service
- * a transaction.  The MCU detects the falling edge and sets a service flag.
- *
- * RF1  SIO_CMD_RTS    SIO1/B Command channel RTS — Z80 requests Command transaction
- * RF2  SIO_BULK_RTS   SIO1/A Bulk channel RTS — Z80 requests Bulk transaction
+ * The Z80 BIOS asserts RTSB when it wants one command transaction.
  * --------------------------------------------------------------------------- */
 #define SIO_CMD_RTS_TRIS   TRISFbits.TRISF1
 #define SIO_CMD_RTS_ANSEL  ANSELFbits.ANSELF1
 #define SIO_CMD_RTS_PORT   PORTFbits.RF1
 #define SIO_CMD_RTS_ACTIVE 0   /* low = Z80 is requesting Command channel service */
-
-#define SIO_BULK_RTS_TRIS   TRISFbits.TRISF2
-#define SIO_BULK_RTS_ANSEL  ANSELFbits.ANSELF2
-#define SIO_BULK_RTS_PORT   PORTFbits.RF2
-#define SIO_BULK_RTS_ACTIVE 0   /* low = Z80 is requesting Bulk channel service */
 
 #endif /* CONFIG_H */
 

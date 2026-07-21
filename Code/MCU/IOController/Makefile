@@ -11,10 +11,7 @@ DFP     ?= /home/kitamura/Downloads/xc8
 
 FIRMWARE_SRCS := \
     $(SRC_DIR)/main.c       \
-    $(SRC_DIR)/trace.c      \
-    $(SRC_DIR)/crc_ccitt.c  \
-    $(SRC_DIR)/sdlc.c       \
-    $(SRC_DIR)/sdlc_bitbang.c \
+    $(SRC_DIR)/external_sync.c \
     $(SRC_DIR)/dispatch.c   \
     $(SRC_DIR)/handlers.c
 

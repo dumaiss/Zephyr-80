@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* All IOC Command-channel frames are fixed at 32 bytes.
+/* All IO Controller command frames are fixed at 32 bytes.
  *
  * Layout:
  *   byte 0      class / command / response type
@@ -35,15 +35,6 @@
 #define IOC_STATUS_OK            0x00
 #define IOC_STATUS_ERROR         0x01
 #define IOC_STATUS_UNKNOWN_CMD   0x02
-
-/* Channel identifiers.
- * Command channel = SIO1/B  (RA1 CMD_CS, RF1 SIO_CMD_RTS)
- * Bulk    channel = SIO1/A  (RA0 BULK_CS, RF2 SIO_BULK_RTS) — inactive this phase
- */
-typedef enum {
-    IO_CH_COMMAND = 0,
-    IO_CH_BULK    = 1
-} IocChannel;
 
 typedef struct {
     uint8_t bytes[IOC_FRAME_SIZE];

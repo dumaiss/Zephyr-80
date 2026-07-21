@@ -3,15 +3,9 @@
 #include "handlers.h"
 #include "ioc_frame.h"
 #include "config.h"
-#include "trace.h"
 
 void handler_ping(const IocFrame *request, IocFrame *reply)
 {
-    TRACE(TRACE_PING_REPLY_START,
-          request->bytes[IOC_OFF_CLASS],
-          request->bytes[IOC_OFF_SEQ],
-          0);
-
     memset(reply->bytes, 0, IOC_FRAME_SIZE);
     reply->bytes[IOC_OFF_CLASS]  = RSP_PING;
     reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
@@ -30,8 +24,6 @@ void handler_ping(const IocFrame *request, IocFrame *reply)
  */
 void handler_reset(void)
 {
-    TRACE(TRACE_RESET_CMD_RECEIVED, 0, 0, 0);
-
     /* Assert host reset (same polarity as boot_reset_pulse) */
     HOST_RESET_LAT      = HOST_RESET_ASSERTED;
     HOST_RESET_HIGH_LAT = HOST_RESET_HIGH_ASSERTED;

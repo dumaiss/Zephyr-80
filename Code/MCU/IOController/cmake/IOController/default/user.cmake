@@ -1,8 +1,8 @@
 # User CMake customization for the IOController MPLAB project.
 #
 # The MPLAB-generated build (.generated/rule.cmake) does not place the project's
-# include/ directory on the compiler search path, so every  #include "config.h"
-# / "trace.h" / "sdlc.h"  fails with "file not found".  (The hand Makefile works
+# include/ directory on the compiler search path, so project headers such as
+# "config.h" and "external_sync.h" fail with "file not found".  (The hand Makefile works
 # because it passes -Iinclude; the CMake/MPLAB build had no equivalent.)
 #
 # This is the sanctioned customization hook: CMakeLists.txt includes it if
