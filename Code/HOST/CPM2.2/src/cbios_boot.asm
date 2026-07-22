@@ -12,6 +12,7 @@
 	.globl runtime_set_default_dma
 	.globl runtime_clear_default_dma
 	.globl console_init
+	.globl vdrip_console_cold_init
 	.globl sio_core_init,sio_core_enable_interrupts
 	.globl WBOOT_RESIDENT_START,WBOOT_RESIDENT_END
 	.globl RUNTIME_WORK_AREA_START,RUNTIME_WORK_AREA_END
@@ -30,15 +31,16 @@
 ;   All primary registers are available for boot-time setup.
 ; Important invariants:
 ;   Page zero gets JP WBOOT at 0000h and JP FBASE at 0005h before applications
-;   run. DEFAULT_DMA at 0080h is recorded and cleared. Interrupts are enabled
-;   only after console state, banking state, and page zero are coherent.
+;   run. DEFAULT_DMA at 0080h is recorded and cleared. The cold console init
+;   sends proxy RESET and waits for the resulting PROXY_READY. Interrupts are
+;   enabled only after console state, banking state, and page zero are coherent.
 boot:
 	di
 	ld sp,#CBIOS_STACK_TOP
 	call select_ram_bank0
 	call ctc_disable_interrupts
 	call sio_core_init
-	call console_init
+	call vdrip_console_cold_init
 	call boot_print_banner
 	call prepare_runnable_bank
 	xor a

@@ -13,7 +13,7 @@
 	.module pt_vdrip_console
 
 	.globl vdrip_console_driver
-	.globl vdrip_console_init,vdrip_console_const
+	.globl vdrip_console_cold_init,vdrip_console_init,vdrip_console_const
 	.globl vdrip_console_conin,vdrip_console_conout
 	.globl vdrip_send_packet,vdrip_send_packet0,vdrip_send_packet1
 	.globl vdrip_rts_assert_raw
@@ -28,6 +28,7 @@
 	.globl vdrip_transport_register_sink
 	.globl vdrip_transport_set_raw_callback,vdrip_transport_set_idle_mode
 	.globl vdrip_transport_wait_ready
+	.globl vdrip_proxy_online
 
 ; SIO0/B port aliases matching platform_zephyr80.inc / sio_core.asm.
 VDRIP_DATA		= SIOB_DATA
@@ -67,7 +68,14 @@ vdrip_console_driver:
 ; Public CP/M console backend
 ; ===========================================================================
 
+vdrip_console_cold_init:
+	ld a,#0x01
+	jr pt_vdrip_console_init_mode
+
 vdrip_console_init:
+	xor a
+pt_vdrip_console_init_mode:
+	push af
 	call vdrip_rts_release_raw
 	call pt_rx_init
 	ld hl,#textq_put_ascii
@@ -81,6 +89,17 @@ vdrip_console_init:
 	xor a
 	ld (vdrip_rx_rts_released),a
 
+	; Cold boot sends RESET immediately. If the proxy is not connected yet the
+	; frame is harmlessly lost; its startup PROXY_READY completes this wait.
+	; Warm boot leaves the normally-running proxy untouched.
+	pop af
+	or a
+	jr z,pt_vdrip_console_wait_ready
+	xor a
+	ld (vdrip_proxy_online),a
+	ld a,#PACKET_RESET
+	call vdrip_send_packet0
+pt_vdrip_console_wait_ready:
 	call vdrip_transport_wait_ready
 	call vdrip_rts_assert_raw
 	xor a

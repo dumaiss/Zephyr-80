@@ -78,7 +78,7 @@
 	.module vdrip_console
 
 	.globl vdrip_console_driver
-	.globl vdrip_console_init,vdrip_console_const
+	.globl vdrip_console_cold_init,vdrip_console_init,vdrip_console_const
 	.globl vdrip_console_conin,vdrip_console_conout
 	.globl vdrip_send_packet,vdrip_send_packet0,vdrip_send_packet1
 	.globl vdrip_rts_assert_raw
@@ -95,6 +95,7 @@
 	.globl vdrip_transport_register_sink
 	.globl vdrip_transport_set_raw_callback,vdrip_transport_set_idle_mode
 	.globl vdrip_transport_wait_ready
+	.globl vdrip_proxy_online
 
 ; ===========================================================================
 ; Constants
@@ -234,12 +235,12 @@ vdrip_console_driver:
 ; Purpose:
 ;   Initialize the Virtual Drip console backend selected by cbios_console.asm.
 ;   Clears driver-owned parser/FIFO/display state, registers vdrip_rx_sink for
-;   SIO_CH_CONSOLE, enables SIO RX interrupts, waits for raw VT100-style terminal
-;   readiness bytes, initializes the remote V9958 G6 state, and enters
-;   interactive mode.
+;   SIO_CH_CONSOLE, enables SIO RX interrupts, waits for packetized PROXY_READY,
+;   initializes the remote V9958 G6 state, and enters interactive mode.
 ;
 ; Inputs:
-;   None.
+;   None. vdrip_console_cold_init selects RESET/READY cold initialization;
+;   vdrip_console_init selects the existing warm initialization path.
 ; Outputs:
 ;   Virtual Drip console state initialized; terminal readiness has been observed;
 ;   SIO0/B RTS asserted for normal input.
@@ -250,22 +251,30 @@ vdrip_console_driver:
 ; Blocking behavior:
 ;   Blocks during the terminal readiness handshake and during serial TX.
 ; VDrip traffic:
-;   Emits RESET, PING, VDP register/font/clear packets, cursor commands, and a
-;   FRAME_MARK after the proxy is ready.
+;   Cold init emits RESET before waiting. Both paths emit VDP register/font/
+;   clear packets, cursor commands, and a FRAME_MARK after the proxy is ready.
 ; sio_rx_kick:
 ;   Not used directly here. The common transport sink receives packetized
 ;   readiness through the normal SIO RX path.
 ;
 ; Startup sequence:
 ;   1. Release RTS, init RX, register sink, enable interrupts.
-;   2. Assert RTS and wait for packetized PROXY_READY from the proxy.
-;   3. Once ready, release RTS and send RESET/PING/VDP init/font/cursor.
-;   4. Assert RTS and enter normal interactive mode.
+;   2. Cold boot sends RESET; warm boot leaves the proxy untouched.
+;   3. Assert RTS and wait for packetized PROXY_READY when not already online.
+;   4. Once ready, release RTS and send VDP init/font/cursor traffic.
+;   5. Assert RTS and enter normal interactive mode.
 ;
 ; Clobbers: AF, BC, DE, HL.
 ; ---------------------------------------------------------------------------
 
+vdrip_console_cold_init:
+	ld a,#0x01
+	jr vdrip_console_init_mode
+
 vdrip_console_init:
+	xor a
+vdrip_console_init_mode:
+	push af
 	; Release RTS — we are not ready yet.
 	call vdrip_rts_release_raw
 
@@ -283,8 +292,17 @@ vdrip_console_init:
 	xor a
 	ld (vdrip_rx_rts_released),a
 
-	; Cold boot waits for PROXY_READY; warm boot returns immediately while the
-	; shared online flag remains set.
+	; A cold boot resets an already-running proxy before waiting. If no proxy is
+	; connected, the RESET is lost and the newly launched proxy's startup READY
+	; satisfies the same wait. Warm boot leaves the running proxy untouched.
+	pop af
+	or a
+	jr z,vdrip_console_wait_ready
+	xor a
+	ld (vdrip_proxy_online),a
+	ld a,#PACKET_RESET
+	call vdrip_send_packet0
+vdrip_console_wait_ready:
 	call vdrip_transport_wait_ready
 	ld a,#0x01
 	ld (term_auto_wrap),a		; auto-wrap enabled at init
@@ -2927,4 +2945,3 @@ VDRIP_CONSOLE_CODE_END:
 	.org VDRIP_FONT_ROM_BASE
 
 	.include "font_cp850_6x8.inc"
-	
