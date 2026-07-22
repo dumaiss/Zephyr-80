@@ -442,11 +442,12 @@ vdrip_console_conin:
 	call v9958_cursor_write_sat
 	call v9958_present
 
-	; Ensure the proxy is permitted to transmit input before we block. A prior
-	; storage transaction or flow-control release can leave RTS deasserted,
-	; which deadlocks the keyboard under hardware RTS/CTS: CONIN waits for a byte
-	; that the proxy is not allowed to send, and RTS is only re-asserted after a
-	; successful dequeue that can never happen.
+	; Consume buffered input before permitting the proxy to transmit more. If the
+	; queue is empty, ensure a prior storage transaction or flow-control release
+	; cannot leave RTS deasserted and deadlock the keyboard.
+	ld a,(textq_count)
+	or a
+	jr nz,vdrip_console_conin_have_char
 	call vdrip_rts_assert_raw
 	xor a
 	ld (vdrip_rx_rts_released),a
@@ -458,6 +459,7 @@ vdrip_console_conin_wait:
 	or a
 	jr z,vdrip_console_conin_wait
 
+vdrip_console_conin_have_char:
 	; Dequeue one byte from the console input queue.
 	di
 	ld hl,#textq_buffer
@@ -2925,3 +2927,4 @@ VDRIP_CONSOLE_CODE_END:
 	.org VDRIP_FONT_ROM_BASE
 
 	.include "font_cp850_6x8.inc"
+	
