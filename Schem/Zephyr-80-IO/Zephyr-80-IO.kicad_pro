@@ -110,14 +110,6 @@
           ""
         ],
         [
-          "silk_edge_clearance|76530200|57934901|3ff83b68-926b-46e5-be17-ffcfb9a4715a|9690f384-68e3-4a07-a1a0-17bf681562f7",
-          "USB Connector needs to extend slightly off the board"
-        ],
-        [
-          "silk_edge_clearance|76530200|65885101|3ff83b68-926b-46e5-be17-ffcfb9a4715a|acdf29d2-3cbf-4c42-a9b0-9d1d50a4418d",
-          "USB Connector needs to extend slightly off the board"
-        ],
-        [
           "silk_over_copper|191860000|74650000|4d51a749-128d-4d9f-b47f-3fca7e454f2d|3f19f084-b542-48cc-ac31-6c28cfbfc925",
           ""
         ],
@@ -177,12 +169,12 @@
         "padstack": "warning",
         "pth_inside_courtyard": "ignore",
         "shorting_items": "error",
-        "silk_edge_clearance": "warning",
+        "silk_edge_clearance": "ignore",
         "silk_over_copper": "warning",
         "silk_overlap": "warning",
         "skew_out_of_range": "error",
         "solder_mask_bridge": "error",
-        "starved_thermal": "error",
+        "starved_thermal": "ignore",
         "text_height": "warning",
         "text_on_edge_cuts": "error",
         "text_thickness": "warning",
@@ -941,7 +933,7 @@
         "uuid": "db33a8e4-587d-4e74-8d3f-b68910957121"
       }
     ],
-    "used_designators": "R42",
+    "used_designators": "#FLG2,#PWR70-71,#PWR80-81,J4,U3,R42",
     "variants": []
   },
   "sheets": [

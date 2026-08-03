@@ -5331,10 +5331,6 @@
 		(uuid "0acef655-840d-4b63-a691-1d994165eb73")
 	)
 	(no_connect
-		(at 229.87 63.5)
-		(uuid "10055882-1cb0-48a0-9059-d9a7b012bc88")
-	)
-	(no_connect
 		(at 199.39 78.74)
 		(uuid "11c2b481-40f8-43a3-b8d2-8d020e67fbb1")
 	)
@@ -6733,6 +6729,16 @@
 			(type default)
 		)
 		(uuid "68b48f13-2d4f-4b6d-b8c1-a840a9e1eccd")
+	)
+	(wire
+		(pts
+			(xy 229.87 63.5) (xy 240.03 63.5)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "68f0d7bb-59b6-4652-bcaa-20ae9ac3ff7d")
 	)
 	(wire
 		(pts
@@ -8744,7 +8750,7 @@
 		)
 		(uuid "39086fd5-298d-4270-8de1-da5bdc788e38")
 	)
-	(label "D2"
+	(label "D0"
 		(at 295.91 184.15 0)
 		(effects
 			(font
@@ -9514,7 +9520,7 @@
 		)
 		(uuid "c9fc8187-c64a-4280-810f-e427ca5342c6")
 	)
-	(label "D0"
+	(label "D2"
 		(at 295.91 189.23 0)
 		(effects
 			(font
@@ -10194,6 +10200,17 @@
 			(justify left)
 		)
 		(uuid "cd46b559-1191-4d56-bae7-d0a6d7ef1daa")
+	)
+	(hierarchical_label "CS_SEL3"
+		(shape output)
+		(at 240.03 63.5 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "d10a02ad-1ae7-4f66-9f7a-3c56a683e12e")
 	)
 	(hierarchical_label "D[0..7]"
 		(shape bidirectional)

@@ -17,12 +17,6 @@
 		(uuid "05ef5dbb-58ff-434e-88ff-2031ed8b9d58")
 	)
 	(junction
-		(at 378.46 158.75)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "90637f61-b9fe-4375-a7d3-52a477563d0f")
-	)
-	(junction
 		(at 381 161.29)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -236,16 +230,6 @@
 	)
 	(wire
 		(pts
-			(xy 378.46 158.75) (xy 378.46 242.57)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "6402445e-ac41-41dc-b656-d21816f45675")
-	)
-	(wire
-		(pts
 			(xy 361.95 196.85) (xy 361.95 224.79)
 		)
 		(stroke
@@ -303,16 +287,6 @@
 			(type default)
 		)
 		(uuid "7189db4a-8f7a-4c55-a2b9-b50863b79ff1")
-	)
-	(wire
-		(pts
-			(xy 378.46 242.57) (xy 368.3 242.57)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "75444b16-2c98-448a-b676-e5ed98df8839")
 	)
 	(wire
 		(pts
@@ -1520,16 +1494,6 @@
 				(justify right)
 			)
 		)
-		(pin "CTC_T02" input
-			(at 368.3 242.57 0)
-			(uuid "880cbd0e-1657-4343-a9e3-c5df5d822400")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
 		(pin "CS2" output
 			(at 292.1 251.46 180)
 			(uuid "0815fe2e-8666-4abb-bd3d-e8152f8458bb")
@@ -1690,7 +1654,7 @@
 				(justify right)
 			)
 		)
-		(pin "IOI_MISO" output
+		(pin "IO_MISO" output
 			(at 297.18 224.79 90)
 			(uuid "d8e7c5ed-cb88-43d5-83bf-a210d06b33cd")
 			(effects

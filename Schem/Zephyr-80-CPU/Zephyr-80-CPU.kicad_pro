@@ -76,12 +76,7 @@
           "width": 0.0
         }
       ],
-      "drc_exclusions": [
-        [
-          "extra_footprint|120950000|96620000|e564886b-9a73-4f94-910a-45ec4b6e664e|00000000-0000-0000-0000-000000000000",
-          ""
-        ]
-      ],
+      "drc_exclusions": [],
       "meta": {
         "version": 2
       },
@@ -741,7 +736,7 @@
         "uuid": "dc6b683c-bfa8-4cb5-a3c8-a89070b5c279"
       }
     ],
-    "used_designators": "",
+    "used_designators": "#FLG3-4,#PWR25-28,J2,U8-9",
     "variants": []
   },
   "sheets": [

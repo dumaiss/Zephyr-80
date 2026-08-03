@@ -227,6 +227,16 @@
 	)
 	(wire
 		(pts
+			(xy 104.14 96.52) (xy 104.14 109.22)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9a111621-a096-4554-9bac-d480672e37cb")
+	)
+	(wire
+		(pts
 			(xy 38.1 96.52) (xy 38.1 109.22)
 		)
 		(stroke
@@ -715,6 +725,16 @@
 				(justify left)
 			)
 		)
+		(pin "CS_SEL3" output
+			(at 104.14 96.52 270)
+			(uuid "737466a8-e2fd-4b9f-9a0e-540c9b5f2ff2")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
 		(instances
 			(project "Zephyr-80-CPU"
 				(path "/dc6b683c-bfa8-4cb5-a3c8-a89070b5c279"
@@ -964,6 +984,16 @@
 		(pin "~{RESET}" passive
 			(at 43.18 109.22 90)
 			(uuid "17ded398-d213-4033-823f-756c1932d4d3")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "CS3" input
+			(at 104.14 109.22 90)
+			(uuid "122809e4-edd1-493c-a13c-358c3d259ae2")
 			(effects
 				(font
 					(size 1.27 1.27)
