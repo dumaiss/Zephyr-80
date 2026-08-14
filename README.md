@@ -177,7 +177,7 @@ compatibility mode—not merely provide a collection of similar video and sound
 chips. The planned compatibility path combines:
 
 - the Percolator Series **Morning Joe** TMS9918-family video card
-- one SN76489-compatible voice from the **Afternoon Blend** sound card
+- an SN76489-compatible PSG path from the **Afternoon Blend** sound card
 - the controller-input decode provided by the Zephyr I/O architecture
 - launcher and memory-mapping support to install a ColecoVision BIOS and
   cartridge image before transferring control
