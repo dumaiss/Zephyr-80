@@ -1,58 +1,243 @@
-# Zephyr-80 Computer
+# Zephyr-80
 
-Retro Soul, Modern Flow -- The Zephyr-80 Way!
+**Retro Soul, Modern Flow**
 
-A compact Z80-based homebrew computer designed to run CP/M and provide classic retro I/O and expansion.
+Zephyr-80 is a modular homebrew Z80 computer built from real retro-style
+components and modern support hardware. It runs CP/M 2.2, provides 512 KiB each
+of banked SRAM and ROM, and uses expansion cards for video, sound, and peripheral
+control.
 
-## Overview
+It is the Z80 member of the broader pBITz / coffee-machine family of homebrew
+computers.
 
-This board implements a banked-memory Z80 system with modern conveniences (SD storage, USB peripherals) while keeping vintage-compatible subsystems (TMS9928 video, SN76489 sound). It's intended for hobbyists building or experimenting with CP/M and retro software.
+The project combines a conventional Z80 bus with a protected common-memory
+region, a driver-oriented BIOS, programmable serial and timer hardware, and an
+MCU-based I/O Controller for storage and human-interface devices. The same
+firmware is also used by the project's MAME implementation.
 
-## Features
+Zephyr-80 is an active hobby project and a hardware/software development
+platform, not a finished consumer product. Some subsystems are working on the
+physical machine, while others remain under bring-up or development.
 
-- **CPU**: Z80-compatible core
-- **RAM**: 512KB, banked (Z80 address banking for CP/M usage and extended RAM experiments)
-- **ROM**: 512KB EEPROM for bootloader/firmware
-- **Storage**: SD Card support for disk images and CP/M volumes
-- **USB Serial**: USB serial port for terminal access and debug console
-- **USB Input**: USB keyboard plus D-Pad support for interactive input
-- **Sound**: SN76489-compatible sound chip for PSG audio
-- **Video**: TMS9928-based output; YPbPr analog video output supported
-- **Expansion**: PCIe style expansion slot for additional cards or peripherals
-- **Power**: Designed to run from a regulated 5V wall power supply
+## Current status
 
-## Hardware Notes
+| Subsystem | Status |
+| --- | --- |
+| Z80 CPU board and memory banking | Working on physical hardware |
+| ROM-to-RAM boot transition | Working |
+| CP/M 2.2 and Zephyr CBIOS | Working |
+| SIO serial console at 115200 baud | Working |
+| Virtual Drip V9958 console | Working development backend |
+| Virtual Drip 8 MiB CP/M disk | Working development backend |
+| MAME machine and V9958 video | Boots the Zephyr firmware; active development |
+| IOCALL fixed-frame transport | Implemented in the BIOS and MCU firmware; hardware integration in progress |
+| Physical V9958 video card | Hardware and firmware bring-up |
+| SD-card and USB HID services through the I/O Controller | In progress |
+| Four-chip SN76489 sound subsystem | Hardware subsystem; software integration in progress |
 
-- The 512KB RAM is banked to map into the Z80 64KB address space as needed by the firmware or CP/M.
-- The 512KB EEPROM contains the primary bootloader/firmware; update via the board's programming interface (refer to device-specific docs).
-- Video uses a TMS9928-compatible video pipeline exposed as YPbPr analog output; a compatible monitor or converter is required.
-- Sound is provided by a sound board hosting four SN76489 PSGs; connected to an amplifier or powered speakers for audio output.
-- The PCIe expansion slots exposes power, bus, and selected signals for optional modules; treat it as an extension header for retro or modern expansion boards.
+## Hardware architecture
 
-## Getting Started
+### Processor and memory
 
-1. Prepare an SD card with a CP/M image or disk set compatible with the board.
-2. Insert the SD card into the board's slot.
-3. Connect YPbPr video to a compatible display, or use the USB serial console and a USB keyboard.
-4. Attach a regulated 5V wall power supply (check current rating in hardware docs before powering).
-5. Power on the board — the bootloader in EEPROM should initialize and boot from the SD card if present.
+- Z80-family CPU, with a current hardware target of 10 MHz
+- 512 KiB SRAM arranged as eight 64 KiB physical banks
+- 512 KiB ROM arranged as eight 64 KiB pages
+- ATF22V10-based memory and I/O decoding
+- Memory-control latch at I/O port `00h`
+- 48 KiB banked application region plus a protected 16 KiB common region in
+  the normal RAM-only runtime configuration
 
-Notes:
-- Use a terminal program (e.g., `screen`, `minicom`, or a serial terminal application) to connect to the USB serial console if you prefer working without the video output.
-- If flashing firmware to the EEPROM or updating boot code, follow the project's programming instructions or tooling.
+At reset, ROM is visible and writes are directed to SRAM underneath it. The
+firmware copies the ROM image into RAM, disables ROM, and continues from RAM.
+The common region at `C000h-FFFFh` remains mapped to SRAM bank 0 while the lower
+48 KiB selects one of the eight RAM banks.
 
-## Power
+See [Memory Management.md](Memory%20Management.md) for the decoder equations,
+memory modes, banking-latch format, and I/O map.
 
-The board is designed to operate from a single regulated 5V DC wall supply. Verify the supply can deliver sufficient current for attached peripherals (SD, USB devices, any expansion cards). Avoid using unregulated or higher-voltage supplies.
+### Serial and timer hardware
 
-## Files
+The system uses two Z80 SIO devices and a Z80 CTC. The BIOS currently owns:
 
-See the project Licence: [Licence.md](Licence.md)
+- SIO0/B for the 115200-baud console and Virtual Drip transport
+- SIO1/B for the synchronous I/O Controller command channel
+- an explicit Z80 IM2 vector entry for the interrupt-driven console receive path
 
-## Contributing
+The I/O Controller supplies the external clock and synchronization signals for
+its synchronous SIO link. The initial IOCALL implementation is deliberately
+simple and uses a polled, fixed-size transaction.
 
-Contributions, improvements, and bug reports are welcome. Open issues or pull requests with hardware notes, firmware updates, or SD images that improve the CP/M experience.
+### Expansion bus
 
----
+Zephyr-80 uses PCIe-style edge connectors as compact, readily available
+physical connectors for its expansion cards. The electrical interface is the
+Zephyr parallel expansion bus; it is **not PCI Express** and must never be
+connected to a PC PCIe slot.
 
-If you want, I can add wiring diagrams, pinouts, a sample CP/M SD image guide, or a small troubleshooting section next.
+## Memory model
+
+The memory hardware provides three useful operating modes:
+
+| Mode | Read behavior |
+| --- | --- |
+| Normal ROM mode | ROM at `0000h-5FFFh` and `C000h-FFFFh`; SRAM at `6000h-BFFFh` |
+| Shadow/copy mode | ROM at `0000h-BFFFh`; common SRAM bank 0 at `C000h-FFFFh` |
+| RAM-only mode | Selected SRAM bank at `0000h-BFFFh`; common SRAM bank 0 at `C000h-FFFFh` |
+
+Writes always reach SRAM. This permits the firmware to populate RAM underneath
+ROM-visible addresses before switching to RAM-only operation.
+
+In the current CP/M build, the lower 48 KiB is the banked transient program
+area. The high common region contains a small application-owned common TPA,
+CCP, BDOS, the Zephyr BIOS, fixed driver slots, runtime state, and the firmware
+stack. Exact addresses are generated from each firmware build and recorded in
+the [CP/M memory map](Code/HOST/CPM2.2/docs/memory-map.md).
+
+## CP/M firmware
+
+The current system boots CP/M 2.2 with a Zephyr-specific CBIOS. The firmware
+separates core BIOS services from console and storage drivers and validates its
+resident memory layout as part of the build.
+
+Zephyr BIOS extensions currently include:
+
+- `MOVE` and `XMOVE` for bank-aware memory transfers
+- `SELMEM` for selecting the execution bank
+- `SETBNK` for selecting the disk DMA bank
+- `IOCALL` for I/O Controller command/reply transactions
+- `VIDEO_SEND` for submitting video command streams
+
+The current IOCALL transport sends one caller-owned 32-byte frame and receives
+one 32-byte reply frame over SIO1/B. The BIOS owns the transport but does not
+interpret individual I/O Controller commands.
+
+For firmware architecture, build artifacts, and the current driver layout, see
+[Code/HOST/CPM2.2/README.md](Code/HOST/CPM2.2/README.md).
+
+## Console and storage
+
+### Virtual Drip development backend
+
+Virtual Drip is the current development proxy for console, video, keyboard
+input, and CP/M storage. It lets the physical Z80 machine exercise the BIOS and
+V9958-oriented software before all replacement hardware paths are complete.
+
+The active console is an 80-column V9958 GRAPHIC 6 terminal. Terminal state is
+kept in V9958 VRAM, with a CP850 font atlas, color-aware logical cells, and a
+sprite-based cursor. See the
+[Virtual Drip V9958 console notes](Code/HOST/CPM2.2/docs/vdrip9958-console.md).
+
+CP/M Drive A is currently backed by an 8 MiB flat image on the proxy side. The
+BIOS exposes normal 128-byte CP/M disk records and maps them to proxy storage
+transactions. See the
+[Virtual Drip disk format](Code/HOST/CPM2.2/docs/zephyr80_vdrip_disk.md).
+
+Virtual Drip is a bring-up tool rather than the intended final storage and HID
+architecture. Those functions are moving to the onboard I/O Controller.
+
+### I/O Controller
+
+The I/O Controller offloads modern peripheral protocols from the Z80. Its
+eventual responsibilities include:
+
+- SD-card storage
+- USB keyboard and controller input
+- system reset and power-management coordination
+- asynchronous input/event delivery to the host
+
+The current firmware implements the synchronous SIO command transport and
+fixed 32-byte IOCALL frames. Basic PING and RESET commands exist for link
+bring-up. Storage, HID, and unsolicited event delivery remain under development.
+
+## Video
+
+Video is provided by expansion hardware rather than being fixed on the CPU
+board. The project includes or has explored several compatible paths:
+
+- a TMS9928-based card for classic 9918-family software and Coleco-style video
+- the newer V9958-based video card with 128 KiB VRAM and RGB output
+- Virtual Drip, a serial development proxy that models VDP operations on a
+  modern host
+- a V9958 implementation in the Zephyr MAME machine
+
+The current CP/M graphical console targets V9958 GRAPHIC 6 semantics. Original
+TMS9928 tests remain in the repository, but the TMS9928 is no longer the only or
+primary description of Zephyr-80 video.
+
+## Sound
+
+The sound expansion subsystem uses four SN76489 programmable sound generators,
+with analog mixing and amplification on the sound card. Software support and
+higher-level music tooling are continuing areas of development.
+
+## MAME emulation
+
+The repository includes Zephyr-80 MAME development under
+`Code/MODERN/Emulator/`. The goal is to run the same firmware used by the
+physical machine rather than maintain a separate emulator-only BIOS.
+
+Current emulator work includes the banked ROM/RAM architecture, Z80 peripheral
+topology, and V9958 video. I/O Controller, storage, and host-HID integration are
+being added incrementally.
+
+The MAME source tree and CP/M source are included as Git submodules. Clone with
+submodules enabled when working on those areas:
+
+~~~sh
+git clone --recurse-submodules https://github.com/dumaiss/Zephyr-80.git
+~~~
+
+## Repository layout
+
+| Path | Contents |
+| --- | --- |
+| `Schem/` | KiCad schematics and board-specific validation notes |
+| `Code/HDL/` | PLD and programmable-logic source |
+| `Code/HOST/CPM2.2/` | CP/M 2.2, Zephyr CBIOS, drivers, image tools, and generated memory documentation |
+| `Code/HOST/Monitor/` | Interactive Zephyr monitor application |
+| `Code/HOST/HelloWorld/` | Hardware bring-up and subsystem test programs |
+| `Code/MCU/` | Power-management and I/O Controller firmware |
+| `Code/MODERN/Emulator/` | MAME machine development and emulator ROM tests |
+
+## Building the CP/M firmware
+
+Initialize the submodules, then build from the CP/M directory:
+
+~~~sh
+git submodule update --init --recursive
+cd Code/HOST/CPM2.2
+make
+~~~
+
+The build requires Python 3, GNU Make, and the SDCC Z80 tools `sdasz80`,
+`sdldz80`, and `makebin`.
+
+Primary outputs include:
+
+| Artifact | Purpose |
+| --- | --- |
+| `build/firmware.bin` | 64 KiB logical firmware image |
+| `build/zephyr80.pre-swap.bin` | assembled logical ROM image before the CPU-board data-bit correction |
+| `build/zephyr80.bin` | final burnable image with the required data-bit swap applied |
+| `docs/memory-map.md` | generated and validated runtime memory map |
+| `docs/symbol-map.md` | generated project-facing firmware symbol map |
+
+Additional build and backend-selection details are documented in the
+[CP/M firmware README](Code/HOST/CPM2.2/README.md).
+
+## Development notes
+
+- Treat the PLD equations and generated firmware memory map as authoritative
+  when older narrative documents disagree.
+- Treat exported BIOS entry points and memory constants as firmware ABI.
+- Several older architecture notes remain in the repository for design history
+  and may describe superseded clock, I/O, or memory arrangements.
+- Hardware revisions and experimental subsystems may require matching firmware
+  branches or configuration. Check the board-specific notes before programming
+  devices or applying power.
+
+## License
+
+Zephyr-80 is licensed under the
+[Solderpad Hardware License v2.1](Licence.md), with the option described there
+to treat the work as Apache License 2.0.
