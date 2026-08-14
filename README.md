@@ -30,6 +30,7 @@ physical machine, while others remain under bring-up or development.
 | Virtual Drip V9958 console | Working development backend |
 | Virtual Drip 8 MiB CP/M disk | Working development backend |
 | MAME machine and V9958 video | Boots the Zephyr firmware; active development |
+| ColecoVision compatibility mode | V9958-based target architecture defined; machine initialization and loader integration in development |
 | IOCALL fixed-frame transport | Implemented in the BIOS and MCU firmware; hardware integration in progress |
 | Percolator Lunch Crema V9958 card | Hardware and firmware bring-up |
 | SD-card and USB HID services through the I/O Controller | In progress |
@@ -155,9 +156,9 @@ board. The physical multimedia cards belong to the Percolator Series and are
 maintained in the
 [PercolatorLabs repository](https://github.com/dumaiss/PercolatorLabs):
 
-- **Morning Joe**: TMS9918-family video for classic software and Coleco-style
-  compatibility
-- **Lunch Crema**: V9958 video with 128 KiB VRAM and RGB output
+- **Morning Joe**: TMS9918-family video for native 9918-era hardware experiments
+- **Lunch Crema**: V9958 video with 128 KiB VRAM and RGB output; expected to
+  provide the ColecoVision-compatible VDP path
 
 Zephyr-specific development paths also include:
 
@@ -168,6 +169,52 @@ Zephyr-specific development paths also include:
 The current CP/M graphical console targets V9958 GRAPHIC 6 semantics. Original
 9918-family tests remain in the repository, but that hardware is no longer the
 only or primary description of Zephyr-80 video.
+
+## ColecoVision compatibility
+
+Zephyr-80 is intended to run ColecoVision software as a dedicated
+**machine-takeover mode**, not as an application that continues to call CP/M.
+Compatibility is expected to use the **Lunch Crema V9958**; the Morning Joe
+TMS9918 card is not required. The V9958's TMS9918-compatible display modes are
+expected to provide the video behavior needed by ColecoVision software.
+
+Zephyr-80 is not wired as a literal ColecoVision clone, so a Zephyr-specific
+bootstrap must construct the environment that the game expects before handing
+over the CPU. That initialization is expected to:
+
+1. quiesce CP/M, its BIOS drivers, and their interrupt sources
+2. load the ColecoVision BIOS and game image into the appropriate RAM locations
+   and physical bank
+3. establish the compatibility memory map while the bootstrap remains in a
+   safe execution area during the final bank switch
+4. initialize the V9958 in its TMS9918-compatible mode, clear or prepare VRAM,
+   and select the Coleco-compatible VDP interrupt route
+5. initialize an SN76489-compatible PSG path on the **Afternoon Blend** card
+6. configure the controller-input path to expose the behavior expected by the
+   game
+7. establish the required vectors, stack, and entry state, then transfer
+   control to the ColecoVision program
+
+After the final transfer, the game owns the CPU, VDP, sound, and controller
+interfaces. CP/M services are no longer assumed to be available.
+
+### Launch paths
+
+Two launch paths are planned. They share the same final hardware-initialization
+and handoff logic:
+
+- **CP/M launcher:** select a game from CP/M, load its BIOS and cartridge image
+  into RAM, prepare the compatibility mapping and peripherals, and let the game
+  take over the machine.
+- **Bootable Zephyr cartridge:** start cartridge-resident loader firmware
+  immediately after reset, copy or unpack the bundled game into RAM, configure
+  memory banking and video, and transfer control without booting CP/M.
+
+This is native execution on the Zephyr Z80 and compatible peripheral paths, not
+CPU emulation. It is still a compatibility target rather than a blanket claim
+that every title works. Games that depend closely on the original console's CPU
+timing may require calibrated delays or title-specific adaptation because
+Zephyr-80 runs its Z80 at 10 MHz.
 
 ## Sound
 
