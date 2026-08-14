@@ -31,9 +31,9 @@ physical machine, while others remain under bring-up or development.
 | Virtual Drip 8 MiB CP/M disk | Working development backend |
 | MAME machine and V9958 video | Boots the Zephyr firmware; active development |
 | IOCALL fixed-frame transport | Implemented in the BIOS and MCU firmware; hardware integration in progress |
-| Physical V9958 video card | Hardware and firmware bring-up |
+| Percolator Lunch Crema V9958 card | Hardware and firmware bring-up |
 | SD-card and USB HID services through the I/O Controller | In progress |
-| Four-chip SN76489 sound subsystem | Hardware subsystem; software integration in progress |
+| Percolator Afternoon Blend four-chip SN76489 card | Hardware subsystem; software integration in progress |
 
 ## Hardware architecture
 
@@ -69,10 +69,9 @@ simple and uses a polled, fixed-size transaction.
 
 ### Expansion bus
 
-Zephyr-80 uses PCIe-style edge connectors as compact, readily available
-physical connectors for its expansion cards. The electrical interface is the
-Zephyr parallel expansion bus; it is **not PCI Express** and must never be
-connected to a PC PCIe slot.
+The latest Zephyr-80 respin uses DIN connectors for the pBITz expansion bus.
+The shared backplane, bus, and mezzanine-card designs are maintained separately
+in the [pBITzPlatform repository](https://github.com/dumaiss/pBITzPlatform).
 
 ## Memory model
 
@@ -152,22 +151,31 @@ bring-up. Storage, HID, and unsolicited event delivery remain under development.
 ## Video
 
 Video is provided by expansion hardware rather than being fixed on the CPU
-board. The project includes or has explored several compatible paths:
+board. The physical multimedia cards belong to the Percolator Series and are
+maintained in the
+[PercolatorLabs repository](https://github.com/dumaiss/PercolatorLabs):
 
-- a TMS9928-based card for classic 9918-family software and Coleco-style video
-- the newer V9958-based video card with 128 KiB VRAM and RGB output
+- **Morning Joe**: TMS9918-family video for classic software and Coleco-style
+  compatibility
+- **Lunch Crema**: V9958 video with 128 KiB VRAM and RGB output
+
+Zephyr-specific development paths also include:
+
 - Virtual Drip, a serial development proxy that models VDP operations on a
   modern host
 - a V9958 implementation in the Zephyr MAME machine
 
 The current CP/M graphical console targets V9958 GRAPHIC 6 semantics. Original
-TMS9928 tests remain in the repository, but the TMS9928 is no longer the only or
-primary description of Zephyr-80 video.
+9918-family tests remain in the repository, but that hardware is no longer the
+only or primary description of Zephyr-80 video.
 
 ## Sound
 
-The sound expansion subsystem uses four SN76489 programmable sound generators,
-with analog mixing and amplification on the sound card. Software support and
+The Zephyr-80 sound card is the Percolator Series **Afternoon Blend**, which
+uses four SN76489 programmable sound generators with analog mixing and
+amplification. The card design is maintained in the
+[PercolatorLabs repository](https://github.com/dumaiss/PercolatorLabs), while
+Zephyr-side drivers and applications belong here. Software support and
 higher-level music tooling are continuing areas of development.
 
 ## MAME emulation
@@ -198,6 +206,13 @@ git clone --recurse-submodules https://github.com/dumaiss/Zephyr-80.git
 | `Code/HOST/HelloWorld/` | Hardware bring-up and subsystem test programs |
 | `Code/MCU/` | Power-management and I/O Controller firmware |
 | `Code/MODERN/Emulator/` | MAME machine development and emulator ROM tests |
+
+## Related repositories
+
+| Repository | Scope |
+| --- | --- |
+| [pBITzPlatform](https://github.com/dumaiss/pBITzPlatform) | DIN-connected pBITz backplane, bus, and mezzanine-card hardware |
+| [PercolatorLabs](https://github.com/dumaiss/PercolatorLabs) | Percolator Series video and sound cards, including Morning Joe, Lunch Crema, and Afternoon Blend |
 
 ## Building the CP/M firmware
 
