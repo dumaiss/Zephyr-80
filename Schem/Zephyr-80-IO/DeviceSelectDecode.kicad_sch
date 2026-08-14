@@ -5424,7 +5424,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "SH-7070TB"
+		(property "MANUFACTURER_PART_NUMBER" "SH-7070MC"
 			(at 58.42 91.44 0)
 			(hide yes)
 			(show_name no)
@@ -6085,7 +6085,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "SH-7070TB"
+		(property "MANUFACTURER_PART_NUMBER" "SH-7070MC"
 			(at 331.47 93.98 0)
 			(hide yes)
 			(show_name no)
@@ -6186,7 +6186,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "SH-7070TB"
+		(property "MANUFACTURER_PART_NUMBER" "SH-7070MC"
 			(at 200.66 92.71 0)
 			(hide yes)
 			(show_name no)
@@ -8113,7 +8113,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "SH-7070TB"
+		(property "MANUFACTURER_PART_NUMBER" "SH-7070MC"
 			(at 453.39 93.98 0)
 			(hide yes)
 			(show_name no)

@@ -3797,7 +3797,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "AMPHENOL_86093967113T55F1LF"
+		(property "MANUFACTURER_PART_NUMBER" "86093967113T55F1LF"
 			(at 196.215 134.62 0)
 			(hide yes)
 			(show_name no)
@@ -4489,7 +4489,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "AMPHENOL_86093967113T55F1LF"
+		(property "MANUFACTURER_PART_NUMBER" "86093967113T55F1LF"
 			(at 74.295 46.99 0)
 			(hide yes)
 			(show_name no)
@@ -4946,7 +4946,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "AMPHENOL_86093967113T55F1LF"
+		(property "MANUFACTURER_PART_NUMBER" "86093967113T55F1LF"
 			(at 194.945 55.88 0)
 			(hide yes)
 			(show_name no)

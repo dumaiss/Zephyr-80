@@ -911,6 +911,19 @@
 				)
 			)
 		)
+		(property "MANUFACTURER_PART_NUMBER" "86093967113T55F1LF"
+			(at 0 0 0)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "bff32dac-2809-4289-9c54-8d781d35e72a")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
 		(path "/61c97d6f-c0cd-4540-8832-42e8c844ef6d/6876936d-1114-4d0d-bd0a-a60564eb48d5")
 		(sheetname "/pBITz Bus Interface/")
 		(sheetfile "pBITzBusInterface.kicad_sch")

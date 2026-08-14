@@ -1967,7 +1967,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "MC74HC4040ADTR2G"
+		(property "MANUFACTURER_PART_NUMBER" "SN74HC4040PWR"
 			(at 134.62 74.93 0)
 			(hide yes)
 			(show_name no)

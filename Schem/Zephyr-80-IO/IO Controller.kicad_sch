@@ -15331,7 +15331,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "110-44-328-41-001000"
+		(property "MANUFACTURER_PART_NUMBER" "ICS-628-T"
 			(at 378.46 106.68 0)
 			(hide yes)
 			(show_name no)
@@ -17738,7 +17738,7 @@
 				)
 			)
 		)
-		(property "MANUFACTURER_PART_NUMBER" "LTST-C150KRKT"
+		(property "MANUFACTURER_PART_NUMBER" ""
 			(at 62.23 146.05 0)
 			(hide yes)
 			(show_name no)
