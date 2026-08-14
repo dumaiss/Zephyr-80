@@ -30,6 +30,7 @@ physical machine, while others remain under bring-up or development.
 | Virtual Drip V9958 console | Working development backend |
 | Virtual Drip 8 MiB CP/M disk | Working development backend |
 | MAME machine and V9958 video | Boots the Zephyr firmware; active development |
+| ColecoVision compatibility mode | Target architecture defined; launcher, memory mapping, and system integration in development |
 | IOCALL fixed-frame transport | Implemented in the BIOS and MCU firmware; hardware integration in progress |
 | Percolator Lunch Crema V9958 card | Hardware and firmware bring-up |
 | SD-card and USB HID services through the I/O Controller | In progress |
@@ -155,8 +156,8 @@ board. The physical multimedia cards belong to the Percolator Series and are
 maintained in the
 [PercolatorLabs repository](https://github.com/dumaiss/PercolatorLabs):
 
-- **Morning Joe**: TMS9918-family video for classic software and Coleco-style
-  compatibility
+- **Morning Joe**: TMS9918-family video for classic software and ColecoVision
+  video compatibility
 - **Lunch Crema**: V9958 video with 128 KiB VRAM and RGB output
 
 Zephyr-specific development paths also include:
@@ -168,6 +169,22 @@ Zephyr-specific development paths also include:
 The current CP/M graphical console targets V9958 GRAPHIC 6 semantics. Original
 9918-family tests remain in the repository, but that hardware is no longer the
 only or primary description of Zephyr-80 video.
+
+## ColecoVision compatibility
+
+Zephyr-80 is intended to run ColecoVision software through a dedicated
+compatibility mode—not merely provide a collection of similar video and sound
+chips. The planned compatibility path combines:
+
+- the Percolator Series **Morning Joe** TMS9918-family video card
+- one SN76489-compatible voice from the **Afternoon Blend** sound card
+- the controller-input decode provided by the Zephyr I/O architecture
+- launcher and memory-mapping support to install a ColecoVision BIOS and
+  cartridge image before transferring control
+
+This work remains under development, so the project does not yet claim blanket
+game compatibility. Software that depends closely on the original console's CPU
+timing may require adaptation because Zephyr-80 runs its Z80 at 10 MHz.
 
 ## Sound
 
