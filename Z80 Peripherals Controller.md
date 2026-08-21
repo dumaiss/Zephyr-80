@@ -1,367 +1,187 @@
-Here is the updated **Z80 Peripherals Controller** document, revised to match the hardware implementation found in the provided KiCad schematics.
+# Zephyr-80 Peripheral Controller Architecture
 
-# TODO: update to reflect changes in architecture
+This document describes the current Zephyr-80 I/O board and its software-visible interfaces. It replaces the earlier proposal in which a microcontroller exposed separate asynchronous UART streams for SD storage and USB HID.
 
+The current design has three distinct parts:
 
-### **Z80 I/O Subsystem — SD + Dual-USB-HID via SIO + PIC18 Micro Controller**
+- **SIO0** provides the conventional asynchronous serial interfaces.
+- **CTC** supplies programmable timing and application timers.
+- **SIO1** provides a synchronous host-to-MCU transport.
 
-## **1) Overall Architecture**
+The committed I/O-board design uses a **PIC18F57Q84** as the I/O controller. The implemented MCU command set is intentionally small; storage, HID, and unsolicited event delivery remain future services rather than current APIs.
 
-### **1.1 Goals**
+## Hardware overview
 
-- **Decoupled I/O:** The PIC18 acts as an I/O co-processor, managing the "chunky" (SD Card) and "urgent" (USB HID) tasks via SPI, isolating the Z80 from complex protocols.
-    
-- **Simple Z80 Integration:** The Z80 interacts with these peripherals strictly through standard Z80 SIO UART links, treating the modern subsystems as simple serial streams.
-    
+| Device | Designator | Role |
+| --- | --- | --- |
+| Z80 CTC | IC1 | Programmable timing, baud-clock generation, and application timers |
+| Z80 SIO/0 | IC2 (SIO0) | Asynchronous console and user serial channels |
+| Z80 SIO/0 | IC3 (SIO1) | Synchronous MCU command and bulk-data channels |
+| PIC18F57Q84 | U15 | I/O controller and synchronous-clock master |
+| 74AHCT125 | U1 | Gating/buffering between SIO1 and the MCU |
+| FT230XS | U7 | USB serial interface for the console |
+| MAX202 | U14 | RS-232 level conversion for the user serial port |
+| 74HC4040 | U8 | Divides the 14.7456 MHz local oscillator for peripheral timing |
 
+The Z80 bus and the SIO/CTC register interface run from the platform's **10 MHz system clock**. The local 14.7456 MHz oscillator is a peripheral timing source; it is not the Z80 CPU clock. See [Clock Architecture](Clock%20Architecture.md) for the complete clock tree.
 
-### **1.2 Major Blocks**
+## I/O port map
 
-- **Z80 Host:** Driven by a **14.7456 MHz** system clock oscillator (`Y1`).    
-- **Clock Management:** A 4040 counter (`U8`) derives the system and peripheral clocks from the main oscillator.
-    
-    - **7.3728 MHz** for high-speed SIO links.        
-    - **3.6864 MHz** for the CTC and CPU system clock.        
-    - **1.8432 MHz** for standard baud rate generation (115.2k).
-        
-- **2× Z80 SIO/0:** Providing 4 serial channels total (`IC2`, `IC3`).      
-- **Z80 CTC:** Used for the User Port baud rate generation and system timing (`IC1`).    
-- **PIC18F57Q84:** The 5V I/O co-processor (`U15`). It connects to the SIOs via bit-banged UART links on **Port C** and manages peripherals via hardware SPI on **Port D**11.    
+The assembly constants are authoritative for software. The PLD decodes each device in a 16-port block, while the low address bits select the device registers used below.
 
----
+| Function | Data port | Control port | Current owner |
+| --- | ---: | ---: | --- |
+| SIO0 channel A — user serial | `20h` | `21h` | Application |
+| SIO0 channel B — console | `22h` | `23h` | BIOS |
+| SIO1 channel A — bulk transport | `30h` | `31h` | Reserved for future bulk services |
+| SIO1 channel B — IOCALL command transport | `32h` | `33h` | BIOS |
+| CTC channel 0 | `40h` | — | Application |
+| CTC channel 1 | `41h` | — | Application |
+| CTC channel 2 | `42h` | — | Application |
+| CTC channel 3 | `43h` | — | Application |
 
-## **2) Channel Assignment & Addressing**
+The full platform map is documented in [Memory Management](Memory%20Management.md). The constants used by CP/M are in [`platform_zephyr80.inc`](Code/HOST/CPM2.2/src/platform_zephyr80.inc).
 
-The hardware implementation uses the following channel mapping. Note that the MCU communicates with the SIOs using **Port C** pins.
+## SIO0: asynchronous serial
 
-### **2.1 SIO 0 (`IC2`) — Base Address 0x20**
+### Channel B: BIOS console
 
-Driven by a **1.8432 MHz** clock, providing fixed **115,200 baud** (x16 divisor).
+SIO0/B is the BIOS-owned console and current Virtual Drip serial path.
 
-| **Channel** | **Role**       | **Description**                         | **I/O Address (Data / Ctrl)** |
-| ----------- | -------------- | --------------------------------------- | ----------------------------- |
-| **A**       | **USB / GPIO** | Link to MCU for Keyboard/Mouse HID data | **0x20 / 0x22**               |
-| **B**       | **Console**    | Main user terminal (FTDI/Serial header) | **0x21 / 0x23**               |
+- Interface: FT230XS USB serial
+- Ports: `22h` data, `23h` control
+- Format: 115200 baud, 8 data bits, no parity, 1 stop bit
+- Serial clock: 1.8432 MHz in SIO x16 mode
+- Flow control: RTS/CTS
+- Receive path: interrupt-driven under IM 2
+- Transmit path: foreground output with CTS polling
 
-### **2.2 SIO 1 (`IC2`) — Base Address 0x30**
+The BIOS owns this channel's initialization, interrupt vector, receive sink, and flow-control state. Applications should use the BIOS console entry points rather than reprogramming SIO0/B directly.
 
-Driven by mixed clocks for high-speed and variable rate support.
+### Channel A: user serial
 
-| **Channel** | **Role**      | **Description**                                   | **I/O Address (Data / Ctrl)** |
-| ----------- | ------------- | ------------------------------------------------- | ----------------------------- |
-| **A**       | **SD Card**   | High-speed link to MCU for Disk I/O (460.8k baud) | **0x20 / 0x22**               |
-| **B**       | **User Port** | External serial port (Clocked by CTC Ch 0)        | **0x21 / 0x23**               |
+SIO0/A is the application-owned external serial channel.
 
-### **2.3 Z80 CTC (`IC3`) — Base Address 0x40**
+- Interface: MAX202 RS-232 transceiver
+- Ports: `20h` data, `21h` control
+- Serial clock: CTC channel 0 output
+- Baud rate: selected by the application's CTC and SIO configuration
 
-Driven by **3.6864 MHz**.
+The BIOS deliberately leaves SIO0/A and the CTC available to applications. Its serial path is present in the hardware design but is not part of the current CP/M console service.
 
-| **Channel** | **Function**                                       | **I/O Address** |
-| ----------- | -------------------------------------------------- | --------------- |
-| **0**       | **User UART Baud** (Generates clock for SIO1 Ch B) | **0x40**        |
-| **1**       | General Purpose / Header Output (`TO1`)            | **0x41**        |
-| **2**       | General Purpose / Header Output (`TO2`)            | **0x42**        |
-| **3**       | General Purpose                                    | **0x43**        |
+## CTC: timing resources
 
----
+The CTC register interface runs in the 10 MHz Z80 clock domain. Its external trigger inputs come from the local 14.7456 MHz oscillator divider:
 
-## **3) MCU & Data Paths**
+| CTC channel | Trigger input | Typical role |
+| --- | ---: | --- |
+| 0 | 1.8432 MHz | Programmable baud clock for SIO0/A |
+| 1 | 3.6864 MHz | Application timer/counter; output `TO1` is routed outward |
+| 2 | 7.3728 MHz | Application timer/counter; output `TO2` is routed outward |
+| 3 | 7.3728 MHz | General application timer/counter |
 
-### **3.1 MCU Pin Usage (`U15` PIC18F57Q84)**
+The current BIOS disables CTC interrupts during initialization and otherwise leaves the device application-owned. Software that enables CTC interrupts must install the corresponding IM 2 vectors and respect the board's interrupt daisy chain.
 
-The MCU uses its hardware SPI port to act as the master for the SD Card and USB Host Controller (MAX3421E), while using Port C to emulate serial links to the Z80.
+## SIO1: synchronous MCU link
 
-- **SPI Bus (Port D):**
-    
-    - `PD1` (Pin 15): **~USB_CS** (Chip Select for USB).        
-    - `PD2` (Pin 16): **~SD_CS** (Chip Select for SD Card).        
-    - `PD3` (Pin 17): **SPI_MOSI**.        
-    - `PD4` (Pin 18): **SPI_MISO**.        
-    - `PD5` (Pin 19): **SPI_CLK**.
-    
-- **Control Signals:**
-    
-    - `PD0` (Pin 14): **USB_INT** (Interrupt from USB Controller).        
-    - `PD6` (Pin 20): **~USB_RST** (Reset USB Controller).        
-    - `PD7` (Pin 21): **~POWER_OFF** (Signal to power manager).
-        
-- **Z80 Link (Port C):**
-    
-    - **Port C (`PC0`–`PC7`)** handles the TX/RX/CTS/RTS signals connecting to the SIO chips (`IC1`/`IC2`).        
+SIO1 is not configured as a pair of asynchronous UARTs. It is the transport between the Z80 and the I/O-controller MCU.
 
-### **3.2 Clocks & Baud Rates**
+| Channel | Ports | Purpose | Status |
+| --- | --- | --- | --- |
+| SIO1/A | `30h` / `31h` | Bulk data | Reserved; no active bulk-service ABI |
+| SIO1/B | `32h` / `33h` | Commands and replies | Active IOCALL transport |
 
-- **SD Card Link (SIO1 A):**
-    
-    - Clock Source: **7.3728 MHz** (`CLK_7M3728`).        
-    - Divisor: x16.        
-    - Resulting Baud Rate: **460,800 baud**.
-        
-- **Console & USB Link (SIO0 A/B):**    
-    - Clock Source: **1.8432 MHz** (`CLK_1M8432`).        
-    - Divisor: x16.        
-    - Resulting Baud Rate: **115,200 baud**.
-        
+The current SIO1/B link uses **External Sync mode**:
 
----
+- The MCU is the synchronous serial clock master.
+- The MCU drives `/SYNCB` for the transaction.
+- SIO1 operates at x1 clocking.
+- `RTSB` is the Z80-to-MCU service-request signal.
+- The link transfers transparent bytes; the SIO does not add an SDLC FCS.
+- A `7Eh` software preamble provides byte alignment before each fixed frame.
+- Phase 1 transfers are foreground-polled and have timeouts.
+- SIO1/B interrupts, DMA-style block instructions, and WAIT/READY handshaking are not used.
 
-## **4) Hardware Notes**
+Although SDLC influenced the hardware design, it is not the active protocol. On this board `/SYNCB` is MCU-owned and also participates in buffer gating, so a SIO mode that drives `/SYNCB` would cause contention. External Sync keeps that signal an input at the SIO.
 
-- **SD Card Presence:** The `SD_PRESENT` signal is routed to the MCU34, allowing it to detect card insertion before attempting initialization via SPI.
-    
-- **User Port:** The User UART (SIO1 B) baud rate is fully programmable via CTC Channel 0, allowing for non-standard or legacy baud rates independent of the fixed system clocks.
-    
-- **Expansion:** `TO1` and `TO2` from the CTC are routed to headers/expansion, available for external timing or triggering applications.
+The detailed wire protocol and bring-up behavior are documented in [`external_sync_protocol.md`](Code/MCU/IOController/docs/external_sync_protocol.md).
 
-## 5) Programming model for Z80  
+## IOCALL programming interface
 
-### 5.1 HID (USART0 / SIO_USB): 2-byte event records (commandless)
+The CP/M BIOS exposes the command transport through IOCALL:
 
-HID is a pure **byte stream** from MCU to Z80. Z80 reads it via SIO RX ISR. 
+- `HL` points to the 32-byte request frame.
+- `DE` points to the 32-byte reply frame.
+- `A` returns the transport result.
 
-#### Record format (2 bytes)
+IOCALL initializes SIO1/B for the transaction, asserts the request, exchanges one fixed request/reply pair, releases the link, and returns. The BIOS transport does not interpret the command payload.
 
-- **Byte0 = META**
-- `b7..b4 TYPE` (0..15)
-- `b3..b2 PORT` (00=port1, 01=port2)
-- `b1..b0 FLAGS` (currently 00)
-- **Byte1 = DATA**
-- “which key / which button / which modifier bitfield”
-  
+### Fixed frame
 
-Suggested TYPE values:
+Every command-channel request and reply is exactly 32 bytes.
 
-- `0x0 KEY_DOWN` DATA = keycode
-- `0x1 KEY_UP` DATA = keycode
-- `0x2 MODS` DATA = mods bitfield
-- `0x3 DPAD_STATE` DATA = bitfield
-- `0x4 DEV_PRESENT` DATA = 0/1  
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 1 | Command or response class |
+| 1 | 1 | Sequence number |
+| 2 | 1 | Command status or flags |
+| 3 | 1 | Payload length |
+| 4 | 16 | Payload |
+| 20 | 12 | Reserved or command-specific |
 
-MODS bitfield (DATA for TYPE=MODS):
+Transport errors and MCU command status are separate:
 
-- b0 LCTRL, b1 LSHIFT, b2 LALT, b3 LGUI, b4 RCTRL, b5 RSHIFT, b6 RALT, b7 RGUI
+- IOCALL returns a transport result such as success, timeout, bad frame, or hardware error in `A`.
+- The MCU reports command-level status in byte 2 of a valid reply frame.
 
-#### Z80 ISR sketch (ring buffer)
+The shared host constants are in [`cbios_defs.inc`](Code/HOST/CPM2.2/src/cbios_defs.inc), and the MCU definition is in [`ioc_frame.h`](Code/MCU/IOController/include/ioc_frame.h).
 
-```asm
+### Implemented commands
 
-; Called from IM2 when SIO_USB RX interrupt fires.
+| Request | Value | Reply/behavior |
+| --- | ---: | --- |
+| `PING` | `01h` | Returns `RSP_PING` (`81h`) and echoes the request metadata/payload |
+| `RESET` | `02h` | Asserts the host reset pair, then resets the MCU; a normal reply is not guaranteed |
+| Unknown command | — | Returns `RSP_UNKNOWN_COMMAND` (`FEh`) with unknown-command status |
 
-; Goal: drain SIO RX FIFO quickly, store bytes into ring.
+The controller also asserts the host reset pair for approximately 100 ms during its own startup.
 
-  
+## Interrupt ownership and priority
 
-SIO_USB_ISR:
+The board's hardware daisy chain is:
 
-.loop:
+`bus IEI → CTC → SIO0 → SIO1 → bus IEO`
 
-in a,(SIO_USB_RR0)
+This establishes hardware priority, not automatic software ownership. In the current CP/M implementation:
 
-bit 0,a ; RX char available?
+- SIO0/B receive is the active BIOS-managed IM 2 interrupt source.
+- SIO0/A and CTC interrupts belong to application software if enabled.
+- SIO1/B IOCALL is polled during Phase 1 and does not generate service interrupts.
+- SIO1/A does not yet expose an active bulk-transfer service.
 
-jr z,.done
+Any future unsolicited keyboard, mouse, or controller events will need an explicit interrupt and buffering ABI. The obsolete two-byte HID record proposal is not that ABI.
 
-in a,(SIO_USB_DATA)
+## Current status and future scope
 
-call RING_PUSH_A
+| Capability | Status |
+| --- | --- |
+| SIO0/B USB-serial console | Implemented and BIOS-owned |
+| SIO0/A programmable user serial | Hardware path present; application-owned |
+| CTC application timing | Available |
+| SIO1/B fixed-frame `PING` | Implemented for bring-up |
+| MCU-controlled reset | Implemented |
+| SIO1/A bulk transport | Reserved, not yet exposed |
+| SD-card block service | Planned; no current host ABI |
+| USB HID service | Planned; no current event ABI |
+| Unsolicited GameOS-style events | Planned; not part of Phase 1 IOCALL |
 
-jr .loop
+Consequently, the former 512-byte SD-sector command stream, two-byte HID records, and separate 460.8 kbaud MCU UART are historical proposals and must not be used as implementation references.
 
-.done:
+## Sources of truth
 
-ei
+When the documentation, schematic annotations, and software disagree, use these sources in this order:
 
-reti
-
-````
-
-  
-Foreground parser consumes in 2-byte chunks:
- 
-
-```asm
-
-; if ring has >=2 bytes:
-
-; meta = pop(); data = pop();
-
-; switch(meta>>4) ...
-
-```
-
-  
----
-
-### 5.2 SD (USART1 / SIO_SD): single-sector RAM buffer protocol
-
-#### Key idea
-
-- MCU holds **one sector** in RAM.
-- Host decides when to load, read sequentially, patch, write sequentially, and flush.
-- MCU never emits unsolicited status bytes.
-
-#### Opcodes (1 byte each)  
-
-- `0x10 LOAD` + `LBA32` (5 bytes total)
-- `0x11 READSEQ` (1 byte cmd, MCU sends 512 bytes)
-- `0x12 READRND` + `IDX16` (3 bytes cmd, MCU sends 1 byte)
-- `0x13 WRITESEQ` + `LEN16` + data (3+LEN bytes)
-- `0x14 WRITERND` + `IDX16` + data8 (4 bytes)
-- `0x15 FLUSH` (1 byte)
-- `0x16 GETSTAT` (1 byte, MCU sends 1 status byte)  
-
-Status byte (`GETSTAT` response):
-- `0x00 OK`
-- nonzero = error (pick a tiny set; example)
-- `0x01 NOSECTOR`
-- `0x02 RANGE`
-- `0x10 SD_IO` (read/write failure)  
-
-Policy:  
-
-- On `LOAD(new_lba)`: if current buffer is dirty → **flush it** → then load new.
-- `READSEQ`: sends exactly **512 bytes**; host counts; no trailer.  
-
-#### Z80 helper routines (sketch)
-
-Assume you already have `SIO_SD_PUTC` and `SIO_SD_GETC` for the channel.
-
-**LOAD** 
-
-```asm
-
-; HL:DE = LBA32 (little-endian or your choice; just be consistent)
-
-SD_LOAD:
-ld a,0x10
-call SIO_SD_PUTC
-ld a,l : call SIO_SD_PUTC
-ld a,h : call SIO_SD_PUTC
-ld a,e : call SIO_SD_PUTC
-ld a,d : call SIO_SD_PUTC
-ret
-
-```
-
-  **GETSTAT** 
-
-```asm
-
-SD_GETSTAT:
-ld a,0x16
-call SIO_SD_PUTC
-call SIO_SD_GETC ; returns A=status
-ret
-
-```
-
-  **READSEQ → buffer[512]**  
-
-```asm
-
-; IX points to destination buffer
-
-SD_READSEQ_512:
-ld a,0x11
-call SIO_SD_PUTC
-ld b,0 ; 256
-ld c,2 ; 2 blocks of 256 = 512
-
-.next256:
-push bc
-ld b,0
-
-.loop256:
-call SIO_SD_GETC
-ld (ix+0),a
-inc ix
-djnz .loop256
-pop bc
-dec c
-jr nz,.next256
-ret
-
-```
-
-  
-**WRITESEQ (512) from buffer**
- 
-
-```asm
-
-; IX points to source buffer
-SD_WRITESEQ_512:
-ld a,0x13
-call SIO_SD_PUTC
-
-; LEN16 = 0x0200
-xor a
-call SIO_SD_PUTC ; LEN lo = 0x00
-ld a,0x02
-call SIO_SD_PUTC ; LEN hi = 0x02
-ld b,0
-ld c,2
-
-.next256w:
-push bc
-ld b,0
-
-.loop256w:
-ld a,(ix+0)
-inc ix
-call SIO_SD_PUTC
-djnz .loop256w
-pop bc
-dec c
-jr nz,.next256w
-
-ret
-
-```
-
-  
-
-**FLUSH**
-
-  
-```asm
-
-SD_FLUSH:
-ld a,0x15
-call SIO_SD_PUTC
-ret
-
-```
-
-  
-
-**Recommended calling pattern**
-
-- Read sector:
-- `SD_LOAD(lba)` → `SD_GETSTAT()` (optional check)
-- `SD_READSEQ_512()` → (use data)
-
-- Write whole sector:
-- `SD_LOAD(lba)` (optional if you want read-modify-write)
-- `SD_WRITESEQ_512()`
-- `SD_FLUSH()` → `SD_GETSTAT()` (check)
-
----
-
-## 6) MCU firmware notes (non-normative, just to align expectations)
-
-  
-- FreeRTOS is optional; with ATmega1284P it’s feasible.
-- Priority rule:
-- HID task is “fast + frequent” (driven by MAX3421E INT)
-- SD task is “slow + chunky” (SPI block transfers)
-- Since HID and SD have **separate UARTs**, you don’t get priority inversion on the Z80 side.
-
----
-
-## 7) What’s deliberately _not_ specified
-
-- Exact keycode mapping (ASCII vs HID usages vs your own table): **software choice**
-- Any checksum/CRC/framing on UART: **nope**
-- Fancy caches: **nope** (only one working sector)
-- “Perfect reliability under abuse”: **nope** (bench machine, not a product)
+1. Host port and register constants in [`platform_zephyr80.inc`](Code/HOST/CPM2.2/src/platform_zephyr80.inc).
+2. IOCALL definitions and transport code in [`cbios_defs.inc`](Code/HOST/CPM2.2/src/cbios_defs.inc) and [`cbios_iocall.asm`](Code/HOST/CPM2.2/src/cbios_iocall.asm).
+3. MCU protocol definitions and firmware under [`Code/MCU/IOController`](Code/MCU/IOController).
+4. The current KiCad I/O-controller schematic and its validation notes.

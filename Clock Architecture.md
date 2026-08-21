@@ -1,130 +1,157 @@
-# Homebrew Z80 Clock Distribution Architecture
+# Zephyr-80 Clock Architecture
 
-# TODO: update with new architectre
+This document describes the clock domains in the currently committed Zephyr-80
+CPU and I/O schematics. It is intentionally limited to the clocks that cross
+subsystem boundaries or affect software-visible timing.
 
-## 1. Design Overview
+Zephyr-80 does **not** use one master oscillator for the entire machine. The CPU
+system clock, asynchronous serial reference clocks, I/O Controller MCU clock,
+and synchronous I/O Controller link clock are separate domains.
 
-This architecture uses a single high-speed master oscillator (**24.576 MHz**) to drive the entire system. The clock signal is split at the source ("Parallel Distribution"):
+## Clock-domain summary
 
-1. **Path A (Logic):** Feeds a hardware divider (74HC4040) to generate fixed, 50% duty cycle clocks for the Z80 CPU and peripherals.
-    
-2. **Path B (Bridge):** Feeds the ATmega328P directly, utilizing the AVR's internal prescaler to run at a safe 12.288 MHz while retaining the ability to "Turbo" to 24.576 MHz via software.
-    
+| Domain or net | Source | Frequency | Primary use |
+| --- | --- | ---: | --- |
+| `CLK_10M` | CPU-board Y1, ECS-2100AX-100 oscillator | 10.000 MHz | Z80 CPU and Z80 peripheral system clocks; exported on the pBITz bus |
+| I/O baud reference | I/O-board Y1, 14.7456 MHz oscillator | 14.7456 MHz | Input to U8, the 74HC4040 divider |
+| `CLK_7M3728` | U8 Q0, 14.7456 MHz / 2 | 7.3728 MHz | CTC trigger/reference inputs 2 and 3 |
+| `CLK_3M6864` | U8 Q1, 14.7456 MHz / 4 | 3.6864 MHz | CTC trigger/reference input 1 |
+| `CLK_1M8432` | U8 Q2, 14.7456 MHz / 8 | 1.8432 MHz | SIO0/B console RxC/TxC and CTC trigger/reference input 0 |
+| User-serial bit clock | CTC channel 0 `TO0` | Programmable | SIO0/A user-port RxC/TxC |
+| I/O Controller serial clock | I/O Controller MCU through the SIO clock buffers | Transaction-dependent | SIO1/A and SIO1/B synchronous serial shifting |
+| I/O Controller MCU core | PIC18F57Q84 HFINTOSC | 64 MHz | Current committed MCU firmware |
 
-## 2. Hardware Schematic & Netlist
+The 14.7456 MHz oscillator and its divided outputs are local timing references
+on the I/O board. They do not clock the Z80 CPU.
 
-### Component 1: Master Oscillator
+## Z80 system clock
 
-- **Part:** 24.576 MHz "Can" Oscillator (Socketed).
-    
-- **VCC:** 5V.
-    
-- **Output:** Connected to **Two** locations:
-    
-    1. ATmega328P Pin 9 (XTAL1).
-        
-    2. 74HC4040 Pin 10 (CLK).
-        
+The CPU board contains a fixed 10 MHz oscillator, Y1 (`ECS-2100AX-100`). Its
+output is named `CLK_10M`.
 
-### Component 2: Frequency Divider
+`CLK_10M` clocks the Z80 and is exported through the pBITz interface. On the I/O
+board it drives the system-clock inputs of the Z80 peripherals, including the
+CTC and both SIO devices.
 
-- **Part:** 74HC4040 (12-Stage Binary Ripple Counter).
-    
-- **Input (Pin 10):** 24.576 MHz from Oscillator.
-    
-- **Outputs:**
-    
+The system-clock input of a Z80 SIO is distinct from its serial `RxC` and `TxC`
+inputs. Supplying a 10 MHz SIO system clock does not imply a 10 Mbit/s serial
+rate. Each SIO channel shifts serial data according to its separate serial-clock
+inputs and its WR4 clock-multiplier configuration.
 
-|**4040 Pin**|**Output**|**Divisor**|**Frequency**|**Destination**|**Notes**|
-|---|---|---|---|---|---|
-|**Pin 9**|Q0|$\div 2$|12.288 MHz|_Unused_|(Available on header for testing)|
-|**Pin 7**|Q1|$\div 4$|**6.144 MHz**|**Z80, SIO, CTC**|Perfect 50% Duty Cycle. Safe for NMOS.|
-|**Pin 6**|Q2|$\div 8$|**3.072 MHz**|**SN76489**|Sound Chip. (Requires pitch correction).|
+### 10 MHz versus 20 MHz
 
-### Component 3: ATmega328P "Smart Bridge"
+The currently committed hardware is the fixed 10 MHz configuration. A note in
+the CPU schematic mentions 10 or 20 MHz, but the fitted oscillator value and
+distributed net are 10 MHz; there is no runtime clock switching.
 
-- **Input (Pin 9):** 24.576 MHz direct from Oscillator.
-    
-- **Pin 10 (XTAL2):** **Disconnected** (Floating).
-    
-- **Operation:** Acts as an SPI bridge and I/O offloader.
-    
-- **Speed:** Selectable 12.288 MHz (Standard) or 24.576 MHz (Turbo).
-    
+Running the CPU at 20 MHz while retaining 10 MHz-class CTC and SIO devices is a
+separate design option. It would require an explicit peripheral-clock and
+wait-state strategy and is not part of the clock architecture documented here.
 
----
+## I/O-board reference clocks
 
-## 3. Software Configuration
+The I/O board uses a separate 14.7456 MHz oscillator and an SN74HC4040 binary
+divider. The first three divider outputs provide exact binary divisions:
 
-### A. ATmega Fuses
-
-You must set the fuses to treat the clock as an External Clock source and enable the safety divider at boot.
-
-- **Low Fuse Byte:** `0x60` (Check specific calculator for your BOD settings).
-    
-    - **CKSEL[3:0]:** `0000` (External Clock).
-        
-    - **CKDIV8:** `0` (Programmed/Enabled). _Critical: This forces the chip to boot at ~3 MHz._
-        
-
-### B. ATmega Initialization Code
-
-In your `setup()` function, you must reconfigure the prescaler to speed up the chip to 12.288 MHz.
-
-C++
-
-```
-#include <avr/power.h>
-
-// Define system clock for delay calculations (Safe Mode)
-#define F_CPU 12288000UL 
-
-void setup() {
-    // 1. Chip boots at 3.072 MHz (24.576 / 8) due to CKDIV8 fuse.
-    
-    // 2. Disable Interrupts during clock change
-    noInterrupts();
-    
-    // 3. Enable Prescaler Change
-    CLKPR = (1 << CLKPCE);
-    
-    // 4. Set Prescaler to Divide-by-2 (0001)
-    //    Target: 24.576 MHz / 2 = 12.288 MHz
-    CLKPR = (1 << CLKPS0); 
-    
-    interrupts();
-    
-    // ... Rest of initialization
-}
+```text
+14.7456 MHz / 2 = 7.3728 MHz
+14.7456 MHz / 4 = 3.6864 MHz
+14.7456 MHz / 8 = 1.8432 MHz
 ```
 
-### C. Z80 Sound Driver (Pitch Correction)
+These frequencies feed the CTC trigger inputs as convenient timing references:
 
-Since the SN76489 is running at 3.072 MHz instead of the NTSC standard 3.579 MHz, audio pitches will be flat. The Z80 software must compensate.
+| CTC channel | Trigger/reference clock |
+| ---: | ---: |
+| 0 | 1.8432 MHz |
+| 1 | 3.6864 MHz |
+| 2 | 7.3728 MHz |
+| 3 | 7.3728 MHz |
 
-- **Correction Factor:** $3.579545 / 3.072 \approx \mathbf{1.1652}$
-    
-- **Formula:** `Register_Value = Target_Frequency_Register * 1.165`
-    
+The CTC itself remains a 10 MHz Z80-bus peripheral through its `CLK` input.
+Its trigger inputs are independent timing sources for the four counter/timer
+channels.
 
----
+## Asynchronous serial clocks
 
-## 4. System Frequency Map
+### SIO0/B console
 
-|**Subsystem**|**Frequency**|**Derivation**|**Notes**|
-|---|---|---|---|
-|**ATmega Core**|**12.288 MHz**|$24.576 / 2$|Configured via `CLKPR`. Safe & Stable.|
-|**Z80 CPU**|**6.144 MHz**|$24.576 / 4$|$\sim$2% overclock from 6 MHz.|
-|**Z80 UART**|**6.144 MHz**|$24.576 / 4$|Allows 57,600 baud (Divisor 10).|
-|**Sound**|**3.072 MHz**|$24.576 / 8$|Flat pitch, 50% duty cycle.|
-|**SD Card SPI**|**6.144 MHz**|$F_{CPU} / 2$|Max SPI speed in Safe Mode.|
+SIO0/B receives `CLK_1M8432` directly on its receive and transmit clock inputs.
+The BIOS configures the channel for asynchronous x16 operation:
 
-## 5. Benefits of this Architecture
+```text
+1,843,200 Hz / 16 = 115,200 baud
+```
 
-1. **Decoupled Stability:** The Z80 clock is generated by hardware logic. If the ATmega crashes or resets, the Z80 clock continues uninterrupted.
-    
-2. **Safety:** The ATmega runs within its datasheet limits (12 MHz @ 5V).
-    
-3. **NMOS Compatibility:** The 74HC4040 provides a clean 50% duty cycle square wave, essential for the vintage Sharp LH0080B CPU.
-    
-4. **Overclock Ready:** If you need more processing power for USB HID, you can change one line of code (`CLKPR=0`) to run the ATmega at 24.576 MHz without touching a soldering iron.
+This is the BIOS console and current Virtual Drip transport.
+
+### SIO0/A user serial port
+
+SIO0/A receives the output of CTC channel 0 (`TO0`) on its receive and transmit
+clock inputs. Software selects the CTC time constant and SIO clock multiplier,
+allowing the user port to support programmable baud rates.
+
+The user-port baud rate is therefore not fixed by the 14.7456 MHz oscillator
+alone; it depends on both the programmed CTC channel and the SIO WR4 setting.
+
+## Synchronous I/O Controller clock
+
+SIO1 uses `CLK_10M` as its Z80 peripheral system clock, but its serial channels
+do not use the fixed baud-divider outputs.
+
+For the SIO1/A bulk channel and SIO1/B command channel, the I/O Controller MCU
+is the serial-clock master. The MCU supplies `SIO_SCK`; 74AHCT125 buffers gate
+that clock to the selected SIO channel. The clock exists only while the MCU is
+participating in a transaction.
+
+Consequences for host firmware:
+
+- there is no fixed SIO1 baud rate;
+- SIO1 is configured for synchronous x1 operation;
+- the Z80 must request a transaction before expecting serial clocks;
+- a polled transfer times out if the MCU never begins clocking;
+- a block transfer using WAIT would stall indefinitely if the MCU stopped the
+  clock before the block completed.
+
+The current Phase 1 IOCALL path uses the SIO1/B command channel with fixed
+32-byte frames. Protocol-specific edge sequencing and synchronization are
+documented in
+[Code/MCU/IOController/docs/external_sync_protocol.md](Code/MCU/IOController/docs/external_sync_protocol.md).
+
+## I/O Controller MCU clock
+
+The currently committed PIC18F57Q84 firmware uses the MCU's internal 64 MHz
+high-frequency oscillator (`HFINTOSC`). It is not clocked from either the CPU
+board's 10 MHz oscillator or the I/O board's 14.7456 MHz baud oscillator.
+
+This independence allows the MCU to continue managing reset and peripheral
+state regardless of the Z80 clock, while also generating the synchronous SIO1
+clock under firmware control.
+
+## Expansion-card clocks
+
+Video and sound clocks are local to their Percolator Series expansion cards and
+are outside the scope of this document. In particular, no SN76489 or VDP clock
+is derived from the I/O board's 74HC4040 in the current architecture.
+
+The Morning Joe, Lunch Crema, and Afternoon Blend clock networks belong in the
+[PercolatorLabs repository](https://github.com/dumaiss/PercolatorLabs). The DIN
+backplane and shared pBITz signal definitions belong in the
+[pBITzPlatform repository](https://github.com/dumaiss/pBITzPlatform).
+
+## Sources of truth
+
+When this document disagrees with an older design note, use the current
+schematics and firmware as the authority:
+
+- CPU oscillator and `CLK_10M` distribution:
+  `Schem/Zephyr-80-CPU/CPU_AddressDecoding.kicad_sch`
+- I/O baud oscillator and divider:
+  `Schem/Zephyr-80-IO/BaudClock.kicad_sch`
+- CTC and SIO clock routing:
+  `Schem/Zephyr-80-IO/IO Controller.kicad_sch`
+- SIO1 transaction clocking:
+  `Code/MCU/IOController/docs/external_sync_protocol.md`
+- MCU oscillator configuration:
+  `Code/MCU/IOController/include/config.h`
+
