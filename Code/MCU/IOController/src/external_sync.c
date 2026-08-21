@@ -14,48 +14,62 @@
  *
  * The SIO is configured by the BIOS for External Sync.  In that mode /SYNCB is
  * an input.  The external logic must provide the sync edge that tells the SIO
- * where character assembly starts.  On this board the same PIC pin also enables
- * the buffer used to read SIO TXDB, so receive holds /SYNCB low for the whole
- * capture window.
+ * where character assembly starts.
+ *
+ * Clock and data are the board-wide shared bus, so SIOB_CS must be asserted for
+ * the whole transaction: it is what puts SIO1/B on SIO_MISO and keeps the SD
+ * card, USB bridge and controller latch off it.  /SYNCB is a separate pin and
+ * carries only the sync strobe.
  *
  * Wire direction names are from the PIC's point of view:
  *
- *   IOC_TXD  -> SIO RXDB   reply data sent to the Z80
- *   IOC_RXD  <- SIO TXDB   request data received from the Z80
- *   IOC_CLK  -> SIO RXTXCB shared receive/transmit clock
- *   IOC_SYNC -> SIO /SYNCB and TXDB buffer /OE
+ *   SIO_MOSI -> SIO RXDB   reply data sent to the Z80
+ *   SIO_MISO <- SIO TXDB   request data received from the Z80
+ *   SIO_SCK  -> SIO RXTXCB shared receive/transmit clock
+ *   SYNCB    -> SIO /SYNCB External Sync strobe
+ *   SIOB_CS  -> bus select for SIO1/B
  *
  * Bytes on the Z80 SIO serial pins are LSB-first.  Do not change the bit order
  * to match a CPU-memory dump; the SIO shifts bit 0 first on the wire.
  */
 
 /* Pin aliases for the SIO1/B External Sync link. */
-#define LINK_CLK_LAT        IOC_CLK_LAT
-#define LINK_CLK_TRIS       IOC_CLK_TRIS
-#define LINK_CLK_ANSEL      IOC_CLK_ANSEL
+#define LINK_CLK_LAT        SIO_SCK_LAT
+#define LINK_CLK_TRIS       SIO_SCK_TRIS
+#define LINK_CLK_ANSEL      SIO_SCK_ANSEL
 
-#define LINK_DOUT_LAT       IOC_TXD_LAT
-#define LINK_DOUT_TRIS      IOC_TXD_TRIS
-#define LINK_DOUT_ANSEL     IOC_TXD_ANSEL
+#define LINK_DOUT_LAT       SIO_MOSI_LAT
+#define LINK_DOUT_TRIS      SIO_MOSI_TRIS
+#define LINK_DOUT_ANSEL     SIO_MOSI_ANSEL
 
-#define LINK_DIN_PORT       IOC_RXD_PORT
-#define LINK_DIN_TRIS       IOC_RXD_TRIS
-#define LINK_DIN_ANSEL      IOC_RXD_ANSEL
+#define LINK_DIN_PORT       SIO_MISO_PORT
+#define LINK_DIN_TRIS       SIO_MISO_TRIS
+#define LINK_DIN_ANSEL      SIO_MISO_ANSEL
 
-#define LINK_SYNC_LAT       IOC_SYNC_LAT
-#define LINK_SYNC_TRIS      IOC_SYNC_TRIS
-#define LINK_SYNC_ANSEL     IOC_SYNC_ANSEL
+#define LINK_SYNC_LAT       SYNCB_LAT
+#define LINK_SYNC_TRIS      SYNCB_TRIS
+#define LINK_SYNC_ANSEL     SYNCB_ANSEL
 
 static uint8_t rx_window[EXTSYNC_RX_WINDOW_BYTES];
 
 static void sync_assert(void)
 {
-    LINK_SYNC_LAT = IOC_SYNC_ASSERTED;
+    LINK_SYNC_LAT = SYNCB_ASSERTED;
 }
 
 static void sync_release(void)
 {
-    LINK_SYNC_LAT = IOC_SYNC_IDLE;
+    LINK_SYNC_LAT = SYNCB_IDLE;
+}
+
+static void bus_select_siob(void)
+{
+    SIOB_CS_LAT = SIOB_CS_ASSERTED;
+}
+
+static void bus_release_siob(void)
+{
+    SIOB_CS_LAT = SIOB_CS_IDLE;
 }
 
 static void write_data_bit(uint8_t bit)
@@ -259,7 +273,11 @@ void external_sync_init(void)
     LINK_DOUT_ANSEL = 0;
     LINK_DIN_ANSEL  = 0;
 
-    LINK_SYNC_LAT  = IOC_SYNC_IDLE;
+    SIOB_CS_ANSEL = 0;
+    SIOB_CS_LAT   = SIOB_CS_IDLE;
+    SIOB_CS_TRIS  = 0;
+
+    LINK_SYNC_LAT  = SYNCB_IDLE;
     LINK_SYNC_TRIS = 0;
 
     LINK_CLK_LAT  = 0;
@@ -275,10 +293,12 @@ bool external_sync_receive(IocFrame *frame)
 {
     uint8_t i;
 
+    bus_select_siob();
     sync_assert();
     for (i = 0u; i < EXTSYNC_RX_WINDOW_BYTES; i++)
         rx_window[i] = clock_input_byte_marking();
     sync_release();
+    bus_release_siob();
 
     return copy_received_frame(frame);
 }
@@ -288,19 +308,20 @@ bool external_sync_receive(IocFrame *frame)
  * Walkthrough:
  *
  *   1. Wait briefly so the BIOS has switched SIO1/B from request transmit to
- *      reply receive.
+ *      reply receive, then take the shared bus with SIOB_CS.
  *   2. Send two setup clocks while /SYNCB is idle high.
  *   3. Clock the 32 reply bytes.  clock_reply_byte() asserts /SYNCB at the
  *      proven bit position and keeps it low after that.
  *   4. Clock one trailing FFh byte.  The SIO exposes the final received byte to
  *      RR0/RX-ready only after additional clocks arrive on this board.
- *   5. Release /SYNCB and return IOC_TXD to marking idle high.
+ *   5. Release /SYNCB and SIOB_CS, and return SIO_MOSI to marking idle high.
  */
 void external_sync_send(const IocFrame *frame)
 {
     uint8_t i;
 
     __delay_ms(EXTSYNC_REPLY_GUARD_MS);
+    bus_select_siob();
     LINK_DOUT_LAT = 1;
 
     LINK_CLK_LAT = 1;
@@ -324,4 +345,5 @@ void external_sync_send(const IocFrame *frame)
 
     sync_release();
     LINK_DOUT_LAT = 1;
+    bus_release_siob();
 }

@@ -13,13 +13,16 @@ static void psu_off(void);
  * Active-low external inputs use internal pull-ups. PWR_OK is left without an
  * internal pull-up because it is driven by the ATX PSU. Outputs start with the
  * IO Controller held in reset and the PSU disabled.
+ *
+ * The IO Controller does not drive its end of PWR_OFF_RQ or PWR_STATE yet, so
+ * whenever this side is an input it enables the pull-up. That keeps both nets
+ * at a defined deasserted level instead of floating between two high-Z ends.
  */
 static void io_init(void)
 {
-#if !PMU_IGNORE_IO_CONTROLLER_SIGNALS
+    /* Active-low input; the pull-up is the deasserted level. */
     PWR_OFF_RQ_DDR &= ~_BV(PWR_OFF_RQ_PIN);
     PWR_OFF_RQ_PORT |= _BV(PWR_OFF_RQ_PIN);
-#endif
 
     PWR_SW_DDR &= ~_BV(PWR_SW_PIN);
     PWR_SW_PORT |= _BV(PWR_SW_PIN);
@@ -31,8 +34,11 @@ static void io_init(void)
     PWR_STATE_DDR |= _BV(PWR_STATE_PIN);
     PWR_STATE_PORT |= _BV(PWR_STATE_PIN);
 #else
+    /* Not driving the handshake: input with the pull-up on, so the net idles
+     * high rather than floating.  High is the "hold IO Controller in reset"
+     * level, which is the safe end of this signal. */
     PWR_STATE_DDR &= ~_BV(PWR_STATE_PIN);
-    PWR_STATE_PORT &= ~_BV(PWR_STATE_PIN);
+    PWR_STATE_PORT |= _BV(PWR_STATE_PIN);
 #endif
 
     PS_ON_DDR |= _BV(PS_ON_PIN);

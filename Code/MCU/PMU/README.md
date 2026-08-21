@@ -80,10 +80,14 @@ See `docs/pinout.md` for the full pinout and signal behavior.
 
 Set `PMU_IGNORE_IO_CONTROLLER_SIGNALS` to `1` in `include/config.h`, or pass it
 as a compiler define, to build the PMU without the IO Controller handshake. In
-that mode the PMU ignores `PWR_OFF_RQ` and leaves `PWR_STATE` as a high
-impedance input instead of driving reset/run state toward the IO Controller.
-The 5 second force-off button hold remains available when the handshake is
-disabled.
+that mode the PMU ignores `PWR_OFF_RQ` and leaves `PWR_STATE` as an input
+instead of driving reset/run state toward the IO Controller. The 5 second
+force-off button hold remains available when the handshake is disabled.
+
+Both `PWR_OFF_RQ` and `PWR_STATE` enable their internal pull-ups whenever they
+are inputs, so each net idles at a defined deasserted level. The IO Controller
+leaves its end of `PWR_OFF` high-Z while its PMU support is unfinished, so
+without the PMU pull-up that net would float with no driver at either end.
 
 ## Power-Off Handshake
 

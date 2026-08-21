@@ -14,8 +14,12 @@ Power-control firmware pin assignments.
 ## Firmware Behavior
 
 - If `PMU_IGNORE_IO_CONTROLLER_SIGNALS` is set to `1`, the PMU does not sample
-  `PWR_OFF_RQ` and leaves `PWR_STATE` as a high impedance input.
-- `PWR_OFF_RQ` and `PWR_SW` use the PMU internal pull-ups.
+  `PWR_OFF_RQ` and does not drive `PWR_STATE`; `PWR_STATE` stays an input with
+  its internal pull-up enabled, so the net idles high instead of floating.
+- `PWR_OFF_RQ`, `PWR_SW` and (when it is an input) `PWR_STATE` use the PMU
+  internal pull-ups.  `PWR_OFF_RQ` keeps its pull-up in both build modes: the
+  IO Controller currently leaves its end of that net high-Z, so without the
+  pull-up both ends would float.
 - `PWR_OK` is treated as an externally driven ATX status signal.
 - PB0 controls the `PS_ON#` MOSFET gate. PB0 high turns the MOSFET on and pulls
   ATX `PS_ON#` low. PB0 low turns the MOSFET off and lets the PSU turn off.

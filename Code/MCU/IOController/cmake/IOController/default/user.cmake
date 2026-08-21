@@ -14,6 +14,10 @@
 
 get_filename_component(_ioc_include_dir
     "${CMAKE_CURRENT_LIST_DIR}/../../../include" ABSOLUTE)
+get_filename_component(_ioc_project_dir
+    "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+set(_ioc_controller_latch_source
+    "${_ioc_project_dir}/src/controller_latch.c")
 
 foreach(_ioc_target
         IOController_default_default_XC8_compile
@@ -23,3 +27,16 @@ foreach(_ioc_target
         target_include_directories(${_ioc_target} PRIVATE "${_ioc_include_dir}")
     endif()
 endforeach()
+
+# Keep diagnostic driver sources in the persistent user hook because MPLAB
+# regenerates the source list under .generated/.
+if(TARGET IOController_default_default_XC8_compile)
+    get_target_property(_ioc_sources
+        IOController_default_default_XC8_compile SOURCES)
+    list(FIND _ioc_sources "${_ioc_controller_latch_source}"
+        _ioc_controller_latch_index)
+    if(_ioc_controller_latch_index EQUAL -1)
+        target_sources(IOController_default_default_XC8_compile PRIVATE
+            "${_ioc_controller_latch_source}")
+    endif()
+endif()
