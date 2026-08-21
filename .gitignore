@@ -80,5 +80,7 @@ Code/MODERN/VirtualDrip/CMakeFiles/3.31.8/CompilerIdC/a.out
 Code/MODERN/VirtualDrip/CMakeFiles/CMakeConfigureLog.yaml
 Code/MODERN/VirtualDrip/CMakeLists.txt
 Code/MODERN/VirtualDrip/CMakeCache.txt
-**/kleplace.log
+# KiCad placement logs. The leading * is required: these land with the literal
+# Windows path baked into the filename, e.g. "C:\Users\User\Desktop\kleplace.log"
+*kleplace.log
 Code/HOST/CPM2.2/images/zephyr80-vdrip2.cpm
