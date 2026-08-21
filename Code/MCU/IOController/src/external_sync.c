@@ -72,8 +72,6 @@ static void bus_release_siob(void)
     SIOB_CS_LAT = SIOB_CS_IDLE;
 }
 
-#if (EXTSYNC_SPI_RX || EXTSYNC_SPI_TX)
-
 /* ---------------------------------------------------------------------------
  * SPI2 link
  * ---------------------------------------------------------------------------
@@ -186,42 +184,10 @@ static void spi_byte_gap(void)
     __delay_us(EXTSYNC_BYTE_GAP_US);
 }
 
-#endif /* EXTSYNC_SPI_RX || EXTSYNC_SPI_TX */
-
 static void write_data_bit(uint8_t bit)
 {
     LINK_DOUT_LAT = (uint8_t)(bit & 1u);
 }
-
-#if !EXTSYNC_SPI_RX
-
-static uint8_t read_data_bit(void)
-{
-    return (uint8_t)(LINK_DIN_PORT ? 1u : 0u);
-}
-
-static uint8_t clock_input_byte_marking(void)
-{
-    uint8_t i;
-    uint8_t value = 0u;
-
-    write_data_bit(1u);
-
-    for (i = 0u; i < 8u; i++) {
-        __delay_us(EXTSYNC_BIT_DELAY_US);
-        LINK_CLK_LAT = 1;
-        __delay_us(EXTSYNC_BIT_DELAY_US);
-
-        if (read_data_bit())
-            value |= (uint8_t)(1u << i);
-
-        LINK_CLK_LAT = 0;
-    }
-
-    return value;
-}
-
-#endif /* !EXTSYNC_SPI_RX */
 
 /* Clock one reply byte into the SIO receiver.
  *
@@ -408,13 +374,11 @@ void external_sync_init(void)
 
     LINK_DIN_TRIS = 1;
 
-#if (EXTSYNC_SPI_RX || EXTSYNC_SPI_TX)
     /* TRIS still governs the pin drivers under PPS, so the directions set above
      * remain correct once the SPI module owns RB1/RB3. */
     spi_init();
     spi_clear_fifos();
     spi_pins_to_lat();
-#endif
 }
 
 bool external_sync_receive(IocFrame *frame)
@@ -424,7 +388,6 @@ bool external_sync_receive(IocFrame *frame)
     bus_select_siob();
     sync_assert();
 
-#if EXTSYNC_SPI_RX
     /* Receive needs no intra-byte GPIO at all: /SYNCB is asserted for the whole
      * window and MOSI just idles marking, which is what shifting out FFh does.
      * So the entire window goes through the SPI module. */
@@ -442,10 +405,6 @@ bool external_sync_receive(IocFrame *frame)
         spi_byte_gap();
     }
     spi_pins_to_lat();
-#else
-    for (i = 0u; i < EXTSYNC_RX_WINDOW_BYTES; i++)
-        rx_window[i] = clock_input_byte_marking();
-#endif
 
     sync_release();
     bus_release_siob();
@@ -492,7 +451,6 @@ void external_sync_send(const IocFrame *frame)
      * to the SPI module without changing a single edge that matters. */
     clock_reply_byte(frame->bytes[0]);
 
-#if EXTSYNC_SPI_TX
     spi_clear_fifos();
     spi_pins_to_spi();
     for (i = 1u; i < IOC_FRAME_SIZE; i++) {
@@ -511,12 +469,6 @@ void external_sync_send(const IocFrame *frame)
         (void)spi_exchange(0xFFu, &discard);
     }
     spi_pins_to_lat();
-#else
-    for (i = 1u; i < IOC_FRAME_SIZE; i++)
-        clock_reply_byte(frame->bytes[i]);
-
-    clock_reply_byte(0xFFu);
-#endif
 
     sync_release();
     LINK_DOUT_LAT = 1;

@@ -36,42 +36,19 @@
  */
 
 /* ---------------------------------------------------------------------------
- * Transport selection
+ * Transport
  *
- * 0 = the proven bit-banged transport.  This is the path that is known to work
- *     on the bench and it remains the default until the SPI path has been
- *     exercised against real hardware.
- * 1 = hardware SPI2 for the bulk of the transfer.
+ * The bulk of every transfer runs on the SPI2 hardware module.  It is a hybrid,
+ * not a wholesale replacement: reply byte 0 is still clocked by hand, because
+ * /SYNCB has to be asserted at a precise position *inside* that byte (after
+ * bit 1's rising edge, before its falling edge) and a hardware shift register
+ * cannot be interrupted mid-word.  sync_assert() is idempotent, so every later
+ * byte needs no intra-byte GPIO and goes through SPI2.
  *
- * The SPI path is a hybrid, not a wholesale replacement.  Reply byte 0 stays
- * bit-banged because /SYNCB has to be asserted at a precise position *inside*
- * that byte (after bit 1's rising edge, before its falling edge) and a hardware
- * shift register cannot be interrupted mid-word.  sync_assert() is idempotent,
- * so every later byte needs no intra-byte GPIO and goes through SPI2.
+ * The bit-banged receive path and the RX/TX transport switches were removed
+ * once the SPI path was confirmed on hardware; see git history if the old
+ * transport is ever needed for comparison.
  * --------------------------------------------------------------------------- */
-#ifndef EXTSYNC_USE_SPI
-#define EXTSYNC_USE_SPI          1
-#endif
-
-/* Receive and transmit can be switched independently.  They are separate code
- * paths with different failure modes, so when the link misbehaves, moving one
- * side back to bit-bang says which half is at fault in a single bench run:
- *
- *   RX 1 / TX 1   both on SPI
- *   RX 1 / TX 0   receive on SPI, reply bit-banged
- *   RX 0 / TX 1   receive bit-banged, reply on SPI
- *   RX 0 / TX 0   equivalent to EXTSYNC_USE_SPI 0
- *
- * Note that a receive failure is silent from the host's point of view: if the
- * PIC cannot decode the request it never sends a reply at all, so the host
- * reports a transport timeout and its receive buffer keeps its A5h fill.  That
- * looks identical to a broken transmit path, which is why these split. */
-#ifndef EXTSYNC_SPI_RX
-#define EXTSYNC_SPI_RX           1
-#endif
-#ifndef EXTSYNC_SPI_TX
-#define EXTSYNC_SPI_TX           1
-#endif
 
 /* Bound on the wait for one SPI byte to complete.  One byte at 125 kHz is
  * ~64 us, about 1000 instruction cycles at 64 MHz, so this is a wide margin.

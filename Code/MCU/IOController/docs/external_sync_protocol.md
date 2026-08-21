@@ -29,13 +29,9 @@ controller latch off the bus, so it must be asserted for the whole transaction.
 On the previous revision both jobs lived on a single pin (`RA1`).  They are now
 split, so a change to sync timing no longer changes bus ownership.
 
-## Transport: bit-bang or SPI2
+## Transport: SPI2
 
-`EXTSYNC_USE_SPI` in `include/external_sync.h` selects the transport.  Set it to
-`0` to fall back to the bit-banged path described throughout this document,
-which is the one originally proven on the bench.
-
-At `1` the bulk of the transfer runs on the SPI2 hardware module.
+The bulk of every transfer runs on the SPI2 hardware module.
 SPI2 is the correct module for this bus because its reset-default PPS inputs are
 already `SCK = RB3` and `SDI = RB2`; SPI1's defaults are RC3/RC4, the port C
 peripheral bus.  Neither `SPI2SCKPPS` nor `SPI2SDIPPS` therefore needs touching,

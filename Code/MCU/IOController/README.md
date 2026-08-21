@@ -34,11 +34,14 @@ reply:   PIC RB1 SIO_MOSI -> Z80 SIO1/B RXDB, clocked by PIC RB3 SIO_SCK
 sync:    PIC RA7 drives SIO1/B /SYNCB
 ```
 
-The bulk of the transfer runs on the SPI2 hardware module.  Set
-`EXTSYNC_USE_SPI` to `0` in `include/external_sync.h` to fall back to the
-original bit-banged transport; see
+The bulk of the transfer runs on the SPI2 hardware module; reply byte 0 is still
+clocked by hand for the `/SYNCB` edge. See
 [docs/external_sync_protocol.md](docs/external_sync_protocol.md) for what stays
-bit-banged even in SPI mode, and why.
+bit-banged and why.
+
+Throughput is set by `EXTSYNC_TARGET_BYTE_US` in `include/external_sync.h`,
+currently 16 us (500 kbit/s). That is paced against the Z80 BIOS receive loop,
+not against the SPI clock — see the header for the T-state budget.
 
 See [docs/pinout.md](docs/pinout.md) for the full pin map.
 

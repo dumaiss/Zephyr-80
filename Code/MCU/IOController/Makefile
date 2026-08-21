@@ -29,7 +29,7 @@ XC8FLAGS ?= -mcpu=$(DEVICE) -mdfp=$(DFP) -I$(INC_DIR) -gdwarf-3
 
 # Extra -D defines, for sweeping tunables without editing headers. e.g.
 #   make DEFS=-DEXTSYNC_TARGET_BYTE_US=16u     # 500 kbit/s
-#   make DEFS="-DEXTSYNC_SPI_RX=0 -DEXTSYNC_SPI_TX=1"
+#   make DEFS=-DEXTSYNC_SPI_BAUD=63u          # SCK 500 kHz
 DEFS ?=
 
 .PHONY: all clean test size force
