@@ -118,6 +118,27 @@
 #define SIO_SCK_PORT         PORTBbits.RB3
 
 /* ---------------------------------------------------------------------------
+ * SPI2 module mapping for the SIO bus
+ *
+ * SPI2 is the right module for this bus, not SPI1: the silicon's reset-default
+ * PPS inputs for SPI2 are already SCK = RB3 and SDI = RB2, which is exactly how
+ * this board is wired.  (SPI1's defaults are RC3/RC4 — the port C peripheral
+ * bus — so leave SPI1 for the SD card, USB HID and controller latch.)
+ *
+ * Because of that, SPI2SCKPPS and SPI2SDIPPS need no configuration at all.
+ * Only the two *output* routes have to be claimed, and master mode needs SCK
+ * routed out as well as read back in.
+ *
+ * PPSLOCKED resets to 0 and this firmware never locks PPS, so no unlock
+ * sequence is required.  PPS1WAY = OFF also permits re-mapping at run time,
+ * which the hybrid transmit path relies on to hand RB1/RB3 back and forth
+ * between the SPI module and LATB.
+ * --------------------------------------------------------------------------- */
+#define SIO_MOSI_PPS         RB1PPS   /* output route for SPI2 SDO */
+#define SIO_SCK_PPS          RB3PPS   /* output route for SPI2 SCK */
+#define SIO_PPS_SRC_LAT      0x00u    /* RxyPPS = 0 gives the pin back to LATxy */
+
+/* ---------------------------------------------------------------------------
  * External Sync strobes (RA6 / RA7)
  *
  * The SIO is configured by the BIOS for External Sync, which makes /SYNC an

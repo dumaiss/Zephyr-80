@@ -29,6 +29,55 @@ controller latch off the bus, so it must be asserted for the whole transaction.
 On the previous revision both jobs lived on a single pin (`RA1`).  They are now
 split, so a change to sync timing no longer changes bus ownership.
 
+## Transport: bit-bang or SPI2
+
+`EXTSYNC_USE_SPI` in `include/external_sync.h` selects the transport.  Set it to
+`0` to fall back to the bit-banged path described throughout this document,
+which is the one originally proven on the bench.
+
+At `1` the bulk of the transfer runs on the SPI2 hardware module.
+SPI2 is the correct module for this bus because its reset-default PPS inputs are
+already `SCK = RB3` and `SDI = RB2`; SPI1's defaults are RC3/RC4, the port C
+peripheral bus.  Neither `SPI2SCKPPS` nor `SPI2SDIPPS` therefore needs touching,
+and only the two output routes (`RB1PPS`, `RB3PPS`) are claimed.
+
+The SPI path is a hybrid:
+
+- **Receive** is entirely hardware.  `/SYNCB` is asserted for the whole window
+  and MOSI only idles marking, so shifting out `FFh` reproduces it exactly.
+- **Reply byte 0 stays bit-banged.**  `/SYNCB` has to fall between bit 1's
+  rising and falling edges, and a hardware shift register cannot be interrupted
+  mid-word.  `sync_assert()` is idempotent, so bytes 1..31 and the trailing
+  flush byte need no intra-byte GPIO and go through SPI2.
+- `RB1PPS`/`RB3PPS` are switched between LATB and SPI2 around the bit-banged
+  phase.  The changeover is glitch-free because `CKP = 0` idles SCK low, which
+  is the level LATB3 already holds.
+
+The SPI clock is `SPI2CLK = 0` (Fosc) with `SPI2BAUD = 31`, giving
+`64 MHz / (2 * 32)` = **1.000 MHz**.
+
+Bit rate is not what protects the host.  The BIOS polls RR0 in software behind
+a 3-byte SIO FIFO, so the *byte* rate is the constraint, and it is held at the
+800 us the bit-banged path produced.  The inter-byte gap is derived from the
+baud rate (`EXTSYNC_BYTE_GAP_US = EXTSYNC_TARGET_BYTE_US - EXTSYNC_SPI_BYTE_US`)
+so changing the baud alone cannot silently change the pacing the host depends
+on.  At 1 MHz that is 8 us of clocking plus a 792 us gap.
+
+Consequently, raising the baud rate on its own buys almost nothing -- the gap is
+99% of the byte period.  `EXTSYNC_TARGET_BYTE_US` is the knob that actually
+makes the link faster, and the one that risks overrunning the host.
+
+External Sync counts clock edges and is indifferent to gaps between bytes.
+
+The two PPS output source codes come from Table 21-2 "PPS Output Selection
+Table" in DS40002213D: `0x35` for SPI2 SDO and `0x34` for SPI2 SCK.  The table
+also confirms both are reachable on port B for the 48-pin package.  These values
+are in neither the XC8 headers nor the DFP device file, which carry only the
+register layout -- the routing table exists only in the datasheet.
+
+For the port C bus later, the same table gives `0x32` for SPI1 SDO and `0x31`
+for SPI1 SCK, both available on port C.
+
 ## SIO Mode
 
 The Z80 BIOS owns all SIO register writes.  The PIC assumes the BIOS has placed

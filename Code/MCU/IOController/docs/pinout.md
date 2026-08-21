@@ -13,12 +13,12 @@ already claims `RESET()` and `NMI`.
 `ANSELA`, `ANSELB`, `ANSELD`, `ANSELE` and `ANSELF` are all cleared to `0x00` in
 `platform_init()`, so every pin below is digital.
 
-## Port A — shared-bus selects and External Sync
+## Port A — peripheral selects and External Sync
 
 | Pin | Port | Signal | Direction | Active | Macro | Notes |
 |---|---|---|---|---|---|---|
 | 21 | RA0 | `/USB_INT` | Input | Low | `USB_INT_PORT` | USB bridge data-ready. Unused by the current firmware. |
-| 22 | RA1 | `/CTRL_LAT_CS` | Output | Low | `CTRL_LAT_CS_LAT` | Select for the cascaded controller 74HC595s; doubles as their RCLK. The 595 latches on RCLK's rising edge, so releasing the select is what commits the outputs. |
+| 22 | RA1 | `/CTRL_LAT_CS` | Output | Low | `CTRL_LAT_CS_LAT` | Select for the cascaded controller 74HC595s on the **port C** bus; doubles as their RCLK. The 595 latches on RCLK's rising edge, so releasing the select is what commits the outputs. Held idle by the current firmware. |
 | 23 | RA2 | `/IO_SD_CS` | Output | Low | `IO_SD_CS_LAT` | SD card select. Held idle by the current firmware. |
 | 24 | RA3 | `/IO_USB_CS` | Output | Low | `IO_USB_CS_LAT` | USB bridge select. Held idle by the current firmware. |
 | 25 | RA4 | `/SIOB_CS` | Output | Low | `SIOB_CS_LAT` | Puts SIO1/B on the shared bus and enables the TXDB buffer. Held asserted for a whole command transaction. |
@@ -26,31 +26,50 @@ already claims `RESET()` and `NMI`.
 | 33 | RA6 | `/SYNCA` | Output | Low | `SYNCA_LAT` | SIO1/A External Sync. Parked idle. |
 | 32 | RA7 | `/SYNCB` | Output | Low | `SYNCB_LAT` | SIO1/B External Sync strobe. |
 
-## Port B — shared serial bus, SIO1/A modem control, ICSP
+## Port B — SIO serial bus, SIO1/A modem control, ICSP
 
 | Pin | Port | Signal | Direction | Active | Macro | Notes |
 |---|---|---|---|---|---|---|
 | 8 | RB0 | `/CTSA` | Output | Low | `CTSA_LAT` | SIO1/A clear-to-send. Parked idle. |
-| 9 | RB1 | `SIO_MOSI` | Output | - | `SIO_MOSI_LAT` | Shared bus data, PIC -> device. Drives SIO1/B `RXDB` and the 74HC595 `SER`. Idle high (marking). |
-| 10 | RB2 | `SIO_MISO` | Input | - | `SIO_MISO_PORT` | Shared bus data, device -> PIC. Samples SIO1/B `TXDB` when `SIOB_CS` is asserted. |
-| 11 | RB3 | `SIO_SCK` | Output | - | `SIO_SCK_LAT` | Shared bus clock. Drives SIO1/B `RXTXCB` and both 74HC595 `SRCLK` pins. Idle low. |
+| 9 | RB1 | `SIO_MOSI` | Output | - | `SIO_MOSI_LAT` | SIO bus data, PIC -> device. Drives SIO1/B `RXDB`. Idle high (marking). SPI2 SDO when the SPI transport is enabled. |
+| 10 | RB2 | `SIO_MISO` | Input | - | `SIO_MISO_PORT` | SIO bus data, device -> PIC. Samples SIO1/B `TXDB` when `/SIOB_CS` is asserted. SPI2 SDI (reset default). |
+| 11 | RB3 | `SIO_SCK` | Output | - | `SIO_SCK_LAT` | SIO bus clock. Drives SIO1/B `RXTXCB`. Idle low. The board only activates it toward an SIO while that SIO's select is asserted. SPI2 SCK (reset default input mapping). |
 | 16 | RB4 | `/DCDA` | Output | Low | `DCDA_LAT` | SIO1/A data-carrier-detect. Parked idle. |
 | 17 | RB5 | `/CTSB` | Output | Low | `CTSB_LAT` | SIO1/B clear-to-send. Parked idle. |
 | 18 | RB6 | `ICSPCLK` | - | - | - | Programming. |
 | 19 | RB7 | `ICSPDAT` | - | - | - | Programming. |
 
-## Port C — unassigned
+## Port C — external peripheral bus
 
-| Pin | Port | Notes |
-|---|---|---|
-| 34 | RC0 | Routed, net not shown on the supplied schematic sheet. |
-| 35 | RC1 | Routed, net not shown on the supplied schematic sheet. |
-| 40 | RC2 | No connect. |
-| 41 | RC3 | No connect. |
-| 46 | RC4 | Routed, net not shown on the supplied schematic sheet. |
-| 47 | RC5 | Routed, net not shown on the supplied schematic sheet. |
-| 48 | RC6 | No connect. |
-| 1 | RC7 | No connect. |
+The second SPI bus, shared by the SD card, the USB HID bridge and the
+controller latch.  Not brought up by the current firmware.
+
+| Pin | Port | Signal | Notes |
+|---|---|---|---|
+| 34 | RC0 | `SD_PRESENT` | SD card presence detect. |
+| 35 | RC1 | `SD_BUSY` | SD card busy. |
+| 40 | RC2 | - | No connect. |
+| 41 | RC3 | `SPI_CLK` | Peripheral bus clock. Also SPI1's reset-default SCK pin. |
+| 46 | RC4 | `MISO` | Peripheral bus data in. Also SPI1's reset-default SDI pin. |
+| 47 | RC5 | `MOSI` | Peripheral bus data out. |
+| 48 | RC6 | - | No connect. |
+| 1 | RC7 | - | No connect. |
+
+Selects for this bus live on port A: `/IO_SD_CS` (RA2), `/IO_USB_CS` (RA3) and
+`/CTRL_LAT_CS` (RA1).
+
+### Which SPI module goes where
+
+The silicon's reset-default PPS input mappings match this board exactly, so
+each bus should use the module that already points at it:
+
+| Module | Default SCK | Default SDI | Bus |
+|---|---|---|---|
+| SPI1 | RC3 | RC4 | Port C peripherals (SD, USB HID, controller latch) |
+| SPI2 | RB3 | RB2 | Port B SIO1/A + SIO1/B |
+
+Assigning them this way means neither bus needs `SPIxSCKPPS` or `SPIxSDIPPS`
+touched at all; only the output routes have to be claimed.
 
 ## Port D — GPIO header
 
@@ -120,8 +139,6 @@ PIC releases /SIOB_CS
 Z80 BIOS deasserts /SIO1B_INT
 ```
 
-For controller-latch bring-up, a successful PING reply is followed by a
-16-clock diagnostic update on `SIO_MOSI` / `SIO_SCK`.  Payload byte 0 is shifted
-first, then payload byte 1; both are MSB-first.  `/CTRL_LAT_CS` is held
-asserted for the 16-bit shift and then released, and that rising edge latches
-the value.
+The controller latch is not driven on this revision.  The 74HC595s moved to the
+port C bus and `controller_latch_write()` is stubbed until those peripherals are
+brought up; see `src/controller_latch.c`.

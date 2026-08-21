@@ -18,19 +18,32 @@ FIRMWARE_SRCS := \
 
 FIRMWARE_HEX := $(BUILD_DIR)/$(TARGET).hex
 
+# Records the DEFS used for the last build.  The firmware depends on it, so
+# changing DEFS forces a rebuild instead of silently leaving a stale hex built
+# with the previous tunables.
+FLAGS_STAMP := $(BUILD_DIR)/.buildflags
+
 # -gdwarf-3 emits DWARF debug info so build/$(TARGET).elf is source-debuggable
 # in VS Code (mplab-core-da / SNAP), matching the MPLAB CMake build flags.
 XC8FLAGS ?= -mcpu=$(DEVICE) -mdfp=$(DFP) -I$(INC_DIR) -gdwarf-3
 
-.PHONY: all clean test size
+# Extra -D defines, for sweeping tunables without editing headers. e.g.
+#   make DEFS=-DEXTSYNC_TARGET_BYTE_US=16u     # 500 kbit/s
+#   make DEFS="-DEXTSYNC_SPI_RX=0 -DEXTSYNC_SPI_TX=1"
+DEFS ?=
+
+.PHONY: all clean test size force
 
 all: $(FIRMWARE_HEX)
 
 $(BUILD_DIR):
 	mkdir -p $@
 
-$(FIRMWARE_HEX): $(FIRMWARE_SRCS) | $(BUILD_DIR)
-	$(XC8) $(XC8FLAGS) $^ -o $(BUILD_DIR)/$(TARGET)
+$(FLAGS_STAMP): force | $(BUILD_DIR)
+	@echo '$(DEFS)' | cmp -s - $@ || echo '$(DEFS)' > $@
+
+$(FIRMWARE_HEX): $(FIRMWARE_SRCS) $(FLAGS_STAMP) | $(BUILD_DIR)
+	$(XC8) $(XC8FLAGS) $(DEFS) $(FIRMWARE_SRCS) -o $(BUILD_DIR)/$(TARGET)
 
 test:
 	@echo "No host tests yet: firmware only."
