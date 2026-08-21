@@ -38,10 +38,11 @@ Pin 23 = !CS_MEMBANK_WR; /* Write: Clocks the 74HC273 (Rising Edge) */
 Pin 22 = !CS_MEMBANK_RD; /* Read:  Enables the 74HC244 (Active Low Level) */
 
 /* New Outputs for 74LS138 */
-Pin [19, 18, 17] = [SEL2..0];  /* Grouping pins 18, 17, and 15 */
+Pin [20, 19, 18, 17] = [SEL3..0];  /* Grouping pins 17 to 20 */
+
 
 /* Define the bit field */
-FIELD IO_ADDR = [SEL2..0];
+FIELD IO_ADDR = [SEL3..0];
 
 /* ----------------------------------------------------------- */
 /* Logic Equations */
@@ -87,10 +88,10 @@ IO_EN = StdIO_Cycle & (Block_20 # Block_30 # Block_40 # Block_60 #
                       Block_A0 # Block_B0 # Block_E0 # Block_F0);
 
 /* Assign values to the field based on the active Block */
-IO_ADDR =  StdIO_Cycle & 'b'001 & Block_20                    /* SIO0 */  
-         # StdIO_Cycle & 'b'010 & Block_30                    /* SIO1 */         
-         # StdIO_Cycle & 'b'011 & Block_40                    /* CTC */
-         # StdIO_Cycle & 'b'100 & Block_60                    /* CART_IO */
-         # StdIO_Cycle & 'b'101 & (Block_A0 # Block_B0)       /* VDP */
-         # StdIO_Cycle & 'b'110 & (Block_E0 # Block_F0) & WR  /* SOUND */
-         # StdIO_Cycle & 'b'111 & (Block_E0 # Block_F0) & RD; /* CTRL */
+IO_ADDR =  StdIO_Cycle & 'b'0010 & Block_20                    /* SIO0 */  
+         # StdIO_Cycle & 'b'0011 & Block_30                    /* SIO1 */         
+         # StdIO_Cycle & 'b'0100 & Block_40                    /* CTC */
+         # StdIO_Cycle & 'b'0110 & Block_60                    /* CART_IO */
+         # StdIO_Cycle & 'b'1010 & (Block_A0 # Block_B0)       /* VDP */
+         # StdIO_Cycle & 'b'1110 & (Block_E0 # Block_F0) & WR  /* SOUND */
+         # StdIO_Cycle & 'b'1110 & (Block_E0 # Block_F0) & RD; /* CTRL */
