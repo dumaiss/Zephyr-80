@@ -109,16 +109,51 @@ bytes 20-31 reserved / command-specific
 Current command classes:
 
 ```text
-01h  CMD_PING
-02h  CMD_RESET
+01h  CMD_PING     echo the payload back
+02h  CMD_RESET    assert the host reset pair, then self-reset the PIC
+03h  CMD_SD_READ  read SD block 0, return its first 16 bytes
 ```
 
 Current response classes:
 
 ```text
 81h  RSP_PING
+83h  RSP_SD_READ
 FEh  RSP_UNKNOWN_COMMAND
 ```
+
+Status bytes (byte 2 of a reply):
+
+```text
+00h  IOC_STATUS_OK
+01h  IOC_STATUS_ERROR
+02h  IOC_STATUS_UNKNOWN_CMD
+10h  IOC_STATUS_SD_NO_RESPONSE   card never answered a command
+11h  IOC_STATUS_SD_UNUSABLE      answered, but not a supported card
+12h  IOC_STATUS_SD_NOT_READY     ACMD41 never reported ready
+13h  IOC_STATUS_SD_READ_FAIL     CMD17 rejected, or no data token
+14h  IOC_STATUS_SD_BUS           the SPI module itself stalled
+```
+
+The SD status codes map one-to-one onto `SdStatus`, so a host-side dump of the
+status byte says which stage of the card bring-up gave up.
+
+### SD_READ
+
+```text
+request   class=03h seq=01h status=00h len=00h, payload unused
+reply     class=83h seq echoed, status per the table above
+          len=10h and bytes 4..19 = first 16 bytes of block 0 on success
+          len=00h and no payload on failure
+```
+
+Adding a command class means touching three places in the firmware: the
+constants in `include/ioc_frame.h`, a case in `src/dispatch.c`, and a clause in
+`find_frame_start()` in `src/external_sync.c`.  That last one is easy to miss --
+it is the fallback used when the host's alignment byte is not found, and its
+per-class length match is what keeps the bit-offset scan from locking onto a
+wrong alignment.  No host-side change is needed, because replies lead with the
+7Eh alignment byte.
 
 ## Transaction Walkthrough
 
@@ -174,14 +209,32 @@ search over the first 16 bit positions.  That last search is deliberately
 limited and only accepts headers that look like current tiny commands:
 
 ```text
-PING:  class=01h seq=01h status=00h len=00h or 10h
-RESET: class=02h seq=01h status=00h len=00h
+PING:    class=01h seq=01h status=00h len=00h or 10h
+RESET:   class=02h seq=01h status=00h len=00h
+SD_READ: class=03h seq=01h status=00h len=00h
 ```
 
 That keeps the code readable while still tolerating the bit phase observed on
 the bench.
 
 ## Reply Transmit
+
+The reply leads with a 7Eh alignment byte, then the 32-byte mailbox.
+
+That byte is not decoration.  The Z80 BIOS reply scanner (`IOC_CMD_RECV_SYNC`)
+locks onto a frame start only on 7Eh or on a hard-coded `IOC_RSP_PING` (81h), so
+a bare mailbox works for PING and nothing else -- any other response class is
+scanned past and reported as `IOC_XPORT_BAD_FRAME` with the host's receive
+buffer untouched.  Leading with 7Eh puts every reply on the BIOS's generic path,
+so response classes can be added without touching the host.
+
+The byte count is unaffected: both shapes sit at the same margin against the
+SIO's one-byte RX-ready lag.
+
+```text
+bare:     32 + 1 flush = 33 clocked, 32 readable; host reads 1 scan + 31 body
+preamble: 1 + 32 + 1   = 34 clocked, 33 readable; host reads 1 scan + 32 body
+```
 
 The reply timing is intentionally written out in `clock_reply_byte()` rather
 than hidden behind a generic byte shifter.  This is the timing that produced a

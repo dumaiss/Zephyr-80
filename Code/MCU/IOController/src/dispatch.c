@@ -11,6 +11,10 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
         handler_ping(request, reply);
         return true;
 
+    case CMD_SD_READ:
+        handler_sd_read(request, reply);
+        return true;
+
     case CMD_RESET:
         handler_reset();   /* does not return */
         return false;

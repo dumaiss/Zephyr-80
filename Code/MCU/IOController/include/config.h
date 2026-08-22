@@ -139,6 +139,49 @@
 #define SIO_PPS_SRC_LAT      0x00u    /* RxyPPS = 0 gives the pin back to LATxy */
 
 /* ---------------------------------------------------------------------------
+ * Port C external peripheral bus (SPI1)
+ *
+ * Shared by the SD card, the USB HID bridge and the controller latch, with the
+ * selects on port A (/IO_SD_CS, /IO_USB_CS, /CTRL_LAT_CS).
+ *
+ * SPI1 is the right module here for the same reason SPI2 is right for the SIO
+ * bus: its reset-default PPS inputs are already SCK = RC3 and SDI = RC4, so
+ * SPI1SCKPPS and SPI1SDIPPS need no configuration.  Only the two output routes
+ * are claimed.
+ *
+ * PPS output source codes from Table 21-2 in DS40002213D; both SPI1 outputs are
+ * available on port C for the 48-pin package:
+ *
+ *   0x32  SPI1 SDO   B, C
+ *   0x31  SPI1 SCK   B, C
+ * --------------------------------------------------------------------------- */
+#define PERIPH_SCK_TRIS      TRISCbits.TRISC3
+#define PERIPH_SCK_ANSEL     ANSELCbits.ANSELC3
+#define PERIPH_SCK_LAT       LATCbits.LATC3
+#define PERIPH_SCK_PPS       RC3PPS
+
+#define PERIPH_MISO_TRIS     TRISCbits.TRISC4
+#define PERIPH_MISO_ANSEL    ANSELCbits.ANSELC4
+#define PERIPH_MISO_PORT     PORTCbits.RC4
+
+#define PERIPH_MOSI_TRIS     TRISCbits.TRISC5
+#define PERIPH_MOSI_ANSEL    ANSELCbits.ANSELC5
+#define PERIPH_MOSI_LAT      LATCbits.LATC5
+#define PERIPH_MOSI_PPS      RC5PPS
+
+#define PERIPH_PPS_SRC_SPI1_SDO  0x32u
+#define PERIPH_PPS_SRC_SPI1_SCK  0x31u
+
+/* SD card status inputs, not used yet. */
+#define SD_PRESENT_TRIS      TRISCbits.TRISC0
+#define SD_PRESENT_ANSEL     ANSELCbits.ANSELC0
+#define SD_PRESENT_PORT      PORTCbits.RC0
+
+#define SD_BUSY_TRIS         TRISCbits.TRISC1
+#define SD_BUSY_ANSEL        ANSELCbits.ANSELC1
+#define SD_BUSY_PORT         PORTCbits.RC1
+
+/* ---------------------------------------------------------------------------
  * External Sync strobes (RA6 / RA7)
  *
  * The SIO is configured by the BIOS for External Sync, which makes /SYNC an

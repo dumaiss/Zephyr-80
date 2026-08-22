@@ -18,7 +18,7 @@ already claims `RESET()` and `NMI`.
 | Pin | Port | Signal | Direction | Active | Macro | Notes |
 |---|---|---|---|---|---|---|
 | 21 | RA0 | `/USB_INT` | Input | Low | `USB_INT_PORT` | USB bridge data-ready. Unused by the current firmware. |
-| 22 | RA1 | `/CTRL_LAT_CS` | Output | Low | `CTRL_LAT_CS_LAT` | Select for the cascaded controller 74HC595s on the **port C** bus; doubles as their RCLK. The 595 latches on RCLK's rising edge, so releasing the select is what commits the outputs. Held idle by the current firmware. |
+| 22 | RA1 | `/CTRL_LAT_CS` | Output | Low | `CTRL_LAT_CS_LAT` | Select for the cascaded controller 74HC595s on the **port C** bus; doubles as their RCLK. The 595 latches on RCLK's rising edge, so releasing the select is what commits the outputs. |
 | 23 | RA2 | `/IO_SD_CS` | Output | Low | `IO_SD_CS_LAT` | SD card select. Held idle by the current firmware. |
 | 24 | RA3 | `/IO_USB_CS` | Output | Low | `IO_USB_CS_LAT` | USB bridge select. Held idle by the current firmware. |
 | 25 | RA4 | `/SIOB_CS` | Output | Low | `SIOB_CS_LAT` | Puts SIO1/B on the shared bus and enables the TXDB buffer. Held asserted for a whole command transaction. |
@@ -41,17 +41,18 @@ already claims `RESET()` and `NMI`.
 
 ## Port C — external peripheral bus
 
-The second SPI bus, shared by the SD card, the USB HID bridge and the
-controller latch.  Not brought up by the current firmware.
+The second SPI bus (SPI1), shared by the SD card, the USB HID bridge and the
+controller latch.  The controller latch and the SD card are both brought up;
+the USB bridge select is held idle.
 
 | Pin | Port | Signal | Notes |
 |---|---|---|---|
 | 34 | RC0 | `SD_PRESENT` | SD card presence detect. |
 | 35 | RC1 | `SD_BUSY` | SD card busy. |
 | 40 | RC2 | - | No connect. |
-| 41 | RC3 | `SPI_CLK` | Peripheral bus clock. Also SPI1's reset-default SCK pin. |
-| 46 | RC4 | `MISO` | Peripheral bus data in. Also SPI1's reset-default SDI pin. |
-| 47 | RC5 | `MOSI` | Peripheral bus data out. |
+| 41 | RC3 | `SPI_CLK` | Peripheral bus clock. SPI1 SCK — reset-default input mapping, output routed via `RC3PPS = 0x31`. |
+| 46 | RC4 | `MISO` | Peripheral bus data in. SPI1 SDI — reset default, no PPS needed. |
+| 47 | RC5 | `MOSI` | Peripheral bus data out. SPI1 SDO via `RC5PPS = 0x32`. Drives the 74HC595 `SER`. |
 | 48 | RC6 | - | No connect. |
 | 1 | RC7 | - | No connect. |
 
@@ -139,6 +140,25 @@ PIC releases /SIOB_CS
 Z80 BIOS deasserts /SIO1B_INT
 ```
 
-The controller latch is not driven on this revision.  The 74HC595s moved to the
-port C bus and `controller_latch_write()` is stubbed until those peripherals are
-brought up; see `src/controller_latch.c`.
+## Controller Latch Bring-Up
+
+The cascaded 74HC595 pair (2 x 8 bits) is driven over SPI1 on the port C bus.
+`controller_latch_tick()` runs from the main loop and, every 500 ms, writes an
+incrementing pair `(n, n+1)` so the count can be watched on the monitor.
+
+```text
+Timer2: FOSC/4 16 MHz, 1:128 prescale, T2PR=249, 1:5 postscale -> 10 ms tick
+        50 ticks -> 500 ms
+SPI1:   Fosc, BAUD=31 -> 1 MHz; 16 bits per update = 16 us
+        LSBF = 0 -- the 595 shifts MSB first, unlike the Z80 SIO
+Latch:  /CTRL_LAT_CS asserted for the 16-bit shift, released to commit
+```
+
+`byte0` is shifted first and lands in the **far** device of the chain; `byte1`
+lands in the near one.  Swap the arguments if the monitor shows them the other
+way round.
+
+The tick is derived from a polled `TMR2IF`, which is a sticky flag rather than a
+count, so blocking work in the main loop stretches the period instead of
+catching up: the 100 ms boot reset delays the first update, and heavy IOCALL
+traffic can add a few ms.  That is fine for a counter being watched by eye.

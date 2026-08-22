@@ -6,6 +6,7 @@
 #include "ioc_frame.h"
 #include "external_sync.h"
 #include "dispatch.h"
+#include "spi1_bus.h"
 #include "controller_latch.h"
 
 /* ---------------------------------------------------------------------------
@@ -81,6 +82,16 @@ static void platform_init(void)
     IOC_GPIO_TRIS = 0xFF;
 
     external_sync_init();
+
+    /* Port C peripheral bus.  Claims RC3/RC4/RC5 and enables SPI1; each device
+     * on that bus sets its own clock rate before a transaction.  Nothing uses
+     * it yet -- this step exists to prove it does not disturb the SIO link. */
+    spi1_bus_init();
+
+    /* Controller latch: 500 ms bring-up counter on the same port C bus.  The
+     * SD card is not touched here -- it initialises lazily on the first
+     * SD_READ, so a missing card costs nothing at boot. */
+    controller_latch_init();
 }
 
 /* ---------------------------------------------------------------------------
@@ -170,6 +181,9 @@ int main(void)
     for (;;) {
         if (command_request_started())
             service_command_request();
+
+        /* Non-blocking: returns immediately unless the 500 ms period elapsed. */
+        controller_latch_tick();
 
         NOP();
     }

@@ -53,5 +53,20 @@ Frames are fixed 32-byte `IocFrame` mailboxes. The active commands are:
 
 The PIC transport clocks the raw 32-byte frame only.
 
+## SD Card
+
+`CMD_SD_READ` (03h) reads block 0 over SPI1 on the port C bus, select
+`/IO_SD_CS` on RA2, and returns its first 16 bytes in the reply payload. The
+card initialises lazily on the first read. Failures come back as status codes
+10h-14h rather than a transport error, so the host can tell which stage gave up.
+`ioc_sd_read.asm` in the HelloWorld project exercises it.
+
+## Controller Latch Bring-Up
+
+The cascaded 74HC595 pair on the port C bus (SPI1) is driven by
+`controller_latch_tick()` from the main loop: every 500 ms it writes an
+incrementing pair `(n, n+1)` to the two latches. See
+[docs/pinout.md](docs/pinout.md) for the timer and SPI1 settings.
+
 See [docs/external_sync_protocol.md](docs/external_sync_protocol.md) for the
 wire-level walkthrough, timing notes, and Z80 SIO references.

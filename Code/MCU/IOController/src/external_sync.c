@@ -260,7 +260,9 @@ static uint8_t read_wire_byte(uint16_t bit_index)
 
 static bool is_command_class(uint8_t value)
 {
-    return (value == CMD_PING) || (value == CMD_RESET);
+    return (value == CMD_PING) ||
+           (value == CMD_RESET) ||
+           (value == CMD_SD_READ);
 }
 
 static bool find_frame_start(uint16_t *bit_index)
@@ -285,6 +287,17 @@ static bool find_frame_start(uint16_t *bit_index)
         }
 
         if (cls == CMD_PING && (len == 0x00u || len == 0x10u)) {
+            *bit_index = start;
+            return true;
+        }
+
+        /* The per-class length match is strict on purpose and is NOT redundant
+         * with the class check above.  This loop walks 16 candidate bit offsets
+         * and takes the first that looks like a header, so the header fields
+         * are the only thing distinguishing the correct bit alignment from a
+         * wrong one.  Every field that stops matching makes a false lock more
+         * likely.  Adding a command means adding a clause here, deliberately. */
+        if (cls == CMD_SD_READ && len == 0x00u) {
             *bit_index = start;
             return true;
         }
@@ -444,16 +457,34 @@ void external_sync_send(const IocFrame *frame)
     __delay_us(EXTSYNC_BIT_DELAY_US);
     LINK_CLK_LAT = 0;
 
-    /* Reply byte 0 is always bit-banged.  clock_reply_byte() drops /SYNCB
+    /* Lead the reply with the 7Eh alignment byte.
+     *
+     * The Z80 BIOS reply scanner (IOC_CMD_RECV_SYNC) locks onto a frame start
+     * only on 7Eh or on a hard-coded RSP_PING (81h).  A bare mailbox therefore
+     * works for PING and nothing else: any other response class is scanned past
+     * and reported as IOC_XPORT_BAD_FRAME with the host's buffer untouched.
+     * Emitting 7Eh puts every reply on the BIOS's generic path, so response
+     * classes can be added with no host-side change.
+     *
+     * The byte count is unaffected.  Both shapes sit at the same margin against
+     * the SIO's one-byte RX-ready lag:
+     *
+     *   bare:     32 + 1 flush = 33 clocked, 32 readable; host reads 1 + 31
+     *   preamble: 1 + 32 + 1   = 34 clocked, 33 readable; host reads 1 + 32
+     *
+     * This byte is also the bit-banged one.  clock_reply_byte() drops /SYNCB
      * between bit 1's rising and falling edges, and no hardware shift register
      * can be interrupted at that point.  Every later call to sync_assert() is a
-     * no-op because /SYNCB is already low, which is what lets bytes 1..31 move
-     * to the SPI module without changing a single edge that matters. */
-    clock_reply_byte(frame->bytes[0]);
+     * no-op because /SYNCB is already low, which is what lets the whole 32-byte
+     * mailbox move to the SPI module without changing an edge that matters.
+     *
+     * If PING regresses, this is the change to back out: restore
+     * clock_reply_byte(frame->bytes[0]) and start the loop below at i = 1. */
+    clock_reply_byte(EXTSYNC_ALIGNMENT_BYTE);
 
     spi_clear_fifos();
     spi_pins_to_spi();
-    for (i = 1u; i < IOC_FRAME_SIZE; i++) {
+    for (i = 0u; i < IOC_FRAME_SIZE; i++) {
         uint8_t discard;
 
         if (!spi_exchange(frame->bytes[i], &discard))

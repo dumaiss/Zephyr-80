@@ -14,7 +14,9 @@ FIRMWARE_SRCS := \
     $(SRC_DIR)/external_sync.c \
     $(SRC_DIR)/dispatch.c   \
     $(SRC_DIR)/handlers.c   \
-    $(SRC_DIR)/controller_latch.c
+    $(SRC_DIR)/controller_latch.c \
+    $(SRC_DIR)/spi1_bus.c \
+    $(SRC_DIR)/sd_card.c
 
 FIRMWARE_HEX := $(BUILD_DIR)/$(TARGET).hex
 
