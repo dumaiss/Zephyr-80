@@ -16,7 +16,8 @@ FIRMWARE_SRCS := \
     $(SRC_DIR)/handlers.c   \
     $(SRC_DIR)/controller_latch.c \
     $(SRC_DIR)/spi1_bus.c \
-    $(SRC_DIR)/sd_card.c
+    $(SRC_DIR)/sd_card.c \
+    $(SRC_DIR)/bulk_channel.c
 
 FIRMWARE_HEX := $(BUILD_DIR)/$(TARGET).hex
 

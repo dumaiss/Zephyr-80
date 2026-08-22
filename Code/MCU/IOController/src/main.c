@@ -8,6 +8,7 @@
 #include "dispatch.h"
 #include "spi1_bus.h"
 #include "controller_latch.h"
+#include "bulk_channel.h"
 
 /* ---------------------------------------------------------------------------
  * Platform initialization
@@ -163,13 +164,14 @@ static void service_command_request(void)
     if (dispatch_command(&request, &reply)) {
         external_sync_send(&reply);
 
-        /* Bring-up diagnostic: expose the first two echoed PING payload bytes
-         * through the cascaded controller latches after the reply completes. */
-        if (request.bytes[IOC_OFF_CLASS] == CMD_PING) {
-            controller_latch_write(
-                request.bytes[IOC_OFF_PAYLOAD],
-                request.bytes[IOC_OFF_PAYLOAD + 1u]);
-        }
+        /* READY -> BULK.  A handler may have staged a bulk transfer; it runs
+         * only now, because the bytes must not be clocked onto SIO1/A until
+         * the READY reply has actually reached the host.
+         *
+         * The old PING diagnostic that wrote payload bytes to the controller
+         * latch lived here.  It is gone: the latch now shows the 500 ms
+         * bring-up counter, and the two fight over the same two devices. */
+        (void)bulk_channel_run_if_armed();
     }
 }
 

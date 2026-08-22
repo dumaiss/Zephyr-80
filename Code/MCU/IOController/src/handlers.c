@@ -4,6 +4,7 @@
 #include "ioc_frame.h"
 #include "config.h"
 #include "sd_card.h"
+#include "bulk_channel.h"
 
 void handler_ping(const IocFrame *request, IocFrame *reply)
 {
@@ -43,7 +44,7 @@ void handler_reset(void)
 /* The 512-byte block lives here rather than on the stack: the frame handlers
  * run from the main loop, and a half-kilobyte automatic would dwarf everything
  * else the PIC has on the stack. */
-static uint8_t sd_block[SD_BLOCK_SIZE];
+static uint8_t xfer_block[SD_BLOCK_SIZE];
 
 static uint8_t sd_status_to_ioc(SdStatus st)
 {
@@ -73,7 +74,7 @@ void handler_sd_read(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_CLASS] = RSP_SD_READ;
     reply->bytes[IOC_OFF_SEQ]   = request->bytes[IOC_OFF_SEQ];
 
-    st = sd_card_read_block(0uL, sd_block);
+    st = sd_card_read_block(0uL, xfer_block);
     reply->bytes[IOC_OFF_STATUS] = sd_status_to_ioc(st);
 
     if (st != SD_OK) {
@@ -82,7 +83,95 @@ void handler_sd_read(const IocFrame *request, IocFrame *reply)
     }
 
     reply->bytes[IOC_OFF_LEN] = IOC_SD_READ_BYTES;
-    memcpy(&reply->bytes[IOC_OFF_PAYLOAD], sd_block, IOC_SD_READ_BYTES);
+    memcpy(&reply->bytes[IOC_OFF_PAYLOAD], xfer_block, IOC_SD_READ_BYTES);
+}
+
+/* Channel-A bring-up: stream a known ramp so the bulk lane can be verified
+ * independently of the SD card.  Reuses the transfer buffer; nothing else is
+ * live at the same time because the foreground loop is single-threaded. */
+void handler_bulk_test(const IocFrame *request, IocFrame *reply)
+{
+    uint16_t length;
+    uint16_t i;
+
+    length = (uint16_t)request->bytes[IOC_OFF_PAYLOAD] |
+             ((uint16_t)request->bytes[IOC_OFF_PAYLOAD + 1u] << 8);
+    if ((length == 0u) || (length > SD_BLOCK_SIZE))
+        length = 256u;
+
+    for (i = 0u; i < length; i++)
+        xfer_block[i] = (uint8_t)i;
+
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_BULK_TEST;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+    reply->bytes[IOC_OFF_LEN]    = IOC_READY_PAYLOAD_LEN;
+
+    reply->bytes[IOC_OFF_READY_XFER_ID]   = bulk_channel_next_xfer_id();
+    reply->bytes[IOC_OFF_READY_DIRECTION] = BULK_DIR_MCU_TO_Z80;
+    reply->bytes[IOC_OFF_READY_LEN_LO]    = (uint8_t)length;
+    reply->bytes[IOC_OFF_READY_LEN_HI]    = (uint8_t)(length >> 8);
+
+    /* Staged, not sent: the bytes must not be clocked until this READY reply
+     * has actually reached the host. */
+    bulk_channel_arm(xfer_block, length,
+                     reply->bytes[IOC_OFF_READY_XFER_ID]);
+}
+
+/* Read one sector and hand it to the bulk lane.
+ *
+ * Ordering matters: the card is read here, before the reply goes out, so the
+ * READY the host receives is a genuine promise that 512 bytes are sitting in
+ * SRAM ready to stream.  That keeps SD latency out of the SIO1/A transaction
+ * and leaves room to double-buffer multi-sector reads later without changing
+ * this API.
+ */
+void handler_sd_read_bulk(const IocFrame *request, IocFrame *reply)
+{
+    SdStatus st;
+    uint32_t lba;
+    uint8_t  ioc_status;
+
+    lba =  (uint32_t)request->bytes[IOC_OFF_LBA_0]
+        | ((uint32_t)request->bytes[IOC_OFF_LBA_0 + 1u] << 8)
+        | ((uint32_t)request->bytes[IOC_OFF_LBA_0 + 2u] << 16)
+        | ((uint32_t)request->bytes[IOC_OFF_LBA_0 + 3u] << 24);
+
+    st = sd_card_read_block(lba, xfer_block);
+    ioc_status = sd_status_to_ioc(st);
+
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_SD_READ_BULK;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = ioc_status;
+    reply->bytes[IOC_OFF_LEN]    = IOC_READY_PAYLOAD_LEN;
+
+    if (st != SD_OK) {
+        /* No transfer id, no length: the host must not enter its read loop. */
+        return;
+    }
+
+    reply->bytes[IOC_OFF_READY_XFER_ID]   = bulk_channel_next_xfer_id();
+    reply->bytes[IOC_OFF_READY_DIRECTION] = BULK_DIR_MCU_TO_Z80;
+    reply->bytes[IOC_OFF_READY_LEN_LO]    = (uint8_t)SD_BLOCK_SIZE;
+    reply->bytes[IOC_OFF_READY_LEN_HI]    = (uint8_t)(SD_BLOCK_SIZE >> 8);
+
+    bulk_channel_arm(xfer_block, SD_BLOCK_SIZE,
+                     reply->bytes[IOC_OFF_READY_XFER_ID]);
+}
+
+/* The DONE half of the lifecycle. */
+void handler_xfer_status(const IocFrame *request, IocFrame *reply)
+{
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_XFER_STATUS;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+    reply->bytes[IOC_OFF_LEN]    = IOC_DONE_PAYLOAD_LEN;
+
+    reply->bytes[IOC_OFF_DONE_XFER_ID] = bulk_channel_last_xfer_id();
+    reply->bytes[IOC_OFF_DONE_STATUS]  = bulk_channel_last_status();
 }
 
 void handler_unknown(const IocFrame *request, IocFrame *reply)

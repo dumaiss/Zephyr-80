@@ -53,13 +53,32 @@ Frames are fixed 32-byte `IocFrame` mailboxes. The active commands are:
 
 The PIC transport clocks the raw 32-byte frame only.
 
+## Two-Lane Transport
+
+The two SIO1 channels are one transport with two lanes: SIO1/B carries commands
+and is authoritative, SIO1/A is a dumb byte pipe with no framing of its own.
+Commands that move more than a mailbox-worth of data use an explicit
+READY -> BULK -> DONE lifecycle:
+
+```text
+CMD_SD_READ_BULK(LBA) -> READY(id, dir, 512) -> 512 bytes on SIO1/A
+                      -> CMD_XFER_STATUS -> DONE(id, status)
+```
+
+The card is read into MCU SRAM before READY is sent, so SD latency sits outside
+the bulk transaction. See
+[docs/external_sync_protocol.md](docs/external_sync_protocol.md) for the wire
+formats, the state machine and the bulk-lane timing.
+
 ## SD Card
 
 `CMD_SD_READ` (03h) reads block 0 over SPI1 on the port C bus, select
 `/IO_SD_CS` on RA2, and returns its first 16 bytes in the reply payload. The
 card initialises lazily on the first read. Failures come back as status codes
 10h-14h rather than a transport error, so the host can tell which stage gave up.
-`ioc_sd_read.asm` in the HelloWorld project exercises it.
+`ioc_sd_read.asm` in the HelloWorld project exercises it; `ioc_sdblk.asm`
+exercises the full-sector bulk path and `ioc_bulk.asm` tests the bulk lane on
+its own with a ramp.
 
 ## Controller Latch Bring-Up
 

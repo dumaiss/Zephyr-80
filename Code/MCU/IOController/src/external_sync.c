@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include "external_sync.h"
 #include "config.h"
+#include "sio_link.h"
 
 /* ---------------------------------------------------------------------------
  * Z80 SIO1/B External Sync link
@@ -85,7 +86,7 @@ static void bus_release_siob(void)
  * even though the module is the one generating the clock.  That is why the
  * output route alone is not enough.
  */
-static void spi_pins_to_lat(void)
+void sio_link_pins_to_lat(void)
 {
     /* Park the idle levels the bit-bang path expects before handing the pins
      * back, so the changeover produces no edge on either wire. */
@@ -95,7 +96,7 @@ static void spi_pins_to_lat(void)
     SIO_MOSI_PPS = SIO_PPS_SRC_LAT;
 }
 
-static void spi_pins_to_spi(void)
+void sio_link_pins_to_spi(void)
 {
     /* CKP = 0 means the module also idles SCK low, so this matches the level
      * LATB3 is already holding and the switch is glitch-free. */
@@ -134,13 +135,13 @@ static void spi_init(void)
  *
  * Nothing else resets the 2-byte receive FIFO, so a transfer left half-finished
  * by an earlier aborted transaction leaves a stale byte in it.  The next
- * spi_exchange() would then return that stale byte immediately without clocking
+ * sio_link_exchange() would then return that stale byte immediately without clocking
  * anything, and every byte after it would be shifted by one position -- the
  * frame decoder would never find a valid header, the PIC would send no reply,
  * and the host would report a transport timeout with its buffer still A5h.
  *
  * CLRBF is the XC8 header's name for the bit the datasheet calls CLB. */
-static void spi_clear_fifos(void)
+void sio_link_clear_fifos(void)
 {
     SPI2STATUSbits.CLRBF = 1;
     PIR5bits.SPI2RXIF = 0;
@@ -161,7 +162,7 @@ static void spi_clear_fifos(void)
  *
  * The wait is bounded so a module that never completes cannot wedge the PIC in
  * a spin loop until reset. */
-static bool spi_exchange(uint8_t out, uint8_t *in)
+bool sio_link_exchange(uint8_t out, uint8_t *in)
 {
     uint16_t guard = EXTSYNC_SPI_TIMEOUT_LOOPS;
 
@@ -179,12 +180,12 @@ static bool spi_exchange(uint8_t out, uint8_t *in)
 /* Hold the byte rate at what the bit-banged path produced.  The Z80 BIOS polls
  * RR0 in software behind a 3-byte FIFO, so byte rate -- not bit rate -- is what
  * keeps the host from overrunning.  See external_sync.h for the arithmetic. */
-static void spi_byte_gap(void)
+void sio_link_byte_gap(void)
 {
     __delay_us(EXTSYNC_BYTE_GAP_US);
 }
 
-static void write_data_bit(uint8_t bit)
+void sio_link_write_data_bit(uint8_t bit)
 {
     LINK_DOUT_LAT = (uint8_t)(bit & 1u);
 }
@@ -206,14 +207,14 @@ static void clock_reply_byte(uint8_t value)
 {
     uint8_t i;
 
-    write_data_bit(value & 1u);
+    sio_link_write_data_bit(value & 1u);
     value >>= 1;
     __delay_us(EXTSYNC_BIT_DELAY_US);
     LINK_CLK_LAT = 1;
     __delay_us(EXTSYNC_BIT_DELAY_US);
     LINK_CLK_LAT = 0;
 
-    write_data_bit(value & 1u);
+    sio_link_write_data_bit(value & 1u);
     value >>= 1;
     __delay_us(EXTSYNC_BIT_DELAY_US);
     LINK_CLK_LAT = 1;
@@ -223,7 +224,7 @@ static void clock_reply_byte(uint8_t value)
     LINK_CLK_LAT = 0;
 
     for (i = 2u; i < 8u; i++) {
-        write_data_bit(value & 1u);
+        sio_link_write_data_bit(value & 1u);
         value >>= 1;
         __delay_us(EXTSYNC_BIT_DELAY_US);
         LINK_CLK_LAT = 1;
@@ -262,7 +263,10 @@ static bool is_command_class(uint8_t value)
 {
     return (value == CMD_PING) ||
            (value == CMD_RESET) ||
-           (value == CMD_SD_READ);
+           (value == CMD_SD_READ) ||
+           (value == CMD_BULK_TEST) ||
+           (value == CMD_SD_READ_BULK) ||
+           (value == CMD_XFER_STATUS);
 }
 
 static bool find_frame_start(uint16_t *bit_index)
@@ -298,6 +302,21 @@ static bool find_frame_start(uint16_t *bit_index)
          * wrong one.  Every field that stops matching makes a false lock more
          * likely.  Adding a command means adding a clause here, deliberately. */
         if (cls == CMD_SD_READ && len == 0x00u) {
+            *bit_index = start;
+            return true;
+        }
+
+        if (cls == CMD_BULK_TEST && (len == 0x00u || len == 0x02u)) {
+            *bit_index = start;
+            return true;
+        }
+
+        if (cls == CMD_SD_READ_BULK && len == IOC_SD_LBA_PAYLOAD_LEN) {
+            *bit_index = start;
+            return true;
+        }
+
+        if (cls == CMD_XFER_STATUS && len == 0x00u) {
             *bit_index = start;
             return true;
         }
@@ -390,8 +409,8 @@ void external_sync_init(void)
     /* TRIS still governs the pin drivers under PPS, so the directions set above
      * remain correct once the SPI module owns RB1/RB3. */
     spi_init();
-    spi_clear_fifos();
-    spi_pins_to_lat();
+    sio_link_clear_fifos();
+    sio_link_pins_to_lat();
 }
 
 bool external_sync_receive(IocFrame *frame)
@@ -404,20 +423,20 @@ bool external_sync_receive(IocFrame *frame)
     /* Receive needs no intra-byte GPIO at all: /SYNCB is asserted for the whole
      * window and MOSI just idles marking, which is what shifting out FFh does.
      * So the entire window goes through the SPI module. */
-    spi_clear_fifos();
-    spi_pins_to_spi();
+    sio_link_clear_fifos();
+    sio_link_pins_to_spi();
     for (i = 0u; i < EXTSYNC_RX_WINDOW_BYTES; i++) {
-        if (!spi_exchange(0xFFu, &rx_window[i])) {
+        if (!sio_link_exchange(0xFFu, &rx_window[i])) {
             /* Give the pins and the bus back before bailing out, or the next
              * transaction starts with RB1/RB3 still routed to the module. */
-            spi_pins_to_lat();
+            sio_link_pins_to_lat();
             sync_release();
             bus_release_siob();
             return false;
         }
-        spi_byte_gap();
+        sio_link_byte_gap();
     }
-    spi_pins_to_lat();
+    sio_link_pins_to_lat();
 
     sync_release();
     bus_release_siob();
@@ -482,14 +501,14 @@ void external_sync_send(const IocFrame *frame)
      * clock_reply_byte(frame->bytes[0]) and start the loop below at i = 1. */
     clock_reply_byte(EXTSYNC_ALIGNMENT_BYTE);
 
-    spi_clear_fifos();
-    spi_pins_to_spi();
+    sio_link_clear_fifos();
+    sio_link_pins_to_spi();
     for (i = 0u; i < IOC_FRAME_SIZE; i++) {
         uint8_t discard;
 
-        if (!spi_exchange(frame->bytes[i], &discard))
+        if (!sio_link_exchange(frame->bytes[i], &discard))
             break;
-        spi_byte_gap();
+        sio_link_byte_gap();
     }
 
     /* The SIO reports the final byte ready only after more clock edges arrive.
@@ -497,9 +516,9 @@ void external_sync_send(const IocFrame *frame)
      * does not consume this idle byte as part of the fixed 32-byte frame. */
     {
         uint8_t discard;
-        (void)spi_exchange(0xFFu, &discard);
+        (void)sio_link_exchange(0xFFu, &discard);
     }
-    spi_pins_to_lat();
+    sio_link_pins_to_lat();
 
     sync_release();
     LINK_DOUT_LAT = 1;

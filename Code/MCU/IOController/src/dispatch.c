@@ -15,6 +15,18 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
         handler_sd_read(request, reply);
         return true;
 
+    case CMD_BULK_TEST:
+        handler_bulk_test(request, reply);
+        return true;
+
+    case CMD_SD_READ_BULK:
+        handler_sd_read_bulk(request, reply);
+        return true;
+
+    case CMD_XFER_STATUS:
+        handler_xfer_status(request, reply);
+        return true;
+
     case CMD_RESET:
         handler_reset();   /* does not return */
         return false;
