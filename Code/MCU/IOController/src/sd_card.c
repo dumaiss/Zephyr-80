@@ -215,6 +215,19 @@ SdStatus sd_card_init(void)
     bool     v2_card;
     uint32_t ocr;
 
+#if SD_HAS_PRESENT_PIN
+    /* Checked BEFORE the cached-success shortcut below, deliberately.  Removing
+     * a card power-cycles it, so it comes back knowing nothing about the SPI
+     * session this driver believes it still has.  Letting the cache answer
+     * first would report SD_OK for a card that is not even in the socket. */
+    SD_PRESENT_ANSEL = 0;
+    SD_PRESENT_TRIS  = 1;
+    if (SD_PRESENT_PORT != SD_PRESENT_ACTIVE) {
+        card_ready = false;
+        return SD_ERR_NO_CARD;
+    }
+#endif
+
     if (card_ready)
         return SD_OK;
 
@@ -226,14 +239,6 @@ SdStatus sd_card_init(void)
      * which is what the trace above assumes -- and it is standard practice on
      * SD SPI wiring anyway. */
     WPUCbits.WPUC4 = 1;
-
-#if SD_HAS_PRESENT_PIN
-    /* Definitive and instant, once RC0 is wired. */
-    SD_PRESENT_ANSEL = 0;
-    SD_PRESENT_TRIS  = 1;
-    if (SD_PRESENT_PORT != SD_PRESENT_ACTIVE)
-        return SD_ERR_NO_CARD;
-#endif
 
     /* Step 1: power-up clocks.
      *
@@ -492,14 +497,30 @@ SdStatus sd_card_read_block(uint32_t lba, uint8_t *buf)
     SD_BUSY_LAT = SD_BUSY_ASSERTED;
 #endif
 
-    /* Retry only the failures a marginal bus actually causes.  A rejected
-     * CMD17 or a dead card will fail identically every time, so retrying those
-     * just wastes the host's patience. */
+    /* Retry policy.
+     *
+     * A failure in the READ phase invalidates the cached initialisation before
+     * retrying.  That is what makes card swaps work: removing a card
+     * power-cycles it, so it comes back in SD mode knowing nothing about the
+     * SPI session this driver believes it still has.  Without the invalidation
+     * every read after a swap fails until the PIC is reset -- the cache said
+     * "initialised" forever.
+     *
+     * A failure in the INIT phase is not retried here: initialisation already
+     * retries CMD0 internally, and a card that is absent or unusable will fail
+     * the same way every time, which would just burn the host's patience. */
     st = SD_ERR_READ;
     for (attempt = 0u; attempt < SD_READ_ATTEMPTS; attempt++) {
         st = sd_read_block_inner(lba, buf);
-        if ((st != SD_ERR_CRC) && (st != SD_ERR_NO_TOKEN))
+
+        if (st == SD_OK)
             break;
+
+        if ((st == SD_ERR_NO_CARD) || (st == SD_ERR_NO_RESPONSE) ||
+            (st == SD_ERR_UNUSABLE) || (st == SD_ERR_NOT_READY))
+            break;   /* init failed; retrying changes nothing */
+
+        card_ready = false;   /* re-initialise on the next attempt */
     }
 
 #if SD_BUSY_LED
