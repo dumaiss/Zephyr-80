@@ -198,47 +198,48 @@ void sio_link_write_data_bit(uint8_t bit)
     LINK_DOUT_LAT = (uint8_t)(bit & 1u);
 }
 
-/* Clock one reply byte into the SIO receiver.
+/* Hand-clock one byte with that channel's /SYNC dropped inside `drop_bit`.
+ * Declared in sio_link.h, where the contract and the per-channel drop_bit are
+ * documented.  Shared by both lanes.
  *
- * This is intentionally open-coded.  The placement of sync_assert() is part of
- * the electrical protocol, not incidental control flow:
+ * The bit shape is the electrical protocol, not incidental control flow:
  *
- *   - bit 0 is clocked while /SYNCB is still high
- *   - bit 1 is clocked, then /SYNCB is driven low before the falling clock edge
- *   - bits 2..7 are clocked while /SYNCB remains low
+ *   - bits before drop_bit are clocked with /SYNC still high
+ *   - drop_bit is clocked, then /SYNC is driven low before the falling edge
+ *   - the remaining bits are clocked with /SYNC low
+ *   - bits 0 and 1 carry no trailing gap; bits 2..7 do
  *
- * That sequence matches the working bench timing for External Sync on SIO1/B.
- * A previous refactor into generic bit helpers changed the setup/sync shape and
- * the host saw only untouched A5h bytes in its receive buffer.
+ * That last asymmetry is deliberate and matches the working bench timing.  An
+ * earlier refactor into generic bit helpers changed the setup/sync shape and
+ * the host saw only untouched A5h bytes in its receive buffer -- so this loop
+ * is written to reproduce the proven waveform exactly, and the `i >= 2u` gap
+ * condition is load-bearing.  Verify against a scope, not against taste.
  */
-static void clock_reply_byte(uint8_t value)
+void sio_link_clock_sync_byte(uint8_t value, SioLinkChannel channel,
+                              uint8_t drop_bit)
 {
     uint8_t i;
 
-    sio_link_write_data_bit(value & 1u);
-    value >>= 1;
-    __delay_us(EXTSYNC_BIT_DELAY_US);
-    LINK_CLK_LAT = 1;
-    __delay_us(EXTSYNC_BIT_DELAY_US);
-    LINK_CLK_LAT = 0;
-
-    sio_link_write_data_bit(value & 1u);
-    value >>= 1;
-    __delay_us(EXTSYNC_BIT_DELAY_US);
-    LINK_CLK_LAT = 1;
-    __delay_us(EXTSYNC_BIT_DELAY_US);
-    sync_assert();
-    __delay_us(EXTSYNC_BIT_DELAY_US);
-    LINK_CLK_LAT = 0;
-
-    for (i = 2u; i < 8u; i++) {
+    for (i = 0u; i < 8u; i++) {
         sio_link_write_data_bit(value & 1u);
         value >>= 1;
         __delay_us(EXTSYNC_BIT_DELAY_US);
         LINK_CLK_LAT = 1;
         __delay_us(EXTSYNC_BIT_DELAY_US);
+
+        if (i == drop_bit) {
+            /* Between this bit's rising and falling edge. */
+            if (channel == SIO_LINK_CH_BULK)
+                SYNCA_LAT = SYNCA_ASSERTED;
+            else
+                SYNCB_LAT = SYNCB_ASSERTED;
+            __delay_us(EXTSYNC_BIT_DELAY_US);
+        }
+
         LINK_CLK_LAT = 0;
-        __delay_us(EXTSYNC_BIT_DELAY_US);
+
+        if (i >= 2u)
+            __delay_us(EXTSYNC_BIT_DELAY_US);
     }
 }
 
@@ -460,7 +461,7 @@ bool external_sync_receive(IocFrame *frame)
  *   1. Wait briefly so the BIOS has switched SIO1/B from request transmit to
  *      reply receive, then take the shared bus with SIOB_CS.
  *   2. Send two setup clocks while /SYNCB is idle high.
- *   3. Clock the 32 reply bytes.  clock_reply_byte() asserts /SYNCB at the
+ *   3. Clock the 32 reply bytes.  sio_link_clock_sync_byte() asserts /SYNCB at the
  *      proven bit position and keeps it low after that.
  *   4. Clock one trailing FFh byte.  The SIO exposes the final received byte to
  *      RR0/RX-ready only after additional clocks arrive on this board.
@@ -500,15 +501,17 @@ void external_sync_send(const IocFrame *frame)
      *   bare:     32 + 1 flush = 33 clocked, 32 readable; host reads 1 + 31
      *   preamble: 1 + 32 + 1   = 34 clocked, 33 readable; host reads 1 + 32
      *
-     * This byte is also the bit-banged one.  clock_reply_byte() drops /SYNCB
+     * This byte is also the bit-banged one.  sio_link_clock_sync_byte() drops /SYNCB
      * between bit 1's rising and falling edges, and no hardware shift register
      * can be interrupted at that point.  Every later call to sync_assert() is a
      * no-op because /SYNCB is already low, which is what lets the whole 32-byte
      * mailbox move to the SPI module without changing an edge that matters.
      *
      * If PING regresses, this is the change to back out: restore
-     * clock_reply_byte(frame->bytes[0]) and start the loop below at i = 1. */
-    clock_reply_byte(EXTSYNC_ALIGNMENT_BYTE);
+     * the call below with frame->bytes[0] and start the loop that follows at
+     * i = 1. */
+    sio_link_clock_sync_byte(EXTSYNC_ALIGNMENT_BYTE, SIO_LINK_CH_COMMAND,
+                             EXTSYNC_SYNC_DROP_BIT);
 
     sio_link_set_baud(EXTSYNC_SPI_BAUD);
     sio_link_clear_fifos();

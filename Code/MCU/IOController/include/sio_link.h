@@ -46,4 +46,32 @@ void sio_link_byte_gap(void);
 /* Put one bit on SIO_MOSI via LATB (bit-banged phase only). */
 void sio_link_write_data_bit(uint8_t bit);
 
+/* Which channel's External Sync strobe to drive. */
+typedef enum {
+    SIO_LINK_CH_COMMAND = 0,   /* SIO1/B -- /SYNCB */
+    SIO_LINK_CH_BULK    = 1    /* SIO1/A -- /SYNCA */
+} SioLinkChannel;
+
+/* Hand-clock one byte, dropping that channel's /SYNC inside bit `drop_bit`.
+ *
+ * This is the one byte per transfer that cannot go through SPI2: the External
+ * Sync strobe has to fall between a specific bit's rising and falling clock
+ * edges, and a hardware shift register cannot be interrupted there.  Once
+ * /SYNC is low it stays low, so every later byte can go out at full SPI speed.
+ * The edge placement IS the electrical protocol -- treat this as timing-exact
+ * code, not as a loop to tidy.
+ *
+ * The waveform is identical for both channels: no trailing gap on bits 0 and 1,
+ * one on bits 2-7, and /SYNC asserted between the rising and falling edge of
+ * bit `drop_bit`.
+ *
+ * drop_bit differs per channel and that is a HARDWARE asymmetry, not a
+ * workaround for a configuration difference.  Channel B wants 1, channel A
+ * wants 0.  Every software cause was eliminated on 2026-08-23 -- identical WR3
+ * (tested), identical WR4, identical setup clocks, identical bit-bang shape,
+ * and clock gate-open timing ruled out by test.  See bulk_channel.c for the
+ * full record and for the measurement that would explain the remaining bit. */
+void sio_link_clock_sync_byte(uint8_t value, SioLinkChannel channel,
+                              uint8_t drop_bit);
+
 #endif /* SIO_LINK_H */

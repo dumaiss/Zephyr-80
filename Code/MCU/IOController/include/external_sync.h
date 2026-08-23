@@ -202,6 +202,14 @@
  * late request silently fails to decode. */
 #define EXTSYNC_RX_WINDOW_BYTES  48u
 
+/* Bit position, within the hand-clocked byte, where /SYNCB is driven low.
+ *
+ * Channel A uses 0 (BULK_SYNC_DROP_BIT in bulk_channel.c).  The one-bit
+ * difference between the channels is a hardware asymmetry with no known cause;
+ * every software explanation was eliminated by test or inspection on
+ * 2026-08-23.  See bulk_channel.c for the record. */
+#define EXTSYNC_SYNC_DROP_BIT    1u
+
 void external_sync_init(void);
 bool external_sync_receive(IocFrame *frame);
 void external_sync_send(const IocFrame *frame);
