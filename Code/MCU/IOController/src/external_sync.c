@@ -275,6 +275,7 @@ static bool is_command_class(uint8_t value)
            (value == CMD_SD_READ) ||
            (value == CMD_BULK_TEST) ||
            (value == CMD_SD_READ_BULK) ||
+           (value == CMD_SD_WRITE_BULK) ||
            (value == CMD_XFER_STATUS);
 }
 
@@ -321,6 +322,11 @@ static bool find_frame_start(uint16_t *bit_index)
         }
 
         if (cls == CMD_SD_READ_BULK && len == IOC_SD_LBA_PAYLOAD_LEN) {
+            *bit_index = start;
+            return true;
+        }
+
+        if (cls == CMD_SD_WRITE_BULK && len == IOC_SD_LBA_PAYLOAD_LEN) {
             *bit_index = start;
             return true;
         }

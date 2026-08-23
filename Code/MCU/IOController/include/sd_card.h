@@ -168,7 +168,15 @@ typedef enum {
     SD_ERR_NO_TOKEN,      /* CMD17 accepted, but no FEh data token followed */
     SD_ERR_CRC,           /* block arrived but its CRC-16 did not match, and
                            * every retry also failed */
-    SD_ERR_BUS            /* the SPI module itself stalled */
+    SD_ERR_BUS,           /* the SPI module itself stalled */
+    SD_ERR_WRITE,         /* CMD24 itself was rejected: R1 came back non-zero */
+    SD_ERR_WRITE_REJECTED,/* the card refused the data packet.  trace[0] holds
+                           * the raw data-response byte; bits 3:1 are the
+                           * reason, 010 = CRC error, 110 = write error */
+    SD_ERR_WRITE_BUSY     /* the card took the block but never stopped
+                           * programming.  The block is in an unknown state --
+                           * this is the one error where retrying blindly is
+                           * NOT safe */
 } SdStatus;
 
 /* Run the SPI-mode initialisation sequence.
@@ -184,6 +192,11 @@ SdStatus sd_card_init(void);
  * have to sequence it.  lba is a block number; the driver converts to a byte
  * address internally for standard-capacity cards. */
 SdStatus sd_card_read_block(uint32_t lba, uint8_t *buf);
+
+/* Write one 512-byte block.  No retry wrapper, deliberately: a write that
+ * failed partway has already changed the card, so whether to retry is the
+ * caller's decision.  Drives SD_BUSY for the duration, like the read path. */
+SdStatus sd_card_write_block(uint32_t lba, const uint8_t *buf);
 
 /* Raw bytes the PIC clocked in while polling for CMD0's R1 response on the
  * FIRST attempt.  Diagnostic only.

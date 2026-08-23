@@ -36,6 +36,7 @@ void handler_sd_read_bulk(const IocFrame *request, IocFrame *reply);
 /* XFER_STATUS: the DONE query.  Returns the id and completion status of the
  * most recent bulk phase.  A DONE id that does not match the READY id means a
  * transfer was lost or overlapped. */
+void handler_sd_write_bulk(const IocFrame *request, IocFrame *reply);
 void handler_xfer_status(const IocFrame *request, IocFrame *reply);
 
 /* Unknown command fallback: fills *reply with RSP_UNKNOWN_COMMAND. */

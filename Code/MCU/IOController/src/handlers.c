@@ -58,6 +58,9 @@ static uint8_t sd_status_to_ioc(SdStatus st)
     case SD_ERR_NO_TOKEN:    return IOC_STATUS_SD_NO_TOKEN;
     case SD_ERR_CRC:         return IOC_STATUS_SD_CRC;
     case SD_ERR_BUS:         return IOC_STATUS_SD_BUS;
+    case SD_ERR_WRITE:       return IOC_STATUS_SD_WRITE_FAIL;
+    case SD_ERR_WRITE_REJECTED: return IOC_STATUS_SD_WRITE_REJ;
+    case SD_ERR_WRITE_BUSY:  return IOC_STATUS_SD_WRITE_BUSY;
     default:                 return IOC_STATUS_ERROR;
     }
 }
@@ -167,6 +170,53 @@ void handler_sd_read_bulk(const IocFrame *request, IocFrame *reply)
                      reply->bytes[IOC_OFF_READY_XFER_ID]);
 }
 
+/* LBA staged by handler_sd_write_bulk for the commit callback.  The bulk
+ * receive runs after the reply has gone out, so the target block has to
+ * survive from handler time to commit time. */
+static uint32_t pending_write_lba;
+
+/* Runs after the payload has been received and de-shifted.  This is the only
+ * point at which the write is real, which is why the DONE query is mandatory
+ * for a write: the bytes reaching the MCU says nothing about the card. */
+static uint8_t commit_sd_write(void)
+{
+    return sd_status_to_ioc(sd_card_write_block(pending_write_lba, xfer_block));
+}
+
+/* Write one sector, payload arriving on the bulk lane.
+ *
+ * Mirror image of handler_sd_read_bulk, with the ordering necessarily
+ * reversed.  A read touches the card BEFORE replying READY, so the READY is a
+ * genuine promise that 512 bytes are ready to stream.  A write cannot: the
+ * data does not exist yet at reply time, so READY only promises the MCU is
+ * ready to RECEIVE, and the card is touched afterwards in commit_sd_write().
+ *
+ * That is why a write must always take the DONE round trip, and why the fast
+ * path in the read program is documented as read-only.
+ */
+void handler_sd_write_bulk(const IocFrame *request, IocFrame *reply)
+{
+    pending_write_lba =  (uint32_t)request->bytes[IOC_OFF_LBA_0]
+                      | ((uint32_t)request->bytes[IOC_OFF_LBA_0 + 1u] << 8)
+                      | ((uint32_t)request->bytes[IOC_OFF_LBA_0 + 2u] << 16)
+                      | ((uint32_t)request->bytes[IOC_OFF_LBA_0 + 3u] << 24);
+
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_SD_WRITE_BULK;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+    reply->bytes[IOC_OFF_LEN]    = IOC_READY_PAYLOAD_LEN;
+
+    reply->bytes[IOC_OFF_READY_XFER_ID]   = bulk_channel_next_xfer_id();
+    reply->bytes[IOC_OFF_READY_DIRECTION] = BULK_DIR_Z80_TO_MCU;
+    reply->bytes[IOC_OFF_READY_LEN_LO]    = (uint8_t)SD_BLOCK_SIZE;
+    reply->bytes[IOC_OFF_READY_LEN_HI]    = (uint8_t)(SD_BLOCK_SIZE >> 8);
+
+    bulk_channel_arm_receive(xfer_block, SD_BLOCK_SIZE,
+                             reply->bytes[IOC_OFF_READY_XFER_ID],
+                             commit_sd_write);
+}
+
 /* The DONE half of the lifecycle. */
 void handler_xfer_status(const IocFrame *request, IocFrame *reply)
 {
@@ -178,6 +228,16 @@ void handler_xfer_status(const IocFrame *request, IocFrame *reply)
 
     reply->bytes[IOC_OFF_DONE_XFER_ID] = bulk_channel_last_xfer_id();
     reply->bytes[IOC_OFF_DONE_STATUS]  = bulk_channel_last_status();
+
+    /* Bring-up diagnostic: what the transfer buffer actually holds. */
+    {
+        uint8_t i;
+        const uint8_t *raw = bulk_channel_rx_window();
+        for (i = 0u; i < IOC_DONE_PEEK_BYTES; i++)
+            reply->bytes[IOC_OFF_DONE_PEEK + i] = xfer_block[i];
+        for (i = 0u; i < IOC_DONE_RAW_BYTES; i++)
+            reply->bytes[IOC_OFF_DONE_RAW + i] = raw[i];
+    }
 }
 
 void handler_unknown(const IocFrame *request, IocFrame *reply)

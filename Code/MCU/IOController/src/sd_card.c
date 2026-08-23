@@ -36,6 +36,7 @@
 #define SD_CMD8_SEND_IF_COND     8u
 #define SD_CMD16_SET_BLOCKLEN    16u
 #define SD_CMD17_READ_SINGLE     17u
+#define SD_CMD24_WRITE_SINGLE    24u
 #define SD_CMD55_APP_CMD         55u
 #define SD_CMD58_READ_OCR        58u
 #define SD_ACMD41_SEND_OP_COND   41u
@@ -49,6 +50,18 @@
 #define SD_R1_READY              0x00u
 
 #define SD_DATA_TOKEN            0xFEu
+/* Write data-response, sent by the card after it takes a data block.  Only
+ * bits 3:1 are meaningful; the rest are undefined and must be masked off. */
+#define SD_DATA_RESP_MASK        0x1Fu
+#define SD_DATA_RESP_ACCEPTED    0x05u
+/* Busy-wait after a write: the card holds DO low while it programs.
+ *
+ * 60000 bytes at the 1 MHz data clock is 8 us each, so ~480 ms -- just past the
+ * 500 ms the SD spec allows for a single-block program, and comfortably inside
+ * the host's ~10.7 s IOCALL patience.  It also has to fit the uint16_t loop
+ * counter: a larger bound silently folds both comparisons to constants and the
+ * timeout stops existing. */
+#define SD_WRITE_BUSY_BYTES      60000u
 
 #define SD_IF_COND_ARG           0x000001AAuL  /* 2.7-3.6 V, check pattern AAh */
 #define SD_OCR_CCS               0x40000000uL  /* block addressing when set */
@@ -451,6 +464,122 @@ static SdStatus sd_read_block_inner(uint32_t lba, uint8_t *buf)
 
     sd_deselect();
     return SD_OK;
+}
+
+/* Write one 512-byte block with CMD24.
+ *
+ * Mirrors sd_read_block_inner(): initialise, select, issue the command, move
+ * the data, release.  Three things differ and each is a distinct failure:
+ *
+ *   - the card ACKs the data with a data-response byte, not just R1.  Only
+ *     bits 3:1 are defined, so it must be masked before comparing.
+ *   - after accepting the block the card pulls DO low and holds it there while
+ *     it programs.  Nothing else may be clocked to it until that clears.
+ *   - the CRC-16 is mandatory in the packet.  SPI mode ignores it unless CRC
+ *     mode is on, but sending a real one costs nothing here (the table is
+ *     already used by the read path) and makes the write self-checking if CRC
+ *     mode is ever enabled.
+ *
+ * There is deliberately no retry wrapper.  A failed read can be retried
+ * harmlessly; a write that failed midway has already changed the card, so
+ * retrying is a decision for the caller, not something to bury in here.
+ */
+static SdStatus sd_write_block_inner(uint32_t lba, const uint8_t *buf)
+{
+    SdStatus st;
+    uint8_t  r1;
+    uint8_t  resp;
+    uint32_t address;
+    uint16_t i;
+    uint16_t crc;
+
+    st = sd_card_init();
+    if (st != SD_OK)
+        return st;
+
+    bus_failed = false;
+
+    address = block_addressed ? lba : (lba * SD_BLOCK_SIZE);
+
+    spi1_bus_configure(SD_DATA_BAUD, SPI1_MSB_FIRST);
+    sd_select();
+
+    for (i = 0u; i < SD_TRACE_BYTES; i++)
+        trace[i] = 0u;
+    trace_armed = true;
+
+    r1 = sd_command(SD_CMD24_WRITE_SINGLE, address, SD_CRC_DUMMY);
+    trace_armed = false;
+
+    if (r1 != SD_R1_READY) {
+        sd_deselect();
+        return SD_ERR_WRITE;
+    }
+
+    /* One idle byte between the command response and the data packet, then the
+     * start token. */
+    (void)sd_xfer(0xFFu);
+    (void)sd_xfer(SD_DATA_TOKEN);
+
+    crc = 0u;
+    for (i = 0u; i < SD_BLOCK_SIZE; i++) {
+        (void)sd_xfer(buf[i]);
+        crc = crc16_update(crc, buf[i]);
+    }
+
+    (void)sd_xfer((uint8_t)(crc >> 8));
+    (void)sd_xfer((uint8_t)crc);
+
+    if (bus_failed) {
+        sd_deselect();
+        return SD_ERR_BUS;
+    }
+
+    resp = sd_xfer(0xFFu);
+    trace[0] = resp;
+    if ((resp & SD_DATA_RESP_MASK) != SD_DATA_RESP_ACCEPTED) {
+        sd_deselect();
+        return SD_ERR_WRITE_REJECTED;
+    }
+
+    /* Card holds DO low while programming.  Any non-zero byte means done. */
+    for (i = 0u; i < SD_WRITE_BUSY_BYTES; i++) {
+        if (sd_xfer(0xFFu) != 0x00u)
+            break;
+        if (bus_failed)
+            break;
+    }
+
+    if (bus_failed) {
+        sd_deselect();
+        return SD_ERR_BUS;
+    }
+
+    if (i >= SD_WRITE_BUSY_BYTES) {
+        sd_deselect();
+        return SD_ERR_WRITE_BUSY;
+    }
+
+    sd_deselect();
+    return SD_OK;
+}
+
+SdStatus sd_card_write_block(uint32_t lba, const uint8_t *buf)
+{
+    SdStatus st;
+
+    SD_BUSY_LAT = SD_BUSY_ASSERTED;
+    st = sd_write_block_inner(lba, buf);
+    SD_BUSY_LAT = SD_BUSY_IDLE;
+
+    /* A write failure invalidates the cached "card is ready" state for the same
+     * reason a read failure does: the card may have been swapped or dropped out
+     * mid-transaction, and the next call must re-initialise rather than trust
+     * a stale flag. */
+    if ((st != SD_OK) && (st != SD_ERR_NO_CARD))
+        card_ready = false;
+
+    return st;
 }
 
 #if SD_CMD0_LOOP

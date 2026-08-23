@@ -44,7 +44,19 @@
 /* XFER_STATUS reply payload: the DONE record. */
 #define IOC_OFF_DONE_XFER_ID     (IOC_OFF_PAYLOAD + 0u)
 #define IOC_OFF_DONE_STATUS      (IOC_OFF_PAYLOAD + 1u)
-#define IOC_DONE_PAYLOAD_LEN     2u
+/* Bring-up diagnostic: the DONE reply also carries the first few bytes of the
+ * transfer buffer, so a write can be checked against what the MCU actually
+ * received rather than against what the card reads back afterwards.  That
+ * separates "the host never sent it", "the de-shift produced garbage" and "the
+ * card write went wrong", which are otherwise indistinguishable. */
+#define IOC_OFF_DONE_PEEK        (IOC_OFF_PAYLOAD + 2u)
+#define IOC_DONE_PEEK_BYTES      8u
+/* Raw capture window, before de-shifting.  With the de-shifted peek above this
+ * separates "the host never transmitted" from "the de-shift is wrong": the raw
+ * bytes should begin 7E 81 followed by the payload at some bit offset. */
+#define IOC_OFF_DONE_RAW         (IOC_OFF_PAYLOAD + 2u + IOC_DONE_PEEK_BYTES)
+#define IOC_DONE_RAW_BYTES       8u
+#define IOC_DONE_PAYLOAD_LEN     (2u + IOC_DONE_PEEK_BYTES + IOC_DONE_RAW_BYTES)
 
 /* SD_READ returns this many bytes of the block in the payload area. */
 #define IOC_SD_READ_BYTES  16
@@ -56,6 +68,7 @@
 #define CMD_BULK_TEST        0x04
 #define CMD_SD_READ_BULK     0x05
 #define CMD_XFER_STATUS      0x06
+#define CMD_SD_WRITE_BULK    0x07
 
 /* Response class bytes (MCU → Z80) */
 #define RSP_PING             0x81
@@ -63,6 +76,7 @@
 #define RSP_BULK_TEST        0x84
 #define RSP_SD_READ_BULK     0x85
 #define RSP_XFER_STATUS      0x86
+#define RSP_SD_WRITE_BULK    0x87
 #define RSP_UNKNOWN_COMMAND  0xFE
 
 /* Status bytes */
@@ -80,10 +94,16 @@
 #define IOC_STATUS_SD_NO_CARD     0x15
 #define IOC_STATUS_SD_NO_TOKEN    0x16
 #define IOC_STATUS_SD_CRC         0x17
+#define IOC_STATUS_SD_WRITE_FAIL  0x18
+#define IOC_STATUS_SD_WRITE_REJ   0x19
+#define IOC_STATUS_SD_WRITE_BUSY  0x1A
 
 /* Bulk lane failure, reported by DONE. */
 #define IOC_STATUS_BULK_FAIL      0x20
 #define IOC_STATUS_BULK_NO_HOST   0x21
+/* Window was clocked but the alignment preamble never appeared: the host did
+ * not transmit, or started outside the search range.  Host-side, not link. */
+#define IOC_STATUS_BULK_NO_SYNC   0x22
 
 typedef struct {
     uint8_t bytes[IOC_FRAME_SIZE];

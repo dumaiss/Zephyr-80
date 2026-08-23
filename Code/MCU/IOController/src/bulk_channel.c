@@ -94,13 +94,98 @@
 #error "BULK_TARGET_BYTE_US must exceed the SPI clocking time per byte"
 #endif
 
+/* Capture window for a Z80 -> MCU transfer.
+ *
+ * Room for the payload, the two-byte preamble, and enough slack that the
+ * preamble can still be found if the host's transmitter starts late.  The
+ * search covers BULK_RX_SEARCH_BITS bit positions, so the window needs that
+ * many bits of headroom plus one byte for the bit-shifted tail read. */
+#define BULK_RX_SEARCH_BITS   64u
+#define BULK_RX_WINDOW_BYTES  (BULK_MAX_LENGTH + 2u + (BULK_RX_SEARCH_BITS / 8u) + 2u)
+
+static uint8_t rx_window[BULK_RX_WINDOW_BYTES];
+
+/* Reassemble one LSB-first byte starting at an arbitrary bit position. */
+static uint8_t rx_wire_byte(uint16_t bit_index)
+{
+    uint8_t  i;
+    uint8_t  value = 0u;
+    uint16_t b;
+
+    for (i = 0u; i < 8u; i++) {
+        b = (uint16_t)(bit_index + i);
+        if ((rx_window[b >> 3] >> (b & 7u)) & 1u)
+            value |= (uint8_t)(1u << i);
+    }
+
+    return value;
+}
+
+/* Locate the payload by finding the two-byte preamble.  Returns the bit index
+ * of the first payload byte. */
+static bool find_bulk_start(uint16_t *bit_index)
+{
+    uint16_t start;
+
+    for (start = 0u; start < BULK_RX_SEARCH_BITS; start++) {
+        if (rx_wire_byte(start) != BULK_RX_PREAMBLE_0)
+            continue;
+        if (rx_wire_byte((uint16_t)(start + 8u)) != BULK_RX_PREAMBLE_1)
+            continue;
+        *bit_index = (uint16_t)(start + 16u);
+        return true;
+    }
+
+    return false;
+}
+
 /* Pace the bulk lane to what the host's inlined read loop can drain. */
 static void bulk_byte_gap(void)
 {
     __delay_us(BULK_BYTE_GAP_US);
 }
 
+/* ---------------------------------------------------------------------------
+ * Receive pacing (Z80 -> MCU) is NOT the send figure, and is deliberately
+ * slacker.
+ *
+ * BULK_TARGET_BYTE_US is sized against the host's INI read loop, where being
+ * slightly too fast costs nothing: the host simply has not seen the byte yet
+ * and polls again.
+ *
+ * Receiving inverts the risk.  The MCU supplies the clock, so if it clocks
+ * faster than the host's transmit loop can refill the SIO, the transmitter
+ * under-runs and streams its WR7 fill character.  On this channel WR7 is 00h,
+ * so the MCU captures a perfectly well-formed block of zeros, the preamble
+ * search still succeeds, and the block is committed to the card.  The failure
+ * is SILENT and looks exactly like a successful write of zeros.
+ *
+ * Worse, once the Tx Underrun latch sets the transmitter stops consuming the
+ * buffer, so the host's TBE never re-asserts and it times out -- which is how
+ * this was found.
+ *
+ * The host's OUTI-based transmit loop costs 56 T-states = 5.6 us at 10 MHz,
+ * the same as its INI read loop.  12 us is a bit over 2x that.  The extra
+ * margin is cheap -- 512 bytes takes 6.1 ms instead of 3.1 ms -- and buys
+ * protection against a failure mode that corrupts data without reporting it.
+ * Do not tune this down to match the send direction; they are not symmetric.
+ * --------------------------------------------------------------------------- */
+#define BULK_RX_TARGET_BYTE_US  12u
+#define BULK_RX_BYTE_GAP_US     (BULK_RX_TARGET_BYTE_US - BULK_SPI_BYTE_US)
+
+#if (BULK_RX_TARGET_BYTE_US <= BULK_SPI_BYTE_US)
+#error "BULK_RX_TARGET_BYTE_US must exceed the SPI clocking time per byte"
+#endif
+
+static void bulk_rx_byte_gap(void)
+{
+    __delay_us(BULK_RX_BYTE_GAP_US);
+}
+
 static const uint8_t *armed_buf;
+static uint8_t       *armed_rx_buf;
+static BulkCommitFn   armed_commit;
+static uint8_t        armed_dir;
 static uint16_t       armed_length;
 static uint8_t        armed_xfer_id;
 static uint8_t        xfer_id_counter;
@@ -187,8 +272,27 @@ static void sync_a_release(void)
 void bulk_channel_arm(const uint8_t *buf, uint16_t length, uint8_t xfer_id)
 {
     armed_buf     = buf;
+    armed_rx_buf  = 0;
+    armed_commit  = 0;
+    armed_dir     = BULK_DIR_MCU_TO_Z80;
     armed_length  = length;
     armed_xfer_id = xfer_id;
+}
+
+void bulk_channel_arm_receive(uint8_t *buf, uint16_t length, uint8_t xfer_id,
+                              BulkCommitFn commit)
+{
+    armed_buf     = 0;
+    armed_rx_buf  = buf;
+    armed_commit  = commit;
+    armed_dir     = BULK_DIR_Z80_TO_MCU;
+    armed_length  = length;
+    armed_xfer_id = xfer_id;
+}
+
+const uint8_t *bulk_channel_rx_window(void)
+{
+    return rx_window;
 }
 
 uint8_t bulk_channel_last_xfer_id(void)
@@ -209,22 +313,13 @@ uint8_t bulk_channel_next_xfer_id(void)
     return xfer_id_counter;
 }
 
-bool bulk_channel_run_if_armed(void)
+/* MCU -> Z80.  The MCU places the /SYNC edge, so it owns the byte boundary
+ * and the host simply reads `length` bytes. */
+static bool bulk_run_send(void)
 {
     uint16_t i;
     uint8_t  discard;
     bool     ok = true;
-
-    if (armed_length == 0u)
-        return true;
-
-    /* READY has gone out; wait for the host to say it is listening. */
-    if (!wait_for_host_ready()) {
-        armed_length = 0u;
-        last_xfer_id = armed_xfer_id;
-        last_status  = IOC_STATUS_BULK_NO_HOST;
-        return false;
-    }
 
     /* Enable the host's receiver, and mark the bulk phase live. */
     DCDA_LAT = DCDA_ASSERTED;
@@ -289,10 +384,114 @@ bool bulk_channel_run_if_armed(void)
     armed_length = 0u;
 
     /* DONE state: the bytes are on the wire.  For a read that is the whole
-     * story; a future write would additionally have to commit to the card
-     * before reporting OK here. */
+     * story.  The write direction cannot report success here -- see
+     * bulk_run_receive(), which defers DONE until the commit has run. */
     last_xfer_id = armed_xfer_id;
     last_status  = ok ? IOC_STATUS_OK : IOC_STATUS_BULK_FAIL;
 
     return ok;
+}
+
+/* Z80 -> MCU.  The MCU still supplies every clock edge, but the host owns the
+ * byte boundary, so the payload is captured raw and de-shifted afterwards.
+ *
+ * /CTSA is what makes this direction work: under Auto Enables it gates the
+ * host's TRANSMITTER, so the host cannot put a bit on the wire until the MCU
+ * says so.  /DCDA stays IDLE throughout -- that gates the host's RECEIVER, and
+ * nothing is being sent to it.  Leaving it deasserted means the clocks driven
+ * here cannot be latched by the host as phantom received bytes. */
+static bool bulk_run_receive(void)
+{
+    uint16_t i;
+    uint16_t bit_index;
+    uint16_t window;
+    uint16_t length;
+    bool     ok = true;
+
+    /* Hold the length locally.  armed_length is cleared during teardown below,
+     * before the payload is de-shifted, so the copy loop must not read it --
+     * doing so silently copies nothing and leaves the destination buffer at
+     * whatever it held before, which then gets committed as if it were the
+     * received data. */
+    length = armed_length;
+
+    /* Payload, preamble, and slack for a late-starting transmitter. */
+    window = (uint16_t)(length + 2u + (BULK_RX_SEARCH_BITS / 8u) + 2u);
+    if (window > BULK_RX_WINDOW_BYTES)
+        window = BULK_RX_WINDOW_BYTES;
+
+    CTSA_LAT = CTSA_ASSERTED;
+    __delay_us(BULK_DCD_SETTLE_US);
+
+    SIOA_CS_LAT = SIOA_CS_ASSERTED;
+
+    /* Marking idle on MOSI and /SYNCA asserted for the whole window, exactly
+     * as external_sync_receive() does on the command lane.  Receiving needs no
+     * intra-byte GPIO: there is no sync edge to place in this direction. */
+    SIO_MOSI_LAT = 1;
+    SYNCA_LAT    = SYNCA_ASSERTED;
+
+    sio_link_set_baud(BULK_SPI_BAUD);
+    sio_link_clear_fifos();
+    sio_link_pins_to_spi();
+    for (i = 0u; i < window; i++) {
+        if (!sio_link_exchange(0xFFu, &rx_window[i])) {
+            ok = false;
+            break;
+        }
+        bulk_rx_byte_gap();
+    }
+    sio_link_pins_to_lat();
+
+    sync_a_release();
+    SIO_MOSI_LAT = 1;
+
+    CTSA_LAT    = CTSA_IDLE;
+    SIOA_CS_LAT = SIOA_CS_IDLE;
+
+    armed_length = 0u;
+    last_xfer_id = armed_xfer_id;
+
+    if (!ok) {
+        last_status = IOC_STATUS_BULK_FAIL;
+        return false;
+    }
+
+    if (!find_bulk_start(&bit_index)) {
+        /* Clocked the window but never saw the preamble: the host either never
+         * transmitted or started so late it fell outside the search.  Distinct
+         * from a bus failure, and worth its own code -- it points at the host
+         * side, not the link. */
+        last_status = IOC_STATUS_BULK_NO_SYNC;
+        return false;
+    }
+
+    for (i = 0u; i < length; i++)
+        armed_rx_buf[i] = rx_wire_byte((uint16_t)(bit_index + (i * 8u)));
+
+    /* Only now is DONE meaningful.  Bytes arriving says nothing about whether
+     * they were stored. */
+    last_status = (armed_commit != 0) ? armed_commit() : IOC_STATUS_OK;
+
+    return (last_status == IOC_STATUS_OK);
+}
+
+bool bulk_channel_run_if_armed(void)
+{
+    if (armed_length == 0u)
+        return true;
+
+    /* READY has gone out; wait for the host to say it is ready to move bytes.
+     * Same signal in both directions: RTS on channel A. */
+    if (!wait_for_host_ready()) {
+        armed_length = 0u;
+        last_xfer_id = armed_xfer_id;
+        last_status  = IOC_STATUS_BULK_NO_HOST;
+        return false;
+    }
+
+    if (armed_dir == BULK_DIR_Z80_TO_MCU)
+        return bulk_run_receive();
+
+    return bulk_run_send();
 }
