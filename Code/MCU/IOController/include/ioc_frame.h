@@ -77,9 +77,13 @@
 #define IOC_STATUS_SD_NOT_READY   0x12
 #define IOC_STATUS_SD_READ_FAIL   0x13
 #define IOC_STATUS_SD_BUS         0x14
+#define IOC_STATUS_SD_NO_CARD     0x15
+#define IOC_STATUS_SD_NO_TOKEN    0x16
+#define IOC_STATUS_SD_CRC         0x17
 
 /* Bulk lane failure, reported by DONE. */
 #define IOC_STATUS_BULK_FAIL      0x20
+#define IOC_STATUS_BULK_NO_HOST   0x21
 
 typedef struct {
     uint8_t bytes[IOC_FRAME_SIZE];

@@ -59,8 +59,30 @@
 #define EXTSYNC_SPI_TIMEOUT_LOOPS 20000u
 
 #define EXTSYNC_BIT_DELAY_US     50u
-#define EXTSYNC_REPLY_GUARD_MS   10u
 #define EXTSYNC_ALIGNMENT_BYTE   0x7Eu
+
+/* ---------------------------------------------------------------------------
+ * Reply turnaround guard
+ *
+ * The PIC waits this long after receiving a request before clocking the reply,
+ * so the host has time to turn SIO1/B from transmit to receive.  Everything the
+ * host does in that window is the prologue of ioc_command_recv_frame:
+ *
+ *   ld a,n / out (c),a  x3   75 T   (WR0 error reset, WR3 RX enable)
+ *   push de / pop hl         21 T
+ *   ld b,n                    7 T
+ *   ret / call / test        ~48 T   getting there from send_frame
+ *                            -----
+ *                            ~130 T  = 13 us at 10 MHz
+ *
+ * This was 10 ms during bring-up -- about 770x what the host needs -- and at two
+ * IOCALLs per sector it was 20 ms of a 32 ms transfer, the single largest cost
+ * in the whole path.  1 ms still leaves ~77x margin.
+ *
+ * In microseconds so it can be tuned below a millisecond without changing units.
+ * If replies start failing, this is the first constant to raise.
+ * --------------------------------------------------------------------------- */
+#define EXTSYNC_REPLY_GUARD_US   200u
 
 /* ---------------------------------------------------------------------------
  * SPI2 link timing
@@ -165,7 +187,20 @@
  * Clock a small fixed window so the firmware stays simple while the host BIOS
  * is still being simplified.
  */
-#define EXTSYNC_RX_WINDOW_BYTES  80u
+/* The window must be long enough that the whole 32-byte mailbox still fits
+ * after wherever the host's 7Eh alignment byte lands:
+ *
+ *     copy_received_frame() requires  start_bits + 256 <= WINDOW * 8
+ *
+ * so a 48-byte window tolerates the alignment byte appearing up to 16 bytes in.
+ * In practice it lands within the first byte or two -- the host asserts RTS and
+ * is transmitting a few microseconds later, against a 16 us byte time -- so 16
+ * bytes is roughly ten times the observed need.
+ *
+ * It was 80, of which only 33 are ever used; each byte costs 16 us twice per
+ * sector.  Lower it further only with that inequality in mind: too small and a
+ * late request silently fails to decode. */
+#define EXTSYNC_RX_WINDOW_BYTES  48u
 
 void external_sync_init(void);
 bool external_sync_receive(IocFrame *frame);

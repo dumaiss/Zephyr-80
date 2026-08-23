@@ -78,9 +78,57 @@
  * host timeout.
  * --------------------------------------------------------------------------- */
 #define SD_R1_POLL_BYTES         10u
-#define SD_IDLE_RETRIES          10u
+#define SD_IDLE_RETRIES          20u
+#define SD_INIT_CLOCK_BYTES      12u   /* 96 clocks; spec minimum is 74 */
+#define SD_POWER_SETTLE_MS       10u   /* spec minimum is 1 ms after Vdd stable */
+#define SD_CMD0_RETRY_GAP_MS     2u
+
+/* Clock rate for the initialisation phase.  The SD spec allows 100-400 kHz;
+ * 400 kHz is the top of that window and the least forgiving of a long or
+ * poorly terminated path, which a mezzanine connector is.  125 kHz is the
+ * slowest SPI1 reaches from Fosc and is still in spec. */
+#define SD_INIT_BAUD             SPI1_BAUD_125KHZ
+
+/* Clock for the data phase, once the card is initialised.  Separate from the
+ * init rate because the card is only obliged to accept 100-400 kHz until it
+ * reports ready.  Lower this first if CMD17 or the data token misbehave: a
+ * card that initialises cleanly at 125 kHz and then fails at 1 MHz is a signal
+ * integrity problem, not a protocol one. */
+#define SD_DATA_BAUD             SPI1_BAUD_1MHZ
+
+/* Whole-read attempts.  Only CRC failures and a missing data token are retried
+ * -- see sd_card_read_block().  A rejected CMD17 or an absent card fails the
+ * same way every time. */
+#define SD_READ_ATTEMPTS         3u
 #define SD_ACMD41_RETRIES        1200u
 #define SD_TOKEN_POLL_BYTES      25000u
+
+/* CRC-16-CCITT (poly 1021h, init 0000h, MSB first) -- the algorithm SD uses
+ * for data blocks.  Nibble table: two lookups per byte, 32 bytes of flash, and
+ * about 800 us for a 512-byte block.  A bitwise loop would be ~2.6 ms, which
+ * would nearly double the read; a 256-entry table saves ~200 us more for 512
+ * bytes of flash and is not worth it here. */
+static const uint16_t crc16_nibble[16] = {
+    0x0000u, 0x1021u, 0x2042u, 0x3063u,
+    0x4084u, 0x50A5u, 0x60C6u, 0x70E7u,
+    0x8108u, 0x9129u, 0xA14Au, 0xB16Bu,
+    0xC18Cu, 0xD1ADu, 0xE1CEu, 0xF1EFu
+};
+
+static uint16_t crc16_update(uint16_t crc, uint8_t data)
+{
+    crc = (uint16_t)((crc << 4) ^ crc16_nibble[((crc >> 12) ^ (data >> 4)) & 0x0Fu]);
+    crc = (uint16_t)((crc << 4) ^ crc16_nibble[((crc >> 12) ^ (data & 0x0Fu)) & 0x0Fu]);
+    return crc;
+}
+
+static uint8_t trace[SD_TRACE_BYTES];
+static bool    trace_armed;
+
+const uint8_t *sd_card_trace(void)
+{
+    return trace;
+}
 
 static bool card_ready;
 static bool block_addressed;
@@ -90,11 +138,16 @@ static void sd_select(void)
     IO_SD_CS_LAT = IO_SD_CS_ASSERTED;
 }
 
+/* Deselect, then give the card its trailing clock.
+ *
+ * The SD spec wants one clock after CS rises so the card releases DO.  That
+ * clock is gated away on this board (see the power-up step in sd_card_init),
+ * so the byte reaches nothing -- but the card tri-states DO on deselect
+ * regardless, and the write costs 8 us and stays correct if the gating is ever
+ * removed. */
 static void sd_deselect(void)
 {
     IO_SD_CS_LAT = IO_SD_CS_IDLE;
-    /* The card releases DO one clock after the select goes high; an idle byte
-     * gives it that clock so it does not hold the shared bus. */
     (void)spi1_bus_write(0xFFu);
 }
 
@@ -133,6 +186,8 @@ static uint8_t sd_command(uint8_t cmd, uint32_t arg, uint8_t crc)
         if (bus_failed)
             return 0xFFu;
         r1 = sd_xfer(0xFFu);
+        if (trace_armed && (i < SD_TRACE_BYTES))
+            trace[i] = r1;
         if ((r1 & 0x80u) == 0u)
             return r1;
     }
@@ -166,22 +221,77 @@ SdStatus sd_card_init(void)
     block_addressed = false;
     bus_failed      = false;
 
-    /* Step 1: 80 clocks with the select high puts the card in a known state. */
-    spi1_bus_configure(SPI1_BAUD_400KHZ, SPI1_MSB_FIRST);
-    sd_deselect();
-    for (i = 0u; i < 10u; i++) {
+    /* SD DO is high-Z until the card is selected and in SPI mode.  A weak
+     * pull-up makes an undriven line read as a clean FFh rather than noise,
+     * which is what the trace above assumes -- and it is standard practice on
+     * SD SPI wiring anyway. */
+    WPUCbits.WPUC4 = 1;
+
+#if SD_HAS_PRESENT_PIN
+    /* Definitive and instant, once RC0 is wired. */
+    SD_PRESENT_ANSEL = 0;
+    SD_PRESENT_TRIS  = 1;
+    if (SD_PRESENT_PORT != SD_PRESENT_ACTIVE)
+        return SD_ERR_NO_CARD;
+#endif
+
+    /* Step 1: power-up clocks.
+     *
+     * The spec asks for at least 74 clocks with CS and DI held HIGH.  On this
+     * board that is impossible: SPI_CLK to the port C devices is GATED BY THE
+     * DEVICE SELECT, confirmed on a scope -- the clock only runs while a select
+     * is asserted, exactly as the SIO bus gates on its channel selects.  Clocks
+     * sent with CS high reach nothing.
+     *
+     * So the power-up clocks are sent with CS LOW.  That is a deliberate
+     * deviation from the spec's letter, forced by the hardware, and it is safe:
+     * DI is held high throughout, so the card sees no start bit (SD commands
+     * begin 0b01) and simply ignores the traffic while its internal
+     * initialisation clocks tick.
+     *
+     * An earlier version also sent a burst with CS high, on the theory that the
+     * gating might not exist.  It was pure waste -- ~0.8 ms of clocks delivered
+     * to a gate that was closed -- and has been removed now the gating is
+     * measured rather than guessed.
+     *
+     * The delay first lets the rail settle; cards want at least 1 ms after Vdd
+     * is stable before they are clocked. */
+    spi1_bus_configure(SD_INIT_BAUD, SPI1_MSB_FIRST);
+    __delay_ms(SD_POWER_SETTLE_MS);
+
+    IO_SD_CS_LAT = IO_SD_CS_ASSERTED;
+    for (i = 0u; i < SD_INIT_CLOCK_BYTES; i++) {
         if (!spi1_bus_write(0xFFu))
             return SD_ERR_BUS;
     }
+    sd_deselect();
 
     /* Step 2: CMD0.  Retried because a card that was mid-transaction before a
-     * warm reset can swallow the first attempt. */
+     * warm reset can swallow the first attempt.
+     *
+     * Silence here is reported as NO_RESPONSE, never as NO_CARD.  An earlier
+     * version inferred "socket empty" from every byte reading FFh, which is
+     * wrong: a seated card that has not entered SPI mode is equally silent, so
+     * the code claimed the card was absent exactly when it was present and
+     * misbehaving.  Only the presence pin can say a card is missing.  Use the
+     * trace bytes to tell silence apart from garbage. */
     sd_select();
     r1 = 0xFFu;
+
+    /* Capture the first attempt's response bytes for diagnostics. */
+    for (i = 0u; i < SD_TRACE_BYTES; i++)
+        trace[i] = 0u;
+    trace_armed = true;
     for (i = 0u; i < SD_IDLE_RETRIES; i++) {
         r1 = sd_command(SD_CMD0_GO_IDLE, 0uL, SD_CRC_CMD0);
+        trace_armed = false;   /* first attempt only */
         if (r1 == SD_R1_IDLE)
             break;
+        /* Deselect between attempts and give the card a moment: a card still
+         * finishing its internal power-up will ignore CMD0 entirely. */
+        sd_deselect();
+        __delay_ms(SD_CMD0_RETRY_GAP_MS);
+        sd_select();
     }
     if (r1 != SD_R1_IDLE) {
         sd_deselect();
@@ -252,13 +362,17 @@ SdStatus sd_card_init(void)
     return SD_OK;
 }
 
-SdStatus sd_card_read_block(uint32_t lba, uint8_t *buf)
+/* Body of the block read.  Wrapped below so SD_BUSY is released on every exit
+ * path, of which this has several. */
+static SdStatus sd_read_block_inner(uint32_t lba, uint8_t *buf)
 {
     SdStatus st;
     uint8_t  r1;
     uint8_t  token;
     uint32_t address;
     uint16_t i;
+    uint16_t crc;
+    uint16_t card_crc;
 
     st = sd_card_init();
     if (st != SD_OK)
@@ -269,10 +383,18 @@ SdStatus sd_card_read_block(uint32_t lba, uint8_t *buf)
     /* Standard-capacity cards address by byte, high-capacity ones by block. */
     address = block_addressed ? lba : (lba * SD_BLOCK_SIZE);
 
-    spi1_bus_configure(SPI1_BAUD_1MHZ, SPI1_MSB_FIRST);
+    spi1_bus_configure(SD_DATA_BAUD, SPI1_MSB_FIRST);
     sd_select();
 
+    /* Re-arm the trace so a read failure reports CMD17's response rather than
+     * CMD0's, which by this point is known to have succeeded. */
+    for (i = 0u; i < SD_TRACE_BYTES; i++)
+        trace[i] = 0u;
+    trace_armed = true;
+
     r1 = sd_command(SD_CMD17_READ_SINGLE, address, SD_CRC_DUMMY);
+    trace_armed = false;
+
     if (r1 != SD_R1_READY) {
         sd_deselect();
         return SD_ERR_READ;
@@ -292,23 +414,97 @@ SdStatus sd_card_read_block(uint32_t lba, uint8_t *buf)
         return SD_ERR_BUS;
     }
     if (token != SD_DATA_TOKEN) {
+        /* Record whatever did arrive.  FEh is the data token; a 0Xh byte is an
+         * SD error token whose low nibble gives the reason. */
+        trace[SD_TRACE_BYTES - 1u] = token;
         sd_deselect();
-        return SD_ERR_READ;
+        return SD_ERR_NO_TOKEN;
     }
 
-    for (i = 0u; i < SD_BLOCK_SIZE; i++)
+    crc = 0u;
+    for (i = 0u; i < SD_BLOCK_SIZE; i++) {
         buf[i] = sd_xfer(0xFFu);
+        crc = crc16_update(crc, buf[i]);
+    }
 
-    /* Two CRC bytes always follow the block and are discarded: SPI mode does
-     * not require the host to check them. */
-    (void)sd_xfer(0xFFu);
-    (void)sd_xfer(0xFFu);
+    /* The card always sends a CRC-16 after the block.  SPI mode does not
+     * require the host to check it, and this driver originally discarded it --
+     * but on a marginal bus that turns a corrupted sector into a silent
+     * SD_OK.  Checking it costs ~800 us and converts corruption into a clean,
+     * retryable error, which is the difference between a subtly wrong
+     * filesystem and a failed read. */
+    card_crc  = (uint16_t)sd_xfer(0xFFu) << 8;
+    card_crc |= (uint16_t)sd_xfer(0xFFu);
 
     if (bus_failed) {
         sd_deselect();
         return SD_ERR_BUS;
     }
 
+    if (card_crc != crc) {
+        trace[SD_TRACE_BYTES - 4u] = (uint8_t)(crc >> 8);
+        trace[SD_TRACE_BYTES - 3u] = (uint8_t)crc;
+        trace[SD_TRACE_BYTES - 2u] = (uint8_t)(card_crc >> 8);
+        trace[SD_TRACE_BYTES - 1u] = (uint8_t)card_crc;
+        sd_deselect();
+        return SD_ERR_CRC;
+    }
+
     sd_deselect();
     return SD_OK;
+}
+
+#if SD_CMD0_LOOP
+/* Power-up clocks plus a single CMD0, repeated forever.  See sd_card.h. */
+void sd_card_cmd0_loop(void)
+{
+    uint8_t i;
+
+    spi1_bus_configure(SD_INIT_BAUD, SPI1_MSB_FIRST);
+    WPUCbits.WPUC4 = 1;
+
+    for (;;) {
+        /* Clocks with CS asserted, matching sd_card_init(): the port C clock is
+         * gated by the select, so a CS-high burst would reach nothing. */
+        sd_select();
+        for (i = 0u; i < SD_INIT_CLOCK_BYTES; i++)
+            (void)spi1_bus_write(0xFFu);
+
+        (void)sd_command(SD_CMD0_GO_IDLE, 0uL, SD_CRC_CMD0);
+        sd_deselect();
+
+        __delay_ms(50);
+    }
+}
+#endif
+
+/* Raise SD_BUSY for the whole card access, including the lazy initialisation
+ * the first call triggers.  That first one can run for the best part of a
+ * second while ACMD41 is polled, so it is clearly visible; later reads are a
+ * brief flicker.  Released on every exit path because the wrapper owns it. */
+SdStatus sd_card_read_block(uint32_t lba, uint8_t *buf)
+{
+    SdStatus st;
+
+    uint8_t attempt;
+
+#if SD_BUSY_LED
+    SD_BUSY_LAT = SD_BUSY_ASSERTED;
+#endif
+
+    /* Retry only the failures a marginal bus actually causes.  A rejected
+     * CMD17 or a dead card will fail identically every time, so retrying those
+     * just wastes the host's patience. */
+    st = SD_ERR_READ;
+    for (attempt = 0u; attempt < SD_READ_ATTEMPTS; attempt++) {
+        st = sd_read_block_inner(lba, buf);
+        if ((st != SD_ERR_CRC) && (st != SD_ERR_NO_TOKEN))
+            break;
+    }
+
+#if SD_BUSY_LED
+    SD_BUSY_LAT = SD_BUSY_IDLE;
+#endif
+
+    return st;
 }

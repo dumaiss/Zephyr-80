@@ -11,10 +11,11 @@
 ;    |<-- READY(id, dir, len) ---|      command lane
 ;    |<====== len bytes =========|      bulk lane, this program's read loop
 ;
-; The MCU is the synchronous clock master and there is no ready signal from the
-; Z80 on the bulk lane, so the MCU waits a fixed guard time after READY before
-; it starts clocking.  This program must therefore enter its read loop promptly
-; once IOCALL returns -- do not print anything in between.
+; Handshake: the MCU is clock master but waits for this program to assert RTS on
+; channel A before clocking a single edge, so there is no race and no guard
+; delay.  /DCDA gates this channel's receiver via Auto Enables (WR3 bit 5), so
+; the receiver is only live while the MCU is actually sending.  /CTSA is
+; asserted for the duration of the bulk phase.
 ;
 ; The payload is a 00 01 02 ... FF ramp, so a shifted or dropped byte is
 ; obvious: the first mismatch index and value are reported.
@@ -49,8 +50,11 @@ RSP_BULK_TEST	= 0x84
 BULK_DATA	= 0x30		; SIO1/A data
 BULK_CTRL	= 0x31		; SIO1/A control
 WR0_RESET_ERROR	= 0x30
-WR3_RX_HUNT	= 0xd1		; 8-bit RX, enter hunt, RX enable
+WR3_RX_HUNT	= 0xf1		; 8-bit RX, AUTO ENABLES, enter hunt, RX enable
+WR5_RTS_ON	= 0xea		; channel A: DTR on, 8-bit TX, TX enable, RTS on
+WR5_RTS_OFF	= 0xe8		; same with RTS off
 RR0_RX_AVAIL	= 0x01
+RR0_CTS		= 0x20		; set while /CTSA is asserted (bulk phase live)
 
 REQ_LEN		= 256		; bytes to ask for
 
@@ -86,8 +90,9 @@ zero_rx:
 	ld a,#>REQ_LEN
 	ld (tx_frame + 5),a		; requested length, high
 
-	; Prime the bulk lane BEFORE the command, so the receiver is already in
-	; hunt when the MCU starts clocking after its guard delay.
+	; Prime the bulk lane BEFORE the command: Auto Enables on, receiver in
+	; hunt.  With Auto Enables the receiver stays gated off until the MCU
+	; asserts /DCDA, so nothing can be latched early.
 	ld a,#WR0_RESET_ERROR
 	out (BULK_CTRL),a
 	ld a,#0x03
@@ -117,28 +122,79 @@ zero_rx:
 	ld hl,#bulk_buf
 
 	; --- bulk read loop -------------------------------------------------
-	; No printing above this point once IOCALL has returned: the MCU is
-	; already counting down its guard delay before it starts clocking.
-bulk_next:
-	ld de,#0			; per-byte timeout counter
-bulk_wait:
+	; Tell the PIC we are in the read loop.  It is waiting on this and will
+	; not clock a single edge until it sees it, so there is no race here and
+	; no fixed guard delay on either side.
+	ld a,#0x05
+	out (BULK_CTRL),a
+	ld a,#WR5_RTS_ON
+	out (BULK_CTRL),a
+
+	; ---- bulk read: INI-based ----
+	; 56 T-states per byte = 5.6 us at 10 MHz, versus 90 T for the previous
+	; in/ld/inc form.  INI does the port read, the store, HL++ and B-- in one
+	; 16 T instruction, which is where most of the saving comes from.
+	;
+	; Register budget is forced by INI: B is the counter, C is the port, HL is
+	; the destination.  That leaves DE for the stall budget -- and because it is
+	; NOT reloaded per byte, it is a budget for the whole transfer rather than
+	; per byte, which is both cheaper and better behaved.
+	;
+	; B counts one 256-byte block at a time (B = 0 means 256), so a transfer is
+	; an optional remainder followed by however many full blocks.
+	ld c,#BULK_DATA
+	ld de,#0			; whole-transfer stall budget
+	ld a,(rx_frame + 7)
+	ld (chunks),a			; number of full 256-byte blocks
+	ld a,(rx_frame + 6)		; remainder
+	or a
+	jr z,chunk_loop
+	ld b,a
+	jr ini_poll
+chunk_loop:
+	ld a,(chunks)
+	or a
+	jr z,bulk_done
+	dec a
+	ld (chunks),a
+	ld b,#0				; 256 bytes
+ini_poll:
+	in a,(BULK_CTRL)		; 11
+	and #RR0_RX_AVAIL		;  7
+	jr nz,ini_got			; 12 taken
+	dec de				;  6
+	ld a,d				;  4
+	or e				;  4
+	jr nz,ini_poll			; 12
+	jp bulk_timeout
+ini_got:
+	ini				; 16  (HL)<-in(C), HL++, B--
+	jp nz,ini_poll			; 10
+	jr chunk_loop
+bulk_done:
+	; ---- end bulk read ----
+
+	; Release RTS: the bulk phase is over from our side.
+	ld a,#0x05
+	out (BULK_CTRL),a
+	ld a,#WR5_RTS_OFF
+	out (BULK_CTRL),a
+
+	; /CTSA is asserted by the PIC for the duration of the bulk phase, so it
+	; should already be deasserted.  Checked rather than relied upon: the
+	; authoritative status still comes from the command lane.  Once this is
+	; proven on the bench, watching this line can replace the DONE round trip.
+	ld de,#0
+cts_wait:
 	in a,(BULK_CTRL)
-	and #RR0_RX_AVAIL
-	jr nz,bulk_got
+	and #RR0_CTS
+	jr z,cts_clear
 	dec de
 	ld a,d
 	or e
-	jr nz,bulk_wait
-	jp bulk_timeout
-bulk_got:
-	in a,(BULK_DATA)
-	ld (hl),a
-	inc hl
-	dec bc
-	ld a,b
-	or c
-	jr nz,bulk_next
-	; --- end bulk read --------------------------------------------------
+	jr nz,cts_wait
+	jp cts_stuck
+cts_clear:
 
 	; Verify the ramp: byte n must equal n modulo 256.
 	ld hl,#bulk_buf
@@ -252,6 +308,12 @@ report_len:
 
 ; Print the byte in A as two uppercase hex digits.
 ; Clobbers: AF, BC, DE (via BDOS).
+cts_stuck:
+	ld de,#msg_cts_stuck
+	ld c,#BDOS_PRINT
+	call BDOS
+	ret
+
 print_hex_byte:
 	push af
 	rrca
@@ -303,9 +365,14 @@ msg_ready_err:
 msg_bad_reply:
 	.ascii "unexpected reply 0x"
 	.db '$'
+msg_cts_stuck:
+	.ascii "/CTSA still asserted after bulk"
+	.db 0x0d, 0x0a, '$'
 msg_crlf:
 	.db 0x0d, 0x0a, '$'
 
+chunks:
+	.ds 1
 xfer_len:
 	.ds 2
 tx_frame:

@@ -183,6 +183,9 @@ Status bytes (byte 2 of a reply):
 12h  IOC_STATUS_SD_NOT_READY     ACMD41 never reported ready
 13h  IOC_STATUS_SD_READ_FAIL     CMD17 rejected, or no data token
 14h  IOC_STATUS_SD_BUS           the SPI module itself stalled
+15h  IOC_STATUS_SD_NO_CARD       socket empty: nothing drove the bus
+16h  IOC_STATUS_SD_NO_TOKEN      CMD17 accepted, no FEh data token followed
+17h  IOC_STATUS_SD_CRC           block CRC-16 mismatch after every retry
 20h  IOC_STATUS_BULK_FAIL        bulk lane stalled mid-transfer (DONE only)
 ```
 
@@ -364,34 +367,131 @@ would hide the discrepancy.
 `BULK_SYNC_DROP_BIT` in `src/bulk_channel.c` exists so the position can be
 bisected from the bench without restructuring the sequence.
 
-### Start guard
+### Handshake
 
-The PIC is clock master and there is no ready signal from the Z80 on this lane,
-so after sending READY it waits `BULK_START_GUARD_MS` (20 ms) before clocking.
-That delay is the only thing preventing the transfer from starting before the
-host's read loop is running; the SIO's 3-byte receive FIFO covers about 48 us at
-the current byte rate, nowhere near enough to absorb the gap.
+Three signals coordinate the bulk phase, all on the SIO1/A modem-control pins:
 
-Consequences worth knowing:
+```text
+  RF1  /SIO1A_INT   in    host's RTS: "I am in my read loop, go"
+  RB4  /DCDA        out   gates the host's RECEIVER (Auto Enables)
+  RB0  /CTSA        out   asserted while the bulk phase is live
+```
 
-- The host must not print or do other work between IOCALL returning and its read
-  loop, and should put the bulk receiver into hunt *before* issuing the command.
-- The guard dominates throughput.  A sector costs roughly 52 ms end to end, of
-  which about 30 ms is guard delay (20 ms here plus the 10 ms reply guard on the
-  command lane) and only 8 ms is actual data movement.
+Sequence:
 
-`/SIO1A_INT` on RF1 is wired but unused.  Having the Z80 assert RTS on channel A
-and the PIC wait for that edge would remove this guard entirely and make the
-handoff deterministic instead of timed.  That is the obvious next improvement if
-sector throughput starts to matter.
+```text
+Z80                                    PIC
+ |<-- READY(id, dir, length) ---------|
+ |   WR3 = F1h  Auto Enables, hunt     |
+ |   WR5 = EAh  RTS on --------------->|  RF1 low: host is listening
+ |                                     |  assert /DCDA -> host RX enabled
+ |                                     |  assert /CTSA -> phase live
+ |<========== length bytes ============|
+ |                                     |  deassert /CTSA -> complete
+ |                                     |  deassert /DCDA -> host RX off
+ |   WR5 = E8h  RTS off                |
+ |   poll RR0 bit 5 == 0               |
+```
 
-Adding a command class means touching three places in the firmware: the
-constants in `include/ioc_frame.h`, a case in `src/dispatch.c`, and a clause in
-`find_frame_start()` in `src/external_sync.c`.  That last one is easy to miss --
-it is the fallback used when the host's alignment byte is not found, and its
-per-class length match is what keeps the bit-offset scan from locking onto a
-wrong alignment.  No host-side change is needed, because replies lead with the
-7Eh alignment byte.
+**RTS removes the race.**  The PIC clocks nothing until it sees RF1 asserted,
+bounded by `BULK_HOST_READY_TIMEOUT_MS` (500 ms) so an absent host costs one
+transfer -- reported as `IOC_STATUS_BULK_NO_HOST` (21h) -- rather than wedging
+the controller.  This replaced a fixed 20 ms start guard that was the single
+largest cost in a sector transfer and was, fundamentally, a guess about how long
+the Z80 needed.  It also removes the host-side rule that nothing may happen
+between IOCALL returning and the read loop.
+
+**Auto Enables makes BULK_ACTIVE structural.**  With WR3 bit 5 set on channel A,
+`/DCD` gates the receiver in hardware.  The PIC holds `/DCDA` deasserted outside
+a transfer, so stray clocks on the shared bus physically cannot become stray
+bytes on the host.  The state machine is enforced at both ends rather than by
+convention.
+
+**`/CTSA` has exactly one meaning: the bulk phase is live.**  That is chosen
+deliberately.  Under Auto Enables this same line gates the host's *transmitter*,
+which is precisely what a future Z80 -> MCU write needs it to mean -- "the PIC is
+ready for your bytes".  One signal, one meaning, correct in both directions.
+
+The host currently *checks* that `/CTSA` deasserted and reports if it did not,
+but still issues `XFER_STATUS` for the authoritative result.  Watching that line
+could replace the DONE round trip and save roughly 12 ms, at the cost of blurring
+the READY/DONE distinction: a wire can say "finished", not "the operation
+succeeded".  For reads that trade is defensible; for writes it is not.
+
+### Timing
+
+Per 512-byte sector, roughly:
+
+```text
+IOCALL     command + READY (200 us guard, 48-byte window)   ~1.7 ms
+bulk       512 bytes at 6 us                                ~3.1 ms
+                                                            -------
+                                                             ~4.8 ms   ~105 KB/s
+```
+
+The DONE query is not in that budget: on a successful read it is skipped
+entirely (see the handshake section).
+
+Every constant here is sized against a measured loop at the other end, and none
+may be changed without re-deriving its counterpart:
+
+| constant | value | sized against |
+|---|---|---|
+| `EXTSYNC_REPLY_GUARD_US` | 200 us | host SIO turnaround, ~130 T = 13 us |
+| `EXTSYNC_RX_WINDOW_BYTES` | 48 | `start_bits + 256 <= WINDOW * 8` |
+| `EXTSYNC_TARGET_BYTE_US` | 16 us | BIOS `sio_command_get_byte`, 151 T = 15.1 us |
+| `BULK_TARGET_BYTE_US` | 6 us | PIC: 4 us SPI at 2 MHz + ~2 us loop |
+| `BULK_SPI_BAUD` | 15 | 64 MHz / (2 * 16) = 2 MHz |
+
+**The two lanes must not share a byte-pacing constant.**  The command lane is
+drained by the BIOS at 151 T-states per byte; the bulk lane by an inlined
+`INI`-based loop in user code at 56 T:
+
+```text
+in a,(ctrl) 11 / and 7 / jr nz 12 / ini 16 / jp nz 10  =  56 T = 5.6 us
+```
+
+`INI` does the port read, the store, `HL++` and `B--` in one 16 T instruction,
+which is most of the saving over the earlier 90 T form.  Because `INI` reserves
+B as the counter and C as the port, DE carries the stall budget -- and it is
+deliberately not reloaded per byte, making it a whole-transfer budget that is
+both cheaper and better behaved than a per-byte one.
+
+Where the limits now sit:
+
+```text
+Z80 INI read loop        5.6 us/byte
+PIC (2 MHz SPI + loop)   6.0 us/byte   <- binding
+Z80 SIO at 10 MHz       ~3.2 us/byte   (clock / 4)
+```
+
+The PIC is the constraint, and it is the ~2 us of polled-loop software per byte
+rather than the clock.  Getting past it needs DMA feeding SPI2 -- the Q84 has a
+DMA that can be timer-triggered for pacing -- which is the only remaining lever
+that does not involve the BIOS.
+
+For context, this path started at 32 ms per sector (16 KB/s).  Nearly all of the
+6.7x came from sizing constants against the loops that actually consume the
+data, not from raising clock rates.
+
+### What is left
+
+Of the ~4.8 ms, about 1.7 ms is the single command round trip and 3.1 ms is data.
+
+- **DMA feeding SPI2** would remove the ~2 us per byte of polled-loop software on
+  the PIC, which is now the binding constraint.  The Q84's DMA can be
+  timer-triggered, which supplies the pacing the polled loop currently provides.
+  This is the only remaining lever that does not touch the BIOS.
+- **The command lane is BIOS-bound** at 16 us/byte, because `sio_command_get_byte`
+  costs 151 T-states.  Inlining that loop the way the bulk lane's is would take
+  it to roughly 6 us/byte, but it means changing the BIOS.
+- **Multi-sector transfers** would amortise the command round trip over more
+  data.  The READY payload already carries a 16-bit length, so no protocol
+  change is needed -- but CP/M's BDOS issues single-sector I/O, so there is
+  nothing to amortise until something else drives the transport.
+
+At ~4.8 ms a sector is likely comparable to CP/M's own per-sector overhead, so
+further gains may not be visible to the operating system.
 
 ## Transaction Walkthrough
 

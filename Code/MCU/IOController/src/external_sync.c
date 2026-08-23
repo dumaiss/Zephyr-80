@@ -131,6 +131,14 @@ static void spi_init(void)
     SPI2CON0bits.EN = 1;
 }
 
+void sio_link_set_baud(uint8_t baud)
+{
+    SPI2CON0bits.EN = 0;
+    SPI2BAUD = baud;
+    SPI2CON0bits.EN = 1;
+    PIR5bits.SPI2RXIF = 0;
+}
+
 /* Empty both FIFOs.
  *
  * Nothing else resets the 2-byte receive FIFO, so a transfer left half-finished
@@ -423,6 +431,7 @@ bool external_sync_receive(IocFrame *frame)
     /* Receive needs no intra-byte GPIO at all: /SYNCB is asserted for the whole
      * window and MOSI just idles marking, which is what shifting out FFh does.
      * So the entire window goes through the SPI module. */
+    sio_link_set_baud(EXTSYNC_SPI_BAUD);
     sio_link_clear_fifos();
     sio_link_pins_to_spi();
     for (i = 0u; i < EXTSYNC_RX_WINDOW_BYTES; i++) {
@@ -461,7 +470,7 @@ void external_sync_send(const IocFrame *frame)
 {
     uint8_t i;
 
-    __delay_ms(EXTSYNC_REPLY_GUARD_MS);
+    __delay_us(EXTSYNC_REPLY_GUARD_US);
     bus_select_siob();
     LINK_DOUT_LAT = 1;
 
@@ -501,6 +510,7 @@ void external_sync_send(const IocFrame *frame)
      * clock_reply_byte(frame->bytes[0]) and start the loop below at i = 1. */
     clock_reply_byte(EXTSYNC_ALIGNMENT_BYTE);
 
+    sio_link_set_baud(EXTSYNC_SPI_BAUD);
     sio_link_clear_fifos();
     sio_link_pins_to_spi();
     for (i = 0u; i < IOC_FRAME_SIZE; i++) {

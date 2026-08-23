@@ -9,6 +9,7 @@
 #include "spi1_bus.h"
 #include "controller_latch.h"
 #include "bulk_channel.h"
+#include "sd_card.h"
 
 /* ---------------------------------------------------------------------------
  * Platform initialization
@@ -42,6 +43,11 @@ static void platform_init(void)
 
     IO_SD_CS_LAT  = IO_SD_CS_IDLE;
     IO_SD_CS_TRIS = 0;
+
+    /* SD activity indicator: parked off until a card access starts. */
+    SD_BUSY_ANSEL = 0;
+    SD_BUSY_LAT   = SD_BUSY_IDLE;
+    SD_BUSY_TRIS  = 0;
 
     SIOA_CS_LAT  = SIOA_CS_IDLE;
     SIOA_CS_TRIS = 0;
@@ -179,6 +185,10 @@ int main(void)
 {
     platform_init();
     boot_reset_pulse();
+
+#if SD_CMD0_LOOP
+    sd_card_cmd0_loop();   /* does not return */
+#endif
 
     for (;;) {
         if (command_request_started())

@@ -42,13 +42,24 @@ already claims `RESET()` and `NMI`.
 ## Port C — external peripheral bus
 
 The second SPI bus (SPI1), shared by the SD card, the USB HID bridge and the
-controller latch.  The controller latch and the SD card are both brought up;
+controller latch.
+
+**`SPI_CLK` is gated by the device selects.**  Confirmed on a scope: the clock
+only runs while a select is asserted, exactly as the port B SIO bus gates on its
+channel selects.  Any device on this bus therefore receives clocks *only* while
+its own select is low.
+
+That has a real consequence for the SD card, whose spec asks for 74+ power-up
+clocks with CS **high**: those clocks reach nothing here, so the driver sends
+them with CS asserted instead (safe, because DI is held high and the card sees
+no start bit).  Anything else added to this bus that expects clocks while
+deselected will need the same treatment.  The controller latch and the SD card are both brought up;
 the USB bridge select is held idle.
 
 | Pin | Port | Signal | Notes |
 |---|---|---|---|
-| 34 | RC0 | `SD_PRESENT` | SD card presence detect. |
-| 35 | RC1 | `SD_BUSY` | SD card busy. |
+| 34 | RC0 | `SD_PRESENT` | SD card presence detect, **active low** (low = card seated). **Not wired on the current board.** The driver infers presence from the card protocol instead (an empty socket leaves DO undriven, so every response byte reads FFh). Set `SD_HAS_PRESENT_PIN` to 1 in `include/sd_card.h` once it is connected. |
+| 35 | RC1 | `SD_BUSY` | **Output**, active high, drives an activity LED directly. Raised for the whole duration of a card access, including the lazy init the first read triggers (which can run for most of a second). Parked low at boot. Note a steady-state read is only ~1-2 ms, too brief to see; only the first-access init flash is visible to the eye. |
 | 40 | RC2 | - | No connect. |
 | 41 | RC3 | `SPI_CLK` | Peripheral bus clock. SPI1 SCK — reset-default input mapping, output routed via `RC3PPS = 0x31`. |
 | 46 | RC4 | `MISO` | Peripheral bus data in. SPI1 SDI — reset default, no PPS needed. |

@@ -19,6 +19,9 @@
 
 /* Baud divider values for SPI1CLK = 0 (Fosc): SCK = 64 MHz / (2 * (BAUD + 1)). */
 #define SPI1_BAUD_400KHZ   79u    /* 64 MHz / 160 = 400 kHz */
+#define SPI1_BAUD_125KHZ   255u   /* 64 MHz / 512 = 125 kHz -- slowest from Fosc,
+                                   * and still inside the SD spec's 100-400 kHz
+                                   * initialisation window */
 #define SPI1_BAUD_200KHZ   159u   /* 64 MHz / 320 = 200 kHz */
 #define SPI1_BAUD_1MHZ     31u    /* 64 MHz /  64 = 1.000 MHz */
 

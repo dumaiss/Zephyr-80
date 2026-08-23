@@ -50,10 +50,13 @@ static uint8_t sd_status_to_ioc(SdStatus st)
 {
     switch (st) {
     case SD_OK:              return IOC_STATUS_OK;
+    case SD_ERR_NO_CARD:     return IOC_STATUS_SD_NO_CARD;
     case SD_ERR_NO_RESPONSE: return IOC_STATUS_SD_NO_RESPONSE;
     case SD_ERR_UNUSABLE:    return IOC_STATUS_SD_UNUSABLE;
     case SD_ERR_NOT_READY:   return IOC_STATUS_SD_NOT_READY;
     case SD_ERR_READ:        return IOC_STATUS_SD_READ_FAIL;
+    case SD_ERR_NO_TOKEN:    return IOC_STATUS_SD_NO_TOKEN;
+    case SD_ERR_CRC:         return IOC_STATUS_SD_CRC;
     case SD_ERR_BUS:         return IOC_STATUS_SD_BUS;
     default:                 return IOC_STATUS_ERROR;
     }
@@ -78,7 +81,10 @@ void handler_sd_read(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_STATUS] = sd_status_to_ioc(st);
 
     if (st != SD_OK) {
-        /* Length stays zero so the host does not read stale payload bytes. */
+        /* Hand back what the card actually said instead of nothing.  All FFh
+         * means nothing drove DO at all; anything else means it is talking. */
+        reply->bytes[IOC_OFF_LEN] = (uint8_t)SD_TRACE_BYTES;
+        memcpy(&reply->bytes[IOC_OFF_PAYLOAD], sd_card_trace(), SD_TRACE_BYTES);
         return;
     }
 

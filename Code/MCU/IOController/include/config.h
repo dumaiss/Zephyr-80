@@ -177,9 +177,14 @@
 #define SD_PRESENT_ANSEL     ANSELCbits.ANSELC0
 #define SD_PRESENT_PORT      PORTCbits.RC0
 
+/* SD_BUSY is an OUTPUT driving an activity LED directly, active high.
+ * The PIC raises it while it is talking to the card, so SD access is visible
+ * without a debugger. */
 #define SD_BUSY_TRIS         TRISCbits.TRISC1
 #define SD_BUSY_ANSEL        ANSELCbits.ANSELC1
-#define SD_BUSY_PORT         PORTCbits.RC1
+#define SD_BUSY_LAT          LATCbits.LATC1
+#define SD_BUSY_ASSERTED     1
+#define SD_BUSY_IDLE         0
 
 /* ---------------------------------------------------------------------------
  * External Sync strobes (RA6 / RA7)

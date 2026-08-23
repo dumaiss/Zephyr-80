@@ -21,6 +21,14 @@
 void sio_link_pins_to_lat(void);
 void sio_link_pins_to_spi(void);
 
+/* Set the SPI2 clock for the lane about to transact.
+ *
+ * The two lanes run at different rates -- the command lane is paced by the
+ * BIOS receive loop, the bulk lane by the host's inlined one -- so each sets
+ * the baud it needs before its transfer.  Safe because the foreground loop
+ * never interleaves them.  Toggling EN also empties both FIFOs. */
+void sio_link_set_baud(uint8_t baud);
+
 /* Empty both FIFOs and clear the receive flag.  Every transaction should start
  * with this; a stale byte left by an aborted transfer shifts everything after
  * it by one position. */

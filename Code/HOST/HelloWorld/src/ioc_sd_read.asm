@@ -119,6 +119,30 @@ sd_err:
 	ld de,#msg_sd_key
 	ld c,#BDOS_PRINT
 	call BDOS
+	; The MCU returns the raw bytes it clocked in while waiting for CMD0's
+	; R1.  All FF = nothing drove DO; anything else = the card is talking.
+	ld de,#msg_trace
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld hl,#(rx_frame + 4)
+	ld b,#8
+trace_loop:
+	push bc
+	push hl
+	ld e,#0x20
+	ld c,#BDOS_CONOUT
+	call BDOS
+	pop hl
+	ld a,(hl)
+	push hl
+	call print_hex_byte
+	pop hl
+	inc hl
+	pop bc
+	djnz trace_loop
+	ld de,#msg_crlf
+	ld c,#BDOS_PRINT
+	call BDOS
 	ret
 
 bad_reply:
@@ -261,8 +285,11 @@ msg_sd_err:
 	.db '$'
 msg_sd_key:
 	.db 0x0d, 0x0a
-	.ascii "10=no response 11=unusable 12=not ready 13=read failed 14=bus"
+	.ascii "10=noresp 11=unusbl 12=notrdy 13=cmd17 14=bus 15=nocard 16=notoken 17=CRC"
 	.db 0x0d, 0x0a, '$'
+msg_trace:
+	.ascii "CMD0 trace:"
+	.db '$'
 msg_crlf:
 	.db 0x0d, 0x0a, '$'
 msg_rx_dump:

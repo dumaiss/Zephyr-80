@@ -76,6 +76,12 @@ formats, the state machine and the bulk-lane timing.
 `/IO_SD_CS` on RA2, and returns its first 16 bytes in the reply payload. The
 card initialises lazily on the first read. Failures come back as status codes
 10h-14h rather than a transport error, so the host can tell which stage gave up.
+Block reads verify the card's CRC-16 and retry on failure. Several timing and
+retry settings are deliberately conservative while the SD path is still
+marginal; see the **BELT AND SUSPENDERS** block at the top of
+[include/sd_card.h](include/sd_card.h) for what each one costs and the order in
+which to relax them.
+
 `ioc_sd_read.asm` in the HelloWorld project exercises it; `ioc_sdblk.asm`
 exercises the full-sector bulk path and `ioc_bulk.asm` tests the bulk lane on
 its own with a ramp.

@@ -112,6 +112,6 @@ void controller_latch_tick(void)
 
     /* (0,1) then (1,2) then (2,3)...  Both bytes wrap at 255 independently,
      * which is fine -- the point is only that the monitor shows them counting. */
-    controller_latch_write(counter, (uint8_t)(counter + 1u));
+    //controller_latch_write(counter, (uint8_t)(counter + 1u));
     counter++;
 }
