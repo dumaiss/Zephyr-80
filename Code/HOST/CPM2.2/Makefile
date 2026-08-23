@@ -10,17 +10,6 @@ DOCS_DIR ?= docs
 
 CPM22_SRC ?= cpm-2.2/src/cpm22.asm
 CPMTOOLS_DISKDEF ?= images/diskdef
-CONSOLE_DRIVER ?= pt_vdrip
-
-ifeq ($(CONSOLE_DRIVER),vdrip)
-CONSOLE_DRIVER_SRC := $(SRC_DIR)/cbios_console_vdrip.asm
-CONSOLE_DRIVER_INCLUDE := cbios_console_vdrip.asm
-else ifeq ($(CONSOLE_DRIVER),pt_vdrip)
-CONSOLE_DRIVER_SRC := $(SRC_DIR)/cbios_console_pt_vdrip.asm
-CONSOLE_DRIVER_INCLUDE := cbios_console_pt_vdrip.asm
-else
-$(error Unsupported CONSOLE_DRIVER=$(CONSOLE_DRIVER). Use vdrip or pt_vdrip)
-endif
 
 ASFLAGS ?= -o -l -s
 LDFLAGS ?= -i
@@ -37,7 +26,7 @@ RUNTIME_SRCS ?= \
 	$(SRC_DIR)/sio_core.asm \
 	$(SRC_DIR)/vdrip_transport.asm \
 	$(SRC_DIR)/cbios_iocall.asm \
-	$(CONSOLE_DRIVER_SRC) \
+	$(SRC_DIR)/cbios_console_vdrip.asm \
 	$(SRC_DIR)/cbios_storage.asm \
 	$(SRC_DIR)/cbios_storage_vdrip.asm \
 	$(SRC_DIR)/cbios_bank_select.asm \
@@ -51,9 +40,7 @@ FIRMWARE_REL ?= $(BUILD_DIR)/firmware.rel
 FIRMWARE_IHX ?= $(BUILD_DIR)/firmware.ihx
 FIRMWARE_LST ?= $(BUILD_DIR)/firmware.lst
 FIRMWARE_SYM ?= $(BUILD_DIR)/firmware.sym
-CONSOLE_DRIVER_STAMP ?= $(BUILD_DIR)/console-driver-$(CONSOLE_DRIVER).stamp
 
-PRE_SWAP_IMAGE ?= $(BUILD_DIR)/zephyr80.pre-swap.bin
 FINAL_IMAGE ?= $(BUILD_DIR)/zephyr80.bin
 LAYOUT_MANIFEST ?= $(BUILD_DIR)/layout.manifest
 LAYOUT_REPORT ?= $(BUILD_DIR)/layout-report.md
@@ -61,7 +48,6 @@ SYMBOL_MAP_DOC ?= $(DOCS_DIR)/symbol-map.md
 MEMORY_MAP_DOC ?= $(DOCS_DIR)/memory-map.md
 
 IMAGE_TOOL := $(TOOLS_DIR)/build_zephyr_image.py
-SWAPBITS_TOOL := $(TOOLS_DIR)/swapbits.py
 CPM22_CONVERT_TOOL := $(TOOLS_DIR)/convert_cpm22_asxxxx.py
 MEMORY_DOC_TOOL := $(TOOLS_DIR)/generate_memory_docs.py
 
@@ -77,7 +63,6 @@ docs: $(FINAL_IMAGE) $(FIRMWARE_LST) $(SYMBOLS_FILE) $(LAYOUT_MANIFEST) $(MEMORY
 		--map "$(SYMBOLS_FILE)" \
 		--manifest "$(LAYOUT_MANIFEST)" \
 		--firmware-bin "$(FIRMWARE_BIN)" \
-		--pre-swap-image "$(PRE_SWAP_IMAGE)" \
 		--final-image "$(FINAL_IMAGE)" \
 		--symbol-map "$(SYMBOL_MAP_DOC)" \
 		--memory-map "$(MEMORY_MAP_DOC)"
@@ -92,7 +77,6 @@ check-inputs: $(BUILD_DIR) $(FIRMWARE_BIN) $(SYMBOLS_FILE)
 	@test -f "$(CPMTOOLS_DISKDEF)" || { echo "Missing cpmtools disk definition: $(CPMTOOLS_DISKDEF)"; exit 1; }
 	@test -f "$(SRC_DIR)/cbios_defs.inc" || { echo "Missing CBIOS definitions: $(SRC_DIR)/cbios_defs.inc"; exit 1; }
 	@test -f "$(IMAGE_TOOL)" || { echo "Missing image tool: $(IMAGE_TOOL)"; exit 1; }
-	@test -f "$(SWAPBITS_TOOL)" || { echo "Missing bit-swap tool: $(SWAPBITS_TOOL)"; exit 1; }
 	@test -f "$(CPM22_CONVERT_TOOL)" || { echo "Missing CP/M conversion tool: $(CPM22_CONVERT_TOOL)"; exit 1; }
 	@test -f "$(MEMORY_DOC_TOOL)" || { echo "Missing memory documentation tool: $(MEMORY_DOC_TOOL)"; exit 1; }
 
@@ -104,13 +88,9 @@ runtime-sources-check:
 $(CPM22_ASXXXX_SRC): $(CPM22_SRC) $(CPM22_CONVERT_TOOL) | $(BUILD_DIR)
 	$(PYTHON) $(CPM22_CONVERT_TOOL) "$<" "$@"
 
-$(CONSOLE_DRIVER_STAMP): | $(BUILD_DIR)
-	printf '%s\n' "$(CONSOLE_DRIVER)" > "$@"
-
-$(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm $(CPM22_ASXXXX_SRC) $(CONSOLE_DRIVER_STAMP) Makefile | $(BUILD_DIR)
+$(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm $(CPM22_ASXXXX_SRC) Makefile | $(BUILD_DIR)
 	sed \
 		-e 's|\.include "../cpm-2.2/src/cpm22.asm"|.include "cpm22_asxxxx.asm"|' \
-		-e 's|\.include "cbios_console_vdrip.asm"|.include "$(CONSOLE_DRIVER_INCLUDE)"|' \
 		"$<" > "$@"
 
 $(FIRMWARE_REL): $(FIRMWARE_SRC) $(RUNTIME_SRCS) $(CPM22_ASXXXX_SRC) $(CPM22_SRC) | $(BUILD_DIR)
@@ -126,17 +106,14 @@ $(FIRMWARE_BIN): $(FIRMWARE_IHX)
 $(SYMBOLS_FILE): $(FIRMWARE_REL)
 	cp "$(FIRMWARE_SYM)" "$@"
 
-$(PRE_SWAP_IMAGE): check-inputs $(IMAGE_TOOL) $(SRC_DIR)/cbios_defs.inc
+$(FINAL_IMAGE): check-inputs $(IMAGE_TOOL) $(SRC_DIR)/cbios_defs.inc
 	$(PYTHON) $(IMAGE_TOOL) \
 		--firmware "$(FIRMWARE_BIN)" \
 		--defs "$(SRC_DIR)/cbios_defs.inc" \
-		--output "$(PRE_SWAP_IMAGE)" \
+		--output "$(FINAL_IMAGE)" \
 		--manifest "$(LAYOUT_MANIFEST)" \
 		--report "$(LAYOUT_REPORT)" \
 		--symbols "$(SYMBOLS_FILE)"
-
-$(FINAL_IMAGE): $(PRE_SWAP_IMAGE)
-	$(PYTHON) $(SWAPBITS_TOOL) "$(PRE_SWAP_IMAGE)" "$(FINAL_IMAGE)"
 
 clean:
 	rm -rf "$(BUILD_DIR)"

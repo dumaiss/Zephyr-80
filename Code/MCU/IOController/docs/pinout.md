@@ -44,17 +44,25 @@ already claims `RESET()` and `NMI`.
 The second SPI bus (SPI1), shared by the SD card, the USB HID bridge and the
 controller latch.
 
-**`SPI_CLK` is gated by the device selects.**  Confirmed on a scope: the clock
-only runs while a select is asserted, exactly as the port B SIO bus gates on its
-channel selects.  Any device on this bus therefore receives clocks *only* while
-its own select is low.
+**`SPI_CLK` is NOT gated by the device selects.**  Unlike the port B SIO bus,
+there is no hardware here that blocks the clock; every device on this bus sees
+every clock the PIC emits, whatever the selects are doing.  Devices are
+distinguished by their select alone, so anything on this bus must ignore clocks
+that are not addressed to it.
 
-That has a real consequence for the SD card, whose spec asks for 74+ power-up
-clocks with CS **high**: those clocks reach nothing here, so the driver sends
-them with CS asserted instead (safe, because DI is held high and the card sees
-no start bit).  Anything else added to this bus that expects clocks while
-deselected will need the same treatment.  The controller latch and the SD card are both brought up;
-the USB bridge select is held idle.
+That matters for the SD card, whose spec asks for 74+ power-up clocks with CS
+**high**.  Those clocks do reach the card, so the driver sends them properly:
+deselected, with DI held high.  This is what puts the card into SPI mode, and
+it must not be moved inside the select.
+
+An earlier revision of this document claimed the clock *was* gated, "confirmed
+on a scope".  The scope only showed clock and select coinciding, because the
+firmware clocked exclusively while a select was asserted; that correlation was
+written up as a hardware fact and then used to justify removing the CS-high
+power-up burst.  See `include/sd_card.h` for the consequences.
+
+The controller latch and the SD card are both brought up; the USB bridge select
+is held idle.
 
 | Pin | Port | Signal | Notes |
 |---|---|---|---|

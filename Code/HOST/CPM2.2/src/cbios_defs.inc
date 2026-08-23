@@ -185,6 +185,19 @@ SIO_WR5_CMD_TX_RTS_ON           = 0x6a
 SIO_WR5_CMD_IDLE                = 0x00
 SIO_EXTSYNC_FILL                = 0x7e
 
+; Bulk channel (SIO1/A) register values.  Deliberately different from the
+; command channel: AUTO ENABLES (WR3 bit 5) is set, so /DCDA gates the receiver
+; and /CTSA gates the transmitter in hardware.  The MCU holds /DCDA deasserted
+; outside a transfer, which is what makes it safe to arm this lane and leave it
+; armed — stray clocks cannot produce stray bytes.
+SIO_WR3_BULK_RX                 = 0xf1   ; 8-bit RX, Auto Enables, hunt, RX enable
+SIO_WR5_BULK_RTS_ON             = 0xea   ; DTR on, 8-bit TX, TX enable, RTS on
+SIO_WR5_BULK_RTS_OFF            = 0xe8   ; same, RTS off
+
+; Longest transfer IOCBULK will accept.  One CP/M sector's worth of SD data;
+; a request beyond this is a caller bug, not something to truncate silently.
+IOC_BULK_MAX_LEN                = 512
+
 ; External Sync framing: software byte-alignment preamble.  Sent as the first
 ; byte of every frame; the receiver hunts for it to find the frame boundary.
 ; (Mostly-zero PING/RESET payloads cannot contain this pattern.)

@@ -38,12 +38,11 @@
  *                                                                   and then fails is signal
  *                                                                   integrity, not protocol
  *   SD_INIT_CLOCK_BYTES    12 (96)    ~1 ms           10 (80)       spec minimum is 74
- *   init clocks with CS    CS low     --              (keep)        REQUIRED, not optional:
- *   asserted                                                        the port C clock is gated
- *                                                                   by the select, so clocks
- *                                                                   sent with CS high reach
- *                                                                   nothing.  Confirmed on a
- *                                                                   scope
+ *   init clocks with CS    CS high    --              (keep)        REQUIRED, not optional:
+ *   high                                                            this is what puts the card
+ *                                                                   into SPI mode at all.  Do
+ *                                                                   not move these clocks
+ *                                                                   inside the select
  *   SD_POWER_SETTLE_MS     10 ms      10 ms first     1 ms          spec minimum is 1 ms after
  *                                     access                        Vdd is stable
  *   SD_IDLE_RETRIES        20         --              10            CMD0 retries; only paid on
@@ -57,12 +56,17 @@
  *                                                                   without it a corrupted
  *                                                                   sector reads as SD_OK
  *
- * RESOLVED, and worth knowing for every port C device: SPI_CLK is GATED BY THE
- * DEVICE SELECT.  Scope confirms the clock only runs while a select is
- * asserted -- the port C bus behaves exactly like the SIO bus in this respect.
- * The spec-correct power-up burst (CS high) therefore delivers nothing, and the
- * clocks must be sent with CS asserted.  A redundant CS-high burst was removed
- * once this was measured.
+ * CORRECTED, and worth knowing for every port C device: SPI_CLK is NOT gated by
+ * the device selects.  There is no hardware between the PIC and the port C
+ * devices that blocks the clock; it runs wherever the firmware clocks it.
+ *
+ * This entry previously claimed the opposite, "confirmed on a scope".  What the
+ * scope actually showed was clock and select coinciding -- which they did
+ * because the firmware only ever clocked while a select was asserted.  That
+ * correlation was recorded as a hardware fact, and the spec-required CS-high
+ * power-up burst was deleted as useless on the strength of it.  It is not
+ * useless; it is the step that puts the card into SPI mode, and losing it is
+ * the likeliest cause of the intermittent all-FFh CMD0 traces that followed.
  *
  * Order to relax, cheapest risk first:
  *   1. SD_POWER_SETTLE_MS -> 1 ms, SD_IDLE_RETRIES -> 10

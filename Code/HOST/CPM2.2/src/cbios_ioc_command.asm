@@ -29,6 +29,7 @@
 	.globl sio_command_rts_assert,sio_command_rts_release
 	.globl sio_command_put_byte,sio_command_get_byte
 	.globl ioc_command_send_frame,ioc_command_recv_frame
+	.globl IOCBULK
 	.globl IOC_CMD_CODE_START,IOC_CMD_CODE_END
 
 	.area CODE (ABS)
@@ -261,6 +262,151 @@ IOC_CMD_RECV_SYNC_TIMEOUT:
 
 IOC_CMD_RECV_BODY_TIMEOUT:
 	ld a,#IOC_XPORT_TIMEOUT_REPLY_BODY
+	ret
+
+; ---------------------------------------------------------------------------
+; IOCBULK
+; Receive a bulk payload on SIO1/A (Bulk channel).
+;
+; The command lane stays authoritative: the caller issues a command through
+; IOCALL, the MCU replies READY with a transfer id and length, and only then
+; does the caller invoke IOCBULK to move the bytes.  This routine is the dumb
+; byte pipe half of that — it knows nothing about transfer ids or what the
+; payload means, and the caller must still collect DONE on the command lane to
+; learn whether the transfer was good.
+;
+; The handshake is owned ENTIRELY here.  The caller must not touch SIO1/A
+; registers before or after: this routine arms the receiver, asserts RTS,
+; drains the stream, releases RTS and confirms the MCU dropped /CTSA.  The MCU
+; waits for RTS before clocking a single edge, so arming inside this call is
+; race-free and needs no guard delay on either side.
+;
+; No IOCALL may be issued while this is running — both lanes share the MCU's
+; single SPI2 engine.
+;
+; In:  HL = destination buffer
+;      DE = byte count, 1..IOC_BULK_MAX_LEN
+; Out: A = IOC_XPORT_OK        all bytes received, /CTSA seen deasserted
+;        = IOC_XPORT_BAD_FRAME length was zero or above IOC_BULK_MAX_LEN
+;        = IOC_XPORT_TIMEOUT   stream stalled; RTS released
+;        = IOC_XPORT_HW_ERROR  bytes arrived but /CTSA never deasserted
+; Clobbers: AF, BC, DE, HL
+; ISR-safe: No.  Blocking poll.
+;
+; Receive loop cost is 56 T-states per byte (5.6 us at 10 MHz), against 151 T
+; for the command lane's sio_command_get_byte.  The difference is all structural:
+; INI performs the port read, the store, HL++ and B-- in one 16 T instruction,
+; and there is no per-byte call/ret or timeout reload.  The MCU paces the bulk
+; lane at 6 us/byte on the strength of this number — do not reintroduce
+; per-byte call overhead here without repacing the MCU side.
+;
+; INI forces the register budget: B is the counter, C the port, HL the
+; destination.  That leaves DE for the stall budget, which is therefore a
+; whole-transfer budget rather than a per-byte one — cheaper, and better
+; behaved.  B counts one 256-byte block at a time (B = 0 means 256), so a
+; transfer is an optional remainder followed by whole blocks; the count of
+; remaining blocks lives on the stack because no register is free to hold it.
+; ---------------------------------------------------------------------------
+IOCBULK:
+	ld a,d
+	cp #(IOC_BULK_MAX_LEN >> 8)
+	jr c,IOCBULK_LEN_OK		; high byte < 2: at most 511
+	jr nz,IOCBULK_BAD_LEN		; high byte > 2: over the limit
+	ld a,e
+	or a
+	jr nz,IOCBULK_BAD_LEN		; 512 + remainder: over the limit
+	jr IOCBULK_ARM			; exactly IOC_BULK_MAX_LEN
+IOCBULK_LEN_OK:
+	ld a,d
+	or e
+	jr z,IOCBULK_BAD_LEN		; zero length is a caller bug
+
+	; Arm the receiver: clear any stale error latch, then RX enable in hunt
+	; with Auto Enables.  /DCDA is still deasserted by the MCU at this point,
+	; so the receiver stays gated off and nothing can be latched early.
+IOCBULK_ARM:
+	ld a,#SIO_WR0_RESET_ERROR
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#0x03
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#SIO_WR3_BULK_RX
+	out (SIO_BULK_CTRL_PORT),a
+
+	; Tell the MCU we are in the read loop.  It is blocked waiting on this.
+	ld a,#0x05
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#SIO_WR5_BULK_RTS_ON
+	out (SIO_BULK_CTRL_PORT),a
+
+	ld a,d				; whole 256-byte blocks
+	ld b,e				; remainder byte count
+	push af				; no register left to hold the block count
+	ld c,#SIO_BULK_DATA_PORT
+	ld de,#0			; whole-transfer stall budget
+	ld a,b
+	or a
+	jr nz,IOCBULK_POLL		; take the remainder first
+
+IOCBULK_CHUNK:
+	pop af
+	or a
+	jr z,IOCBULK_DRAINED		; popped and not re-pushed: stack balanced
+	dec a
+	push af
+	ld b,#0				; B = 0 means 256 bytes to INI
+
+IOCBULK_POLL:
+	in a,(SIO_BULK_CTRL_PORT)	; 11
+	and #SIO_RX_READY		;  7
+	jr nz,IOCBULK_GOT		; 12
+	dec de				;  6
+	ld a,d				;  4
+	or e				;  4
+	jr nz,IOCBULK_POLL		; 12
+	pop af				; drop the block count before leaving
+	jr IOCBULK_TIMEOUT
+IOCBULK_GOT:
+	ini				; 16  (HL) <- in(C), HL++, B--
+	jp nz,IOCBULK_POLL		; 10
+	jr IOCBULK_CHUNK
+
+	; All bytes in.  Release RTS, then confirm the MCU ended the bulk phase.
+	; /CTSA is asserted for the duration of the transfer, so it should already
+	; be gone; checking it costs nothing and catches an MCU that died mid
+	; transfer having sent the right number of bytes.  The authoritative status
+	; still comes from DONE on the command lane.
+IOCBULK_DRAINED:
+	call IOCBULK_RTS_OFF
+	ld de,#0
+IOCBULK_CTS_WAIT:
+	in a,(SIO_BULK_CTRL_PORT)
+	and #SIO_RR0_CTS
+	jr z,IOCBULK_OK
+	dec de
+	ld a,d
+	or e
+	jr nz,IOCBULK_CTS_WAIT
+	ld a,#IOC_XPORT_HW_ERROR
+	ret
+IOCBULK_OK:
+	xor a
+	ret
+
+IOCBULK_TIMEOUT:
+	call IOCBULK_RTS_OFF
+	ld a,#IOC_XPORT_TIMEOUT
+	ret
+
+	; Rejected before RTS was asserted, so there is no handshake to unwind.
+IOCBULK_BAD_LEN:
+	ld a,#IOC_XPORT_BAD_FRAME
+	ret
+
+IOCBULK_RTS_OFF:
+	ld a,#0x05
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#SIO_WR5_BULK_RTS_OFF
+	out (SIO_BULK_CTRL_PORT),a
 	ret
 
 IOC_CMD_CODE_END:

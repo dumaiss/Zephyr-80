@@ -9,17 +9,15 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 44206 bytes |
-| Pre-swap image | `build/zephyr80.pre-swap.bin` | 131072 bytes |
-| Final burnable image | `build/zephyr80.bin` | 131072 bytes |
-| Layout manifest | `build/layout.manifest` | 273 bytes |
+| Firmware symbol map | `build/firmware.map` | 44662 bytes |
+| Burnable image | `build/zephyr80.bin` | 131072 bytes |
+| Layout manifest | `build/layout.manifest` | 232 bytes |
 
 ## Reset And CP/M Common Symbols
 
 | Symbol | Address | Notes |
 |---|---:|---|
 | `reset_vector` | `0000h` | ROM reset entry. |
-| `bdos_entry_shim` | `DA45h` | High BIOS BDOS compatibility shim; jumps to stock BDOS. |
 | `CBASE` | `C400h` | CP/M CCP base for the configured memory size. |
 | `FBASE` | `CC06h` | CP/M BDOS entry in this assembled image. |
 | `CCP_ENTRY` | `C400h` | CCP command processor entry alias for `CBASE`. |
@@ -66,6 +64,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `ZBIOS_EXT_BASE + 09h` | `DA3Ch` | `SETBNK` |
 | `ZBIOS_EXT_BASE + 0Ch` | `DA3Fh` | `IOCALL` |
 | `ZBIOS_EXT_BASE + 0Fh` | `DA42h` | `VIDEO_SEND` |
+| `ZBIOS_EXT_BASE + 12h` | `DA45h` | `IOCBULK` |
 
 ## BIOS Implementation Symbols
 
@@ -157,6 +156,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `MOVE` | `DC22h` | Same-bank or cross-bank memory move. |
 | `BANKING_CODE_END` | `DCAEh` | Banking extension implementation end. |
 | `VIDEO_SEND` | `DF50h` | Extended BIOS call: raw VDrip display/VDP packet send. |
+| `IOCBULK` | `F5D0h` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
 | `BIOS_EXT_CODE_START` | `DF50h` | BIOS extension code start. |
 | `BIOS_EXT_CODE_END` | `DF78h` | BIOS extension code end. |
 | `BIOS_CODE_END` | `DF78h` | End of core BIOS code. |

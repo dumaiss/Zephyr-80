@@ -182,8 +182,7 @@ Primary generated artifacts:
 | Artifact | Meaning |
 |---|---|
 | `build/firmware.bin` | 64 KiB firmware image before payload attachment |
-| `build/zephyr80.pre-swap.bin` | logical ROM image after firmware and payload assembly |
-| `build/zephyr80.bin` | final burnable bit-swapped image |
+| `build/zephyr80.bin` | burnable ROM image after firmware and payload assembly |
 | `docs/memory-map.md` | generated memory map and validation report |
 | `docs/symbol-map.md` | generated stable project-facing symbol map |
 
@@ -195,7 +194,6 @@ python3 tools/generate_memory_docs.py \
   --map build/firmware.map \
   --manifest build/layout.manifest \
   --firmware-bin build/firmware.bin \
-  --pre-swap-image build/zephyr80.pre-swap.bin \
   --final-image build/zephyr80.bin \
   --symbol-map docs/symbol-map.md \
   --memory-map docs/memory-map.md
@@ -206,7 +204,7 @@ python3 tools/generate_memory_docs.py \
 ```text
 src/        Zephyr-80 CBIOS and platform-specific runtime source
 cpm-2.2/    CP/M 2.2 source and reference material
-tools/      image-building, conversion, bit-swap, and documentation tools
+tools/      image-building, conversion, and documentation tools
 images/     payload and disk-format inputs
 docs/       generated and hand-written project documentation
 build/      generated build outputs

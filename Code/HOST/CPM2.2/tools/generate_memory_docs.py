@@ -46,6 +46,7 @@ EXTENDED_TABLE = [
     ("09h", "SETBNK"),
     ("0Ch", "IOCALL"),
     ("0Fh", "VIDEO_SEND"),
+    ("12h", "IOCBULK"),
 ]
 
 IMPLEMENTATION_SYMBOLS = [
@@ -135,6 +136,7 @@ IMPLEMENTATION_SYMBOLS = [
     (("MOVE",), "Same-bank or cross-bank memory move."),
     (("BANKING_CODE_END",), "Banking extension implementation end."),
     (("VIDEO_SEND",), "Extended BIOS call: raw VDrip display/VDP packet send."),
+    (("IOCBULK",), "Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake."),
     (("BIOS_EXT_CODE_START",), "BIOS extension code start."),
     (("BIOS_EXT_CODE_END",), "BIOS extension code end."),
     (("BIOS_CODE_END",), "End of core BIOS code."),
@@ -230,7 +232,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--map", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--firmware-bin", required=True, type=Path)
-    parser.add_argument("--pre-swap-image", required=True, type=Path)
     parser.add_argument("--final-image", required=True, type=Path)
     parser.add_argument("--symbol-map", required=True, type=Path)
     parser.add_argument("--memory-map", required=True, type=Path)
@@ -682,8 +683,7 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
         "|---|---|---:|",
         f"| Firmware binary | `{args.firmware_bin}` | {artifact_size(args.firmware_bin)} bytes |",
         f"| Firmware symbol map | `{args.map}` | {artifact_size(args.map)} bytes |",
-        f"| Pre-swap image | `{args.pre_swap_image}` | {artifact_size(args.pre_swap_image)} bytes |",
-        f"| Final burnable image | `{args.final_image}` | {artifact_size(args.final_image)} bytes |",
+        f"| Burnable image | `{args.final_image}` | {artifact_size(args.final_image)} bytes |",
         f"| Layout manifest | `{args.manifest}` | {artifact_size(args.manifest)} bytes |",
         "",
         "## Reset And CP/M Common Symbols",
@@ -691,7 +691,6 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
         "| Symbol | Address | Notes |",
         "|---|---:|---|",
         symbol_row(symbols, ("reset_vector",), "ROM reset entry."),
-        symbol_row(symbols, ("bdos_entry_shim",), "High BIOS BDOS compatibility shim; jumps to stock BDOS."),
         symbol_row(symbols, ("CBASE",), "CP/M CCP base for the configured memory size."),
         symbol_row(symbols, ("FBASE",), "CP/M BDOS entry in this assembled image."),
         symbol_row(symbols, ("CCP_ENTRY",), "CCP command processor entry alias for `CBASE`."),
@@ -858,8 +857,7 @@ def write_memory_map(
         f"| `{span(require_symbol(symbols, 'reset_vector'), require_symbol(symbols, 'reset_vector') + 2)}` | Reset vector: `JP cpm_rom_entry_high`. |",
         f"| `{span(require_symbol(symbols, 'CBASE'), require_symbol(symbols, 'CCPSTACK'))}` | CP/M CCP area through `CCPSTACK`. |",
         f"| `{span(require_symbol(symbols, 'FBASE'), cbios_base - 1)}` | CP/M BDOS, BDOS work variables, and CP/M tables. |",
-        f"| `{span(require_symbol(symbols, 'CBIOS_JUMP_TABLE'), require_symbol(symbols, 'bdos_entry_shim') - 1)}` | Standard BIOS jump table plus `ZBIOS_EXT_BASE`. |",
-        f"| `{span(require_symbol(symbols, 'bdos_entry_shim'), require_symbol(symbols, 'bdos_entry_shim') + 2)}` | `bdos_entry_shim`: compatibility jump to `FBASE`. |",
+        f"| `{span(require_symbol(symbols, 'CBIOS_JUMP_TABLE'), require_symbol(symbols, 'ZBIOS_EXT_BASE') + 0x14)}` | Standard BIOS jump table plus `ZBIOS_EXT_BASE`. |",
         f"| `{span(require_symbol(symbols, 'cpm_rom_entry_high'), require_symbol(symbols, 'BANK_HELPERS_START') - 1)}` | ROM-to-RAM shadow-copy boot code. |",
         f"| `{span(require_symbol(symbols, 'BANK_HELPERS_START'), require_symbol(symbols, 'BANK_HELPERS_END') - 1)}` | Low-level bank selection helpers. |",
         f"| `{span(require_symbol(symbols, 'boot'), require_symbol(symbols, 'CONSOLE_CODE_START') - 1)}` | Cold boot, warm boot, CCP restore, page-zero, DMA, CTC helpers, and alignment gap. |",
@@ -995,8 +993,7 @@ def write_memory_map(
             "| Artifact | Size | Notes |",
             "|---|---:|---|",
             f"| `{args.firmware_bin}` | {artifact_size(args.firmware_bin)} bytes | Firmware image before payload attachment. |",
-            f"| `{args.pre_swap_image}` | {artifact_size(args.pre_swap_image)} bytes | Logical image after payload attachment and before CPU-board bit swap. |",
-            f"| `{args.final_image}` | {artifact_size(args.final_image)} bytes | Final burnable image after `tools/swapbits.py`. |",
+            f"| `{args.final_image}` | {artifact_size(args.final_image)} bytes | Burnable image after payload attachment. |",
             "",
             "## Validation Report",
             "",
@@ -1026,8 +1023,8 @@ def write_memory_map(
             f"- `IOCALL` code is at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` in core BIOS and uses the SIO1/B Command-channel External Sync transport.",
             f"- `VIDEO_SEND` code is at `{h4(require_symbol(symbols, 'BIOS_EXT_CODE_START'))}` in core BIOS; raw VDP/display writes may desynchronize the V9958 logical-cell state.",
             f"- `WBOOT` resident code starts at `{h4(require_symbol(symbols, 'WBOOT_RESIDENT_START'))}`, inside protected high BIOS memory.",
-            f"- `ZBIOS_EXT_BASE` is at `{h4(ext_base)}` and exposes `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `IOCALL`, and `VIDEO_SEND`.",
-            f"- The final bit-swapped image is `{args.final_image}`.",
+            f"- `ZBIOS_EXT_BASE` is at `{h4(ext_base)}` and exposes `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `IOCALL`, `VIDEO_SEND`, and `IOCBULK`.",
+            f"- The burnable image is `{args.final_image}`.",
             "",
         ]
     )

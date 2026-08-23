@@ -140,11 +140,9 @@ static void sd_select(void)
 
 /* Deselect, then give the card its trailing clock.
  *
- * The SD spec wants one clock after CS rises so the card releases DO.  That
- * clock is gated away on this board (see the power-up step in sd_card_init),
- * so the byte reaches nothing -- but the card tri-states DO on deselect
- * regardless, and the write costs 8 us and stays correct if the gating is ever
- * removed. */
+ * The SD spec wants one clock after CS rises so the card releases DO.  The
+ * clock reaches the card with CS high -- there is no gating on this bus -- so
+ * this byte does its job. */
 static void sd_deselect(void)
 {
     IO_SD_CS_LAT = IO_SD_CS_IDLE;
@@ -240,36 +238,32 @@ SdStatus sd_card_init(void)
      * SD SPI wiring anyway. */
     WPUCbits.WPUC4 = 1;
 
-    /* Step 1: power-up clocks.
+    /* Step 1: power-up clocks, CS and DI held HIGH, as the spec requires.
      *
-     * The spec asks for at least 74 clocks with CS and DI held HIGH.  On this
-     * board that is impossible: SPI_CLK to the port C devices is GATED BY THE
-     * DEVICE SELECT, confirmed on a scope -- the clock only runs while a select
-     * is asserted, exactly as the SIO bus gates on its channel selects.  Clocks
-     * sent with CS high reach nothing.
+     * This is how a card is put into SPI mode: it samples CS on the first clock
+     * edges it sees, and CS must be HIGH then.  Clocked with CS low instead, a
+     * card is entitled to stay in SD mode and ignore CMD0 forever -- which
+     * presents as an all-FFh CMD0 trace and SD_ERR_NO_RESPONSE.
      *
-     * So the power-up clocks are sent with CS LOW.  That is a deliberate
-     * deviation from the spec's letter, forced by the hardware, and it is safe:
-     * DI is held high throughout, so the card sees no start bit (SD commands
-     * begin 0b01) and simply ignores the traffic while its internal
-     * initialisation clocks tick.
-     *
-     * An earlier version also sent a burst with CS high, on the theory that the
-     * gating might not exist.  It was pure waste -- ~0.8 ms of clocks delivered
-     * to a gate that was closed -- and has been removed now the gating is
-     * measured rather than guessed.
+     * There is NO hardware gate on SPI_CLK to the port C devices.  An earlier
+     * version of this comment asserted there was one, "confirmed on a scope",
+     * and moved the burst to CS low on that basis.  The scope showed only that
+     * clock and CS coincided -- which they did because this firmware clocked
+     * exclusively while a select was asserted.  Correlation was recorded as a
+     * hardware fact and then used to justify dropping the one step the spec is
+     * least willing to bend on.  The clock reaches the card whatever CS is
+     * doing, so the compliant sequence is available and is what runs here.
      *
      * The delay first lets the rail settle; cards want at least 1 ms after Vdd
      * is stable before they are clocked. */
     spi1_bus_configure(SD_INIT_BAUD, SPI1_MSB_FIRST);
     __delay_ms(SD_POWER_SETTLE_MS);
 
-    IO_SD_CS_LAT = IO_SD_CS_ASSERTED;
+    sd_deselect();
     for (i = 0u; i < SD_INIT_CLOCK_BYTES; i++) {
         if (!spi1_bus_write(0xFFu))
             return SD_ERR_BUS;
     }
-    sd_deselect();
 
     /* Step 2: CMD0.  Retried because a card that was mid-transaction before a
      * warm reset can swallow the first attempt.
@@ -469,12 +463,12 @@ void sd_card_cmd0_loop(void)
     WPUCbits.WPUC4 = 1;
 
     for (;;) {
-        /* Clocks with CS asserted, matching sd_card_init(): the port C clock is
-         * gated by the select, so a CS-high burst would reach nothing. */
-        sd_select();
+        /* Clocks with CS HIGH, matching sd_card_init(). */
+        sd_deselect();
         for (i = 0u; i < SD_INIT_CLOCK_BYTES; i++)
             (void)spi1_bus_write(0xFFu);
 
+        sd_select();
         (void)sd_command(SD_CMD0_GO_IDLE, 0uL, SD_CRC_CMD0);
         sd_deselect();
 

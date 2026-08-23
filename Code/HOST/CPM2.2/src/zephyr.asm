@@ -10,7 +10,7 @@
 
 	.globl cpm_rom_entry_high
 	.globl boot,wboot
-	.globl bdos_entry_shim
+	.globl IOCBULK
 	.globl const,conin,conout,list,punch,reader,listst
 	.globl home,seldsk,settrk,setsec,setdma,read,write,sectran
 	.globl MOVE,XMOVE,SELMEM,SETBNK,IOCALL,VIDEO_SEND
@@ -91,8 +91,7 @@ ZBIOS_EXT_BASE:
 	jp SETBNK
 	jp IOCALL
 	jp VIDEO_SEND
-bdos_entry_shim:
-	jp FBASE
+	jp IOCBULK
 
 	.include "boot_shadow_copy.asm"
 	.include "cbios_bank_select.asm"

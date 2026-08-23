@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Zephyr-80 paged CP/M image before CPU-board bit swapping."""
+"""Build the Zephyr-80 paged CP/M image."""
 
 from __future__ import annotations
 
@@ -355,7 +355,7 @@ def write_manifest(
 ) -> None:
     lines = [
         f"image.name={output.name}",
-        "image.status=pre_swap_valid",
+        "image.status=valid",
         f"firmware.path={firmware}",
         f"common.base={COMMON_BASE:04X}h",
     ]
@@ -390,7 +390,7 @@ def write_manifest(
         lines.append("storage.backend=vdrip_proxy")
     for symbol, status in symbol_status.items():
         lines.append(f"symbol.{symbol}={status}")
-    lines.extend(["validation.payloads=pass", "bitswap.status=pending"])
+    lines.extend(["validation.payloads=pass"])
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -405,7 +405,7 @@ def write_report(
     lines = [
         "# Zephyr-80 Image Layout Report",
         "",
-        f"- Pre-swap image: `{output}`",
+        f"- Image: `{output}`",
         f"- Firmware input: `{firmware}`",
         f"- Common memory base: `{COMMON_BASE:04X}h`",
         "",
@@ -461,7 +461,6 @@ def write_report(
             "## Notes",
             "",
             "- Drive A is backed by VDrip proxy storage; banks 2-7 are not populated with a RAM disk seed image.",
-            "- Bit-swap status is pending until `tools/swapbits.py` produces `zephyr80.bin`.",
             "- `../CPM` is context only and is not a build dependency.",
             "",
         ]
