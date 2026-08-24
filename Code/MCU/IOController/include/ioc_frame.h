@@ -104,6 +104,10 @@
 /* Window was clocked but the alignment preamble never appeared: the host did
  * not transmit, or started outside the search range.  Host-side, not link. */
 #define IOC_STATUS_BULK_NO_SYNC   0x22
+/* Payload arrived and was de-shifted, but its CRC-16 did not match.  The bulk
+ * lane carries no other integrity check, so without this a corrupted block is
+ * committed to the card looking exactly like a good one. */
+#define IOC_STATUS_BULK_CRC       0x23
 
 typedef struct {
     uint8_t bytes[IOC_FRAME_SIZE];

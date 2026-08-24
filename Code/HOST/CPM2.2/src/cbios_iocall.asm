@@ -51,10 +51,34 @@ IOCTRL_CODE_START:
 ; ---------------------------------------------------------------------------
 ; IOCALL — fixed-frame Command-channel transport entry point
 ; ---------------------------------------------------------------------------
+; RTS here means "I have an unacknowledged request for you", NOT "a transaction
+; is in progress".  It is released as soon as the request frame is delivered,
+; which is well before the reply arrives.
+;
+; That distinction is the whole handshake.  The MCU cannot reliably catch a
+; falling edge -- it samples the line only in its main loop and is blind for the
+; length of a bulk transfer or a card write -- so nothing important may live in
+; an edge.  Under these semantics the MCU never leaves a service without having
+; positively observed this release, so any low level it finds while idle is
+; unambiguously a NEW request, whether or not it saw the transition.
+;
+; It also decouples the release from the reply.  If the MCU fails to decode a
+; request it sends nothing, and the host waits out its receive timeout -- but
+; RTS is already high by then, so the MCU cannot mistake that wait for another
+; request and clock junk windows into a host that is trying to listen.
 IOCALL:
 	call sio_command_init		; (re)init SIO1/B External Sync — Phase 1 workaround
 
 	push de				; save caller RX frame pointer across send
+
+	; Backpressure: the MCU advertises COMMAND_READY on /DCDB only while it is
+	; in command-idle.  Asserting RTS before that would hand it a request it
+	; cannot yet see -- and would make a dead controller indistinguishable
+	; from a busy one, since both would present as a byte timeout seconds
+	; later.  HL (the caller's TX frame pointer) is untouched by this.
+	call sio_command_wait_ready
+	or a
+	jr nz,IOCALL_FAIL_STACKED
 
 	call sio_command_rts_assert	; assert SIO1/B RTS → MCU starts clocking
 
@@ -64,17 +88,18 @@ IOCALL:
 	jr nz,IOCALL_FAIL_STACKED
 
 	pop de				; restore caller RX frame pointer
-	call ioc_command_recv_frame
-	or a
-	jr nz,IOCALL_FAIL_RTS
 
+	; Request delivered — acknowledge it.  ioc_command_send_frame has clocked
+	; trailing filler, so the last frame byte is off the shift register and
+	; disabling the transmitter here cannot truncate it.
 	call sio_command_rts_release
-	xor a
+
+	; A carries recv_frame's status straight out: OK, or the transport error.
+	call ioc_command_recv_frame
 	ret
 
 IOCALL_FAIL_STACKED:
 	pop de				; balance stack
-IOCALL_FAIL_RTS:
 	ld b,a
 	call sio_command_rts_release
 	ld a,b

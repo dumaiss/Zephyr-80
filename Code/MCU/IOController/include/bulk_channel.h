@@ -25,6 +25,14 @@
 #define BULK_DIR_MCU_TO_Z80  0x00u
 #define BULK_DIR_Z80_TO_MCU  0x01u
 
+/* Every bulk payload is followed by a CRC-16 trailer, in both directions.
+ *
+ * The command lane validates four header fields; the bulk lane had NOTHING --
+ * a corrupted block was indistinguishable from a good one at both ends, and
+ * silently written to the card.  Lengths quoted in READY and passed to the arm
+ * functions are PAYLOAD bytes; the wire carries length + BULK_CRC_BYTES. */
+#define BULK_CRC_BYTES       2u
+
 /* Longest transfer either direction will carry.  One SD block. */
 #define BULK_MAX_LENGTH      512u
 

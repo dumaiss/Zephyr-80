@@ -140,6 +140,7 @@ IOC_XPORT_OK                    = 0x00
 IOC_XPORT_TIMEOUT               = 0x01
 IOC_XPORT_BAD_FRAME             = 0x02
 IOC_XPORT_HW_ERROR              = 0x03
+IOC_XPORT_NOT_READY             = 0x04       ; MCU never advertised COMMAND_READY
 IOC_XPORT_TIMEOUT_REPLY_MARKER  = 0x11       ; bring-up diagnostic: no reply byte seen
 IOC_XPORT_TIMEOUT_REPLY_BODY    = 0x12       ; bring-up diagnostic: reply began, then stalled
 
@@ -177,6 +178,24 @@ IOC_RSP_PING                    = 0x81
 ; re-enables TX (0x68) at the start of the next transaction.
 SIO_WR4_CMD_EXTSYNC             = 0x30
 SIO_WR0_RESET_ERROR             = 0x30
+; WR0 command bits 5-3 = 010, Reset External/Status Interrupts.  Needed before
+; trusting RR0's modem-status bits: the SIO latches them on change, so a stale
+; latch would report a level the pin no longer carries.
+SIO_WR0_RESET_EXT_STATUS        = 0x10
+
+; RR0 bit 3 is /DCD.  A SET bit means the pin is LOW, i.e. asserted -- the same
+; convention this code uses for RR0 bit 5 / CTS.  On the command channel the MCU
+; drives /DCDB as COMMAND_READY.
+SIO_RR0_DCD                     = 0x08
+
+; How long IOCALL waits for COMMAND_READY before giving up.  Must comfortably
+; exceed the MCU's longest legitimate busy period -- SD initialisation is up to
+; about a second and a block write adds ~0.5 s -- while still failing far sooner
+; than the ~11 s byte timeout, so a dead controller is reported quickly instead
+; of looking like a slow one.  Inner DE x outer B at ~5.6 us per iteration:
+; 65536 x 8 x 5.6 us is roughly 2.9 s.
+SIO_COMMAND_READY_TIMEOUT       = 0xffff
+SIO_COMMAND_READY_OUTER         = 8
 SIO_WR3_CMD_RX_OFF              = 0xc0
 SIO_WR3_CMD_RX                  = 0xd1
 SIO_WR3_CMD_RX_NO_HUNT          = 0xc1
@@ -184,6 +203,13 @@ SIO_WR5_CMD_TX_RTS_OFF          = 0x68
 SIO_WR5_CMD_TX_RTS_ON           = 0x6a
 SIO_WR5_CMD_IDLE                = 0x00
 SIO_EXTSYNC_FILL                = 0x7e
+
+; Filler clocked after a request frame so the last frame byte is fully shifted
+; out before IOCALL drops RTS (which disables the transmitter).  FFh is the
+; marking idle level, and is deliberately NOT the 7Eh preamble so it can never
+; be mistaken for the start of another frame.
+IOC_SEND_TRAILER_BYTES          = 2
+IOC_SEND_TRAILER_FILL           = 0xff
 
 ; Bulk channel (SIO1/A) register values.  Deliberately different from the
 ; command channel: AUTO ENABLES (WR3 bit 5) is set, so /DCDA gates the receiver
@@ -194,9 +220,11 @@ SIO_WR3_BULK_RX                 = 0xf1   ; 8-bit RX, Auto Enables, hunt, RX enab
 SIO_WR5_BULK_RTS_ON             = 0xea   ; DTR on, 8-bit TX, TX enable, RTS on
 SIO_WR5_BULK_RTS_OFF            = 0xe8   ; same, RTS off
 
-; Longest transfer IOCBULK will accept.  One CP/M sector's worth of SD data;
-; a request beyond this is a caller bug, not something to truncate silently.
-IOC_BULK_MAX_LEN                = 512
+; Longest transfer IOCBULK will accept: one sector plus the bulk lane's CRC-16
+; trailer.  IOCBULK is a dumb byte pipe and does not know about the CRC -- the
+; caller asks for payload + trailer and checks it itself -- so this bound only
+; has to be large enough to let it through.
+IOC_BULK_MAX_LEN                = 514
 
 ; External Sync framing: software byte-alignment preamble.  Sent as the first
 ; byte of every frame; the receiver hunts for it to find the frame boundary.

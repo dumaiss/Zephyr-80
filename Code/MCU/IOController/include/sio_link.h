@@ -46,6 +46,16 @@ void sio_link_byte_gap(void);
 /* Put one bit on SIO_MOSI via LATB (bit-banged phase only). */
 void sio_link_write_data_bit(uint8_t bit);
 
+/* CRC-16-CCITT (poly 1021h, init 0000h, MSB first) over transport payloads.
+ *
+ * Same algorithm the SD data blocks use.  Deliberately a separate copy from the
+ * one in sd_card.c: that one belongs to the card protocol, this one to the
+ * transport, and making either depend on the other would couple two layers for
+ * 64 bytes of table.
+ *
+ * Init with 0 and feed every payload byte in wire order. */
+uint16_t sio_link_crc16_update(uint16_t crc, uint8_t data);
+
 /* Which channel's External Sync strobe to drive. */
 typedef enum {
     SIO_LINK_CH_COMMAND = 0,   /* SIO1/B -- /SYNCB */

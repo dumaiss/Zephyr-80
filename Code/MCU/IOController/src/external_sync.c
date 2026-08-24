@@ -193,6 +193,20 @@ void sio_link_byte_gap(void)
     __delay_us(EXTSYNC_BYTE_GAP_US);
 }
 
+static const uint16_t link_crc16_nibble[16] = {
+    0x0000u, 0x1021u, 0x2042u, 0x3063u,
+    0x4084u, 0x50A5u, 0x60C6u, 0x70E7u,
+    0x8108u, 0x9129u, 0xA14Au, 0xB16Bu,
+    0xC18Cu, 0xD1ADu, 0xE1CEu, 0xF1EFu
+};
+
+uint16_t sio_link_crc16_update(uint16_t crc, uint8_t data)
+{
+    crc = (uint16_t)((crc << 4) ^ link_crc16_nibble[((crc >> 12) ^ (data >> 4)) & 0x0Fu]);
+    crc = (uint16_t)((crc << 4) ^ link_crc16_nibble[((crc >> 12) ^ (data & 0x0Fu)) & 0x0Fu]);
+    return crc;
+}
+
 void sio_link_write_data_bit(uint8_t bit)
 {
     LINK_DOUT_LAT = (uint8_t)(bit & 1u);
@@ -283,7 +297,7 @@ static bool find_frame_start(uint16_t *bit_index)
 {
     uint16_t start;
 
-    for (start = 0u; start < 16u; start++) {
+    for (start = 0u; start < EXTSYNC_FRAME_SEARCH_BITS; start++) {
         uint8_t cls = read_wire_byte(start);
         uint8_t seq = read_wire_byte((uint16_t)(start + 8u));
         uint8_t status = read_wire_byte((uint16_t)(start + 16u));

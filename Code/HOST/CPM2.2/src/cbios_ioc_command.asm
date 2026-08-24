@@ -28,6 +28,7 @@
 
 	.globl sio_command_rts_assert,sio_command_rts_release
 	.globl sio_command_put_byte,sio_command_get_byte
+	.globl sio_command_wait_ready
 	.globl ioc_command_send_frame,ioc_command_recv_frame
 	.globl IOCBULK
 	.globl IOC_CMD_CODE_START,IOC_CMD_CODE_END
@@ -75,6 +76,49 @@ sio_command_rts_release:
 	out (SIO_COMMAND_CTRL_PORT),a
 	ld a,#SIO_WR5_CMD_IDLE
 	out (SIO_COMMAND_CTRL_PORT),a
+	xor a
+	ret
+
+; ---------------------------------------------------------------------------
+; sio_command_wait_ready
+; Wait for the MCU to advertise COMMAND_READY on /DCDB (RR0 bit 3).
+;
+; The MCU holds this asserted only while it is in command-idle.  It drops it on
+; accepting a request and does not raise it again until everything that request
+; triggered has finished -- including the bulk phase and any SD card write.  So
+; this is the backpressure that keeps the host from issuing a command the MCU
+; cannot yet see.
+;
+; Each poll first issues WR0 = Reset External/Status Interrupts.  The SIO latches
+; RR0's modem-status bits on change, so without that a stale latch could report
+; a level the pin no longer carries and this would either spin or, worse, let a
+; request through early.
+;
+; In:  nothing
+; Out: A = IOC_XPORT_OK, or IOC_XPORT_NOT_READY on timeout
+; Clobbers: AF, DE
+; ---------------------------------------------------------------------------
+sio_command_wait_ready:
+	push bc
+	ld b,#SIO_COMMAND_READY_OUTER
+SIO_CMD_RDY_OUTER:
+	ld de,#SIO_COMMAND_READY_TIMEOUT
+SIO_CMD_RDY_WAIT:
+	ld a,#SIO_WR0_RESET_EXT_STATUS
+	out (SIO_COMMAND_CTRL_PORT),a
+	in a,(SIO_COMMAND_CTRL_PORT)
+	and #SIO_RR0_DCD
+	jr nz,SIO_CMD_RDY_OK
+	dec de
+	ld a,d
+	or e
+	jr nz,SIO_CMD_RDY_WAIT
+	djnz SIO_CMD_RDY_OUTER
+	pop bc
+	ld a,#IOC_XPORT_NOT_READY
+	ret
+SIO_CMD_RDY_OK:
+	pop bc
 	xor a
 	ret
 
@@ -193,6 +237,32 @@ IOC_CMD_SEND_LOOP:
 	ret nz				; return error code on timeout
 	inc hl
 	djnz IOC_CMD_SEND_LOOP
+
+	; Trailing filler, and it is NOT optional.
+	;
+	; sio_command_put_byte polls for transmit-buffer-empty and then writes,
+	; so when the loop above finishes the last frame byte is still sitting in
+	; the buffer or the shift register -- not on the wire.  The caller drops
+	; RTS immediately after this returns, and sio_command_rts_release
+	; DISABLES the transmitter to make /RTSB actually rise (in External Sync
+	; mode an enabled transmitter never satisfies transmit-empty, so clearing
+	; the RTS bit alone leaves the line latched low).  Disabling TX with a
+	; byte still in flight truncates it, the MCU captures a short frame, and
+	; find_frame_start rejects it.
+	;
+	; Each put_byte waits for the previous byte to leave the buffer, so after
+	; two fillers byte 31 is guaranteed clear of the shift register.  The
+	; MCU's capture window is 48 bytes against a 33-byte frame, so the filler
+	; lands in slack it already tolerates, and truncating filler costs
+	; nothing.
+	ld b,#IOC_SEND_TRAILER_BYTES
+IOC_CMD_SEND_TRAILER:
+	ld c,#IOC_SEND_TRAILER_FILL
+	call sio_command_put_byte
+	or a
+	ret nz
+	djnz IOC_CMD_SEND_TRAILER
+
 	xor a
 	ret
 
@@ -307,15 +377,21 @@ IOC_CMD_RECV_BODY_TIMEOUT:
 ; transfer is an optional remainder followed by whole blocks; the count of
 ; remaining blocks lives on the stack because no register is free to hold it.
 ; ---------------------------------------------------------------------------
+	; Length check against IOC_BULK_MAX_LEN, compared as a full 16-bit value.
+	;
+	; An earlier version rejected anything with a non-zero low byte once the
+	; high byte matched, which was only correct while the limit was exactly
+	; 512.  Raising it to 514 for the CRC trailer made that logic reject every
+	; single 514-byte transfer -- the low byte of the limit is no longer zero.
 IOCBULK:
 	ld a,d
 	cp #(IOC_BULK_MAX_LEN >> 8)
-	jr c,IOCBULK_LEN_OK		; high byte < 2: at most 511
-	jr nz,IOCBULK_BAD_LEN		; high byte > 2: over the limit
-	ld a,e
-	or a
-	jr nz,IOCBULK_BAD_LEN		; 512 + remainder: over the limit
-	jr IOCBULK_ARM			; exactly IOC_BULK_MAX_LEN
+	jr c,IOCBULK_LEN_OK		; high byte below the limit's: in range
+	jr nz,IOCBULK_BAD_LEN		; high byte above the limit's: too long
+	ld a,#(IOC_BULK_MAX_LEN & 0xff)
+	cp e
+	jr c,IOCBULK_BAD_LEN		; same high byte, low byte over: too long
+	jr IOCBULK_ARM
 IOCBULK_LEN_OK:
 	ld a,d
 	or e

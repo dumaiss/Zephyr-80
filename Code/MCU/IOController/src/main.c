@@ -128,20 +128,101 @@ static void boot_reset_pulse(void)
  * Command request detection
  * ---------------------------------------------------------------------------
  *
- * /SIO1B_INT is level-low for the whole IOCALL transaction.  The PIC services
- * only the high-to-low edge; a level-triggered loop would repeatedly clock idle
- * windows while the host still holds the line asserted.
+ * /SIO1B_INT is an ACKNOWLEDGED REQUEST line, not a transaction-active line:
+ *
+ *     low   = the host has a request outstanding
+ *     high  = the request has been accepted
+ *
+ * The host drops it as soon as it has finished transmitting its frame -- long
+ * before the reply -- and the PIC observes that release as a required step of
+ * servicing, below.  Because the PIC is already committed to the service when
+ * it looks, it cannot miss it.
+ *
+ * Detection is therefore a plain level test.  No edge is involved anywhere, and
+ * that is deliberate: the PIC samples this line only in its main loop and is
+ * blind for the length of a bulk transfer or a card write -- hundreds of
+ * milliseconds.  Anything encoded in an edge during that window is lost with no
+ * trace, because the line is already low and will never fall again.
+ *
+ * Two earlier schemes both failed on exactly that:
+ *
+ *   - Sampled edge (remember the previous level, look for high-to-low).  Only
+ *     works if the PIC happens to sample inside the gap between one request's
+ *     release and the next one's assertion.  A host issuing back-to-back
+ *     commands re-asserts within microseconds, so the request was simply lost
+ *     until the host's ~11 s timeout.
+ *
+ *   - Level plus a wait-for-release AFTER servicing.  Fails the other way.
+ *     During a write the host releases, transmits the bulk payload, waits for
+ *     /CTSA and re-asserts for its DONE query -- all while the PIC is still
+ *     inside the bulk receive and the card write.  By the time the PIC waited,
+ *     the release had already happened and would not repeat.  A short bound
+ *     meant it gave up and re-serviced the same low level, clocking junk
+ *     windows into a listening host; a long bound meant a ~10 s deadlock.
+ *
+ * Requiring the release mid-service removes the ambiguity instead of trying to
+ * out-sample it.  Having seen this request acknowledged, any low level found
+ * while idle must belong to a later one.
+ *
+ * The bound below only has to cover the host finishing its frame.  The host
+ * sends 35 bytes into a 48-byte window, so it has normally released before
+ * external_sync_receive() even returns and this costs nothing.  A timeout here
+ * is a real fault and is reported by declining to reply, which the host sees as
+ * a clean receive timeout rather than as framing garbage.
  */
-static uint8_t sio1b_int_prev_level = 1u;
+#define REQUEST_RELEASE_TIMEOUT_LOOPS  20000u
+
+/* ---------------------------------------------------------------------------
+ * COMMAND_READY on /DCDB
+ * ---------------------------------------------------------------------------
+ *
+ * /DCDB is a PIC output into the host's SIO1/B, readable by the host as RR0
+ * bit 3.  It carries a persistent level, not a pulse:
+ *
+ *     asserted     the PIC is in command-idle and will accept a request
+ *     deasserted   the PIC will not accept a new command
+ *
+ * The contract is "READY means the host may make exactly one request", which is
+ * what the architecture actually supports: one SPI engine, no concurrent lanes,
+ * one transaction in flight.  The host must not assert RTS unless READY.
+ *
+ * This is backpressure and diagnosability, NOT the fix for the request race --
+ * that is the acknowledged-request handshake (see command_request_started()).
+ * What it adds is that a host talking to a busy controller can tell, rather
+ * than discovering it after an 11 s timeout, and a host talking to a DEAD
+ * controller finds out immediately instead of looking identical to a busy one.
+ *
+ * READY is asserted only after the request has been acknowledged AND all work
+ * it triggered has finished -- including the bulk phase and any card write.
+ * Asserting earlier would invite a request the PIC cannot yet service.
+ *
+ * DO NOT ENABLE AUTO ENABLES ON CHANNEL B.  With WR3 bit 5 clear, as it is
+ * today, /DCDB is a pure status bit with no side effects.  Set that bit and
+ * /DCDB starts gating the host's RECEIVER, so deasserting it mid-transaction
+ * would silently kill reception.  /DCDA on the bulk lane does exactly that, on
+ * purpose -- the asymmetry between the two channels is deliberate and is a trap
+ * for anyone who assumes they are configured alike.
+ */
+static void command_ready_set(bool ready)
+{
+    DCDB_LAT = ready ? DCDB_ASSERTED : DCDB_IDLE;
+}
 
 static bool command_request_started(void)
 {
-    uint8_t now = SIO1B_INT_PORT;
-    bool falling = (sio1b_int_prev_level != SIO1B_INT_ACTIVE) &&
-                   (now == SIO1B_INT_ACTIVE);
+    return SIO1B_INT_PORT == SIO1B_INT_ACTIVE;
+}
 
-    sio1b_int_prev_level = now;
-    return falling;
+static bool wait_request_release(void)
+{
+    uint16_t guard;
+
+    for (guard = 0u; guard < REQUEST_RELEASE_TIMEOUT_LOOPS; guard++) {
+        if (SIO1B_INT_PORT != SIO1B_INT_ACTIVE)
+            return true;
+    }
+
+    return false;
 }
 
 /* ---------------------------------------------------------------------------
@@ -163,8 +244,21 @@ static void service_command_request(void)
 {
     IocFrame request;
     IocFrame reply;
+    bool     have_request;
 
-    if (!external_sync_receive(&request))
+    have_request = external_sync_receive(&request);
+
+    /* Acknowledge before replying, whether or not the frame decoded.
+     *
+     * Doing it on the failure path too is what stops a single missed frame
+     * from cascading: the host is left waiting for a reply that will not come,
+     * but its RTS is already high, so the PIC cannot mistake that wait for a
+     * fresh request and clock junk windows into a receiver that is listening
+     * for a preamble. */
+    if (!wait_request_release())
+        return;
+
+    if (!have_request)
         return;
 
     if (dispatch_command(&request, &reply)) {
@@ -190,9 +284,18 @@ int main(void)
     sd_card_cmd0_loop();   /* does not return */
 #endif
 
+    /* Advertise readiness only once everything is initialised.  Before this
+     * the pin sits at its parked idle level, so a host that boots first
+     * correctly sees "not ready" rather than talking to a half-configured
+     * controller. */
+    command_ready_set(true);
+
     for (;;) {
-        if (command_request_started())
+        if (command_request_started()) {
+            command_ready_set(false);   /* accepting: no further requests */
             service_command_request();
+            command_ready_set(true);    /* all work done, including bulk/SD */
+        }
 
         /* Non-blocking: returns immediately unless the 500 ms period elapsed. */
         controller_latch_tick();

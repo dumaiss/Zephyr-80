@@ -202,6 +202,28 @@
  * late request silently fails to decode. */
 #define EXTSYNC_RX_WINDOW_BYTES  48u
 
+/* How far into the capture window find_frame_start() will look for the frame.
+ *
+ * The window is deliberately larger than a frame so the host's transmission can
+ * start late and still be captured whole.  The search must therefore cover that
+ * entire slack: anything less throws away the tolerance the window was sized to
+ * provide.
+ *
+ * It used to search 16 bits -- two bytes -- against 15 bytes of slack.  That
+ * held for one-shot .COM programs, where the delay between the host asserting
+ * RTS and its first byte reaching the wire was consistent.  Under back-to-back
+ * transactions it is not: the PIC begins clocking at varying points relative to
+ * the host, and a request arriving later than two byte-times was either missed
+ * outright or, worse, matched at a wrong alignment inside those 16 bits.  A
+ * mis-locked header dispatches the WRONG HANDLER -- an observed case decoded a
+ * CMD_SD_READ_BULK as CMD_PING and replied RSP_PING, after which every
+ * subsequent reply was off by one transaction.
+ *
+ * The bound is derived from the window so it cannot drift out of step: the
+ * 32-byte frame must still fit after the start offset. */
+#define EXTSYNC_FRAME_SEARCH_BITS \
+    ((uint16_t)((EXTSYNC_RX_WINDOW_BYTES - IOC_FRAME_SIZE) * 8u))
+
 /* Bit position, within the hand-clocked byte, where /SYNCB is driven low.
  *
  * Channel A uses 0 (BULK_SYNC_DROP_BIT in bulk_channel.c).  The one-bit

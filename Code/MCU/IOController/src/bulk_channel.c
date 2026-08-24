@@ -101,7 +101,7 @@
  * search covers BULK_RX_SEARCH_BITS bit positions, so the window needs that
  * many bits of headroom plus one byte for the bit-shifted tail read. */
 #define BULK_RX_SEARCH_BITS   64u
-#define BULK_RX_WINDOW_BYTES  (BULK_MAX_LENGTH + 2u + (BULK_RX_SEARCH_BITS / 8u) + 2u)
+#define BULK_RX_WINDOW_BYTES  (BULK_MAX_LENGTH + BULK_CRC_BYTES + 2u + (BULK_RX_SEARCH_BITS / 8u) + 2u)
 
 static uint8_t rx_window[BULK_RX_WINDOW_BYTES];
 
@@ -170,7 +170,24 @@ static void bulk_byte_gap(void)
  * protection against a failure mode that corrupts data without reporting it.
  * Do not tune this down to match the send direction; they are not symmetric.
  * --------------------------------------------------------------------------- */
-#define BULK_RX_TARGET_BYTE_US  12u
+/* 24 us, not 12.
+ *
+ * The host's OUTI loop costs 5.6 us/byte, so 12 us left it 6.4 us of slack --
+ * less than one interrupt.  A CTC ISR measured at 117 T-states (98 T of handler
+ * plus 19 T of IM2 acknowledge) is 11.7 us at 10 MHz, so a single interrupt
+ * landing inside a transfer put the host further behind than one byte's slack,
+ * and with only about two byte-times of buffering in the SIO's transmit path
+ * the transmitter ran dry.  Under CTC load at 1 ms that failed ~65% of writes.
+ *
+ * At 24 us the slack is 18.4 us per byte, comfortably more than one ISR, so a
+ * single interrupt is absorbed within the byte it lands in.
+ *
+ * The cost is 12.4 ms per 512-byte block instead of 6.2 ms -- about 41 kB/s.
+ * That is ample for CP/M storage, where SD command latency dominates anyway,
+ * and it buys tolerance of the interrupt load that real console traffic will
+ * produce.  Reads are unaffected: their 3-byte RX FIFO already absorbs ~18 us
+ * and they ran clean under the same load. */
+#define BULK_RX_TARGET_BYTE_US  24u
 #define BULK_RX_BYTE_GAP_US     (BULK_RX_TARGET_BYTE_US - BULK_SPI_BYTE_US)
 
 #if (BULK_RX_TARGET_BYTE_US <= BULK_SPI_BYTE_US)
@@ -318,6 +335,7 @@ uint8_t bulk_channel_next_xfer_id(void)
 static bool bulk_run_send(void)
 {
     uint16_t i;
+    uint16_t crc;
     uint8_t  discard;
     bool     ok = true;
 
@@ -354,6 +372,7 @@ static bool bulk_run_send(void)
     /* Byte 0 carries the sync edge and is still delivered as data. */
     sio_link_clock_sync_byte(armed_buf[0], SIO_LINK_CH_BULK,
                              BULK_SYNC_DROP_BIT);
+    crc = sio_link_crc16_update(0u, armed_buf[0]);
 
     sio_link_set_baud(BULK_SPI_BAUD);
     sio_link_clear_fifos();
@@ -363,6 +382,22 @@ static bool bulk_run_send(void)
             ok = false;
             break;
         }
+        crc = sio_link_crc16_update(crc, armed_buf[i]);
+        bulk_byte_gap();
+    }
+
+    /* CRC-16 trailer, most significant byte first.  The host reads
+     * length + BULK_CRC_BYTES and checks it; the lane has no other integrity
+     * check, so without this a corrupted block is indistinguishable from a
+     * good one at both ends. */
+    if (ok) {
+        if (!sio_link_exchange((uint8_t)(crc >> 8), &discard))
+            ok = false;
+        bulk_byte_gap();
+    }
+    if (ok) {
+        if (!sio_link_exchange((uint8_t)crc, &discard))
+            ok = false;
         bulk_byte_gap();
     }
 
@@ -406,6 +441,8 @@ static bool bulk_run_receive(void)
     uint16_t bit_index;
     uint16_t window;
     uint16_t length;
+    uint16_t crc;
+    uint16_t wire_crc;
     bool     ok = true;
 
     /* Hold the length locally.  armed_length is cleared during teardown below,
@@ -415,8 +452,10 @@ static bool bulk_run_receive(void)
      * received data. */
     length = armed_length;
 
-    /* Payload, preamble, and slack for a late-starting transmitter. */
-    window = (uint16_t)(length + 2u + (BULK_RX_SEARCH_BITS / 8u) + 2u);
+    /* Payload, CRC trailer, preamble, and slack for a late-starting
+     * transmitter. */
+    window = (uint16_t)(length + BULK_CRC_BYTES + 2u +
+                        (BULK_RX_SEARCH_BITS / 8u) + 2u);
     if (window > BULK_RX_WINDOW_BYTES)
         window = BULK_RX_WINDOW_BYTES;
 
@@ -446,14 +485,32 @@ static bool bulk_run_receive(void)
     sync_a_release();
     SIO_MOSI_LAT = 1;
 
-    CTSA_LAT    = CTSA_IDLE;
     SIOA_CS_LAT = SIOA_CS_IDLE;
+
+    /* /CTSA deliberately stays ASSERTED past the end of the byte stream, until
+     * the commit below has finished.  For a write it means "this transfer is
+     * still in progress", and the commit IS part of the transfer -- the card
+     * has not been touched yet when the last byte lands.
+     *
+     * This is not cosmetic.  The command-lane request detector is edge
+     * triggered on /SIO1B_INT, and the PIC samples that line only in its main
+     * loop -- so it is blind for the whole card write.  A host that releases
+     * channel A and immediately issues the DONE query asserts its RTS while
+     * the PIC is inside the write; when the PIC returns, the line is already
+     * low and there is no edge left to see.  The request is lost and the host
+     * times out after ~11 s.
+     *
+     * Holding /CTSA across the commit gives the host something real to wait
+     * on, so by the time it asks for DONE the PIC is back in its loop and has
+     * sampled the idle level.  A host that watches /CTSA cannot lose the race;
+     * one that does not, still can. */
 
     armed_length = 0u;
     last_xfer_id = armed_xfer_id;
 
     if (!ok) {
         last_status = IOC_STATUS_BULK_FAIL;
+        CTSA_LAT = CTSA_IDLE;
         return false;
     }
 
@@ -463,15 +520,35 @@ static bool bulk_run_receive(void)
          * from a bus failure, and worth its own code -- it points at the host
          * side, not the link. */
         last_status = IOC_STATUS_BULK_NO_SYNC;
+        CTSA_LAT = CTSA_IDLE;
         return false;
     }
 
-    for (i = 0u; i < length; i++)
+    crc = 0u;
+    for (i = 0u; i < length; i++) {
         armed_rx_buf[i] = rx_wire_byte((uint16_t)(bit_index + (i * 8u)));
+        crc = sio_link_crc16_update(crc, armed_rx_buf[i]);
+    }
+
+    /* CRC-16 trailer follows the payload, most significant byte first. */
+    wire_crc  = (uint16_t)rx_wire_byte((uint16_t)(bit_index + (length * 8u))) << 8;
+    wire_crc |= (uint16_t)rx_wire_byte((uint16_t)(bit_index + ((length + 1u) * 8u)));
+
+    if (wire_crc != crc) {
+        /* Do NOT commit.  A block that fails here reached the MCU intact
+         * enough to be de-shifted but is not the block the host sent, and
+         * writing it would be a silent wrong-data write to the card. */
+        last_status = IOC_STATUS_BULK_CRC;
+        CTSA_LAT = CTSA_IDLE;
+        return false;
+    }
 
     /* Only now is DONE meaningful.  Bytes arriving says nothing about whether
      * they were stored. */
     last_status = (armed_commit != 0) ? armed_commit() : IOC_STATUS_OK;
+
+    /* Transfer is genuinely over: release the busy indication. */
+    CTSA_LAT = CTSA_IDLE;
 
     return (last_status == IOC_STATUS_OK);
 }
