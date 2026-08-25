@@ -248,12 +248,28 @@ SIO_COMMAND_REPLY_SCAN_LIMIT    = 0xa0
 ; the debugger without the Z80 giving up; it still returns IOC_XPORT_TIMEOUT
 ; instead of hanging forever.  For production, drop OUTER back to 1.
 SIO_COMMAND_TIMEOUT             = 0xffff
-SIO_COMMAND_TIMEOUT_OUTER       = 0x20
+; 0x04, not 0x20.  At ~5.6 us per inner iteration this is ~1.5 s instead of
+; ~11 s, and it must only exceed the MCU's longest legitimate silence: the card
+; read inside a SD_READ_BULK transaction, worst case ~1 s during initialisation.
+; COMMAND_READY on /DCDB now gates "MCU busy" separately, so this timeout only
+; has to cover a reply that is genuinely coming.
+;
+; This is a bring-up throughput decision, not a correctness one: every failure
+; costs its full timeout, so at 0x20 a handful of errors made a soak run take
+; minutes and the interrupt counter measured waiting rather than work.
+SIO_COMMAND_TIMEOUT_OUTER       = 0x04
 
 ; Code placement for IOC Command-channel transport helpers.
 ; The generated map is authoritative for VDRIP_CONSOLE_CODE_END.
-; IOC command helpers retain their established placement before slot 5.
-CBIOS_IOC_COMMAND_CODE_BASE     = 0xf52c
+;
+; Moved down from F52Ch to F400h to give the transport room for command-frame
+; CRC.  F400h-F52Bh is genuine slack: driver slot 4 ends at F3FFh and slot 5
+; begins at F680h, so nothing is displaced.  MOVE_BUFFER was NOT reclaimed --
+; despite looking idle it is live scratch for the VDrip storage backend,
+; cbios_bank's cross-bank MOVE and the ramdisk path.
+;
+; This buys ~300 bytes; the region had 2 free before it.
+CBIOS_IOC_COMMAND_CODE_BASE     = 0xf400
 
 ; ------------------------------------------------------------------------------
 ; CP/M Page Zero & Environment Setup

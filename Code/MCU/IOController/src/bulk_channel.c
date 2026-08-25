@@ -187,6 +187,13 @@ static void bulk_byte_gap(void)
  * and it buys tolerance of the interrupt load that real console traffic will
  * produce.  Reads are unaffected: their 3-byte RX FIFO already absorbs ~18 us
  * and they ran clean under the same load. */
+/* BISECT: back to the 12 us that ran 1864 passes clean.
+ *
+ * 24 us was correct reasoning for interrupt headroom on the write path, but
+ * reads started failing their CRC after it went in and I have no mechanism --
+ * this constant is used only in bulk_run_receive(), the WRITE direction, and
+ * writes are passing while every read fails.  Restoring the known-good value
+ * to confirm the changes are even the cause. */
 #define BULK_RX_TARGET_BYTE_US  24u
 #define BULK_RX_BYTE_GAP_US     (BULK_RX_TARGET_BYTE_US - BULK_SPI_BYTE_US)
 

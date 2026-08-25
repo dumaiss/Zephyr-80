@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 44662 bytes |
+| Firmware symbol map | `build/firmware.map` | 45122 bytes |
 | Burnable image | `build/zephyr80.bin` | 131072 bytes |
 | Layout manifest | `build/layout.manifest` | 232 bytes |
 
@@ -144,7 +144,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `SIO_CORE_CODE_END` | `DF50h` | BIOS-owned SIO core code end. |
 | `IOCTRL_CODE_START` | `DF7Bh` | IOCALL transaction code start in core BIOS. |
 | `IOCALL` | `DF7Bh` | Zephyr extended BIOS IO Controller transaction call. |
-| `IOCTRL_CODE_END` | `DFC8h` | IOCALL transaction code end. |
+| `IOCTRL_CODE_END` | `DFCAh` | IOCALL transaction code end. |
 | `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E012h` | Virtual Drip console init, proxy handshake, VDP setup. |
@@ -156,7 +156,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `MOVE` | `DC22h` | Same-bank or cross-bank memory move. |
 | `BANKING_CODE_END` | `DCAEh` | Banking extension implementation end. |
 | `VIDEO_SEND` | `DF50h` | Extended BIOS call: raw VDrip display/VDP packet send. |
-| `IOCBULK` | `F5D0h` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
+| `IOCBULK` | `F4DCh` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
 | `BIOS_EXT_CODE_START` | `DF50h` | BIOS extension code start. |
 | `BIOS_EXT_CODE_END` | `DF78h` | BIOS extension code end. |
 | `BIOS_CODE_END` | `DF78h` | End of core BIOS code. |

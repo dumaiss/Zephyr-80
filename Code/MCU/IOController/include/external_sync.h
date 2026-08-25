@@ -152,8 +152,54 @@
  * dropping the per-byte call/timeout gets it to about 62 T-states (6.2 us,
  * ~1.3 Mbit/s), which is what a 1 Mbps target actually needs.
  * --------------------------------------------------------------------------- */
+/* 32 us, not 16, and the reason is interrupt headroom rather than throughput.
+ *
+ * sio_command_get_byte costs 151 T-states = 15.1 us at 10 MHz, so 16 us left
+ * this lane 0.9 us of slack per byte.  A CTC interrupt measured at 117 T-states
+ * (98 T of handler plus 19 T of IM2 acknowledge) is 11.7 us -- thirteen times
+ * that margin.  Under interrupt load the host lost bytes, and the failures
+ * presented as missing replies and wrong reply classes rather than as anything
+ * recognisably timing-related.
+ *
+ * 32 us gives 16.9 us of slack, comfortably more than one ISR.  It costs almost
+ * nothing: a frame is 34 bytes, so 0.54 ms becomes 1.09 ms PER TRANSACTION --
+ * not per sector byte, which is what the bulk lane carries.  Sector throughput
+ * is unaffected.
+ *
+ * The real fix for this lane is the host loop, not the pacing.  151 T-states is
+ * mostly per-byte call/ret, push/pop and a 24-bit timeout reload; inlining it
+ * the way IOCBULK's INI loop is inlined gets it to about 62 T, at which point
+ * the pacing could come back down and the lane would still tolerate interrupts.
+ * Until then, buy the margin here -- it is nearly free. */
+/* 32 us, for interrupt headroom -- and unlike the bulk lane this IS a margin
+ * bet rather than a structural fix.  It is taken knowingly.
+ *
+ * sio_command_get_byte costs 151 T-states = 15.1 us at 10 MHz, so 16 us left
+ * 0.9 us of slack per byte against an 11.7 us ISR.  32 us gives 16.9 us, which
+ * covers one interrupt.  The cost is trivial because this lane carries 34 bytes
+ * per TRANSACTION, not per sector: 0.54 ms becomes 1.09 ms, and sector
+ * throughput is untouched.
+ *
+ * The bulk lane got a DI critical section instead, which removes the dependency
+ * on ISR duration entirely.  That is NOT available here: the MCU performs card
+ * I/O inside a command transaction -- handler_sd_read_bulk reads the sector
+ * before it replies -- so a DI spanning the reply would blackout for ~10 ms
+ * typically and up to ~1 s during card initialisation.  Unlike the bulk case
+ * that is not bounded by anything the host controls.
+ *
+ * The principled fixes, in increasing order of work:
+ *   1. Inline the host receive loop.  151 T is mostly per-byte call/ret,
+ *      push/pop and a 24-bit timeout reload; IOCBULK's INI loop shows ~62 T is
+ *      reachable.  That alone gives 9.8 us at 16 us pacing -- still under one
+ *      ISR, so it needs ~20 us pacing with it, but that is faster than today.
+ *   2. Split the transaction so the reply is not a blocking wait spanning card
+ *      I/O, at which point a DI becomes possible here too.
+ *   3. Burst flow control, as described for the bulk lane.
+ *
+ * NOTE: this value was reverted once while chasing a read regression that a
+ * machine reset later cleared.  It was never implicated. */
 #ifndef EXTSYNC_TARGET_BYTE_US
-#define EXTSYNC_TARGET_BYTE_US   16u   /* 8 bits / 16 us = 500 kbit/s */
+#define EXTSYNC_TARGET_BYTE_US   16u   /* 8 bits / 32 us = 250 kbit/s */
 #endif
 #define EXTSYNC_SPI_BYTE_US      ((8u * 2u * (EXTSYNC_SPI_BAUD + 1u)) / 64u)
 #define EXTSYNC_BYTE_GAP_US      (EXTSYNC_TARGET_BYTE_US - EXTSYNC_SPI_BYTE_US)

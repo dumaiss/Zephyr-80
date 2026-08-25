@@ -70,6 +70,9 @@ PREAMBLE_1	= 0x81
 
 BLOCK_SIZE	= 512
 BULK_CRC_BYTES	= 2
+CMD_CTRL	= 0x33		; SIO1/B control -- command lane
+RR1_RX_OVERRUN	= 0x20		; RR1 bit 5: receive overrun
+RR0_SYNC_HUNT	= 0x10		; RR0 bit 4: receiver still hunting for sync
 NUM_LBA		= 8
 MAX_DETAIL	= 8		; detailed mismatch reports before counting only
 
@@ -154,6 +157,8 @@ cfg_done:
 	ld (detail_count),a
 	ld (fail_code),a
 	ld (fail_info),a
+	ld (fail_rr1),a
+	ld (fail_rr0),a
 
 ; --- one pass over the whole LBA table -------------------------------------
 pass_loop:
@@ -490,8 +495,9 @@ do_write:
 	call IOCALL
 	or a
 	jr z,dw_c2
-	ld (fail_info),a		; keep IOCALL's own status -- it is the
-	ld a,#1				; whole diagnosis, so do not lose it
+	ld (fail_info),a		; keep IOCALL's own status
+	call snap_rr1
+	ld a,#1
 	jp dw_fail_n
 dw_c2:
 	ld a,(rx_frame + 0)
@@ -502,11 +508,29 @@ dw_c2:
 dw_c3:
 	ld a,(rx_frame + 2)
 	or a
-	jr z,dw_arm
+	jr z,dw_c4
 	ld a,#3				; MCU refused: READY status non-zero
+	jp dw_fail_n
+	; fall through is not possible; the echo check follows the status check
+dw_c4:
+	call check_lba_echo
+	jr z,dw_arm
+	ld a,#12			; MCU decoded a DIFFERENT LBA -- do not write
 	jp dw_fail_n
 
 dw_arm:
+	; Interrupts OFF for the whole transmit phase.
+	;
+	; The MCU clocks a byte every 12 us regardless of what the Z80 is doing,
+	; and the transmit path has only about two byte-times of buffering.  An ISR
+	; landing inside the loop makes the transmitter run dry, and it streams
+	; WR7 fill (00h) in place of real data -- which the bulk CRC now catches,
+	; but the transfer is lost either way.
+	;
+	; Unlike a design where the Z80 bit-bangs the clock, there is no way to
+	; stall the producer.  ~6.2 ms of blackout for a 512-byte write.
+	di
+
 	; Arm channel A for transmit: RX disabled, we only send.
 	ld a,#WR0_RESET_ERROR
 	out (BULK_CTRL),a
@@ -600,6 +624,7 @@ dw_rts_off:
 	out (BULK_CTRL),a
 	ld a,#WR5_TX_RTS_OFF
 	out (BULK_CTRL),a
+	ei				; transfer over; DONE runs with interrupts on
 
 	; Wait for /CTSA to drop before asking anything on the command lane.
 	;
@@ -634,8 +659,9 @@ dw_cts_clear:
 	call IOCALL
 	or a
 	jr z,dw_d2
-	ld (fail_info),a		; IOCALL status: 01 send timeout,
-	ld a,#8				; 11 no reply, 12 reply stalled, 02 bad frame
+	ld (fail_info),a		; IOCALL status: 01 send, 11 no reply,
+	call snap_rr1			; 12 reply stalled, 02 bad frame
+	ld a,#8
 	jp dw_fail_n
 dw_d2:
 	ld a,(rx_frame + 0)
@@ -663,6 +689,7 @@ dw_fail_rts:
 	ld a,#WR5_TX_RTS_OFF
 	out (BULK_CTRL),a
 	pop af
+	ei				; every path out of the transmit phase
 dw_fail_n:
 	ld (fail_code),a
 	ld hl,(err_write)
@@ -678,9 +705,18 @@ dw_fail_n:
 	call puts
 	ld a,(fail_info)
 	call print_hex_byte
+	ld de,#msg_rr0
+	call puts
+	ld a,(fail_rr0)
+	call print_hex_byte
+	ld de,#msg_rr1
+	call puts
+	ld a,(fail_rr1)
+	call print_hex_byte
 	call crlf
 	xor a
 	ld (fail_info),a
+	ld (fail_rr1),a
 	ld a,#1
 	ret
 
@@ -703,6 +739,7 @@ do_read:
 	or a
 	jr z,dr_c2
 	ld (fail_info),a		; IOCALL's own status
+	call snap_rr1
 	ld a,#1				; command IOCALL failed
 	jr dr_fail_n
 dr_c2:
@@ -715,9 +752,14 @@ dr_c2:
 dr_c3:
 	ld a,(rx_frame + 2)
 	or a
-	jr z,dr_bulk
+	jr z,dr_c4
 	ld (fail_info),a		; the MCU's SD status
 	ld a,#3				; MCU refused the read
+	jr dr_fail_n
+dr_c4:
+	call check_lba_echo
+	jr z,dr_bulk
+	ld a,#6				; MCU decoded a DIFFERENT LBA
 	jr dr_fail_n
 
 dr_bulk:
@@ -777,9 +819,18 @@ dr_fail_n:
 	call puts
 	ld a,(fail_info)
 	call print_hex_byte
+	ld de,#msg_rr0
+	call puts
+	ld a,(fail_rr0)
+	call print_hex_byte
+	ld de,#msg_rr1
+	call puts
+	ld a,(fail_rr1)
+	call print_hex_byte
 	call crlf
 	xor a
 	ld (fail_info),a
+	ld (fail_rr1),a
 	ld a,#1
 	ret
 
@@ -950,6 +1001,58 @@ zf_rx:
 ; In:  HL = buffer, BC = byte count
 ; Out: DE = CRC
 ; Clobbers: AF, BC, DE, HL
+; Snapshot RR1 on the command lane.
+;
+; Bit 5 is Rx Overrun -- set means the SIO took a byte with the FIFO already
+; full, i.e. the host genuinely failed to keep up.  That is the reading that
+; separates interrupt-induced byte loss from a framing or sequencing fault,
+; which look identical from the transport status alone.  Bit 6 is CRC/framing,
+; bit 4 parity.
+;
+; Reading RR1 requires setting the pointer first; it resets to 0 afterwards.
+; Clobbers: AF
+; Verify the LBA the MCU echoed in READY against the one we asked for.
+;
+; The command frame has no CRC, so a false lock at a wrong bit offset can pass
+; the header checks and hand the MCU a garbage LBA.  For a WRITE that means 512
+; bytes land on a sector nobody asked for, silently.  Checking the echo here
+; aborts before any data moves, so a mis-framed command costs a failed transfer
+; instead of a destroyed sector.
+;
+; Out: Z set if the echo matches.  Clobbers AF, B, DE, HL.
+check_lba_echo:
+	ld hl,#(rx_frame + 8)
+	ld de,#cur_lba
+	ld b,#4
+cle_loop:
+	ld a,(de)
+	cp (hl)
+	ret nz
+	inc hl
+	inc de
+	djnz cle_loop
+	xor a				; Z set: match
+	ret
+
+; Snapshot RR0 then RR1 on the command lane.
+;
+; RR0 bit 4 (SYNC/HUNT) is the decisive one for a missing reply: SET means the
+; receiver never left hunt, i.e. it never saw the /SYNCB edge at all and no byte
+; was ever assembled.  CLEAR means sync was established and bytes were being
+; received, so the reply arrived but no preamble matched -- a completely
+; different fault.
+;
+; RR1 bit 5 is Rx Overrun; consistently clear so far, which is what ruled out
+; byte loss.  RR0 is read first because reading it needs no pointer set.
+snap_rr1:
+	in a,(CMD_CTRL)			; RR0 (pointer is 0)
+	ld (fail_rr0),a
+	ld a,#0x01
+	out (CMD_CTRL),a
+	in a,(CMD_CTRL)			; RR1
+	ld (fail_rr1),a
+	ret
+
 crc16_block:
 	ld de,#0			; crc = 0
 crc_byte:
@@ -1107,6 +1210,12 @@ msg_everify:
 msg_code:
 	.ascii " code="
 	.db '$'
+msg_rr0:
+	.ascii " rr0="
+	.db '$'
+msg_rr1:
+	.ascii " rr1="
+	.db '$'
 msg_info:
 	.ascii " info="
 	.db '$'
@@ -1142,6 +1251,8 @@ tx_crc:		.ds 2
 detail_count:	.ds 1
 fail_code:	.ds 1
 fail_info:	.ds 1
+fail_rr1:	.ds 1
+fail_rr0:	.ds 1
 bad_exp:	.ds 1
 bad_got:	.ds 1
 bad_offset:	.ds 2

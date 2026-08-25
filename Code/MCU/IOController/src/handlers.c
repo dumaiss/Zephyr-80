@@ -65,6 +65,16 @@ static uint8_t sd_status_to_ioc(SdStatus st)
     }
 }
 
+/* Echo the LBA the MCU decoded, so the host can verify it before moving data.
+ * See IOC_OFF_READY_LBA for why this exists. */
+static void reply_echo_lba(IocFrame *reply, uint32_t lba)
+{
+    reply->bytes[IOC_OFF_READY_LBA + 0u] = (uint8_t)lba;
+    reply->bytes[IOC_OFF_READY_LBA + 1u] = (uint8_t)(lba >> 8);
+    reply->bytes[IOC_OFF_READY_LBA + 2u] = (uint8_t)(lba >> 16);
+    reply->bytes[IOC_OFF_READY_LBA + 3u] = (uint8_t)(lba >> 24);
+}
+
 /* Read block 0 and hand back its first IOC_SD_READ_BYTES bytes.
  *
  * Blocking: the first call also initialises the card, which can take about a
@@ -165,6 +175,7 @@ void handler_sd_read_bulk(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_READY_DIRECTION] = BULK_DIR_MCU_TO_Z80;
     reply->bytes[IOC_OFF_READY_LEN_LO]    = (uint8_t)SD_BLOCK_SIZE;
     reply->bytes[IOC_OFF_READY_LEN_HI]    = (uint8_t)(SD_BLOCK_SIZE >> 8);
+    reply_echo_lba(reply, lba);
 
     bulk_channel_arm(xfer_block, SD_BLOCK_SIZE,
                      reply->bytes[IOC_OFF_READY_XFER_ID]);
@@ -211,6 +222,7 @@ void handler_sd_write_bulk(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_READY_DIRECTION] = BULK_DIR_Z80_TO_MCU;
     reply->bytes[IOC_OFF_READY_LEN_LO]    = (uint8_t)SD_BLOCK_SIZE;
     reply->bytes[IOC_OFF_READY_LEN_HI]    = (uint8_t)(SD_BLOCK_SIZE >> 8);
+    reply_echo_lba(reply, pending_write_lba);
 
     bulk_channel_arm_receive(xfer_block, SD_BLOCK_SIZE,
                              reply->bytes[IOC_OFF_READY_XFER_ID],

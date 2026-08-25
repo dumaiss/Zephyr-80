@@ -55,6 +55,7 @@ CMD_XFER_STATUS	= 0x06
 RSP_XFER_STATUS	= 0x86
 
 BULK_DATA	= 0x30		; SIO1/A data
+BULK_CRC_BYTES	= 2		; CRC-16 trailer the MCU expects
 BULK_CTRL	= 0x31		; SIO1/A control
 WR0_RESET_ERROR	= 0x30
 WR0_RESET_EOM	= 0xc0		; reset Tx Underrun/EOM latch
@@ -77,6 +78,13 @@ start:
 	ld (tx_failed),a		; .ds space is not zeroed by the loader
 
 	call build_ramp
+
+	; Payload CRC, computed before the lane is armed: the transmit loop must
+	; keep pace with the MCU's clock and cannot afford it inline.
+	ld hl,#sector_buf
+	ld bc,#512
+	call crc16_block
+	ld (tx_crc),de
 
 	; ---- build SD_WRITE_BULK(LBA 0) ----
 	call zero_frames
@@ -174,7 +182,7 @@ start:
 tx_chunk:
 	ld a,(tx_chunks)
 	or a
-	jr z,tx_done
+	jr z,tx_crc_hi			; payload done -> send the CRC trailer
 	dec a
 	ld (tx_chunks),a
 	ld b,#0				; 256 bytes
@@ -191,6 +199,18 @@ tx_got:
 	outi				; 16  out(C)<-(HL), HL++, B--
 	jp nz,tx_poll			; 10
 	jr tx_chunk
+
+	; CRC-16 trailer, most significant byte first.  Reached by a branch, so
+	; it needs its own label -- it must not sit after the loop's
+	; unconditional jr where nothing can reach it.
+tx_crc_hi:
+	ld a,(tx_crc + 1)
+	call put_byte
+	jp c,bulk_timeout
+	ld a,(tx_crc + 0)
+	call put_byte
+	jp c,bulk_timeout
+
 tx_done:
 
 	; Did the transmitter run dry at any point?
@@ -338,6 +358,37 @@ rr_loop:
 	ld de,#msg_crlf
 	ld c,#BDOS_PRINT
 	call BDOS
+	ret
+
+; CRC-16-CCITT (poly 1021h, init 0000h, MSB first) over BC bytes at HL.
+; Must match sio_link_crc16_update() on the MCU.
+; In:  HL = buffer, BC = count.  Out: DE = CRC.  Clobbers AF, BC, DE, HL.
+crc16_block:
+	ld de,#0
+crc_byte:
+	ld a,(hl)
+	xor d
+	ld d,a
+	push bc
+	ld b,#8
+crc_bit:
+	sla e
+	rl d
+	jr nc,crc_nox
+	ld a,d
+	xor #0x10
+	ld d,a
+	ld a,e
+	xor #0x21
+	ld e,a
+crc_nox:
+	djnz crc_bit
+	pop bc
+	inc hl
+	dec bc
+	ld a,b
+	or c
+	jr nz,crc_byte
 	ret
 
 ; Send one byte on the bulk lane, polling for transmit-buffer-empty first.
@@ -568,6 +619,8 @@ ready_id:
 	.ds 1
 tx_failed:
 	.ds 1
+tx_crc:
+	.ds 2
 tx_chunks:
 	.ds 1
 tx_frame:

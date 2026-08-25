@@ -219,12 +219,31 @@ SIO_CMD_GET_READY:
 ; Clobbers: AF, B, C, DE, HL
 ; ---------------------------------------------------------------------------
 ioc_command_send_frame:
+	; Interrupts OFF for the frame transfer.
+	;
+	; The MCU is clock master and does not wait, so a stall inside this loop
+	; is lost data rather than latency.  The masked interval is bounded and
+	; short: 35 bytes at the command pacing, ~1.1 ms.
+	;
+	; Deliberately NOT around the whole IOCALL.  The MCU performs card I/O
+	; inside a transaction, so masking across the reply would blackout for up
+	; to a second.  Masking the transfers and leaving the WAIT interruptible
+	; is the contract; see the response scan below.
+	;
+	; Assumes the caller had interrupts enabled, which every current caller
+	; does.  Preserving the entry state properly needs ld a,i with the Z80
+	; erratum retry, and is required before this ships.
+	di
+
 	; Optional sync preamble first (byte-alignment marker for the MCU), then reset the
 	; Tx Underrun/EOM latch so the transmitter shifts the buffered bytes.
 	ld c,#IOC_SYNC_PREAMBLE
 	call sio_command_put_byte
 	or a
-	ret nz				; return error code on timeout
+	jr z,IOC_CMD_SEND_EOM
+	ei
+	ret				; return error code on timeout
+IOC_CMD_SEND_EOM:
 	ld a,#0xc0			; WR0: Reset Tx Underrun/EOM latch
 	out (SIO_COMMAND_CTRL_PORT),a
 
@@ -234,7 +253,10 @@ IOC_CMD_SEND_LOOP:
 	ld c,(hl)
 	call sio_command_put_byte
 	or a
-	ret nz				; return error code on timeout
+	jr z,IOC_CMD_SEND_NEXT
+	ei
+	ret				; return error code on timeout
+IOC_CMD_SEND_NEXT:
 	inc hl
 	djnz IOC_CMD_SEND_LOOP
 
@@ -260,9 +282,25 @@ IOC_CMD_SEND_TRAILER:
 	ld c,#IOC_SEND_TRAILER_FILL
 	call sio_command_put_byte
 	or a
-	ret nz
+	jr z,IOC_CMD_SEND_TRAIL_NEXT
+	ei
+	ret
+IOC_CMD_SEND_TRAIL_NEXT:
 	djnz IOC_CMD_SEND_TRAILER
 
+	; Deliberately returns with interrupts STILL MASKED on success.
+	;
+	; The MCU begins its reply only EXTSYNC_REPLY_GUARD_US (200 us) after the
+	; request window, and the host must have its receiver armed and hunting by
+	; then.  Re-enabling here let a pending interrupt -- one is always pending,
+	; the send masks for ~1.1 ms -- run before the arm, and with console
+	; interrupts stacking on top the receiver could be armed part-way through
+	; the reply.  It then synced on a later edge, saw no 7Eh, and timed out:
+	; RR0 showed hunt CLEAR with no byte available.
+	;
+	; ioc_command_recv_frame arms the receiver and re-enables interrupts before
+	; its scan.  Error exits above re-enable normally; only this path stays
+	; masked, and only until the arm.
 	xor a
 	ret
 
@@ -276,6 +314,10 @@ IOC_CMD_SEND_TRAILER:
 ;      32-byte frame written to buffer at DE on success.
 ; Clobbers: AF, B, C, HL
 ; ---------------------------------------------------------------------------
+; Entered with interrupts MASKED by a successful ioc_command_send_frame, so the
+; receiver can be armed before the MCU's 200 us reply guard expires.  Interrupts
+; are re-enabled once the arm is done and before the scan, which is the WAIT and
+; may span the MCU's card I/O.
 ioc_command_recv_frame:
 	; RX was disabled during request TX, so the request-capture clock window
 	; cannot fill the SIO RX FIFO with full-duplex junk.  Clear any stale error
@@ -287,6 +329,10 @@ ioc_command_recv_frame:
 	out (SIO_COMMAND_CTRL_PORT),a
 	ld a,#SIO_WR3_CMD_RX
 	out (SIO_COMMAND_CTRL_PORT),a
+
+	; Receiver is armed and hunting; the reply can no longer be missed.
+	; Everything from here to the preamble match is the WAIT, so unmask.
+	ei
 
 	push de
 	pop hl				; HL = RX buffer pointer
@@ -308,13 +354,22 @@ IOC_CMD_RECV_SYNC:
 	ld a,#IOC_XPORT_BAD_FRAME	; preamble not found in window
 	ret
 
+; The preamble scan above runs with interrupts ENABLED: it is the WAIT for the
+; MCU's reply, and that wait spans any card I/O the command triggered -- up to a
+; second.  Masking it would be the multi-millisecond blackout the design
+; explicitly rules out.
+;
+; From here the bytes are streaming and the MCU will not pause, so the body is
+; masked.  32 bytes at the command pacing, ~1 ms.
 IOC_CMD_RECV_BODY_FIRST:
+	di
 	ld (hl),c			; no preamble visible; first byte is reply class
 	inc hl
 	ld b,#(IOC_FRAME_SIZE - 1)
 	jr IOC_CMD_RECV_LOOP
 
 IOC_CMD_RECV_BODY:
+	di
 	ld b,#IOC_FRAME_SIZE
 IOC_CMD_RECV_LOOP:
 	call sio_command_get_byte
@@ -323,6 +378,7 @@ IOC_CMD_RECV_LOOP:
 	ld (hl),c
 	inc hl
 	djnz IOC_CMD_RECV_LOOP
+	ei
 	xor a
 	ret
 
@@ -331,6 +387,7 @@ IOC_CMD_RECV_SYNC_TIMEOUT:
 	ret
 
 IOC_CMD_RECV_BODY_TIMEOUT:
+	ei
 	ld a,#IOC_XPORT_TIMEOUT_REPLY_BODY
 	ret
 
@@ -401,12 +458,59 @@ IOCBULK_LEN_OK:
 	; with Auto Enables.  /DCDA is still deasserted by the MCU at this point,
 	; so the receiver stays gated off and nothing can be latched early.
 IOCBULK_ARM:
+	; Interrupts OFF for the whole transfer.
+	;
+	; The MCU is clock master and NEVER waits mid-transfer -- it emits a byte
+	; every 6 us whatever the Z80 is doing.  So an ISR landing inside this loop
+	; is not merely latency: the MCU keeps delivering, the SIO's 3-byte receive
+	; FIFO covers about 18 us, and past that bytes are simply lost.
+	;
+	; This is the structural difference from designs where the Z80 bit-bangs
+	; the clock itself.  There, an interrupt stretches the transfer and nothing
+	; is lost; here there is a producer that cannot be paused.
+	;
+	; Pacing cannot fix that -- it only buys a larger ISR you happen to
+	; survive, and leaves correctness depending on ISR duration forever.  A
+	; critical section removes the dependency.
+	;
+	; Cost is ~3.1 ms for a 512-byte read.  CP/M has no real-time expectation
+	; and the console SIO buffers, so that is acceptable.  A periodic tick will
+	; COALESCE across it, which matters if the tick is used for accounting
+	; rather than just scheduling.
+	;
+	; Assumes the caller had interrupts enabled, which every current caller
+	; does.  The fix that removes even this assumption is burst transfer: the
+	; MCU stops the clock every N bytes so the host can service interrupts in
+	; the gaps, bounding the blackout to ~192 us for 32-byte bursts.
+	di
+
 	ld a,#SIO_WR0_RESET_ERROR
 	out (SIO_BULK_CTRL_PORT),a
 	ld a,#0x03
 	out (SIO_BULK_CTRL_PORT),a
 	ld a,#SIO_WR3_BULK_RX
 	out (SIO_BULK_CTRL_PORT),a
+
+	; Drain anything the previous transfer left in the receive FIFO.
+	;
+	; NOT optional.  A caller that reads fewer bytes than the MCU clocked
+	; leaves the remainder sitting in the SIO's 3-byte FIFO, and they surface
+	; at the HEAD of the next transfer -- shifting the whole payload by whole
+	; bytes.  It is self-sustaining, because each transfer then leaves the same
+	; count behind, and it survives a reflash: only a machine reset clears it.
+	;
+	; Observed exactly that when a program built before the CRC trailer asked
+	; for 512 bytes of a 514-byte stream.  Every later transfer came back with
+	; the previous transfer's CRC bytes prepended, and every CRC check failed.
+	;
+	; Enabling RX in hunt does not empty the FIFO; only reading it does.
+IOCBULK_DRAIN:
+	in a,(SIO_BULK_CTRL_PORT)
+	and #SIO_RX_READY
+	jr z,IOCBULK_DRAINED_FIFO
+	in a,(SIO_BULK_DATA_PORT)
+	jr IOCBULK_DRAIN
+IOCBULK_DRAINED_FIFO:
 
 	; Tell the MCU we are in the read loop.  It is blocked waiting on this.
 	ld a,#0x05
@@ -462,14 +566,17 @@ IOCBULK_CTS_WAIT:
 	ld a,d
 	or e
 	jr nz,IOCBULK_CTS_WAIT
+	ei
 	ld a,#IOC_XPORT_HW_ERROR
 	ret
 IOCBULK_OK:
+	ei
 	xor a
 	ret
 
 IOCBULK_TIMEOUT:
 	call IOCBULK_RTS_OFF
+	ei
 	ld a,#IOC_XPORT_TIMEOUT
 	ret
 

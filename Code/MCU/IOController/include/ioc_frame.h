@@ -35,7 +35,24 @@
 #define IOC_OFF_READY_DIRECTION  (IOC_OFF_PAYLOAD + 1u)
 #define IOC_OFF_READY_LEN_LO     (IOC_OFF_PAYLOAD + 2u)
 #define IOC_OFF_READY_LEN_HI     (IOC_OFF_PAYLOAD + 3u)
-#define IOC_READY_PAYLOAD_LEN    4u
+/* The LBA the MCU actually DECODED from the request, echoed back so the host
+ * can check it before any data moves.
+ *
+ * The command frame has no CRC: find_frame_start() dispatches on a header whose
+ * class, sequence, status and length all validate, and the payload is not
+ * checked by anything.  A false lock at a wrong bit offset therefore hands a
+ * handler a garbage LBA, and a write lands 512 bytes on a sector nobody asked
+ * for -- silently, reporting success.  Observed: the target sector kept its
+ * previous contents while the write reported OK.
+ *
+ * Echoing the decoded LBA lets the host abort before the bulk phase, so a
+ * mis-framed command costs a failed transfer instead of a destroyed sector.
+ *
+ * This is a MITIGATION, not the fix.  The fix is a CRC over the whole command
+ * frame, validated before dispatch.  Until that exists, nothing else stops a
+ * plausible-looking header from running a handler with corrupt arguments. */
+#define IOC_OFF_READY_LBA        (IOC_OFF_PAYLOAD + 4u)
+#define IOC_READY_PAYLOAD_LEN    8u
 
 /* SD_READ_BULK request payload: 32-bit LBA, little-endian. */
 #define IOC_OFF_LBA_0            (IOC_OFF_PAYLOAD + 0u)

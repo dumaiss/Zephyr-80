@@ -212,7 +212,7 @@ SdStatus sd_card_write_block(uint32_t lba, const uint8_t *buf);
  * After a READ failure the trace is re-armed and instead holds the CMD17
  * response: the R1 poll bytes, with the observed data token (or FFh if none
  * ever arrived) in the last slot. */
-#define SD_TRACE_BYTES 8u
+#define SD_TRACE_BYTES 8u 
 const uint8_t *sd_card_trace(void);
 
 #endif /* SD_CARD_H */
