@@ -4,6 +4,7 @@
 #include "ioc_frame.h"
 #include "config.h"
 #include "sd_card.h"
+#include "sd_cache.h"
 #include "bulk_channel.h"
 
 void handler_ping(const IocFrame *request, IocFrame *reply)
@@ -17,7 +18,9 @@ void handler_ping(const IocFrame *request, IocFrame *reply)
     memcpy(&reply->bytes[IOC_OFF_PAYLOAD],
            &request->bytes[IOC_OFF_PAYLOAD],
            16u);
-    /* Bytes 20-31: reserved, already zero from memset */
+    /* Bytes 20-31: reserved, already zero from memset -- except the firmware
+     * level, so a host never has to infer which build answered. */
+    reply->bytes[IOC_OFF_PING_LEVEL] = IOC_FW_LEVEL;
 }
 
 /* RESET is a terminal, disruptive command.
@@ -245,10 +248,19 @@ void handler_xfer_status(const IocFrame *request, IocFrame *reply)
     {
         uint8_t i;
         const uint8_t *raw = bulk_channel_rx_window();
+        /* Peek the buffer the transfer was actually armed into, not a fixed
+         * one -- record transfers do not use xfer_block. */
+        const uint8_t *got = bulk_channel_rx_target();
         for (i = 0u; i < IOC_DONE_PEEK_BYTES; i++)
-            reply->bytes[IOC_OFF_DONE_PEEK + i] = xfer_block[i];
-        for (i = 0u; i < IOC_DONE_RAW_BYTES; i++)
-            reply->bytes[IOC_OFF_DONE_RAW + i] = raw[i];
+            reply->bytes[IOC_OFF_DONE_PEEK + i] = (got != 0) ? got[i] : 0u;
+        /* Caller-selected slice of the raw window, so a failure can be walked
+         * a byte at a time instead of guessed at from its first eight. */
+        uint16_t off  = request->bytes[IOC_OFF_STATUS_RAW_OFF];
+        uint16_t size = bulk_channel_rx_window_size();
+        for (i = 0u; i < IOC_DONE_RAW_BYTES; i++) {
+            uint16_t k = (uint16_t)(off + i);
+            reply->bytes[IOC_OFF_DONE_RAW + i] = (k < size) ? raw[k] : 0u;
+        }
     }
 }
 
@@ -258,4 +270,110 @@ void handler_unknown(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_CLASS]  = RSP_UNKNOWN_COMMAND;
     reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
     reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_UNKNOWN_CMD;
+}
+
+/* ---------------------------------------------------------------------------
+ * Record-addressed access
+ *
+ * The CP/M BIOS storage driver talks in 128-byte records and never sees a
+ * block.  Everything below is a thin shell over sd_cache: decode the record
+ * number, hand off, report.  The deblocking, the LRU and the write policy all
+ * live in sd_cache.c, which is where they can be reasoned about without a
+ * frame layout in the way.
+ * --------------------------------------------------------------------------- */
+
+/* Staging buffer for one record.  Separate from xfer_block because the bulk
+ * lane streams straight out of (or into) it while the cache slot it came from
+ * stays intact -- copying is what keeps the cache from being aliased by a
+ * transfer that might fail halfway. */
+static uint8_t xfer_record[IOC_SD_RECORD_BYTES];
+
+static uint32_t decode_record(const IocFrame *request)
+{
+    return  (uint32_t)request->bytes[IOC_OFF_RECORD_0]
+         | ((uint32_t)request->bytes[IOC_OFF_RECORD_0 + 1u] << 8)
+         | ((uint32_t)request->bytes[IOC_OFF_RECORD_0 + 2u] << 16)
+         | ((uint32_t)request->bytes[IOC_OFF_RECORD_0 + 3u] << 24);
+}
+
+static void reply_header(const IocFrame *request, IocFrame *reply,
+                         uint8_t cls, uint8_t status, uint8_t len)
+{
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = cls;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = status;
+    reply->bytes[IOC_OFF_LEN]    = len;
+}
+
+/* Read one record.  The cache is consulted BEFORE the reply goes out, so a
+ * READY here is the same genuine promise the block read makes: the bytes are
+ * already in SRAM and the bulk phase cannot fail for want of the card. */
+void handler_sd_read_rec(const IocFrame *request, IocFrame *reply)
+{
+    uint32_t record = decode_record(request);
+    SdStatus st     = sd_cache_read_record(record, xfer_record);
+
+    reply_header(request, reply, RSP_SD_READ_REC,
+                 sd_status_to_ioc(st), IOC_READY_PAYLOAD_LEN);
+
+    if (st != SD_OK)
+        return;                 /* no id, no length: host must not read */
+
+    reply->bytes[IOC_OFF_READY_XFER_ID]   = bulk_channel_next_xfer_id();
+    reply->bytes[IOC_OFF_READY_DIRECTION] = BULK_DIR_MCU_TO_Z80;
+    reply->bytes[IOC_OFF_READY_LEN_LO]    = (uint8_t)IOC_SD_RECORD_BYTES;
+    reply->bytes[IOC_OFF_READY_LEN_HI]    = 0u;
+    reply_echo_lba(reply, record);
+
+    bulk_channel_arm(xfer_record, IOC_SD_RECORD_BYTES,
+                     reply->bytes[IOC_OFF_READY_XFER_ID]);
+}
+
+static uint32_t pending_write_record;
+
+/* Runs once the record has arrived and been de-shifted.
+ *
+ * Unlike the block write path this usually does NOT touch the card: the record
+ * lands in a cache slot and is committed by the flush timer.  The exception is
+ * the write-through block, where this returns the card's own status.  Either
+ * way the DONE query stays mandatory -- it is the only thing that reports a
+ * bulk CRC failure, and a deferred write can still fail here by being unable to
+ * read the containing block. */
+static uint8_t commit_sd_write_record(void)
+{
+    return sd_status_to_ioc(sd_cache_write_record(pending_write_record,
+                                                  xfer_record));
+}
+
+void handler_sd_write_rec(const IocFrame *request, IocFrame *reply)
+{
+    pending_write_record = decode_record(request);
+
+    reply_header(request, reply, RSP_SD_WRITE_REC,
+                 IOC_STATUS_OK, IOC_READY_PAYLOAD_LEN);
+
+    reply->bytes[IOC_OFF_READY_XFER_ID]   = bulk_channel_next_xfer_id();
+    reply->bytes[IOC_OFF_READY_DIRECTION] = BULK_DIR_Z80_TO_MCU;
+    reply->bytes[IOC_OFF_READY_LEN_LO]    = (uint8_t)IOC_SD_RECORD_BYTES;
+    reply->bytes[IOC_OFF_READY_LEN_HI]    = 0u;
+    reply_echo_lba(reply, pending_write_record);
+
+    bulk_channel_arm_receive(xfer_record, IOC_SD_RECORD_BYTES,
+                             reply->bytes[IOC_OFF_READY_XFER_ID],
+                             commit_sd_write_record);
+}
+
+/* Commit everything now.  No bulk phase: the status in the reply IS the answer,
+ * so this is the one storage command a host can trust without a DONE query.
+ *
+ * Blocking for as long as the dirty slots take -- up to four card writes, and
+ * an SD card is entitled to a couple of hundred milliseconds each on an
+ * erase-block boundary.  That is the point: a host calling this wants the
+ * card consistent before it does whatever comes next. */
+void handler_sd_flush(const IocFrame *request, IocFrame *reply)
+{
+    SdStatus st = sd_cache_flush();
+
+    reply_header(request, reply, RSP_SD_FLUSH, sd_status_to_ioc(st), 0u);
 }

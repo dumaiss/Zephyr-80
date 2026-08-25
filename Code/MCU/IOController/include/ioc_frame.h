@@ -56,28 +56,47 @@
 #define IOC_OFF_READY_DIRECTION  (IOC_OFF_PAYLOAD + 1u)
 #define IOC_OFF_READY_LEN_LO     (IOC_OFF_PAYLOAD + 2u)
 #define IOC_OFF_READY_LEN_HI     (IOC_OFF_PAYLOAD + 3u)
-/* The LBA the MCU actually DECODED from the request, echoed back so the host
- * can check it before any data moves.
+/* The LBA (or record number) the MCU actually DECODED from the request, echoed
+ * back so the host can check it before any data moves.
  *
- * The command frame has no CRC: find_frame_start() dispatches on a header whose
- * class, sequence, status and length all validate, and the payload is not
- * checked by anything.  A false lock at a wrong bit offset therefore hands a
- * handler a garbage LBA, and a write lands 512 bytes on a sector nobody asked
- * for -- silently, reporting success.  Observed: the target sector kept its
- * previous contents while the write reported OK.
+ * This began as a mitigation for a command lane with no CRC, where a false bit
+ * lock could hand a handler a garbage LBA and land a write on a sector nobody
+ * asked for -- silently, reporting success.  Observed at the time: the target
+ * sector kept its previous contents while the write reported OK.
  *
- * Echoing the decoded LBA lets the host abort before the bulk phase, so a
- * mis-framed command costs a failed transfer instead of a destroyed sector.
- *
- * This is a MITIGATION, not the fix.  The fix is a CRC over the whole command
- * frame, validated before dispatch.  Until that exists, nothing else stops a
- * plausible-looking header from running a handler with corrupt arguments. */
+ * The frame CRC above is now the real fix, and it is checked before dispatch.
+ * The echo stays because it is nearly free and it checks a different thing: the
+ * CRC proves the frame arrived intact, the echo proves the MCU and the host
+ * agree on what the frame MEANT.  A decode bug on either side survives a
+ * perfect CRC. */
 #define IOC_OFF_READY_LBA        (IOC_OFF_PAYLOAD + 4u)
 #define IOC_READY_PAYLOAD_LEN    8u
 
 /* SD_READ_BULK request payload: 32-bit LBA, little-endian. */
 #define IOC_OFF_LBA_0            (IOC_OFF_PAYLOAD + 0u)
 #define IOC_SD_LBA_PAYLOAD_LEN   4u
+
+/* SD_READ_REC / SD_WRITE_REC request payload: 32-bit CP/M record number, in the
+ * same slot as the LBA so one decode path serves both.
+ *
+ * 8 MiB / 128 = 65536 records, so the volume needs only 16 bits today.  The
+ * field is 32 anyway: it sits exactly at the 16-bit ceiling, and widening a
+ * protocol field after the fact breaks every .com file already on the disk. */
+#define IOC_OFF_RECORD_0         (IOC_OFF_PAYLOAD + 0u)
+#define IOC_SD_RECORD_PAYLOAD_LEN 4u
+#define IOC_SD_RECORD_BYTES      128u
+
+/* XFER_STATUS REQUEST payload: which part of the raw capture window to return.
+ *
+ * Eight bytes of window is enough to see that a transfer went wrong and not
+ * enough to say how.  A sync failure needs to be told apart three ways -- the
+ * host never transmitted, the preamble is present but past the search, or the
+ * preamble is corrupt -- and the first eight bytes look similar in all three.
+ *
+ * Byte 4 of the request is a window offset in bytes.  Zero, which every
+ * existing caller sends because they zero the frame, means the same window as
+ * before, so this is backward compatible. */
+#define IOC_OFF_STATUS_RAW_OFF   (IOC_OFF_PAYLOAD + 0u)
 
 /* XFER_STATUS reply payload: the DONE record. */
 #define IOC_OFF_DONE_XFER_ID     (IOC_OFF_PAYLOAD + 0u)
@@ -107,6 +126,12 @@
 #define CMD_SD_READ_BULK     0x05
 #define CMD_XFER_STATUS      0x06
 #define CMD_SD_WRITE_BULK    0x07
+/* Record-addressed access, served from the SD block cache.  These are what the
+ * CP/M BIOS storage driver uses; the block-addressed commands above stay for
+ * bring-up tools that need to bypass the cache. */
+#define CMD_SD_READ_REC      0x08
+#define CMD_SD_WRITE_REC     0x09
+#define CMD_SD_FLUSH         0x0A
 
 /* Response class bytes (MCU → Z80) */
 #define RSP_PING             0x81
@@ -115,7 +140,36 @@
 #define RSP_SD_READ_BULK     0x85
 #define RSP_XFER_STATUS      0x86
 #define RSP_SD_WRITE_BULK    0x87
+#define RSP_SD_READ_REC      0x88
+#define RSP_SD_WRITE_REC     0x89
+#define RSP_SD_FLUSH         0x8A
 #define RSP_UNKNOWN_COMMAND  0xFE
+
+/* Firmware capability level, returned by PING.
+ *
+ * Bump this whenever the frame protocol gains something a host can depend on.
+ * It exists because "is the controller running the firmware I just built?" has
+ * twice been answered wrongly by inference, and each time cost a debugging
+ * round: once when an unflashed build replied RSP_UNKNOWN_COMMAND to a new
+ * class, and once when a stale build silently ignored a new request field and
+ * returned the same window slice six times.
+ *
+ *   1  base two-lane transport: PING, SD_READ, BULK_TEST, SD_READ_BULK,
+ *      XFER_STATUS, SD_WRITE_BULK
+ *   2  frame CRC and rolling sequence
+ *   3  bulk-lane CRC in both directions
+ *   4  record commands and the SD block cache: SD_READ_REC, SD_WRITE_REC,
+ *      SD_FLUSH; XFER_STATUS honours a raw-window offset; the DONE peek
+ *      follows the armed receive buffer
+ *   5  bulk writes carry a sacrificial lead-in byte before the preamble, and
+ *      the receive search widened to 128 bits to keep its late-start margin
+ */
+#define IOC_FW_LEVEL  5
+
+/* PING reply: the firmware level.  In the RESERVED area, not the payload --
+ * PING echoes bytes 4..19 verbatim and that echo is what proves the round trip,
+ * so it must not be overwritten. */
+#define IOC_OFF_PING_LEVEL  20u
 
 /* Status bytes */
 #define IOC_STATUS_OK            0x00

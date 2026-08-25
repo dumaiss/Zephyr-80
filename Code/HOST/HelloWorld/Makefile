@@ -16,7 +16,7 @@ LISTING_TO_IHEX := $(TOOLS_DIR)/listing_to_ihex.py
 IHX_TO_COM := $(TOOLS_DIR)/ihx_to_com.py
 
 ASXXXX_TARGETS := vdrip_checkerboard vdrip_smiley shadow_copy_test shadow_copy_low vdrip_text_mode_test
-COM_TARGETS := video_smiley video_smiley_v9958 mandelbrot_v9958 mandelbrot_v9958_real nowrap wrapon ioc_ping ioc_reset ioc_rts_probe ioc_sd_read ioc_bulk ioc_sdblk ioc_sdwrite ioc_sdsoak
+COM_TARGETS := video_smiley video_smiley_v9958 mandelbrot_v9958 mandelbrot_v9958_real nowrap wrapon ioc_ping ioc_reset ioc_rts_probe ioc_sd_read ioc_bulk ioc_sdblk ioc_sdwrite ioc_sdsoak ioc_sdrec
 ASXXXX_SRCS := $(addprefix $(SRC_DIR)/,$(addsuffix .asm,$(ASXXXX_TARGETS)))
 COM_SRCS := $(addprefix $(SRC_DIR)/,$(addsuffix .asm,$(COM_TARGETS)))
 ASXXXX_INCS := $(wildcard $(SRC_DIR)/*.inc)

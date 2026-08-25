@@ -4,6 +4,7 @@
 #include "config.h"
 #include "spi1_bus.h"
 #include "controller_latch.h"
+#include "timebase.h"
 
 /* ---------------------------------------------------------------------------
  * Controller latch — first bring-up of the port C peripheral bus
@@ -34,34 +35,11 @@
  * value for a mezzanine bus whose loading is not yet characterised. */
 #define CTRL_SPI_BAUD         SPI1_BAUD_1MHZ
 
-#define CTRL_TICK_PERIOD_MS   10u
 #define CTRL_UPDATE_MS        500u
-#define CTRL_TICKS_PER_UPDATE (CTRL_UPDATE_MS / CTRL_TICK_PERIOD_MS)
+#define CTRL_TICKS_PER_UPDATE (CTRL_UPDATE_MS / TIMEBASE_TICK_MS)
 
-static uint8_t tick_count;
-static uint8_t counter;
-
-/* Timer2 produces a 10 ms tick:
- *
- *   FOSC/4 = 16 MHz, 1:128 prescale         -> 125 kHz
- *   T2PR = 249, so the period is 250 counts -> 500 Hz
- *   1:5 postscale                           -> 100 Hz = 10 ms
- *
- * Fifty of those is the 500 ms bring-up period. */
-static void timer_init(void)
-{
-    T2CON = 0x00;             /* stop the timer while it is reconfigured */
-    T2CLKCON = 0x01;          /* CS = 00001 -> FOSC/4 = 16 MHz */
-    T2HLT = 0x00;             /* free running, software gated */
-    T2PR = 249u;              /* restarts at 0 on reaching PR -> 250 counts */
-    T2TMR = 0x00;
-
-    T2CONbits.CKPS  = 0b111;  /* 1:128 prescale  -> 125 kHz */
-    T2CONbits.OUTPS = 0b0100; /* 1:5 postscale   -> 100 Hz = 10 ms */
-
-    PIR3bits.TMR2IF = 0;
-    T2CONbits.ON = 1;
-}
+static uint16_t last_update;
+static uint8_t  counter;
 
 void controller_latch_init(void)
 {
@@ -71,10 +49,8 @@ void controller_latch_init(void)
     CTRL_LAT_CS_LAT   = CTRL_LAT_CS_IDLE;
     CTRL_LAT_CS_TRIS  = 0;
 
-    timer_init();
-
-    tick_count = 0u;
-    counter    = 0u;
+    last_update = timebase_ticks();
+    counter     = 0u;
 
     /* Park the outputs at a known value rather than whatever the 595s powered
      * up holding. */
@@ -100,15 +76,14 @@ void controller_latch_write(uint8_t byte0, uint8_t byte1)
 
 void controller_latch_tick(void)
 {
-    if (!PIR3bits.TMR2IF)
+    uint16_t now = timebase_ticks();
+
+    /* Elapsed-time test, not equality: a long SD access can span several tick
+     * periods, and the counter then jumps by more than one. */
+    if ((uint16_t)(now - last_update) < CTRL_TICKS_PER_UPDATE)
         return;
 
-    PIR3bits.TMR2IF = 0;
-
-    if (++tick_count < CTRL_TICKS_PER_UPDATE)
-        return;
-
-    tick_count = 0u;
+    last_update = now;
 
     /* (0,1) then (1,2) then (2,3)...  Both bytes wrap at 255 independently,
      * which is fine -- the point is only that the monitor shows them counting. */

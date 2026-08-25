@@ -90,6 +90,18 @@ uint8_t bulk_channel_next_xfer_id(void);
  * before any preamble search or bit de-shifting. */
 const uint8_t *bulk_channel_rx_window(void);
 
+/* Size of that window, so callers can bound a caller-selected slice. */
+uint16_t bulk_channel_rx_window_size(void);
+
+/* The buffer the last receive was armed into, so a diagnostic can peek at what
+ * actually landed.  NULL if nothing has been armed for receive.
+ *
+ * XFER_STATUS used to peek a fixed buffer, which was correct while every bulk
+ * receive used the same one.  Record transfers land somewhere else, so the
+ * diagnostic reported eight zeroes from an untouched block buffer on exactly
+ * the failures it existed to explain. */
+const uint8_t *bulk_channel_rx_target(void);
+
 uint8_t bulk_channel_last_xfer_id(void);
 uint8_t bulk_channel_last_status(void);
 

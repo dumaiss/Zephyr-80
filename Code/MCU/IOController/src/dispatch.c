@@ -27,6 +27,18 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
         handler_sd_write_bulk(request, reply);
         return true;
 
+    case CMD_SD_READ_REC:
+        handler_sd_read_rec(request, reply);
+        return true;
+
+    case CMD_SD_WRITE_REC:
+        handler_sd_write_rec(request, reply);
+        return true;
+
+    case CMD_SD_FLUSH:
+        handler_sd_flush(request, reply);
+        return true;
+
     case CMD_XFER_STATUS:
         handler_xfer_status(request, reply);
         return true;

@@ -709,7 +709,7 @@ IOCBULK_DRAINED_FIFO:
 IOCBULK_CHUNK:
 	pop af
 	or a
-	jr z,IOCBULK_DRAINED		; popped and not re-pushed: stack balanced
+	jr z,IOCBULK_TRAILER		; popped and not re-pushed: stack balanced
 	dec a
 	push af
 	ld b,#0				; B = 0 means 256 bytes to INI
@@ -732,6 +732,19 @@ IOCBULK_GOT:
 	; Payload received.  The CRC trailer follows it on the wire but does NOT
 	; go into the caller's buffer -- callers pass a payload-sized buffer and
 	; never see integrity.  Most significant byte first, matching the MCU.
+	;
+	; The payload loop above MUST land here and not on IOCBULK_DRAINED.  It
+	; jumped straight past this block once, leaving ioc_bulk_crc holding
+	; whatever was there before -- and what was there before is IOCBULKW's
+	; precomputed CRC of the last payload it SENT, because both routines share
+	; the variable.
+	;
+	; That is why the fault hid for so long.  The soak writes a block and then
+	; reads the same block back, so the leftover CRC was exactly the CRC of the
+	; data being verified and the check passed 3200 times running.  It only
+	; failed once a test read a DIFFERENT record than it last wrote.  A check
+	; that compares against stale state is worse than no check: it reports
+	; success and suppresses the reason to look.
 IOCBULK_TRAILER:
 	call IOCBULK_GET
 	jp c,IOCBULK_TIMEOUT
@@ -897,19 +910,55 @@ IOCBULKW_ARM:
 	out (SIO_BULK_CTRL_PORT),a
 	ld a,#SIO_WR3_BULK_TX
 	out (SIO_BULK_CTRL_PORT),a
+
+	; STAGE THE FIRST PREAMBLE BYTE BEFORE RAISING RTS.
+	;
+	; RTS is the MCU's "go": wait_for_host_ready() returns on it and the MCU
+	; then asserts /CTSA and starts clocking.  It does not ask again.  So
+	; anything sitting in the transmitter at that moment is what goes on the
+	; wire -- and if the buffer is still empty, that is WR7 fill.
+	;
+	; Raising RTS first left a window of roughly a dozen instructions in which
+	; the MCU could begin clocking fill.  The preamble then arrives that many
+	; bit times late, past the 64-bit search, and the MCU reports BULK_NO_SYNC
+	; having captured a window that opens with idle marking and ten bits of
+	; fill before any data.  That is exactly what a failing transfer's raw
+	; capture showed: no 7E 81 anywhere, but the payload ramp present further
+	; in.
+	;
+	; Intermittent because it is a race: whether it fails depends on where the
+	; MCU happens to be in its poll when RTS goes up.  Staging the byte first
+	; removes the race rather than making it less likely -- there is no longer
+	; a moment when RTS is high and the transmitter is empty.
+	;
+	; The buffer is empty on entry and /CTSA is still deasserted, so this PUT
+	; cannot block: with the transmitter gated off nothing is shifting, and the
+	; SIO reports the buffer free immediately.
+	; The lead-in goes first and is expected to be damaged.  See
+	; IOC_BULK_LEADIN: the byte the transmitter emits as it starts is fill,
+	; not what was buffered, so the preamble must not be that byte.
+	push de
+	ld a,#IOC_BULK_LEADIN
+	call IOCBULKW_PUT
+	jp c,IOCBULKW_STALL_POP
+
+	; EOM reset still follows the first buffered byte, as it must.
+	ld a,#SIO_WR0_RESET_EOM
+	out (SIO_BULK_CTRL_PORT),a
+
+	; Now say "go".  The transmitter has something to send.
 	ld a,#0x05
 	out (SIO_BULK_CTRL_PORT),a
 	ld a,#SIO_WR5_BULK_RTS_ON
 	out (SIO_BULK_CTRL_PORT),a
 
-	; Preamble byte 0, THEN the EOM reset, THEN byte 1.  See the note above:
-	; the order is not interchangeable.
-	push de
+	; Byte 1 goes in after RTS of necessity: the SIO holds one buffered byte
+	; plus the shift register, so a second write cannot complete until the
+	; first has started shifting -- which needs the clock, which needs RTS.
+	; Preamble proper, on a transmitter that is now running.
 	ld a,#IOC_BULK_PREAMBLE_0
 	call IOCBULKW_PUT
 	jp c,IOCBULKW_STALL_POP
-	ld a,#SIO_WR0_RESET_EOM
-	out (SIO_BULK_CTRL_PORT),a
 	ld a,#IOC_BULK_PREAMBLE_1
 	call IOCBULKW_PUT
 	jp c,IOCBULKW_STALL_POP

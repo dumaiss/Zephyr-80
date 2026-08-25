@@ -8,6 +8,8 @@
 #include "dispatch.h"
 #include "spi1_bus.h"
 #include "controller_latch.h"
+#include "timebase.h"
+#include "sd_cache.h"
 #include "bulk_channel.h"
 #include "sd_card.h"
 
@@ -98,7 +100,9 @@ static void platform_init(void)
     /* Controller latch: 500 ms bring-up counter on the same port C bus.  The
      * SD card is not touched here -- it initialises lazily on the first
      * SD_READ, so a missing card costs nothing at boot. */
+    timebase_init();
     controller_latch_init();
+    sd_cache_init();
 }
 
 /* ---------------------------------------------------------------------------
@@ -295,6 +299,29 @@ int main(void)
             command_ready_set(false);   /* accepting: no further requests */
             service_command_request();
             command_ready_set(true);    /* all work done, including bulk/SD */
+        }
+
+        /* One owner of the Timer2 flag; everything below compares against it. */
+        timebase_poll();
+
+        /* Write-back flush for the SD cache.
+         *
+         * Runs only here, between commands, so it cannot land in the middle of
+         * a transaction -- the loop is single-threaded and
+         * service_command_request() completes its bulk phase before returning.
+         *
+         * COMMAND_READY is dropped around it because the flush can block for
+         * the length of several card writes.  The Z80 holds /SIO1B_INT until
+         * acknowledged, so a request arriving mid-flush is delayed rather than
+         * lost; this only tells the host the truth about when to bother
+         * asking.  Raised again unconditionally: leaving it low on a failed
+         * flush would wedge the host waiting for a controller that is fine. */
+        if (sd_cache_flush_due()) {
+            command_ready_set(false);
+            (void)sd_cache_tick();
+            command_ready_set(true);
+        } else {
+            (void)sd_cache_tick();      /* keeps the interval anchored; no I/O */
         }
 
         /* Non-blocking: returns immediately unless the 500 ms period elapsed. */

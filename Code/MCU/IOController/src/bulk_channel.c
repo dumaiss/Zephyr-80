@@ -100,7 +100,17 @@
  * preamble can still be found if the host's transmitter starts late.  The
  * search covers BULK_RX_SEARCH_BITS bit positions, so the window needs that
  * many bits of headroom plus one byte for the bit-shifted tail read. */
-#define BULK_RX_SEARCH_BITS   64u
+/* Widened from 64.  The host now sends a sacrificial lead-in byte before the
+ * preamble, because the first byte out of its transmitter is fill rather than
+ * what was buffered, so 7E 81 starts a byte later than it used to.  64 bits
+ * would still cover that, but the margin for a late start is what absorbs this
+ * class of fault and it should not be spent on a known, fixed cost.
+ *
+ * A wider search means more candidate positions and so more chances of a false
+ * lock on 16 bits of payload that happen to read 7E 81.  That is survivable
+ * only because the payload carries its own CRC: a false lock de-shifts into
+ * garbage and is rejected rather than committed. */
+#define BULK_RX_SEARCH_BITS   128u
 #define BULK_RX_WINDOW_BYTES  (BULK_MAX_LENGTH + BULK_CRC_BYTES + 2u + (BULK_RX_SEARCH_BITS / 8u) + 2u)
 
 static uint8_t rx_window[BULK_RX_WINDOW_BYTES];
@@ -208,6 +218,11 @@ static void bulk_rx_byte_gap(void)
 
 static const uint8_t *armed_buf;
 static uint8_t       *armed_rx_buf;
+
+/* Survives teardown: armed_rx_buf is cleared before the payload is de-shifted,
+ * but a diagnostic issued after the transfer still needs to know where the
+ * bytes went. */
+static uint8_t *last_rx_target;
 static BulkCommitFn   armed_commit;
 static uint8_t        armed_dir;
 static uint16_t       armed_length;
@@ -308,10 +323,21 @@ void bulk_channel_arm_receive(uint8_t *buf, uint16_t length, uint8_t xfer_id,
 {
     armed_buf     = 0;
     armed_rx_buf  = buf;
+    last_rx_target = buf;
     armed_commit  = commit;
     armed_dir     = BULK_DIR_Z80_TO_MCU;
     armed_length  = length;
     armed_xfer_id = xfer_id;
+}
+
+const uint8_t *bulk_channel_rx_target(void)
+{
+    return last_rx_target;
+}
+
+uint16_t bulk_channel_rx_window_size(void)
+{
+    return BULK_RX_WINDOW_BYTES;
 }
 
 const uint8_t *bulk_channel_rx_window(void)

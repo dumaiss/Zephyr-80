@@ -44,6 +44,13 @@
 	.globl ioc_command_send_frame,ioc_command_recv_frame
 
 	.area CODE (ABS)
+
+	; One byte of transport level, immediately below IOCALL.  See
+	; ZBIOS_XPORT_LEVEL: a host can read it straight out of ROM and refuse to
+	; interpret a wire capture produced by a BIOS it was not built against.
+	.org ZBIOS_XPORT_LEVEL_ADDR
+	.db ZBIOS_XPORT_LEVEL
+
 	.org CBIOS_IOCTRL_CODE_BASE
 
 IOCTRL_CODE_START:

@@ -253,6 +253,21 @@ SIO_RR1_TX_UNDERRUN             = 0x40
 ; symmetric with sending: the MCU supplies the clock but cannot know which edge
 ; the host's transmitter started on, so it searches for this pattern.  Two bytes,
 ; because a lone 7Eh occurs at a shifted offset inside ordinary data.
+; Sacrificial lead-in, sent before the preamble.
+;
+; The first byte out of the transmitter is not trustworthy.  With Auto Enables
+; the shift register cannot load until the MCU asserts /CTSA, so the opening bit
+; times go out as fill and the byte in the buffer is lost.  Measured on a failing
+; transfer: aligning 48 bytes of the MCU's raw capture against the expected
+; stream fits at a -6 bit offset with 9 bad bits in 378, and all nine are in the
+; preamble -- 7E arrived as 00, 81 arrived one bit late, and every payload bit
+; after that was correct.
+;
+; Nothing can make the first byte reliable from this side, so it is made
+; disposable instead: the lead-in absorbs the startup and 7E 81 follows on a
+; transmitter that is already running.  00h rather than something distinctive on
+; purpose -- it must not be mistaken for the preamble by the MCU's bit search.
+IOC_BULK_LEADIN                 = 0x00
 IOC_BULK_PREAMBLE_0             = 0x7e
 IOC_BULK_PREAMBLE_1             = 0x81
 
@@ -451,6 +466,22 @@ CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_BIOS_EXT_CODE_BASE        = CBIOS_BASE + 0x0550                  ; DF50h
 CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x057B                  ; DF7Bh — immediately after VIDEO_SEND
+
+; Transport level, readable directly from ROM at a fixed address.
+;
+; The MCU reports IOC_FW_LEVEL over PING, which proves the CONTROLLER is
+; current and says nothing about the BIOS.  A stale ROM then presents as a
+; transport fault: a wire change was made, flashed to the PIC only, and the
+; capture came back byte-identical to the previous one three times running
+; before the pairing was checked rather than assumed.
+;
+; Placed one byte below IOCALL, inside VIDEO_SEND's tail slack.  Both regions
+; sit at fixed offsets from CBIOS_BASE and IOCALL's address is already published
+; ABI, so this address moves only if the vector table's target does.
+;
+;   5  bulk writes lead with a sacrificial byte before the 7E 81 preamble
+ZBIOS_XPORT_LEVEL               = 0x05
+ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_IOCTRL_CODE_BASE - 1           ; DF7Ah
 
 ; VDrip CP850 font placement in bank 0 TPA.
 ; Font data lives at VDRIP_FONT_ROM_BASE in the firmware binary (bank 0 ROM).

@@ -40,6 +40,10 @@ void handler_sd_write_bulk(const IocFrame *request, IocFrame *reply);
 void handler_xfer_status(const IocFrame *request, IocFrame *reply);
 
 /* Unknown command fallback: fills *reply with RSP_UNKNOWN_COMMAND. */
+void handler_sd_read_rec(const IocFrame *request, IocFrame *reply);
+void handler_sd_write_rec(const IocFrame *request, IocFrame *reply);
+void handler_sd_flush(const IocFrame *request, IocFrame *reply);
+
 void handler_unknown(const IocFrame *request, IocFrame *reply);
 
 #endif /* HANDLERS_H */
