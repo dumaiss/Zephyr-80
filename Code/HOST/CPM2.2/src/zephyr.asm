@@ -106,4 +106,5 @@ ZBIOS_EXT_BASE:
 	.include "cbios_console_vdrip.asm"
 	.include "cbios_storage.asm"
 	.include "cbios_storage_vdrip.asm"
+	.include "cbios_storage_sd.asm"
 	.include "cbios_bank.asm"

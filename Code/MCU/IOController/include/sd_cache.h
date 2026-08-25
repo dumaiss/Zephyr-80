@@ -68,6 +68,11 @@
  * a write-back flush, since the idle gap is exactly when the card is free.
  */
 
+/* Block loads actually issued to the card.  Compare against the record-read
+ * count in the PING reply: four records share one block, so a sequential read
+ * should show roughly one miss per four records. */
+uint16_t sd_cache_misses(void);
+
 #define SD_CACHE_SLOTS      4u
 #define SD_CACHE_FLUSH_MS   100u
 

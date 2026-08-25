@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "external_sync.h"
+#include "timebase.h"
 #include "config.h"
 #include "sio_link.h"
 
@@ -290,6 +291,10 @@ static bool is_command_class(uint8_t value)
            (value == CMD_BULK_TEST) ||
            (value == CMD_SD_READ_BULK) ||
            (value == CMD_SD_WRITE_BULK) ||
+           (value == CMD_SD_READ_REC) ||
+           (value == CMD_SD_WRITE_REC) ||
+           (value == CMD_SD_FLUSH) ||
+           (value == CMD_PROFILE) ||
            (value == CMD_XFER_STATUS);
 }
 
@@ -383,6 +388,39 @@ static bool find_frame_start(uint16_t *bit_index)
             return true;
         }
 
+        /* Record-addressed access.  These were added with the SD storage
+         * driver and NOT registered here, which is what this comment block
+         * exists to prevent: find_frame_start() is the only path that checks a
+         * candidate alignment against the CRC, so an unregistered class could
+         * never be framed by it.  Those commands fell through to the alignment
+         * heuristics in copy_received_frame(), which key on 7Eh -- a byte the
+         * BIOS never sends, but which the host SIO emits as WR7 transmitter-
+         * underrun fill.  The result was a frame locked on noise, dispatched
+         * unverified: the PIC read a garbage class and answered
+         * RSP_UNKNOWN_COMMAND with the host's class byte sitting in the
+         * sequence slot, and the host rejected the reply as BAD_SEQ. */
+        if ((cls == CMD_SD_READ_REC || cls == CMD_SD_WRITE_REC) &&
+            len == IOC_SD_RECORD_PAYLOAD_LEN) {
+            if (!frame_crc_ok(start))
+                continue;
+            *bit_index = start;
+            return true;
+        }
+
+        if (cls == CMD_PROFILE && len == 0x00u) {
+            if (!frame_crc_ok(start))
+                continue;
+            *bit_index = start;
+            return true;
+        }
+
+        if (cls == CMD_SD_FLUSH && len == 0x00u) {
+            if (!frame_crc_ok(start))
+                continue;
+            *bit_index = start;
+            return true;
+        }
+
         if (cls == CMD_XFER_STATUS && len == 0x00u) {
             if (!frame_crc_ok(start))
                 continue;
@@ -417,38 +455,123 @@ static uint16_t find_alignment_end(void)
     return 0xFFFFu;
 }
 
+/* Extract the request frame from the capture window.
+ *
+ * THE CRC DECIDES.  Every path below proposes a candidate alignment and then
+ * asks frame_crc_ok() whether it is right; none of them may accept a guess on
+ * its own authority.  The first two are shortcuts that skip the bit search when
+ * the frame happens to sit on a byte boundary -- they save the ~2 ms a full
+ * search costs, and nothing else.
+ *
+ * They used to return without checking anything, and that was the bug behind a
+ * whole class of storage failures.  Both key on 7Eh, described here as an
+ * alignment byte "the BIOS currently clocks before the mailbox".  The BIOS does
+ * not, and never did in this firmware's lifetime; the only 7Eh on the wire is
+ * WR7, the host SIO's transmitter-underrun FILL character, which appears
+ * wherever the Z80 momentarily runs dry.  So the shortcuts were hunting through
+ * a 48-byte window for a byte that marks nothing, and handing whatever followed
+ * it straight to dispatch.
+ *
+ * A frame that validates nowhere returns false, and the caller sends no reply.
+ * That is the right failure: the host waits out its receive timeout and retries
+ * with RTS already released, which costs one transaction.  Answering a frame
+ * that was never sent costs lane synchronisation, which costs everything after
+ * it.
+ */
+/* The bit offset that last decoded a frame successfully.
+ *
+ * Frames arrive at a stable alignment -- the host asserts RTS and the PIC
+ * starts clocking, so the phase relationship barely moves between transactions.
+ * Trying the previous answer first turns the common case from a 128-offset walk
+ * into a single 30-byte CRC.  It cannot cause a mis-decode: the CRC still has to
+ * pass, exactly as it does for every other candidate.
+ *
+ * Measured before this existed: the alignment search was 4946 ms of a 9526 ms
+ * SC2 load, 52% of the wall time. */
+static uint16_t last_good_bit;
+static bool     last_good_valid;
+
+/* Nothing but idle in the window.
+ *
+ * The PIC enters service_command_request() on a LEVEL, so it clocks a window
+ * whenever /SIO1B_INT is low -- including when the host has asserted but not yet
+ * started transmitting.  Those windows read as all-FFh marking idle, contain no
+ * frame, and used to cost a full failed search: alignment scan over 384 bits,
+ * then every one of 128 offsets, matching nothing.  That is the expensive half
+ * of the 4946 ms, because it happened about once per real transaction.
+ *
+ * A real frame always contains a zero bit somewhere -- the class, the length and
+ * the status byte cannot all be FFh -- so this rejects only windows that could
+ * never decode. */
+static bool window_is_idle(void)
+{
+    uint8_t i;
+
+    for (i = 0u; i < EXTSYNC_RX_WINDOW_BYTES; i++) {
+        if (rx_window[i] != 0xFFu)
+            return false;
+    }
+
+    return true;
+}
+
 static bool copy_received_frame(IocFrame *frame)
 {
     uint16_t start;
     uint8_t i;
 
-    if (rx_window[0] == EXTSYNC_ALIGNMENT_BYTE) {
+    if (window_is_idle())
+        return false;
+
+    /* Last known alignment, CRC-verified like any other candidate. */
+    if (last_good_valid &&
+        ((uint16_t)(last_good_bit + (uint16_t)(IOC_FRAME_SIZE * 8u)) <=
+         (uint16_t)(EXTSYNC_RX_WINDOW_BYTES * 8u)) &&
+        frame_crc_ok(last_good_bit)) {
         for (i = 0u; i < IOC_FRAME_SIZE; i++)
-            frame->bytes[i] = rx_window[(uint8_t)(i + 1u)];
+            frame->bytes[i] =
+                read_wire_byte((uint16_t)(last_good_bit + (uint16_t)i * 8u));
         return true;
     }
 
+    /* Shortcut: an alignment byte opens the window, so the frame would start on
+     * the next byte boundary.  read_wire_byte(8n) == rx_window[n], so bit 8
+     * names exactly that candidate. */
+    if (rx_window[0] == EXTSYNC_ALIGNMENT_BYTE && frame_crc_ok(8u)) {
+        for (i = 0u; i < IOC_FRAME_SIZE; i++)
+            frame->bytes[i] = rx_window[(uint8_t)(i + 1u)];
+        last_good_bit   = 8u;
+        last_good_valid = true;
+        return true;
+    }
+
+    /* Shortcut: an alignment byte somewhere further in.  Bounds first -- a
+     * start that late leaves no room for 32 bytes, and frame_crc_ok() would
+     * read off the end of the window. */
     start = find_alignment_end();
-    if (start == 0xFFFFu) {
-        if (!find_frame_start(&start))
-            return false;
+    if ((start != 0xFFFFu) &&
+        ((uint16_t)(start + (uint16_t)(IOC_FRAME_SIZE * 8u)) <=
+         (uint16_t)(EXTSYNC_RX_WINDOW_BYTES * 8u)) &&
+        frame_crc_ok(start)) {
+        for (i = 0u; i < IOC_FRAME_SIZE; i++)
+            frame->bytes[i] =
+                read_wire_byte((uint16_t)(start + (uint16_t)i * 8u));
+        last_good_bit   = start;
+        last_good_valid = true;
+        return true;
     }
 
-    if ((uint16_t)(start + (uint16_t)(IOC_FRAME_SIZE * 8u)) >
-        (uint16_t)(EXTSYNC_RX_WINDOW_BYTES * 8u)) {
+    /* The authority: walk every bit offset at which a frame still fits and take
+     * the first whose header matches a registered command AND whose CRC
+     * verifies. */
+    if (!find_frame_start(&start))
         return false;
-    }
 
-    for (i = 0u; i < IOC_FRAME_SIZE; i++) {
-        frame->bytes[i] =
-            read_wire_byte((uint16_t)(start + (uint16_t)i * 8u));
-    }
+    for (i = 0u; i < IOC_FRAME_SIZE; i++)
+        frame->bytes[i] = read_wire_byte((uint16_t)(start + (uint16_t)i * 8u));
 
-    if (frame->bytes[IOC_OFF_CLASS] == EXTSYNC_ALIGNMENT_BYTE) {
-        for (i = 0u; i < (uint8_t)(IOC_FRAME_SIZE - 1u); i++)
-            frame->bytes[i] = frame->bytes[(uint8_t)(i + 1u)];
-        frame->bytes[IOC_FRAME_SIZE - 1u] = 0u;
-    }
+    last_good_bit   = start;
+    last_good_valid = true;
 
     return true;
 }
@@ -485,6 +608,9 @@ void external_sync_init(void)
 bool external_sync_receive(IocFrame *frame)
 {
     uint8_t i;
+    uint16_t t_rx;
+    uint16_t t_dec;
+    bool     ok;
 
     bus_select_siob();
     sync_assert();
@@ -495,6 +621,7 @@ bool external_sync_receive(IocFrame *frame)
     sio_link_set_baud(EXTSYNC_SPI_BAUD);
     sio_link_clear_fifos();
     sio_link_pins_to_spi();
+    t_rx = uprof_now();
     for (i = 0u; i < EXTSYNC_RX_WINDOW_BYTES; i++) {
         if (!sio_link_exchange(0xFFu, &rx_window[i])) {
             /* Give the pins and the bus back before bailing out, or the next
@@ -507,11 +634,16 @@ bool external_sync_receive(IocFrame *frame)
         sio_link_byte_gap();
     }
     sio_link_pins_to_lat();
+    uprof_add(UPROF_RX, t_rx);
 
     sync_release();
     bus_release_siob();
 
-    return copy_received_frame(frame);
+    t_dec = uprof_now();
+    ok = copy_received_frame(frame);
+    uprof_add(UPROF_DECODE, t_dec);
+
+    return ok;
 }
 
 /* Send one 32-byte reply mailbox.

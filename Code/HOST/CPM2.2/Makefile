@@ -29,6 +29,7 @@ RUNTIME_SRCS ?= \
 	$(SRC_DIR)/cbios_console_vdrip.asm \
 	$(SRC_DIR)/cbios_storage.asm \
 	$(SRC_DIR)/cbios_storage_vdrip.asm \
+	$(SRC_DIR)/cbios_storage_sd.asm \
 	$(SRC_DIR)/cbios_bank_select.asm \
 	$(SRC_DIR)/cbios_bank.asm
 

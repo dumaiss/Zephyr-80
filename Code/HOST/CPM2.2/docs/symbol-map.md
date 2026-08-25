@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 46645 bytes |
+| Firmware symbol map | `build/firmware.map` | 48834 bytes |
 | Burnable image | `build/zephyr80.bin` | 131072 bytes |
 | Layout manifest | `build/layout.manifest` | 232 bytes |
 
@@ -103,25 +103,25 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `CONSOLE_CODE_END` | `DBC3h` | Console BIOS facade end. |
 | `STORAGE_STUB_CODE_START` | `DBC3h` | Storage BIOS facade start. |
 | `home` | `DBC3h` | Storage HOME facade; routes to VDrip storage backend. |
-| `settrk` | `DBC9h` | Storage SETTRK facade; records selected track. |
-| `setsec` | `DBCCh` | Storage SETSEC facade; records selected sector. |
-| `seldsk` | `DBCFh` | Storage SELDSK facade; returns drive A DPH or no disk. |
+| `settrk` | `DBC6h` | Storage SETTRK facade; records selected track. |
+| `setsec` | `DBC9h` | Storage SETSEC facade; records selected sector. |
+| `seldsk` | `DBCCh` | Storage SELDSK facade; returns drive A DPH or no disk. |
 | `setdma` | `DBD8h` | Records DMA address. |
-| `read` | `DBDDh` | Storage READ facade; transfers from VDrip proxy storage. |
-| `write` | `DBE5h` | Storage WRITE facade; transfers to VDrip proxy storage. |
-| `sectran` | `DBFFh` | Returns untranslated 0-based logical sector for no-skew media. |
-| `STORAGE_STUB_CODE_END` | `DC02h` | Storage BIOS facade end. |
+| `read` | `DBCFh` | Storage READ facade; transfers from VDrip proxy storage. |
+| `write` | `DBD2h` | Storage WRITE facade; transfers to VDrip proxy storage. |
+| `sectran` | `DBD5h` | Returns untranslated 0-based logical sector for no-skew media. |
+| `STORAGE_STUB_CODE_END` | `DBDDh` | Storage BIOS facade end. |
 | `VDRIP_TRANSPORT_CODE_START` | `F680h` | Shared Virtual Drip transport start. |
-| `vdrip_send_frame` | `F721h` | Current no-CRC Virtual Drip frame sender. |
-| `vdrip_rx_sink` | `F79Bh` | Single SIO0/B Virtual Drip receive sink. |
-| `VDRIP_TRANSPORT_CODE_END` | `F900h` | Shared Virtual Drip transport end. |
-| `VDRIP_STORAGE_CODE_START` | `F900h` | VDrip storage backend code start. |
-| `vdrip_storage_seldsk` | `F911h` | Selects CP/M drive A and returns its DPH. |
-| `vdrip_storage_read` | `F925h` | Reads one 128-byte record from VDrip proxy storage. |
-| `vdrip_storage_write` | `F963h` | Writes one 128-byte record to VDrip proxy storage. |
+| `vdrip_send_frame` | `F72Ah` | Current no-CRC Virtual Drip frame sender. |
+| `vdrip_rx_sink` | `F7A4h` | Single SIO0/B Virtual Drip receive sink. |
+| `VDRIP_TRANSPORT_CODE_END` | `F909h` | Shared Virtual Drip transport end. |
+| `VDRIP_STORAGE_CODE_START` | `F910h` | VDrip storage backend code start. |
+| `vdrip_storage_seldsk` | `F921h` | Selects CP/M drive A and returns its DPH. |
+| `vdrip_storage_read` | `F935h` | Reads one 128-byte record from VDrip proxy storage. |
+| `vdrip_storage_write` | `F973h` | Writes one 128-byte record to VDrip proxy storage. |
 | `VDRIP_STORAGE_DPH` | `FB40h` | Drive A disk parameter header. |
 | `VDRIP_STORAGE_DPB` | `FB50h` | Drive A disk parameter block. |
-| `VDRIP_STORAGE_CODE_END` | `FA64h` | VDrip storage backend code end. |
+| `VDRIP_STORAGE_CODE_END` | `FA74h` | VDrip storage backend code end. |
 | `SIO_CORE_CODE_START` | `DD10h` | BIOS-owned SIO core code start in core BIOS. |
 | `CONSOLE_IM2_VECTOR_ENTRY` | `DD10h` | SIO core exact IM2 vector table entry address. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |

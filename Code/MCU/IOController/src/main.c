@@ -10,6 +10,7 @@
 #include "controller_latch.h"
 #include "timebase.h"
 #include "sd_cache.h"
+#include "power.h"
 #include "bulk_channel.h"
 #include "sd_card.h"
 
@@ -38,6 +39,20 @@ static void platform_init(void)
     ANSELF = 0x00;
     ODCONA = 0x00;
     WPUA   = 0x00;
+
+    /* /PWR_OFF FIRST, before anything slow.
+     *
+     * Until this pin is driven, the net is held only by pull-ups and the PMU
+     * cannot tell a booting controller from one asking for power off. Observed
+     * on hardware: with the card in, the machine would not start; with it out,
+     * it did. The PMU has a one second grace period for exactly this, and the
+     * only way to spend that budget is to dawdle here -- boot_reset_pulse()
+     * alone is 100 ms, and card init can be most of a second.
+     *
+     * Latch to idle while still an input, then drive. The other order lets the
+     * pin glitch through asserted, which on this net is a power cut. */
+    PWR_OFF_LAT  = PWR_OFF_IDLE;
+    PWR_OFF_TRIS = 0;
 
     /* Inactive shared-bus selects stay idle while the command link clocks. */
     IO_USB_CS_LAT  = IO_USB_CS_IDLE;
@@ -75,11 +90,9 @@ static void platform_init(void)
     HOST_NMI_LAT  = HOST_NMI_IDLE;
     HOST_NMI_TRIS = 0;
 
-    /* Power management stays floating: the PMU side is not finished, and
-     * driving RF6 at all stops the machine from starting.  TRIS only — do not
-     * write LATF6 here. */
-    PWR_OFF_TRIS     = 1;
-    SHUTDOWN_RQ_TRIS = 1;
+    /* /PWR_OFF was taken to its idle level above, deliberately early.
+     * /SHUTDOWN_RQ is set up by power_init(); it is an input and nothing is
+     * waiting on it. */
 
     USB_INT_TRIS     = 1;
     NMI_RQ_TRIS      = 1;
@@ -103,6 +116,8 @@ static void platform_init(void)
     timebase_init();
     controller_latch_init();
     sd_cache_init();
+    power_init();
+    uprof_init();
 }
 
 /* ---------------------------------------------------------------------------
@@ -244,11 +259,24 @@ static bool wait_request_release(void)
  *
  * CMD_RESET is terminal: its handler asserts the reset pair and resets the PIC.
  */
+/* How often the service path runs, and how often it gives up before
+ * dispatching.  Entry is on a LEVEL, so the PIC can be woken by a line that is
+ * asserted but not yet carrying a frame; the gap between these two numbers is
+ * exactly that waste, and it was invisible until the phase timer showed rx and
+ * decode accumulating outside the transaction total. */
+uint16_t svc_calls;
+uint16_t svc_aborts;
+
 static void service_command_request(void)
 {
     IocFrame request;
     IocFrame reply;
     bool     have_request;
+    bool     dispatched;
+    uint16_t t;
+    uint16_t t_total = uprof_now();
+
+    svc_calls++;
 
     have_request = external_sync_receive(&request);
 
@@ -259,14 +287,24 @@ static void service_command_request(void)
      * but its RTS is already high, so the PIC cannot mistake that wait for a
      * fresh request and clock junk windows into a receiver that is listening
      * for a preamble. */
-    if (!wait_request_release())
+    if (!wait_request_release()) {
+        svc_aborts++;
         return;
+    }
 
-    if (!have_request)
+    if (!have_request) {
+        svc_aborts++;
         return;
+    }
 
-    if (dispatch_command(&request, &reply)) {
+    t = uprof_now();
+    dispatched = dispatch_command(&request, &reply);
+    uprof_add(UPROF_DISPATCH, t);
+
+    if (dispatched) {
+        t = uprof_now();
         external_sync_send(&reply);
+        uprof_add(UPROF_SEND, t);
 
         /* READY -> BULK.  A handler may have staged a bulk transfer; it runs
          * only now, because the bytes must not be clocked onto SIO1/A until
@@ -275,8 +313,12 @@ static void service_command_request(void)
          * The old PING diagnostic that wrote payload bytes to the controller
          * latch lived here.  It is gone: the latch now shows the 500 ms
          * bring-up counter, and the two fight over the same two devices. */
+        t = uprof_now();
         (void)bulk_channel_run_if_armed();
+        uprof_add(UPROF_BULK, t);
     }
+
+    uprof_add(UPROF_TOTAL, t_total);
 }
 
 int main(void)
@@ -301,8 +343,39 @@ int main(void)
             command_ready_set(true);    /* all work done, including bulk/SD */
         }
 
-        /* One owner of the Timer2 flag; everything below compares against it. */
+        /* One owner of the Timer2 flag; everything below compares against it.
+         * Polled FIRST so the shutdown debounce below reads a tick count that
+         * is current within this pass, rather than one left over from the
+         * previous one. */
         timebase_poll();
+
+        /* Shutdown request from the PMU.
+         *
+         * Checked at the top of an idle pass, which is the only place it can be
+         * acted on: a transaction in progress must finish before the cache is
+         * committed, and the loop is single-threaded so it always has.
+         *
+         * ORDER MATTERS.  COMMAND_READY drops FIRST, before the flush, because
+         * the host gates every IOCALL on it -- so from that moment the Z80
+         * cannot start another write.  Flushing first and lowering it after
+         * would leave a window in which a write lands in a slot that has just
+         * been committed, and the rails would be cut with that block dirty.
+         *
+         * A failed flush still powers off.  The user asked for a shutdown; not
+         * shutting down is a worse answer than shutting down with a block
+         * uncommitted, and there is nobody left to report to. */
+        if (power_shutdown_requested()) {
+            /* Stop accepting commands first.  The host gates every IOCALL on
+             * COMMAND_READY, so from this moment the Z80 cannot start another
+             * write, and nothing can dirty a slot the flush has already
+             * committed.  That is sufficient on its own -- the Z80 is not reset
+             * here, because /SHUTDOWN_RQ is a shutdown request and nothing
+             * more. */
+            command_ready_set(false);
+
+            (void)sd_cache_flush();
+            power_off();                /* does not return */
+        }
 
         /* Write-back flush for the SD cache.
          *

@@ -25,7 +25,9 @@
 
 BDOS		= 0x0005
 BDOS_CONOUT	= 0x02		; output char in E; no useful return
-BDOS_PRINT	= 0x09		; print '$'-terminated string at DE
+BDOS_PRINT	= 0x09
+CMD_PROFILE	= 0x0B
+RSP_PROFILE	= 0x8B		; print '$'-terminated string at DE
 IOCALL		= 0xDA3F	; BIOS extended entry: IOC fixed-frame transport
 
 CMD_PING	= 0x01
@@ -79,29 +81,29 @@ copy_payload:
 	call IOCALL
 
 	or a
-	jr nz,xport_err
+	jp nz,xport_err
 
 	; Verify reply class.
 	ld a,(rx_frame)
 	cp #RSP_PING
-	jr nz,bad_reply
+	jp nz,bad_reply
 	; Sequence is no longer checked here: it rolls per transaction and IOCALL
 	; validates the echo itself, rejecting a mismatch as IOC_XPORT_BAD_SEQ.
 	; Comparing it against a constant would fail on every transaction but the
 	; first.
 	ld a,(rx_frame + 2)
 	or a
-	jr nz,bad_reply
+	jp nz,bad_reply
 	ld a,(rx_frame + 3)
 	cp #0x10
-	jr nz,bad_reply
+	jp nz,bad_reply
 	ld hl,#(rx_frame + 4)
 	ld de,#ping_payload
 	ld b,#16
 verify_payload:
 	ld a,(de)
 	cp (hl)
-	jr nz,bad_reply
+	jp nz,bad_reply
 	inc de
 	inc hl
 	djnz verify_payload
@@ -109,7 +111,171 @@ verify_payload:
 	ld de,#msg_ok
 	ld c,#BDOS_PRINT
 	call BDOS
+
+	; ---- firmware level and power handshake ----
+	ld de,#msg_fw
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(rx_frame + 20)		; IOC_OFF_PING_LEVEL
+	call print_hex_byte
+
+	; Decode the power snapshot rather than printing a hex byte nobody can
+	; read at a glance.  Each line is one question the handshake raises.
+	ld a,(rx_frame + 21)		; IOC_OFF_PING_POWER
+	ld (pwr_bits),a
+
+	ld de,#msg_pwr_drv
+	call say_bit_2			; bit 2: do we own /PWR_OFF
+	ld de,#msg_pwr_lat
+	call say_bit_1			; bit 1: what we drive it to
+	ld de,#msg_pwr_pin
+	call say_bit_0			; bit 0: what it actually sits at
+	ld de,#msg_sd_pin
+	call say_bit_3			; bit 3: is the PMU asking
+	ld de,#msg_sd_latch
+	call say_bit_4			; bit 4: was a falling edge seen
+	ld de,#msg_sd_wpu
+	call say_bit_5			; bit 5: is our pull-up on
+
+	; Silent SD retry accounting.  A retried read succeeds, so these two
+	; numbers are the only place it is ever visible.
+	ld de,#msg_retry
+	ld hl,#(rx_frame + 22)
+	call say_word
+	ld de,#msg_reinit
+	ld hl,#(rx_frame + 24)
+	call say_word
+	ld de,#msg_recread
+	ld hl,#(rx_frame + 26)
+	call say_word
+	ld de,#msg_miss
+	ld hl,#(rx_frame + 28)
+	call say_word
+
+	; PROFILE is a second transaction.  It must come last: it reports the
+	; accumulated totals, and issuing it earlier would leave its own exchange
+	; out of the numbers it is printing.
+	; Both frames cleared inline; ioc_ping has no shared helper for this and
+	; A5h in the RX frame is what makes "no reply at all" visible.
+	xor a
+	ld hl,#tx_frame
+	ld b,#32
+zero_tx2:
+	ld (hl),a
+	inc hl
+	djnz zero_tx2
+	ld a,#0xa5
+	ld hl,#rx_frame
+	ld b,#32
+zero_rx2:
+	ld (hl),a
+	inc hl
+	djnz zero_rx2
+
+	ld a,#CMD_PROFILE
+	ld (tx_frame + 0),a
+	ld a,#0x01
+	ld (tx_frame + 1),a
+	ld hl,#tx_frame
+	ld de,#rx_frame
+	call IOCALL
+	or a
+	jr nz,prof_bad
+	ld a,(rx_frame + 0)
+	cp #RSP_PROFILE
+	jr nz,prof_bad
+
+	ld de,#msg_prof
+	ld hl,#(rx_frame + 4)
+	call say_word
+	ld de,#msg_p1
+	ld hl,#(rx_frame + 6)
+	call say_word
+	ld de,#msg_p2
+	ld hl,#(rx_frame + 8)
+	call say_word
+	ld de,#msg_p3
+	ld hl,#(rx_frame + 10)
+	call say_word
+	ld de,#msg_p4
+	ld hl,#(rx_frame + 12)
+	call say_word
+	ld de,#msg_p5
+	ld hl,#(rx_frame + 14)
+	call say_word
+	ld de,#msg_calls
+	ld hl,#(rx_frame + 16)
+	call say_word
+	ld de,#msg_aborts
+	ld hl,#(rx_frame + 18)
+	call say_word
 	ret
+prof_bad:
+	ld de,#msg_proferr
+	ld c,#BDOS_PRINT
+	call BDOS
+	ret
+
+; Print the label at DE then the little-endian word at HL, high byte first.
+;
+; BOTH bytes are fetched BEFORE anything is printed, because print_hex_byte
+; calls BDOS and CP/M's BDOS preserves nothing -- HL included.  The first
+; version of this walked the pointer between the two prints, so it displayed a
+; correct high byte followed by whatever address the clobbered HL happened to
+; land on.  Every counter came out as 00FF, and the FF was pure fiction; it cost
+; a debugging round on the theory that the SD path was retrying 255 times.
+say_word:
+	push hl
+	ld c,#BDOS_PRINT
+	call BDOS
+	pop hl
+	ld a,(hl)			; low byte
+	inc hl
+	ld h,(hl)			; high byte; the pointer is finished with
+	ld l,a				; HL = high:low, both now in registers
+	ld a,h
+	push hl
+	call print_hex_byte
+	pop hl
+	ld a,l
+	call print_hex_byte
+	ret
+
+; Print the label at DE then 0 or 1 for the selected bit of pwr_bits.
+say_bit_5:
+	ld b,#0x20
+	jr say_bit
+say_bit_4:
+	ld b,#0x10
+	jr say_bit
+say_bit_3:
+	ld b,#0x08
+	jr say_bit
+say_bit_2:
+	ld b,#0x04
+	jr say_bit
+say_bit_1:
+	ld b,#0x02
+	jr say_bit
+say_bit_0:
+	ld b,#0x01
+say_bit:
+	push bc
+	ld c,#BDOS_PRINT
+	call BDOS
+	pop bc
+	ld a,(pwr_bits)
+	and b
+	ld a,#0x30			; '0'
+	jr z,say_bit_out
+	inc a				; '1'
+say_bit_out:
+	ld e,a
+	ld c,#BDOS_CONOUT
+	call BDOS
+	ld de,#msg_crlf
+	ld c,#BDOS_PRINT
+	jp BDOS
 
 xport_err:
 	push af
@@ -198,6 +364,29 @@ msg_xport_err:
 msg_bad_reply:
 	.ascii " - unexpected reply 0x"
 	.db '$'
+msg_fw:		.ascii "fw level $"
+msg_pwr_drv:	.db 13,10
+		.ascii "  /PWR_OFF     driven by us : $"
+msg_pwr_lat:	.ascii "  /PWR_OFF     we drive     : $"
+msg_pwr_pin:	.ascii "  /PWR_OFF     pin reads    : $"
+msg_sd_pin:	.ascii "  /SHUTDOWN_RQ pin reads    : $"
+msg_sd_latch:	.ascii "  /SHUTDOWN_RQ edge latched : $"
+msg_sd_wpu:	.ascii "  /SHUTDOWN_RQ pull-up on   : $"
+msg_retry:	.db 13,10
+		.ascii "  SD read retries         : $"
+msg_reinit:	.ascii "  SD re-initialisations   : $"
+msg_recread:	.ascii "  SD record reads         : $"
+msg_miss:	.ascii "  SD cache misses         : $"
+msg_prof:	.db 13,10
+		.ascii "  ms in rx window         : $"
+msg_p1:		.ascii "  ms in frame decode      : $"
+msg_p2:		.ascii "  ms in dispatch/card     : $"
+msg_p3:		.ascii "  ms in reply send        : $"
+msg_p4:		.ascii "  ms in bulk phase        : $"
+msg_p5:		.ascii "  ms total (all phases)   : $"
+msg_calls:	.ascii "  service calls           : $"
+msg_aborts:	.ascii "  .. aborted, no frame    : $"
+msg_proferr:	.ascii "  PROFILE failed$"
 msg_crlf:
 	.db 0x0d, 0x0a, '$'
 msg_rx_dump:
@@ -213,3 +402,4 @@ tx_frame:
 	.ds 32
 rx_frame:
 	.ds 32
+pwr_bits:	.ds 1

@@ -11,12 +11,12 @@ static void psu_off(void);
  * Configure the PMU GPIO.
  *
  * Active-low external inputs use internal pull-ups. PWR_OK is left without an
- * internal pull-up because it is driven by the ATX PSU. Outputs start with the
- * IO Controller held in reset and the PSU disabled.
+ * internal pull-up because it is driven by the ATX PSU. Outputs start with
+ * /SHUTDOWN_RQ deasserted and the PSU disabled.
  *
- * The IO Controller does not drive its end of PWR_OFF_RQ or PWR_STATE yet, so
- * whenever this side is an input it enables the pull-up. That keeps both nets
- * at a defined deasserted level instead of floating between two high-Z ends.
+ * Both handshake signals are active low, so whenever this side is an input it
+ * enables the pull-up and the net sits at the deasserted level rather than
+ * floating between two high-Z ends. The IO Controller does the same on its end.
  */
 static void io_init(void)
 {
@@ -30,15 +30,16 @@ static void io_init(void)
     PWR_OK_DDR &= ~_BV(PWR_OK_PIN);
     PWR_OK_PORT &= ~_BV(PWR_OK_PIN);
 
+    /* /SHUTDOWN_RQ idles HIGH either way, which is what active low buys.
+     *
+     * Driving: set the latch high BEFORE making it an output, so the pin cannot
+     * glitch through asserted on the way. Not driving: input with the pull-up
+     * on, so the net still idles high rather than floating. */
+    SHUTDOWN_RQ_PORT |= _BV(SHUTDOWN_RQ_PIN);
 #if !PMU_IGNORE_IO_CONTROLLER_SIGNALS
-    PWR_STATE_DDR |= _BV(PWR_STATE_PIN);
-    PWR_STATE_PORT |= _BV(PWR_STATE_PIN);
+    SHUTDOWN_RQ_DDR |= _BV(SHUTDOWN_RQ_PIN);
 #else
-    /* Not driving the handshake: input with the pull-up on, so the net idles
-     * high rather than floating.  High is the "hold IO Controller in reset"
-     * level, which is the safe end of this signal. */
-    PWR_STATE_DDR &= ~_BV(PWR_STATE_PIN);
-    PWR_STATE_PORT |= _BV(PWR_STATE_PIN);
+    SHUTDOWN_RQ_DDR &= ~_BV(SHUTDOWN_RQ_PIN);
 #endif
 
     PS_ON_DDR |= _BV(PS_ON_PIN);
@@ -87,19 +88,19 @@ static void psu_off(void)
 #endif
 }
 
-static void hold_io_reset(void)
+static void assert_shutdown_rq(void)
 {
-    /* PWR_STATE high tells the IO Controller to hold the system in reset. */
+    /* Active low: pull the net down to ask the IO Controller to clean up. */
 #if !PMU_IGNORE_IO_CONTROLLER_SIGNALS
-    PWR_STATE_PORT |= _BV(PWR_STATE_PIN);
+    SHUTDOWN_RQ_PORT &= ~_BV(SHUTDOWN_RQ_PIN);
 #endif
 }
 
-static void release_io_reset(void)
+static void deassert_shutdown_rq(void)
 {
-    /* PWR_STATE low tells the IO Controller that the system may run. */
+    /* Active low: release the net high, nothing is being asked. */
 #if !PMU_IGNORE_IO_CONTROLLER_SIGNALS
-    PWR_STATE_PORT &= ~_BV(PWR_STATE_PIN);
+    SHUTDOWN_RQ_PORT |= _BV(SHUTDOWN_RQ_PIN);
 #endif
 }
 
@@ -113,12 +114,12 @@ static void apply_controller_action(power_controller_action_t action)
         psu_off();
     }
 
-    if (action & POWER_CONTROLLER_ACTION_HOLD_IO_RESET) {
-        hold_io_reset();
+    if (action & POWER_CONTROLLER_ACTION_ASSERT_SHUTDOWN_RQ) {
+        assert_shutdown_rq();
     }
 
-    if (action & POWER_CONTROLLER_ACTION_RELEASE_IO_RESET) {
-        release_io_reset();
+    if (action & POWER_CONTROLLER_ACTION_DEASSERT_SHUTDOWN_RQ) {
+        deassert_shutdown_rq();
     }
 }
 

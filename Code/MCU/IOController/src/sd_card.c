@@ -218,6 +218,10 @@ static uint32_t sd_read_r37_trailer(void)
     return v;
 }
 
+static void bump(uint16_t *counter);
+static uint16_t read_retries;
+static uint16_t reinits;
+
 SdStatus sd_card_init(void)
 {
     uint8_t  r1;
@@ -241,6 +245,10 @@ SdStatus sd_card_init(void)
 
     if (card_ready)
         return SD_OK;
+
+    /* Past the cache, so a real initialisation sequence is about to run.  This
+     * is the expensive half of a retried read and the number worth watching. */
+    bump(&reinits);
 
     block_addressed = false;
     bus_failed      = false;
@@ -610,6 +618,27 @@ void sd_card_cmd0_loop(void)
  * the first call triggers.  That first one can run for the best part of a
  * second while ACMD41 is polled, so it is clearly visible; later reads are a
  * brief flicker.  Released on every exit path because the wrapper owns it. */
+/* Retry and re-init counters.
+ *
+ * These exist because a retried read is INVISIBLE: it returns SD_OK with the
+ * right bytes, and the only trace it leaves is time.  A marginal bus therefore
+ * presents as "the card is mysteriously slow" rather than as an error, and no
+ * amount of staring at throughput numbers distinguishes it from a protocol
+ * cost.  One failed read costs a full re-initialisation -- 10 ms of settle plus
+ * CMD0 and ACMD41 at 125 kHz -- so a few percent of retries dominates
+ * everything else the driver does.
+ *
+ * Saturating rather than wrapping: "at least 65535" is the same answer as any
+ * larger number, and a wrap would read as a small count. */
+static void bump(uint16_t *counter)
+{
+    if (*counter != 0xFFFFu)
+        (*counter)++;
+}
+
+uint16_t sd_card_read_retries(void) { return read_retries; }
+uint16_t sd_card_reinits(void)      { return reinits; }
+
 SdStatus sd_card_read_block(uint32_t lba, uint8_t *buf)
 {
     SdStatus st;
@@ -643,6 +672,7 @@ SdStatus sd_card_read_block(uint32_t lba, uint8_t *buf)
             (st == SD_ERR_UNUSABLE) || (st == SD_ERR_NOT_READY))
             break;   /* init failed; retrying changes nothing */
 
+        bump(&read_retries);
         card_ready = false;   /* re-initialise on the next attempt */
     }
 

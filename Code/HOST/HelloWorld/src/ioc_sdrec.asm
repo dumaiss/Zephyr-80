@@ -48,7 +48,7 @@ IOCBULKW	= 0xDA48	; ZBIOS_EXT_BASE + 15h: bulk transmit
 
 CMD_PING	 = 0x01
 RSP_PING	 = 0x81
-IOC_FW_LEVEL	 = 5		; controller firmware this program expects
+IOC_FW_LEVEL	 = 11		; controller firmware this program expects
 ZBIOS_XPORT_LEVEL     = 5	; BIOS transport level this program expects
 ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A	; one byte below IOCALL, readable from ROM
 CMD_SD_READ_REC	 = 0x08
@@ -723,6 +723,7 @@ fail:
 	call BDOS
 	ld a,(fail_info)
 	call print_hex_byte
+	call report_frame
 	; Each extra section is a GUARDED CALL, not a forward branch over a block.
 	;
 	; It was written the other way first: `cp #0x30 / jr nz,fail_end` with the
@@ -744,6 +745,44 @@ fail:
 	ld de,#msg_crlf
 	ld c,#BDOS_PRINT
 	call BDOS
+	ret
+
+; First eight bytes of the reply frame exactly as received.
+;
+; This exists for IOC_XPORT_BAD_SEQ (info 06), which is the one transport error
+; that reports a frame the transport BELIEVED: its CRC passed, so the bytes are
+; intact and the controller really sent them -- just for some earlier request.
+; Nothing else in this report can tell "the host is one reply behind" apart from
+; "noise that happened to checksum", and the two have opposite causes.
+;
+; Byte 0 is the class, naming which command the stale reply answered, and byte 1
+; is that transaction's sequence number.  The gap between it and the sequence
+; this request expected is how many exchanges the host has fallen behind, which
+; is the number that says whether one extra frame appeared or one went missing.
+;
+; Printed unconditionally rather than under a `cp` guard: the frame is cheap and
+; every failure has one, and a conditional dump is precisely how the earlier
+; diagnostic here managed never to print on the run that needed it.
+report_frame:
+	ld de,#msg_rx
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld hl,#rx_frame
+	ld b,#8
+rf_loop:
+	push bc
+	push hl
+	ld e,#0x20
+	ld c,#BDOS_CONOUT
+	call BDOS
+	pop hl
+	ld a,(hl)
+	push hl
+	call print_hex_byte
+	pop hl
+	inc hl
+	pop bc
+	djnz rf_loop
 	ret
 
 ; Byte offset, expected and got, for a data mismatch.
@@ -881,6 +920,7 @@ msg_pass:	.ascii "ALL PASS"
 msg_fail:	.ascii "FAIL code $"
 msg_rec:	.ascii " rec $"
 msg_info:	.ascii " info $"
+msg_rx:		.ascii "  rx$"
 msg_at:		.ascii " at $"
 msg_exp:	.ascii " exp $"
 msg_got:	.ascii " got $"

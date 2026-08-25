@@ -460,7 +460,13 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ;   Slots 0-4:
 ;     E000h... Virtual Drip V9958 console (no BIOS screen mirror)
 ;
-CBIOS_STORAGE_VDRIP_CODE_BASE         = 0xf900                                ; follows common VDrip transport
+; Moved up from F900h to reclaim room for the transport, which sits immediately
+; below it and was FULL -- adding nine bytes to vdrip_transport_wait_ready
+; overflowed straight into this base.  Slot 5 ends at FA7Fh and the storage
+; backend ended at FA63h, so the 28 unused bytes were on the wrong side of this
+; constant.  Shifting it up 16 hands those to the transport and still leaves the
+; storage backend clear of FA80h; check_overlap.py enforces both ends.
+CBIOS_STORAGE_VDRIP_CODE_BASE         = 0xf910                                ; follows common VDrip transport
 CBIOS_VDRIP_TRANSPORT_CODE_BASE       = CBIOS_DRIVER_SLOT5_BASE              ; F680h
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
@@ -596,7 +602,73 @@ CBIOS_AREA_END                  = 0xffff
 ; ------------------------------------------------------------------------------
 ; VDrip Storage Configuration (DPB Mapping)
 ; ------------------------------------------------------------------------------
-VDRIP_STORAGE_DRIVE                   = 0x00
+; ---------------------------------------------------------------------------
+; Drive assignment
+;
+; A: is the SD card, B: is the VDrip proxy volume.  Both backends are linked;
+; the facade routes on the drive selected by SELDSK.  The VDrip volume stays
+; mounted so files can be copied across before it is retired.
+;
+; Geometry is identical for both -- 16384 tracks x 4 records x 128 bytes = 8 MiB
+; -- so they share one DPB and one directory buffer.  Only the DPH and the
+; allocation vector have to be per drive.
+; ---------------------------------------------------------------------------
+; SWAPPED BACK FOR DIAGNOSIS: VDrip is A: again and the SD card is B:.
+;
+; CP/M searches the default drive on every command, so whichever backend is A:
+; is the one a fault takes the machine down with.  Putting the known-good volume
+; there means a misbehaving SD path costs a failed DIR on B: instead of an
+; unusable prompt.
+;
+; To go back to SD as the boot volume, swap these two values.  Nothing else
+; needs to change: the dispatcher routes on whatever SELDSK was given and each
+; backend owns its own DPH and allocation vector.
+SD_STORAGE_DRIVE                      = 0x01       ; B:
+VDRIP_STORAGE_DRIVE                   = 0x00       ; A:
+
+; The drive id the VDrip PROTOCOL carries, which is not the CP/M drive letter.
+; It names the volume on the proxy side and has always been 0; moving the CP/M
+; letter to B: must not change what goes on the wire.
+VDRIP_STORAGE_PROTO_DRIVE             = 0x00
+
+; SD storage backend: second half of driver slot 4.  The transport occupies
+; F000h-F334h, so the split at F400h leaves it 204 bytes of headroom and gives
+; the backend 640.
+CBIOS_STORAGE_SD_CODE_BASE            = 0xf400
+CBIOS_STORAGE_SD_CODE_LIMIT           = 0xf680
+
+; Per-drive state.  The allocation vector is the only large piece; it lands in
+; the 256 bytes of scratch that were unallocated, which it fills exactly.
+SD_STORAGE_ALV_BUFFER                 = CBIOS_SCRATCH_BASE + 0x0280   ; FD00h
+SD_STORAGE_DPH                        = VDRIP_STORAGE_DPHDPB_BASE + 0x20  ; FB60h
+
+; Scratch layout inside MOVE_BUFFER for one SD transaction.  192 bytes divides
+; exactly into one 128-byte record and the two 32-byte command frames, which is
+; why the buffer is not shrunk any further.
+SD_STORAGE_DATA_OFF                   = 0x0000     ; 128 bytes
+SD_STORAGE_TX_OFF                     = 0x0080     ; 32 bytes
+SD_STORAGE_RX_OFF                     = 0x00a0     ; 32 bytes
+
+; Record commands on the IO Controller.
+SD_CMD_READ_REC                       = 0x08
+SD_RSP_READ_REC                       = 0x88
+SD_CMD_WRITE_REC                      = 0x09
+SD_RSP_WRITE_REC                      = 0x89
+SD_CMD_FLUSH                          = 0x0a
+SD_RSP_FLUSH                          = 0x8a
+SD_CMD_XFER_STATUS                    = 0x06
+SD_RSP_XFER_STATUS                    = 0x86
+SD_STORAGE_RECORD_BYTES               = 0x0080
+
+; SD backend state.  Lives in the storage work area's tail, which had 12 free
+; bytes between the VDrip transport's block and storage_caller_sp.
+SD_STORAGE_WORK_AREA                  = CBIOS_WORK_AREA + 0x005c        ; FE5Ch
+sd_storage_track                      = SD_STORAGE_WORK_AREA + 0x00
+sd_storage_sector                     = SD_STORAGE_WORK_AREA + 0x02
+sd_storage_record                     = SD_STORAGE_WORK_AREA + 0x04
+sd_storage_saved_bank                 = SD_STORAGE_WORK_AREA + 0x06
+sd_storage_expect                     = SD_STORAGE_WORK_AREA + 0x07
+stg_drive                             = SD_STORAGE_WORK_AREA + 0x08
 VDRIP_STORAGE_RECORD_BYTES            = 0x0080
 VDRIP_STORAGE_TOTAL_RECORDS           = 0x10000
 VDRIP_STORAGE_SECTORS_PER_TRACK       = 0x0004

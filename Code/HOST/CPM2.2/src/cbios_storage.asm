@@ -1,7 +1,11 @@
 ; Local Zephyr-80 CP/M storage BIOS stubs.
 ;
-; This file owns the CP/M BIOS storage entry points. Drive A is routed to the
-; VDrip storage backend; all other drives keep deterministic no-device behavior.
+; This file owns the CP/M BIOS storage entry points.  A: is the SD card and B:
+; is the VDrip proxy volume; every other drive reports no device.
+;
+; Both backends are linked and the dispatcher routes on the drive SELDSK last
+; selected, which is how CP/M sequences disk I/O: SELDSK always precedes the
+; SETTRK/SETSEC/READ/WRITE that act on it.
 ;
 ; Storage facade flow:
 ;   SELDSK selects a drive and returns its DPH. Only drive A is present.
@@ -17,9 +21,8 @@
 	.globl home,seldsk,settrk,setsec,setdma,read,write,sectran
 	.globl STORAGE_STUB_CODE_START,STORAGE_STUB_CODE_END
 	.globl cbios_dma_addr
-	.globl vdrip_storage_home,vdrip_storage_seldsk,vdrip_storage_seldsk_unsupported
-	.globl vdrip_storage_settrk,vdrip_storage_setsec,vdrip_storage_read,vdrip_storage_write
-	.globl vdrip_storage_sectran
+	.globl stg_home,stg_seldsk,stg_settrk,stg_setsec
+	.globl stg_read,stg_write,stg_sectran
 	.globl storage_caller_sp
 
 	.area CODE (ABS)
@@ -32,37 +35,26 @@ STORAGE_STUB_CODE_START:
 ; Inputs: none.
 ; Outputs: vdrip_storage_track = 0.
 ; Clobbers: backend-defined; HL preserved for conservative CP/M callers.
+; Every entry is a jump into the dispatcher, which lives with the SD backend.
+;
+; The facade region is 63 bytes, between the core BIOS and the banking code, and
+; there is no room here for drive routing plus a stack switch.  These have to sit
+; at fixed addresses because they are the CP/M jump table's targets; the logic
+; does not.
 home:
-	push hl
-	call vdrip_storage_home
-	pop hl
-	ret
-
-; SETTRK
-; Input: BC = CP/M track number.
-; Output: selected track recorded by backend.
+	jp stg_home
 settrk:
-	jp vdrip_storage_settrk
-
-; SETSEC
-; Input: BC = CP/M logical sector number, zero-based after SECTRAN.
-; Output: selected sector recorded by backend.
+	jp stg_settrk
 setsec:
-	jp vdrip_storage_setsec
-
-; SELDSK
-; Purpose:
-;   Select a CP/M drive and return its disk parameter header.
-; Input:
-;   C = disk number.
-; Output:
-;   HL = DPH for drive A, or 0000h for no disk.
-; Clobbers: AF, HL.
+	jp stg_setsec
 seldsk:
-	ld a,c
-	cp #VDRIP_STORAGE_DRIVE
-	jp z,vdrip_storage_seldsk
-	jp vdrip_storage_seldsk_unsupported
+	jp stg_seldsk
+read:
+	jp stg_read
+write:
+	jp stg_write
+sectran:
+	jp stg_sectran
 
 ; SETDMA
 ; Input: BC = DMA address.
@@ -70,53 +62,5 @@ seldsk:
 setdma:
 	ld (cbios_dma_addr),bc
 	ret
-
-; READ and WRITE
-; Purpose:
-;   Transfer one CP/M 128-byte record through the VDrip storage backend.
-; Inputs:
-;   vdrip_storage_track, vdrip_storage_sector, cbios_dma_addr, and DMA_BANK hold the active
-;   CP/M disk address and caller buffer bank/address.
-; Outputs:
-;   A = 0 on success, nonzero on backend error.
-; Clobbers:
-;   Backend may use AF/BC/DE/HL; the facade preserves BC/DE/HL for callers.
-; Stack:
-;   CP/M BDOS calls BIOS disk I/O with a small private stack. The VDrip storage
-;   backend can nest packet TX/RX, polling, and temporary diagnostics deeply, so
-;   run the backend on the BIOS-owned stack window and restore the caller stack
-;   before returning.
-read:
-	push bc
-	push de
-	push hl
-	ld hl,#vdrip_storage_read
-	jr storage_call_backend
-
-write:
-	push bc
-	push de
-	push hl
-	ld hl,#vdrip_storage_write
-
-storage_call_backend:
-	ld (storage_caller_sp),sp
-	ld sp,#CBIOS_CONSOLE_STACK_TOP
-	ld de,#storage_call_return
-	push de
-	jp (hl)
-
-storage_call_return:
-	ld hl,(storage_caller_sp)
-	ld sp,hl
-	pop hl
-	pop de
-	pop bc
-	ret
-
-; SECTRAN
-; Input: BC = logical sector. Returns HL = untranslated logical sector.
-sectran:
-	jp vdrip_storage_sectran
 
 STORAGE_STUB_CODE_END:

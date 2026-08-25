@@ -5,6 +5,13 @@
 #include "config.h"
 #include "sd_card.h"
 #include "sd_cache.h"
+#include "timebase.h"
+
+/* Every record read the host asks for, whether it hits the cache or not.  This
+ * is the number that says whether CP/M is issuing the reads the file size
+ * implies, or many times more.  Defined here rather than beside its handler so
+ * handler_ping(), which reports it, sees it. */
+static uint16_t rec_reads;
 #include "bulk_channel.h"
 
 void handler_ping(const IocFrame *request, IocFrame *reply)
@@ -21,6 +28,35 @@ void handler_ping(const IocFrame *request, IocFrame *reply)
     /* Bytes 20-31: reserved, already zero from memset -- except the firmware
      * level, so a host never has to infer which build answered. */
     reply->bytes[IOC_OFF_PING_LEVEL] = IOC_FW_LEVEL;
+
+    /* Power handshake snapshot; see IOC_OFF_PING_POWER. */
+    {
+        uint8_t p = 0u;
+        if (PWR_OFF_PORT)          p |= IOC_PING_PWR_OFF_PIN;
+        if (PWR_OFF_LAT)           p |= IOC_PING_PWR_OFF_LAT;
+        if (PWR_OFF_TRIS == 0u)    p |= IOC_PING_PWR_OFF_DRIVEN;
+        if (SHUTDOWN_RQ_PORT)      p |= IOC_PING_SHUTDOWN_PIN;
+        if (PIR10bits.INT2IF)      p |= IOC_PING_SHUTDOWN_LATCH;
+        if (SHUTDOWN_RQ_WPU)       p |= IOC_PING_SHUTDOWN_WPU;
+        reply->bytes[IOC_OFF_PING_POWER] = p;
+    }
+
+    /* Silent SD retry accounting; see sd_card.h. */
+    {
+        uint16_t r = sd_card_read_retries();
+        uint16_t i = sd_card_reinits();
+        reply->bytes[IOC_OFF_PING_RETRY_LO]  = (uint8_t)r;
+        reply->bytes[IOC_OFF_PING_RETRY_HI]  = (uint8_t)(r >> 8);
+        reply->bytes[IOC_OFF_PING_REINIT_LO] = (uint8_t)i;
+        reply->bytes[IOC_OFF_PING_REINIT_HI] = (uint8_t)(i >> 8);
+
+        r = rec_reads;
+        i = sd_cache_misses();
+        reply->bytes[IOC_OFF_PING_RECREAD_LO] = (uint8_t)r;
+        reply->bytes[IOC_OFF_PING_RECREAD_HI] = (uint8_t)(r >> 8);
+        reply->bytes[IOC_OFF_PING_MISS_LO]    = (uint8_t)i;
+        reply->bytes[IOC_OFF_PING_MISS_HI]    = (uint8_t)(i >> 8);
+    }
 }
 
 /* RESET is a terminal, disruptive command.
@@ -312,6 +348,8 @@ static void reply_header(const IocFrame *request, IocFrame *reply,
 void handler_sd_read_rec(const IocFrame *request, IocFrame *reply)
 {
     uint32_t record = decode_record(request);
+
+    rec_reads++;
     SdStatus st     = sd_cache_read_record(record, xfer_record);
 
     reply_header(request, reply, RSP_SD_READ_REC,
@@ -376,4 +414,31 @@ void handler_sd_flush(const IocFrame *request, IocFrame *reply)
     SdStatus st = sd_cache_flush();
 
     reply_header(request, reply, RSP_SD_FLUSH, sd_status_to_ioc(st), 0u);
+}
+
+/* Accumulated microsecond profile, as six 16-bit millisecond totals.
+ *
+ * A separate command rather than more PING fields: PING's payload bytes 4-19
+ * carry a test pattern the host echoes back and verifies, and overwriting them
+ * would trade an integrity check for a diagnostic. */
+void handler_profile(const IocFrame *request, IocFrame *reply)
+{
+    uint8_t i;
+
+    reply_header(request, reply, RSP_PROFILE, IOC_STATUS_OK,
+                 IOC_PROFILE_PAYLOAD_LEN);
+
+    {
+        extern uint16_t svc_calls, svc_aborts;
+        reply->bytes[IOC_OFF_PROFILE_CALLS]      = (uint8_t)svc_calls;
+        reply->bytes[IOC_OFF_PROFILE_CALLS + 1u] = (uint8_t)(svc_calls >> 8);
+        reply->bytes[IOC_OFF_PROFILE_ABORTS]      = (uint8_t)svc_aborts;
+        reply->bytes[IOC_OFF_PROFILE_ABORTS + 1u] = (uint8_t)(svc_aborts >> 8);
+    }
+
+    for (i = 0u; i < UPROF_SLOTS; i++) {
+        uint16_t ms = uprof_ms(i);
+        reply->bytes[IOC_OFF_PROFILE_0 + (uint8_t)(i * 2u)]      = (uint8_t)ms;
+        reply->bytes[IOC_OFF_PROFILE_0 + (uint8_t)(i * 2u) + 1u] = (uint8_t)(ms >> 8);
+    }
 }

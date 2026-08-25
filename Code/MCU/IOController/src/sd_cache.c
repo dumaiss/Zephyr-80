@@ -107,6 +107,10 @@ static SdCacheSlot *choose_victim(void)
     return &slots[oldest];
 }
 
+static uint16_t cache_misses;
+
+uint16_t sd_cache_misses(void) { return cache_misses; }
+
 /* Get the slot for an LBA, loading it from the card if necessary.
  * Returns NULL with *st set on a card failure. */
 static SdCacheSlot *acquire(uint32_t lba, SdStatus *st)
@@ -120,6 +124,12 @@ static SdCacheSlot *acquire(uint32_t lba, SdStatus *st)
         touch(s);
         return s;
     }
+
+    /* A miss: from here the request costs a real 512-byte card read.  Counted
+     * so the hit rate is observable -- with four records per block a sequential
+     * file should miss once every four reads, and anything close to one miss
+     * per read means the cache is being thrashed rather than used. */
+    cache_misses++;
 
     s = (lba == SD_CACHE_PINNED_LBA) ? &slots[SD_CACHE_PINNED_SLOT]
                                      : choose_victim();

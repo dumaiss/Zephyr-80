@@ -58,7 +58,28 @@
  * cycles at 64 MHz, so this bound is orders of magnitude wide. */
 #define EXTSYNC_SPI_TIMEOUT_LOOPS 20000u
 
-#define EXTSYNC_BIT_DELAY_US     50u
+/* Half-bit time for the ONE hand-clocked byte per transfer.
+ *
+ * Was 50 us, an unjustified bring-up value, and it cost about 1.15 ms every
+ * time it ran: 8 bits x 2 delays, plus one on the sync-drop bit and one more on
+ * each bit from 2 up.  It runs twice per record read -- once for the reply's
+ * alignment byte, once for byte 0 of the bulk transfer -- so it was roughly
+ * 2.5 ms of a 17.5 ms transaction, measured.
+ *
+ * The justification for lowering it is in this same file: every OTHER byte of
+ * that reply goes out through SPI2 at EXTSYNC_SPI_BAUD, which is 1 MHz -- 1 us
+ * per bit.  The same SIO receives those 32 bytes without complaint, so it can
+ * receive byte 0 at the same rate.  Byte 0 is hand-clocked because /SYNCB has
+ * to be asserted at a precise POSITION inside it, which a hardware shift
+ * register cannot do; that is a placement constraint, not a speed one.
+ *
+ * 2 us is double the SPI path's bit period, so it stays the slowest edge on the
+ * link rather than the fastest.
+ *
+ * IF FRAMING REGRESSES, THIS IS THE FIRST THING TO PUT BACK.  Restore 50u and
+ * re-measure: reply send and bulk phase should each grow by ~1.15 ms per
+ * transaction, which the profiler will show directly. */
+#define EXTSYNC_BIT_DELAY_US     2u
 #define EXTSYNC_ALIGNMENT_BYTE   0x7Eu
 
 /* ---------------------------------------------------------------------------

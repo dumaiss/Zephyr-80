@@ -212,6 +212,13 @@ SdStatus sd_card_write_block(uint32_t lba, const uint8_t *buf);
  * After a READ failure the trace is re-armed and instead holds the CMD17
  * response: the R1 poll bytes, with the observed data token (or FFh if none
  * ever arrived) in the last slot. */
+/* Silent-retry accounting.  A retried read returns SD_OK with correct data, so
+ * these are the only evidence it happened; sd_card_reinits() is the expensive
+ * one, since every retry forces a full CMD0/ACMD41 sequence at 125 kHz.  Both
+ * saturate at 65535 rather than wrapping. */
+uint16_t sd_card_read_retries(void);
+uint16_t sd_card_reinits(void);
+
 #define SD_TRACE_BYTES 8u 
 const uint8_t *sd_card_trace(void);
 

@@ -324,29 +324,35 @@
 /* ---------------------------------------------------------------------------
  * Power control (RF6 / RF7)
  *
- * The PMU side is not finished, so the firmware LEAVES BOTH PINS FLOATING.
- * Driving RF6 at all — even to the deasserted level — stopped the machine from
- * starting, so platform_init() only sets TRIS=1 and never touches LATF6.
+ * BOTH SIGNALS ARE ACTIVE LOW, deliberately and symmetrically.
  *
- * PWR_OFF is a LEVEL signal to the PMU, not a pulse: once it is asserted the
- * PMU cuts rails and keeps them cut.  Never toggle it as a strobe.  When the
- * PMU is ready, take ownership by writing PWR_OFF_LAT = PWR_OFF_IDLE first and
- * only then clearing PWR_OFF_TRIS, so the pin never glitches through asserted.
+ * Inverted logic on both lets each end hold its own input at the deasserted
+ * level with a programmed pull-up, so a net with an unpowered or high-Z partner
+ * reads "nothing is being asked" rather than floating. Neither MCU has
+ * programmable pull-downs -- the PIC has WPUA..WPUF and nothing else, the AVR
+ * likewise -- so active low is the only polarity that can be made fail-safe in
+ * firmware alone.
  *
- * SHUTDOWN_RQ is the incoming request that a shutdown should begin.
+ *   /PWR_OFF      out  HIGH = keep power on      LOW = remove power
+ *   /SHUTDOWN_RQ  in   HIGH = nothing requested  LOW = please shut down
+ *
+ * /SHUTDOWN_RQ is ONLY a shutdown request. It does not gate whether the system
+ * may run: the PMU powers the machine when PWR_OK is good and that is the whole
+ * of the start-up story. An earlier reading of it as a run/reset gate is what
+ * made the boot sequence look like it needed an arming step; it does not.
  * --------------------------------------------------------------------------- */
 #define PWR_OFF_TRIS         TRISFbits.TRISF6
 #define PWR_OFF_ANSEL        ANSELFbits.ANSELF6
 #define PWR_OFF_LAT          LATFbits.LATF6
 #define PWR_OFF_PORT         PORTFbits.RF6
-#define PWR_OFF_ASSERTED     1
-#define PWR_OFF_IDLE         0
-#define PWR_OFF_FLOAT        1   /* TRIS value: PMU side incomplete, stay high-Z */
+#define PWR_OFF_ASSERTED     0   /* LOW  = remove power */
+#define PWR_OFF_IDLE         1   /* HIGH = keep power on */
 
 #define SHUTDOWN_RQ_TRIS     TRISFbits.TRISF7
 #define SHUTDOWN_RQ_ANSEL    ANSELFbits.ANSELF7
 #define SHUTDOWN_RQ_PORT     PORTFbits.RF7
-#define SHUTDOWN_RQ_ACTIVE   1
+#define SHUTDOWN_RQ_WPU      WPUFbits.WPUF7
+#define SHUTDOWN_RQ_ACTIVE   0   /* LOW = the PMU is asking us to shut down */
 
 /* ---------------------------------------------------------------------------
  * GPIO header (Port D)

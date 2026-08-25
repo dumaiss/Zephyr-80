@@ -6,12 +6,20 @@
 #include "power_controller.h"
 
 /*
- * Set to 1 to run the PMU without participating in the IO Controller
- * handshake. In that mode the firmware ignores PWR_OFF_RQ and does not drive
- * PWR_STATE.
+ * Set to 1 to run the PMU standalone, ignoring /PWR_OFF_RQ and leaving
+ * /SHUTDOWN_RQ deasserted.
+ *
+ * Both signals are ACTIVE LOW so each end can hold its own input at the
+ * deasserted level with a programmed pull-up. A net whose partner is unpowered
+ * or high-Z then reads "nothing requested" rather than floating. Neither MCU
+ * has programmable pull-downs -- the AVR has pull-ups only, and so does the PIC
+ * -- so this is the only polarity that is fail-safe in firmware alone.
+ *
+ * Because of that, standalone mode is now genuinely inert rather than merely
+ * untested: /SHUTDOWN_RQ idles high either way.
  */
 #ifndef PMU_IGNORE_IO_CONTROLLER_SIGNALS
-#define PMU_IGNORE_IO_CONTROLLER_SIGNALS 1
+#define PMU_IGNORE_IO_CONTROLLER_SIGNALS 0
 #endif
 
 /*
@@ -22,16 +30,27 @@
  * easier to check against the schematic.
  */
 
-/* IO Controller asks the PMU to shut down the PSU. Active low input. */
+/*
+ * /PWR_OFF_RQ: the IO Controller telling us it is done and power may go.
+ * Active low, held high by the internal pull-up when nothing drives it.
+ */
 #define PWR_OFF_RQ_DDR  DDRB
 #define PWR_OFF_RQ_PORT PORTB
 #define PWR_OFF_RQ_PINR PINB
 #define PWR_OFF_RQ_PIN  PB4
 
-/* PWR_STATE high holds the IO Controller in reset; low allows it to run. */
-#define PWR_STATE_DDR   DDRB
-#define PWR_STATE_PORT  PORTB
-#define PWR_STATE_PIN   PB3
+/*
+ * /SHUTDOWN_RQ: us asking the IO Controller to clean up. Active low, idle high.
+ *
+ * A shutdown request and nothing more. It does NOT gate whether the system may
+ * run -- the PSU comes up when PWR_OK is good and that is the whole start-up
+ * story. It was previously called PWR_STATE and described as holding the IO
+ * Controller in reset, which is a name and a description that appear nowhere on
+ * the schematic; the net is SHUTDOWN_RQ.
+ */
+#define SHUTDOWN_RQ_DDR   DDRB
+#define SHUTDOWN_RQ_PORT  PORTB
+#define SHUTDOWN_RQ_PIN   PB3
 
 /* Enclosure power switch. Active low input, handled as an edge/hold signal. */
 #define PWR_SW_DDR      DDRB

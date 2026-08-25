@@ -76,7 +76,25 @@ vdrip_transport_set_idle_mode:
 	ld (vdrip_rx_mode),a
 	ret
 
-; Wait indefinitely for packetized PROXY_READY when not already online.
+;
+; Waits for packetized PROXY_READY when not already online -- indefinitely if
+; the link is merely quiet, but NOT if it has demonstrably lost data.
+;
+; The escape below is the difference between a disk error and a dead machine.
+; vdrip_transport_wait_reply already bails on SIO0B_LAST_RX_ERROR by clearing
+; vdrip_proxy_online and returning BIOS_ERR.  This loop then ran with
+; proxy_online clear, waiting for a PROXY_READY the proxy only ever sends on its
+; own initiative -- and it is reached from vdrip_console_init, which runs on WARM
+; boot as well as cold.  So one lost byte on this link armed a permanent hang at
+; the next warm boot: no console, no prompt, reset required.
+;
+; The lost byte is not hypothetical.  This link is SIO0, shared with the console;
+; the IO Controller lives on SIO1 and masks interrupts for the whole of a bulk
+; transfer, because the PIC is clock master and never waits mid-stream.  For
+; those milliseconds the RX ISR cannot run and software RTS cannot be dropped,
+; so SIO0's three-byte FIFO can overrun.  The two SIOs share no wires and couple
+; only through the interrupt mask, which is why this needs BOTH drives to
+; reproduce and neither one alone.
 vdrip_transport_wait_ready:
 	ld a,(vdrip_proxy_online)
 	or a
@@ -90,7 +108,18 @@ vdrip_ready_wait:
 	call sio_rx_kick
 	ld a,(vdrip_proxy_online)
 	or a
+	jr nz,vdrip_ready_done
+
+	; Quiet is not the same as broken.  A recorded receive error means the
+	; bytes that would have carried PROXY_READY are already gone, so this wait
+	; can now only end by never ending; report it and let CP/M raise a disk
+	; error.  With no error, keep waiting -- that is the "proxy has not started
+	; yet" case this loop exists to serve.
+	ld a,(SIO0B_LAST_RX_ERROR)
+	or a
 	jr z,vdrip_ready_wait
+	ld a,#BIOS_ERR
+	ret
 vdrip_ready_done:
 	ld a,(vdrip_idle_mode)
 	ld (vdrip_rx_mode),a

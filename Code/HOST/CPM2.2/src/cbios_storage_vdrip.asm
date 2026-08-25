@@ -258,7 +258,7 @@ vdrip_storage_build_request_header:
 	ld a,(vdrip_storage_active_seq)
 	ld (hl),a
 	inc hl
-	ld (hl),#VDRIP_STORAGE_DRIVE
+	ld (hl),#VDRIP_STORAGE_PROTO_DRIVE	; wire id, not the CP/M letter
 	inc hl
 	ld de,(vdrip_storage_lba)
 	ld (hl),e

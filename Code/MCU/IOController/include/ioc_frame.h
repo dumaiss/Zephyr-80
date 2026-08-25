@@ -132,6 +132,7 @@
 #define CMD_SD_READ_REC      0x08
 #define CMD_SD_WRITE_REC     0x09
 #define CMD_SD_FLUSH         0x0A
+#define CMD_PROFILE          0x0B
 
 /* Response class bytes (MCU → Z80) */
 #define RSP_PING             0x81
@@ -143,6 +144,14 @@
 #define RSP_SD_READ_REC      0x88
 #define RSP_SD_WRITE_REC     0x89
 #define RSP_SD_FLUSH         0x8A
+#define RSP_PROFILE          0x8B
+
+/* Six 16-bit millisecond totals at bytes 4-15; see timebase.h for the slots. */
+#define IOC_OFF_PROFILE_0        (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_PROFILE_CALLS    (IOC_OFF_PAYLOAD + 12u)
+#define IOC_OFF_PROFILE_ABORTS   (IOC_OFF_PAYLOAD + 14u)
+#define IOC_PROFILE_PAYLOAD_LEN  16u
+
 #define RSP_UNKNOWN_COMMAND  0xFE
 
 /* Firmware capability level, returned by PING.
@@ -163,12 +172,54 @@
  *      follows the armed receive buffer
  *   5  bulk writes carry a sacrificial lead-in byte before the preamble, and
  *      the receive search widened to 128 bits to keep its late-start margin
+ *   6  power handshake: /PWR_OFF driven idle from the first instructions of
+ *      startup, /SHUTDOWN_RQ latched and debounced, and both reported by PING
  */
-#define IOC_FW_LEVEL  5
+#define IOC_FW_LEVEL  11
+
+/* PING reply: a snapshot of the power handshake pins.
+ *
+ * Diagnostic, and the cheapest way to answer the question that keeps coming up:
+ * is the controller driving /PWR_OFF, and is the PMU asking for anything? Both
+ * ends of that handshake are invisible from the host otherwise, and guessing
+ * between "the controller is not running" and "something on the card holds the
+ * net low" has already cost several rounds.
+ *
+ *   bit 0  /PWR_OFF pin level      (PORTF6) 1 = keep power on
+ *   bit 1  /PWR_OFF drive level    (LATF6)  what we are asking for
+ *   bit 2  /PWR_OFF is an output   (TRIS=0) 1 = we own the pin
+ *   bit 3  /SHUTDOWN_RQ pin level  (PORTF7) 0 = the PMU is asking
+ *   bit 4  /SHUTDOWN_RQ edge latch (INT2IF) 1 = a falling edge was seen
+ *   bit 5  /SHUTDOWN_RQ pull-up on (WPUF7)
+ *
+ * Bits 0 and 1 disagreeing is the interesting case: it means the pin is being
+ * driven to one level and sitting at the other, which is a short or a pull
+ * stronger than the driver rather than anything in firmware.
+ */
+#define IOC_OFF_PING_POWER  21u
+#define IOC_PING_PWR_OFF_PIN    0x01u
+#define IOC_PING_PWR_OFF_LAT    0x02u
+#define IOC_PING_PWR_OFF_DRIVEN 0x04u
+#define IOC_PING_SHUTDOWN_PIN   0x08u
+#define IOC_PING_SHUTDOWN_LATCH 0x10u
+#define IOC_PING_SHUTDOWN_WPU   0x20u
 
 /* PING reply: the firmware level.  In the RESERVED area, not the payload --
  * PING echoes bytes 4..19 verbatim and that echo is what proves the round trip,
  * so it must not be overwritten. */
+/* Silent SD retry counters, little-endian.  See sd_card.h: a retried read is
+ * invisible in every other reply field, because it succeeds. */
+#define IOC_OFF_PING_RETRY_LO   22u
+#define IOC_OFF_PING_RETRY_HI   23u
+#define IOC_OFF_PING_REINIT_LO  24u
+#define IOC_OFF_PING_REINIT_HI  25u
+
+/* Bytes 26-29: record reads served and cache misses.  30-31 are the CRC. */
+#define IOC_OFF_PING_RECREAD_LO 26u
+#define IOC_OFF_PING_RECREAD_HI 27u
+#define IOC_OFF_PING_MISS_LO    28u
+#define IOC_OFF_PING_MISS_HI    29u
+
 #define IOC_OFF_PING_LEVEL  20u
 
 /* Status bytes */

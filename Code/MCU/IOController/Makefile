@@ -19,7 +19,8 @@ FIRMWARE_SRCS := \
     $(SRC_DIR)/sd_card.c \
     $(SRC_DIR)/bulk_channel.c \
     $(SRC_DIR)/timebase.c \
-    $(SRC_DIR)/sd_cache.c
+    $(SRC_DIR)/sd_cache.c \
+    $(SRC_DIR)/power.c
 
 FIRMWARE_HEX := $(BUILD_DIR)/$(TARGET).hex
 
