@@ -85,9 +85,10 @@ copy_payload:
 	ld a,(rx_frame)
 	cp #RSP_PING
 	jr nz,bad_reply
-	ld a,(rx_frame + 1)
-	cp #0x01
-	jr nz,bad_reply
+	; Sequence is no longer checked here: it rolls per transaction and IOCALL
+	; validates the echo itself, rejecting a mismatch as IOC_XPORT_BAD_SEQ.
+	; Comparing it against a constant would fail on every transaction but the
+	; first.
 	ld a,(rx_frame + 2)
 	or a
 	jr nz,bad_reply

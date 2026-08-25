@@ -80,6 +80,13 @@ IOCALL:
 	or a
 	jr nz,IOCALL_FAIL_STACKED
 
+	; Stamp the outgoing sequence and CRC.  Callers build class, status,
+	; length and payload; integrity is the transport's business and they
+	; never see it.  Done before RTS so the frame is complete the moment the
+	; MCU starts clocking.
+	call ioc_frame_stamp		; HL preserved; A = sequence stamped
+	ld (ioc_expect_seq),a
+
 	call sio_command_rts_assert	; assert SIO1/B RTS → MCU starts clocking
 
 	; HL = caller TX frame pointer (preserved by rts_assert which clobbers AF only)
@@ -94,9 +101,46 @@ IOCALL:
 	; disabling the transmitter here cannot truncate it.
 	call sio_command_rts_release
 
-	; A carries recv_frame's status straight out: OK, or the transport error.
+	; recv_frame does NOT preserve DE.  Its header comment claims
+	; "Clobbers: AF, B, C, HL", but it calls sio_command_get_byte in a loop
+	; and that uses DE as its timeout counter -- so the RX pointer is gone by
+	; the time it returns.  Keep it on the stack instead of trusting DE.
+	push de
 	call ioc_command_recv_frame
+	pop hl				; HL = caller RX frame
+	or a
+	ret nz				; transport error: nothing to validate
+
+	; The reply arrived intact enough to copy.  Now decide whether to believe
+	; it.  ioc_frame_check clobbers HL too, so keep a copy across it.
+	push hl
+	call ioc_frame_check
+	pop hl
+	or a
+	jr nz,IOCALL_CRC_FAIL
+
+	; CRC is good, so the sequence byte can be trusted.  A reply echoing a
+	; different sequence belongs to an earlier transaction -- accepting it
+	; would answer this request with a stale one.
+	inc hl				; IOC_OFF_SEQ
+	ld a,(ioc_expect_seq)
+	cp (hl)
+	jr nz,IOCALL_SEQ_FAIL
+
+	xor a
 	ret
+
+IOCALL_CRC_FAIL:
+	ld a,#IOC_XPORT_BAD_CRC
+	ret
+
+IOCALL_SEQ_FAIL:
+	ld a,#IOC_XPORT_BAD_SEQ
+	ret
+
+; Sequence expected in the reply to the outstanding request.
+ioc_expect_seq:
+	.db 0
 
 IOCALL_FAIL_STACKED:
 	pop de				; balance stack

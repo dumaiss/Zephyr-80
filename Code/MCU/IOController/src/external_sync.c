@@ -293,28 +293,58 @@ static bool is_command_class(uint8_t value)
            (value == CMD_XFER_STATUS);
 }
 
+/* Verify the CRC of a candidate frame sitting at an arbitrary bit offset.
+ *
+ * This is the authority for dispatch.  The header checks below only exist to
+ * keep the search from computing a CRC at all 128 candidate offsets, which
+ * would cost about 2 ms per window; a header match narrows it to typically one.
+ */
+static bool frame_crc_ok(uint16_t bit_index)
+{
+    uint16_t crc = 0u;
+    uint16_t wire;
+    uint8_t  i;
+
+    for (i = 0u; i < IOC_CRC_COVERED; i++)
+        crc = sio_link_crc16_update(crc,
+                  read_wire_byte((uint16_t)(bit_index + ((uint16_t)i * 8u))));
+
+    wire  = (uint16_t)read_wire_byte(
+                (uint16_t)(bit_index + ((uint16_t)IOC_OFF_CRC_LO * 8u)));
+    wire |= (uint16_t)read_wire_byte(
+                (uint16_t)(bit_index + ((uint16_t)IOC_OFF_CRC_HI * 8u))) << 8;
+
+    return wire == crc;
+}
+
 static bool find_frame_start(uint16_t *bit_index)
 {
     uint16_t start;
 
     for (start = 0u; start < EXTSYNC_FRAME_SEARCH_BITS; start++) {
         uint8_t cls = read_wire_byte(start);
-        uint8_t seq = read_wire_byte((uint16_t)(start + 8u));
         uint8_t status = read_wire_byte((uint16_t)(start + 16u));
         uint8_t len = read_wire_byte((uint16_t)(start + 24u));
 
         if (!is_command_class(cls))
             continue;
 
-        if (seq != 0x01u || status != 0x00u)
+        /* The sequence number is now rolling, so it can no longer be matched
+         * against a constant -- that evidence is replaced by the CRC below,
+         * which is worth far more than the one byte it displaces. */
+        if (status != 0x00u)
             continue;
 
         if (cls == CMD_RESET && len == 0x00u) {
+            if (!frame_crc_ok(start))
+                continue;
             *bit_index = start;
             return true;
         }
 
         if (cls == CMD_PING && (len == 0x00u || len == 0x10u)) {
+            if (!frame_crc_ok(start))
+                continue;
             *bit_index = start;
             return true;
         }
@@ -326,26 +356,36 @@ static bool find_frame_start(uint16_t *bit_index)
          * wrong one.  Every field that stops matching makes a false lock more
          * likely.  Adding a command means adding a clause here, deliberately. */
         if (cls == CMD_SD_READ && len == 0x00u) {
+            if (!frame_crc_ok(start))
+                continue;
             *bit_index = start;
             return true;
         }
 
         if (cls == CMD_BULK_TEST && (len == 0x00u || len == 0x02u)) {
+            if (!frame_crc_ok(start))
+                continue;
             *bit_index = start;
             return true;
         }
 
         if (cls == CMD_SD_READ_BULK && len == IOC_SD_LBA_PAYLOAD_LEN) {
+            if (!frame_crc_ok(start))
+                continue;
             *bit_index = start;
             return true;
         }
 
         if (cls == CMD_SD_WRITE_BULK && len == IOC_SD_LBA_PAYLOAD_LEN) {
+            if (!frame_crc_ok(start))
+                continue;
             *bit_index = start;
             return true;
         }
 
         if (cls == CMD_XFER_STATUS && len == 0x00u) {
+            if (!frame_crc_ok(start))
+                continue;
             *bit_index = start;
             return true;
         }
@@ -487,9 +527,18 @@ bool external_sync_receive(IocFrame *frame)
  *      RR0/RX-ready only after additional clocks arrive on this board.
  *   5. Release /SYNCB and SIOB_CS, and return SIO_MOSI to marking idle high.
  */
-void external_sync_send(const IocFrame *frame)
+void external_sync_send(IocFrame *frame)
 {
     uint8_t i;
+    uint16_t crc = 0u;
+
+    /* Stamp the CRC before a single bit goes out.  The host rejects any reply
+     * that fails it, which is what stops a mis-framed or stale reply being
+     * accepted as the answer to the outstanding request. */
+    for (i = 0u; i < IOC_CRC_COVERED; i++)
+        crc = sio_link_crc16_update(crc, frame->bytes[i]);
+    frame->bytes[IOC_OFF_CRC_LO] = (uint8_t)crc;
+    frame->bytes[IOC_OFF_CRC_HI] = (uint8_t)(crc >> 8);
 
     __delay_us(EXTSYNC_REPLY_GUARD_US);
     bus_select_siob();

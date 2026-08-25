@@ -16,6 +16,27 @@
  */
 #define IOC_FRAME_SIZE  32
 
+/* Frame integrity: CRC-16 over bytes 0..29, stored little-endian at 30..31.
+ *
+ * Not decoration.  find_frame_start() walks candidate bit offsets and used to
+ * dispatch on a header whose class, sequence, status and length all validated
+ * -- which is four bytes of evidence, and a wrong bit alignment can supply them
+ * by coincidence.  Two observed consequences:
+ *
+ *   - a CMD_SD_READ_BULK decoded as CMD_PING, replying RSP_PING and putting
+ *     every later reply one transaction out of step;
+ *   - a write landing on a sector nobody asked for, reporting success, because
+ *     the LBA payload was never checked by anything.
+ *
+ * The second is silent destruction of unrelated data.  A frame is now dispatched
+ * only if the CRC passes; the header check survives purely as a cheap pre-filter
+ * so the search does not compute 128 CRCs per window.
+ *
+ * Same CRC-16-CCITT as the bulk lane, so sio_link_crc16_update() is shared. */
+#define IOC_OFF_CRC_LO   30u
+#define IOC_OFF_CRC_HI   31u
+#define IOC_CRC_COVERED  30u
+
 /* Byte offsets within a frame */
 #define IOC_OFF_CLASS    0
 #define IOC_OFF_SEQ      1

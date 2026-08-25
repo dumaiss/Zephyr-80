@@ -280,6 +280,10 @@
 
 void external_sync_init(void);
 bool external_sync_receive(IocFrame *frame);
-void external_sync_send(const IocFrame *frame);
+/* Transmit a 32-byte reply.  NOT const: the transport stamps the frame's CRC
+ * into bytes 30..31 before sending, so handlers never have to know integrity
+ * exists.  They set class, sequence (echoed from the request), status, length
+ * and payload; everything else is the transport's business. */
+void external_sync_send(IocFrame *frame);
 
 #endif /* EXTERNAL_SYNC_H */

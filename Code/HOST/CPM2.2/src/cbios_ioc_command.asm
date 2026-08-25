@@ -31,6 +31,7 @@
 	.globl sio_command_wait_ready
 	.globl ioc_command_send_frame,ioc_command_recv_frame
 	.globl IOCBULK
+	.globl ioc_frame_crc,ioc_frame_stamp,ioc_frame_check
 	.globl IOC_CMD_CODE_START,IOC_CMD_CODE_END
 
 	.area CODE (ABS)
@@ -206,6 +207,156 @@ SIO_CMD_GET_READY:
 	ret
 
 ; ---------------------------------------------------------------------------
+; ioc_frame_crc
+; CRC-16-CCITT (poly 1021h, init 0000h, MSB first) over the first
+; IOC_CRC_COVERED bytes of the frame at HL.
+;
+; Nibble table: two lookups per byte, 32 bytes of table, ~70 T-states per byte.
+; 30 bytes costs ~210 us, paid twice per transaction against a ~2 ms transfer.
+; A bitwise loop would be ~720 us each and a 256-entry table would cost 512
+; bytes of BIOS for a saving that does not matter at this frame size.
+;
+; Must match sio_link_crc16_update() on the MCU, which is the same algorithm.
+;
+; In:  HL = frame
+; Out: DE = CRC
+; Clobbers: AF, BC, DE, HL
+; ---------------------------------------------------------------------------
+ioc_frame_crc:
+	ld de,#0			; crc = 0
+	ld b,#IOC_CRC_COVERED
+IOC_CRC_BYTE:
+	ld a,(hl)
+	push bc
+	; high nibble: index = ((crc >> 12) ^ (data >> 4)) & 0x0F
+	rrca
+	rrca
+	rrca
+	rrca
+	and #0x0f
+	ld c,a
+	ld a,d
+	rrca
+	rrca
+	rrca
+	rrca
+	and #0x0f
+	xor c
+	call IOC_CRC_NIBBLE
+	; low nibble
+	ld a,(hl)
+	and #0x0f
+	ld c,a
+	ld a,d
+	rrca
+	rrca
+	rrca
+	rrca
+	and #0x0f
+	xor c
+	call IOC_CRC_NIBBLE
+	pop bc
+	inc hl
+	djnz IOC_CRC_BYTE
+	ret
+
+; crc = (crc << 4) ^ table[A].  A = 4-bit index.
+; Clobbers: AF, BC
+IOC_CRC_NIBBLE:
+	add a,a				; table entries are 16-bit
+	ld c,a
+	ld b,#0
+	push hl
+	ld hl,#ioc_crc_table
+	add hl,bc
+	ld c,(hl)
+	inc hl
+	ld b,(hl)			; BC = table entry
+	pop hl
+	; crc <<= 4
+	ex de,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	ex de,hl
+	; crc ^= BC
+	ld a,d
+	xor b
+	ld d,a
+	ld a,e
+	xor c
+	ld e,a
+	ret
+
+ioc_crc_table:
+	.dw 0x0000, 0x1021, 0x2042, 0x3063
+	.dw 0x4084, 0x50a5, 0x60c6, 0x70e7
+	.dw 0x8108, 0x9129, 0xa14a, 0xb16b
+	.dw 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef
+
+; ---------------------------------------------------------------------------
+; ioc_frame_stamp — write the outgoing sequence and CRC into the frame at HL.
+; In:  HL = frame.  Out: A = the sequence stamped.  Clobbers: AF, BC, DE, HL.
+; ---------------------------------------------------------------------------
+ioc_frame_stamp:
+	; Next sequence.  Rolls modulo 256; 0 is not special.
+	ld a,(ioc_seq)
+	inc a
+	ld (ioc_seq),a
+
+	push hl
+	inc hl				; IOC_OFF_SEQ = 1
+	ld (hl),a
+	pop hl
+
+	push hl
+	call ioc_frame_crc		; DE = CRC over bytes 0..IOC_CRC_COVERED-1
+	pop hl
+
+	push hl
+	ld bc,#IOC_OFF_CRC_LO
+	add hl,bc
+	ld (hl),e
+	inc hl
+	ld (hl),d
+	pop hl
+
+	ld a,(ioc_seq)
+	ret
+
+; ---------------------------------------------------------------------------
+; ioc_frame_check — verify the CRC of the frame at HL.
+; Out: A = 0 if the CRC matches, non-zero otherwise.  Clobbers: AF, BC, DE, HL.
+; ---------------------------------------------------------------------------
+ioc_frame_check:
+	push hl
+	call ioc_frame_crc		; DE = computed
+	pop hl
+	push hl
+	ld bc,#IOC_OFF_CRC_LO
+	add hl,bc
+	ld a,(hl)
+	cp e
+	jr nz,IOC_CRC_BAD
+	inc hl
+	ld a,(hl)
+	cp d
+	jr nz,IOC_CRC_BAD
+	pop hl
+	xor a
+	ret
+IOC_CRC_BAD:
+	pop hl
+	ld a,#1
+	ret
+
+; Rolling transaction sequence.  Lives in the code region, which is RAM at
+; runtime after the shadow copy.
+ioc_seq:
+	.db 0
+
+; ---------------------------------------------------------------------------
 ; ioc_command_send_frame
 ; Send exactly IOC_FRAME_SIZE (32) bytes via SIO1/B (Command channel) in
 ; External Sync mode (transparent bytes; optional software preamble only).
@@ -312,7 +463,13 @@ IOC_CMD_SEND_TRAIL_NEXT:
 ; In:  DE = pointer to 32-byte RX frame buffer in caller RAM
 ; Out: A = IOC_XPORT_OK or IOC_XPORT_TIMEOUT on error
 ;      32-byte frame written to buffer at DE on success.
-; Clobbers: AF, B, C, HL
+; Clobbers: AF, B, C, DE, HL
+;
+; DE IS CLOBBERED -- this said "AF, B, C, HL" for a long time and it was wrong.
+; sio_command_get_byte uses DE as its 16-bit timeout counter, and this routine
+; calls it once per byte, so the caller's RX pointer does not survive.  Trusting
+; the old comment cost a debugging session: IOCALL recovered the pointer from DE
+; after the call and CRC-checked whatever it happened to address.
 ; ---------------------------------------------------------------------------
 ; Entered with interrupts MASKED by a successful ioc_command_send_frame, so the
 ; receiver can be armed before the MCU's 200 us reply guard expires.  Interrupts

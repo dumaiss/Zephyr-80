@@ -134,6 +134,23 @@ SIO_BULK_CTRL_PORT              = SIO1A_CTRL      ; 31h — Bulk channel control
 ;   bytes 20-31 reserved / command-specific
 IOC_FRAME_SIZE                  = 0x20
 
+; Frame integrity, owned entirely by IOCALL.  Callers build class/status/length/
+; payload and never touch these: IOCALL stamps the sequence and CRC on send, and
+; verifies both on receive.
+;
+; The CRC covers bytes 0..29 and lives little-endian at 30..31, inside the
+; existing reserved area -- so the frame layout callers already use is unchanged.
+;
+; Why it exists: the MCU's frame search walks candidate bit offsets and used to
+; dispatch on a header alone.  A wrong alignment can supply a plausible header by
+; coincidence, and did -- once decoding a CMD_SD_READ_BULK as CMD_PING, and once
+; handing a write a garbage LBA so it landed on a sector nobody asked for while
+; reporting success.
+IOC_OFF_SEQ                     = 0x01
+IOC_OFF_CRC_LO                  = 0x1e
+IOC_OFF_CRC_HI                  = 0x1f
+IOC_CRC_COVERED                 = 0x1e
+
 ; BIOS transport status codes returned by IOCALL.
 ; These are transport-layer codes; MCU command status is in the 32-byte frame.
 IOC_XPORT_OK                    = 0x00
@@ -141,6 +158,8 @@ IOC_XPORT_TIMEOUT               = 0x01
 IOC_XPORT_BAD_FRAME             = 0x02
 IOC_XPORT_HW_ERROR              = 0x03
 IOC_XPORT_NOT_READY             = 0x04       ; MCU never advertised COMMAND_READY
+IOC_XPORT_BAD_CRC               = 0x05       ; reply CRC did not match
+IOC_XPORT_BAD_SEQ               = 0x06       ; reply echoed the wrong sequence
 IOC_XPORT_TIMEOUT_REPLY_MARKER  = 0x11       ; bring-up diagnostic: no reply byte seen
 IOC_XPORT_TIMEOUT_REPLY_BODY    = 0x12       ; bring-up diagnostic: reply began, then stalled
 
