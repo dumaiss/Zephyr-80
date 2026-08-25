@@ -46,6 +46,7 @@ CMD_TAIL	= 0x0080	; CP/M command tail: length byte then text
 
 IOCALL		= 0xDA3F
 IOCBULK		= 0xDA45
+IOCBULKW	= 0xDA48
 
 CMD_SD_READ_BULK  = 0x05
 RSP_SD_READ_BULK  = 0x85
@@ -466,21 +467,6 @@ bp_pre_next:
 ; Counts its own failures so callers only branch on the result.
 ; ---------------------------------------------------------------------------
 do_write:
-	; Payload CRC first, on the unconditional path.
-	;
-	; It lived just above dw_arm at one point, which is a JUMP TARGET -- the
-	; READY status check branches straight to it, so the computation was
-	; skipped every time and the trailer was whatever uninitialised .ds memory
-	; held.  The MCU then rejected every single write with BULK_CRC, which is
-	; exactly what it should do.
-	;
-	; Computed here rather than inside the transmit loop because that loop has
-	; to keep pace with the MCU's clock and cannot afford 12 ms of arithmetic.
-	ld hl,#ref_buf
-	ld bc,#BLOCK_SIZE
-	call crc16_block
-	ld (tx_crc),de
-
 	call zero_frames
 	ld a,#CMD_SD_WRITE_BULK
 	ld (tx_frame + 0),a
@@ -496,7 +482,6 @@ do_write:
 	or a
 	jr z,dw_c2
 	ld (fail_info),a		; keep IOCALL's own status
-	call snap_rr1
 	ld a,#1
 	jp dw_fail_n
 dw_c2:
@@ -518,134 +503,43 @@ dw_c4:
 	ld a,#12			; MCU decoded a DIFFERENT LBA -- do not write
 	jp dw_fail_n
 
+; Does the MCU's READY reply quote back the LBA we asked for?  Z = yes.
+;
+; Cheap and worth it: a write to the wrong sector is the one failure this test
+; cannot detect by reading back, because the read would go to the wrong sector
+; too and agree with itself.
+check_lba_echo:
+	ld hl,#(rx_frame + 8)
+	ld de,#cur_lba
+	ld b,#4
+cle_loop:
+	ld a,(de)
+	cp (hl)
+	ret nz
+	inc hl
+	inc de
+	djnz cle_loop
+	xor a				; Z set: match
+	ret
+
 dw_arm:
-	; Interrupts OFF for the whole transmit phase.
-	;
-	; The MCU clocks a byte every 12 us regardless of what the Z80 is doing,
-	; and the transmit path has only about two byte-times of buffering.  An ISR
-	; landing inside the loop makes the transmitter run dry, and it streams
-	; WR7 fill (00h) in place of real data -- which the bulk CRC now catches,
-	; but the transfer is lost either way.
-	;
-	; Unlike a design where the Z80 bit-bangs the clock, there is no way to
-	; stall the producer.  ~6.2 ms of blackout for a 512-byte write.
-	di
-
-	; Arm channel A for transmit: RX disabled, we only send.
-	ld a,#WR0_RESET_ERROR
-	out (BULK_CTRL),a
-	ld a,#0x03
-	out (BULK_CTRL),a
-	ld a,#WR3_RX_OFF
-	out (BULK_CTRL),a
-	ld a,#0x05
-	out (BULK_CTRL),a
-	ld a,#WR5_TX_RTS_ON
-	out (BULK_CTRL),a
-
-	; Preamble.  Load the first byte, THEN reset the Tx Underrun/EOM latch;
-	; reset while the buffer is empty and the transmitter never starts.
-	ld a,#PREAMBLE_0
-	call put_byte
-	jr nc,dw_p2
-	ld a,#4				; preamble byte 0 never went out
-	jp dw_fail_rts
-dw_p2:
-	ld a,#WR0_RESET_EOM
-	out (BULK_CTRL),a
-	ld a,#PREAMBLE_1
-	call put_byte
-	jr nc,dw_send
-	ld a,#5				; preamble byte 1 never went out
-	jp dw_fail_rts
-
-dw_send:
-	; OUTI loop, 56 T-states/byte.  Must keep pace with the MCU's clock.
+	; One BIOS call replaces the whole transmit phase: arming channel A, the
+	; RTS handshake, the preamble, the OUTI loop, the CRC trailer, the
+	; underrun check and the interrupt guard all live in IOCBULKW now.  This
+	; program touches no SIO register.
 	ld hl,#ref_buf
-	ld c,#BULK_DATA
-	ld de,#0			; whole-transfer stall budget
-	ld a,#2
-	ld (tx_chunks),a
-dw_chunk:
-	ld a,(tx_chunks)
+	ld de,#BLOCK_SIZE
+	call IOCBULKW
 	or a
-	jr z,dw_crc_hi			; payload done -> send the CRC trailer
-	dec a
-	ld (tx_chunks),a
-	ld b,#0				; 256 bytes
-dw_poll:
-	in a,(BULK_CTRL)		; 11
-	and #RR0_TX_EMPTY		;  7
-	jr nz,dw_got			; 12
-	dec de				;  6
-	ld a,d				;  4
-	or e				;  4
-	jr nz,dw_poll			; 12
-	ld a,#6				; transmit stalled mid-block
-	jp dw_fail_rts
-dw_got:
-	outi				; 16
-	jp nz,dw_poll			; 10
-	jr dw_chunk
-
-	; CRC-16 trailer, most significant byte first.
-	;
-	; This needs its own label because it is reached by a branch, not by
-	; falling through -- it sat unlabelled after the loop's unconditional
-	; `jr dw_chunk` at one point, which made it unreachable, and the loop's
-	; exit branched past it as well.  The trailer was never transmitted and
-	; the MCU rejected every write.
-dw_crc_hi:
-	ld a,(tx_crc + 1)
-	call put_byte
-	jr nc,dw_crc_lo
-	ld a,#6
-	jp dw_fail_rts
-dw_crc_lo:
-	ld a,(tx_crc + 0)
-	call put_byte
-	jr nc,dw_sent
-	ld a,#6
-	jp dw_fail_rts
-
+	jr z,dw_sent
+	ld (fail_info),a
+	ld a,#6				; IOCBULKW failed
+	jp dw_fail_n
 dw_sent:
 
-	; Underrun latch: set means fill went out in place of data.
-	ld a,#0x01
-	out (BULK_CTRL),a
-	in a,(BULK_CTRL)
-	and #RR1_TX_UNDERRUN
-	jr z,dw_rts_off
-	ld a,#7				; transmitter ran dry: fill, not data
-	jp dw_fail_rts
-
-dw_rts_off:
-	ld a,#0x05
-	out (BULK_CTRL),a
-	ld a,#WR5_TX_RTS_OFF
-	out (BULK_CTRL),a
-	ei				; transfer over; DONE runs with interrupts on
-
-	; Wait for /CTSA to drop before asking anything on the command lane.
-	;
-	; For a write the MCU holds /CTSA asserted until it has committed the
-	; block to the card, so this is waiting out the card write.  Skipping it
-	; is not merely impatient: the MCU's command-lane request detector is
-	; edge triggered and it samples nothing while writing, so a DONE query
-	; issued during that window is lost outright and costs an ~11 s timeout.
-	; Omitting this wait is exactly how that was found.
-	ld de,#0
-dw_cts_wait:
-	in a,(BULK_CTRL)
-	and #RR0_CTS
-	jr z,dw_cts_clear
-	dec de
-	ld a,d
-	or e
-	jr nz,dw_cts_wait
-	ld a,#11			; /CTSA never released
-	jp dw_fail_n
-dw_cts_clear:
+	; No /CTSA wait here.  IOCBULKW holds the lane until the MCU releases
+	; /CTSA, which for a write is after the card commit, so by the time it
+	; returns the command lane is already listening.
 
 	; DONE is mandatory for a write: the card is only touched after the last
 	; byte lands, so the status does not exist until now.
@@ -660,7 +554,6 @@ dw_cts_clear:
 	or a
 	jr z,dw_d2
 	ld (fail_info),a		; IOCALL status: 01 send, 11 no reply,
-	call snap_rr1			; 12 reply stalled, 02 bad frame
 	ld a,#8
 	jp dw_fail_n
 dw_d2:
@@ -682,14 +575,6 @@ dw_good:
 
 ; Release RTS before reporting, so a failed write does not leave the lane
 ; asserted into the next attempt.  A holds the failure code.
-dw_fail_rts:
-	push af
-	ld a,#0x05
-	out (BULK_CTRL),a
-	ld a,#WR5_TX_RTS_OFF
-	out (BULK_CTRL),a
-	pop af
-	ei				; every path out of the transmit phase
 dw_fail_n:
 	ld (fail_code),a
 	ld hl,(err_write)
@@ -739,7 +624,6 @@ do_read:
 	or a
 	jr z,dr_c2
 	ld (fail_info),a		; IOCALL's own status
-	call snap_rr1
 	ld a,#1				; command IOCALL failed
 	jr dr_fail_n
 dr_c2:
@@ -764,40 +648,18 @@ dr_c4:
 
 dr_bulk:
 	; IOCBULK owns the whole SIO1/A handshake; we touch no SIO registers.
-	; READY quotes the PAYLOAD length; the wire carries the CRC trailer after
-	; it, so ask IOCBULK for both.  IOCBULK is a dumb pipe and neither knows
-	; nor cares about the CRC.
+	; Payload length only.  IOCBULK carries and verifies the CRC trailer
+	; itself now, so the buffer and the count are both payload-sized.
 	ld hl,#rd_buf
 	ld a,(rx_frame + 6)
 	ld e,a
 	ld a,(rx_frame + 7)
 	ld d,a
-	inc de
-	inc de				; + BULK_CRC_BYTES
 	call IOCBULK
 	or a
-	jr z,dr_crc
+	jr z,dr_good
 	ld (fail_info),a		; IOCBULK status: 01 timeout, 02 bad len,
 	ld a,#4				; 03 /CTSA stuck
-	jr dr_fail_n
-
-	; Verify the trailer before believing a byte of it.
-dr_crc:
-	ld hl,#rd_buf
-	ld bc,#BLOCK_SIZE
-	call crc16_block
-	ld hl,#(rd_buf + BLOCK_SIZE)
-	ld a,(hl)
-	cp d
-	jr nz,dr_crc_bad
-	inc hl
-	ld a,(hl)
-	cp e
-	jr z,dr_good
-dr_crc_bad:
-	ld a,e
-	ld (fail_info),a		; low byte of the CRC we computed
-	ld a,#5				; bulk CRC mismatch on the read
 	jr dr_fail_n
 
 dr_good:
@@ -989,167 +851,6 @@ zf_rx:
 	djnz zf_rx
 	ret
 
-; CRC-16-CCITT (poly 1021h, init 0000h, MSB first) over BC bytes at HL.
-;
-; Must match sio_link_crc16_update() on the MCU, which is the nibble-table form
-; of the same algorithm.  Bitwise here: ~240 T-states per byte, about 12 ms for
-; a 512-byte block.  Affordable in a soak and far easier to be sure of.
-;
-; The bulk lane carries no other integrity check, so this is the only thing
-; between a corrupted block and a silent bad sector.
-;
-; In:  HL = buffer, BC = byte count
-; Out: DE = CRC
-; Clobbers: AF, BC, DE, HL
-; Snapshot RR1 on the command lane.
-;
-; Bit 5 is Rx Overrun -- set means the SIO took a byte with the FIFO already
-; full, i.e. the host genuinely failed to keep up.  That is the reading that
-; separates interrupt-induced byte loss from a framing or sequencing fault,
-; which look identical from the transport status alone.  Bit 6 is CRC/framing,
-; bit 4 parity.
-;
-; Reading RR1 requires setting the pointer first; it resets to 0 afterwards.
-; Clobbers: AF
-; Verify the LBA the MCU echoed in READY against the one we asked for.
-;
-; The command frame has no CRC, so a false lock at a wrong bit offset can pass
-; the header checks and hand the MCU a garbage LBA.  For a WRITE that means 512
-; bytes land on a sector nobody asked for, silently.  Checking the echo here
-; aborts before any data moves, so a mis-framed command costs a failed transfer
-; instead of a destroyed sector.
-;
-; Out: Z set if the echo matches.  Clobbers AF, B, DE, HL.
-check_lba_echo:
-	ld hl,#(rx_frame + 8)
-	ld de,#cur_lba
-	ld b,#4
-cle_loop:
-	ld a,(de)
-	cp (hl)
-	ret nz
-	inc hl
-	inc de
-	djnz cle_loop
-	xor a				; Z set: match
-	ret
-
-; Snapshot RR0 then RR1 on the command lane.
-;
-; RR0 bit 4 (SYNC/HUNT) is the decisive one for a missing reply: SET means the
-; receiver never left hunt, i.e. it never saw the /SYNCB edge at all and no byte
-; was ever assembled.  CLEAR means sync was established and bytes were being
-; received, so the reply arrived but no preamble matched -- a completely
-; different fault.
-;
-; RR1 bit 5 is Rx Overrun; consistently clear so far, which is what ruled out
-; byte loss.  RR0 is read first because reading it needs no pointer set.
-snap_rr1:
-	in a,(CMD_CTRL)			; RR0 (pointer is 0)
-	ld (fail_rr0),a
-	ld a,#0x01
-	out (CMD_CTRL),a
-	in a,(CMD_CTRL)			; RR1
-	ld (fail_rr1),a
-	ret
-
-crc16_block:
-	ld de,#0			; crc = 0
-crc_byte:
-	ld a,(hl)
-	xor d
-	ld d,a				; crc ^= byte << 8
-	push bc
-	ld b,#8
-crc_bit:
-	sla e				; carry <- crc bit 7
-	rl d				; crc <<= 1, carry <- old bit 15
-	jr nc,crc_nox
-	ld a,d
-	xor #0x10			; crc ^= 1021h
-	ld d,a
-	ld a,e
-	xor #0x21
-	ld e,a
-crc_nox:
-	djnz crc_bit
-	pop bc
-	inc hl
-	dec bc
-	ld a,b
-	or c
-	jr nz,crc_byte
-	ret
-
-; Send one byte on the bulk lane.  Carry set on timeout.
-put_byte:
-	push bc
-	ld c,a
-	ld de,#0
-pb_wait:
-	in a,(BULK_CTRL)
-	and #RR0_TX_EMPTY
-	jr nz,pb_ready
-	dec de
-	ld a,d
-	or e
-	jr nz,pb_wait
-	pop bc
-	scf
-	ret
-pb_ready:
-	ld a,c
-	out (BULK_DATA),a
-	pop bc
-	or a
-	ret
-
-puts:
-	push hl
-	ld c,#BDOS_PRINT
-	call BDOS
-	pop hl
-	ret
-
-crlf:
-	push hl
-	ld de,#msg_crlf
-	ld c,#BDOS_PRINT
-	call BDOS
-	pop hl
-	ret
-
-print_hex_word:
-	ld a,h
-	push hl
-	call print_hex_byte
-	pop hl
-	ld a,l
-	; fall through
-
-print_hex_byte:
-	push af
-	rrca
-	rrca
-	rrca
-	rrca
-	and #0x0f
-	call print_hex_nibble
-	pop af
-	and #0x0f
-print_hex_nibble:
-	push hl
-	add a,#0x30
-	cp #0x3a
-	jr c,phx_out
-	add a,#0x07
-phx_out:
-	ld e,a
-	ld c,#BDOS_CONOUT
-	call BDOS
-	pop hl
-	ret
-
 ; ---------------------------------------------------------------------------
 ; Data
 ; ---------------------------------------------------------------------------
@@ -1240,14 +941,59 @@ msg_stopped:
 msg_crlf:
 	.db 0x0d, 0x0a, '$'
 
+
+puts:
+	push hl
+	ld c,#BDOS_PRINT
+	call BDOS
+	pop hl
+	ret
+
+crlf:
+	push hl
+	ld de,#msg_crlf
+	ld c,#BDOS_PRINT
+	call BDOS
+	pop hl
+	ret
+
+print_hex_word:
+	ld a,h
+	push hl
+	call print_hex_byte
+	pop hl
+	ld a,l
+	; fall through
+
+print_hex_byte:
+	push af
+	rrca
+	rrca
+	rrca
+	rrca
+	and #0x0f
+	call print_hex_nibble
+	pop af
+	and #0x0f
+print_hex_nibble:
+	push hl
+	add a,#0x30
+	cp #0x3a
+	jr c,phx_out
+	add a,#0x07
+phx_out:
+	ld e,a
+	ld c,#BDOS_CONOUT
+	call BDOS
+	pop hl
+	ret
+
 entry_sp:	.ds 2
 int_enable:	.ds 1
 tc_acc:		.ds 1
 ctc_tc:		.ds 1
 lba_index:	.ds 1
 pattern_id:	.ds 1
-tx_chunks:	.ds 1
-tx_crc:		.ds 2
 detail_count:	.ds 1
 fail_code:	.ds 1
 fail_info:	.ds 1

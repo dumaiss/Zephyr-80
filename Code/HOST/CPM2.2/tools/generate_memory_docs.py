@@ -47,6 +47,7 @@ EXTENDED_TABLE = [
     ("0Ch", "IOCALL"),
     ("0Fh", "VIDEO_SEND"),
     ("12h", "IOCBULK"),
+    ("15h", "IOCBULKW"),
 ]
 
 IMPLEMENTATION_SYMBOLS = [
@@ -137,6 +138,7 @@ IMPLEMENTATION_SYMBOLS = [
     (("BANKING_CODE_END",), "Banking extension implementation end."),
     (("VIDEO_SEND",), "Extended BIOS call: raw VDrip display/VDP packet send."),
     (("IOCBULK",), "Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake."),
+    (("IOCBULKW",), "Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake."),
     (("BIOS_EXT_CODE_START",), "BIOS extension code start."),
     (("BIOS_EXT_CODE_END",), "BIOS extension code end."),
     (("BIOS_CODE_END",), "End of core BIOS code."),
@@ -857,7 +859,7 @@ def write_memory_map(
         f"| `{span(require_symbol(symbols, 'reset_vector'), require_symbol(symbols, 'reset_vector') + 2)}` | Reset vector: `JP cpm_rom_entry_high`. |",
         f"| `{span(require_symbol(symbols, 'CBASE'), require_symbol(symbols, 'CCPSTACK'))}` | CP/M CCP area through `CCPSTACK`. |",
         f"| `{span(require_symbol(symbols, 'FBASE'), cbios_base - 1)}` | CP/M BDOS, BDOS work variables, and CP/M tables. |",
-        f"| `{span(require_symbol(symbols, 'CBIOS_JUMP_TABLE'), require_symbol(symbols, 'ZBIOS_EXT_BASE') + 0x14)}` | Standard BIOS jump table plus `ZBIOS_EXT_BASE`. |",
+        f"| `{span(require_symbol(symbols, 'CBIOS_JUMP_TABLE'), require_symbol(symbols, 'ZBIOS_EXT_BASE') + 0x17)}` | Standard BIOS jump table plus `ZBIOS_EXT_BASE`. |",
         f"| `{span(require_symbol(symbols, 'cpm_rom_entry_high'), require_symbol(symbols, 'BANK_HELPERS_START') - 1)}` | ROM-to-RAM shadow-copy boot code. |",
         f"| `{span(require_symbol(symbols, 'BANK_HELPERS_START'), require_symbol(symbols, 'BANK_HELPERS_END') - 1)}` | Low-level bank selection helpers. |",
         f"| `{span(require_symbol(symbols, 'boot'), require_symbol(symbols, 'CONSOLE_CODE_START') - 1)}` | Cold boot, warm boot, CCP restore, page-zero, DMA, CTC helpers, and alignment gap. |",
@@ -1023,7 +1025,7 @@ def write_memory_map(
             f"- `IOCALL` code is at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` in core BIOS and uses the SIO1/B Command-channel External Sync transport.",
             f"- `VIDEO_SEND` code is at `{h4(require_symbol(symbols, 'BIOS_EXT_CODE_START'))}` in core BIOS; raw VDP/display writes may desynchronize the V9958 logical-cell state.",
             f"- `WBOOT` resident code starts at `{h4(require_symbol(symbols, 'WBOOT_RESIDENT_START'))}`, inside protected high BIOS memory.",
-            f"- `ZBIOS_EXT_BASE` is at `{h4(ext_base)}` and exposes `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `IOCALL`, `VIDEO_SEND`, and `IOCBULK`.",
+            f"- `ZBIOS_EXT_BASE` is at `{h4(ext_base)}` and exposes `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `IOCALL`, `VIDEO_SEND`, `IOCBULK` and `IOCBULKW`.",
             f"- The burnable image is `{args.final_image}`.",
             "",
         ]

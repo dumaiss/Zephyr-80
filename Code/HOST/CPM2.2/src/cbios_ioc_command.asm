@@ -30,8 +30,8 @@
 	.globl sio_command_put_byte,sio_command_get_byte
 	.globl sio_command_wait_ready
 	.globl ioc_command_send_frame,ioc_command_recv_frame
-	.globl IOCBULK
-	.globl ioc_frame_crc,ioc_frame_stamp,ioc_frame_check
+	.globl IOCBULK,IOCBULKW
+	.globl ioc_frame_crc,ioc_crc_block,ioc_frame_stamp,ioc_frame_check
 	.globl IOC_CMD_CODE_START,IOC_CMD_CODE_END
 
 	.area CODE (ABS)
@@ -223,8 +223,25 @@ SIO_CMD_GET_READY:
 ; Clobbers: AF, BC, DE, HL
 ; ---------------------------------------------------------------------------
 ioc_frame_crc:
+	ld bc,#IOC_CRC_COVERED
+	; fall through
+
+; ---------------------------------------------------------------------------
+; ioc_crc_block
+; Same CRC over an arbitrary run, so one engine serves both lanes: 30-byte
+; command frames and 512-byte bulk payloads.
+;
+; The counter is 16-bit because the bulk lane needs it, which costs ~13 T-states
+; per byte over the djnz form (dec bc sets no flags).  For a 512-byte sector
+; that is ~0.7 ms -- worth paying to avoid a second copy of the table and the
+; nibble helper, which together are larger than the whole saving.
+;
+; In:  HL = buffer, BC = byte count (must be non-zero)
+; Out: DE = CRC
+; Clobbers: AF, BC, DE, HL
+; ---------------------------------------------------------------------------
+ioc_crc_block:
 	ld de,#0			; crc = 0
-	ld b,#IOC_CRC_COVERED
 IOC_CRC_BYTE:
 	ld a,(hl)
 	push bc
@@ -257,7 +274,10 @@ IOC_CRC_BYTE:
 	call IOC_CRC_NIBBLE
 	pop bc
 	inc hl
-	djnz IOC_CRC_BYTE
+	dec bc
+	ld a,b
+	or c
+	jr nz,IOC_CRC_BYTE
 	ret
 
 ; crc = (crc << 4) ^ table[A].  A = 4-bit index.
@@ -598,18 +618,20 @@ IOC_CMD_RECV_BODY_TIMEOUT:
 	; 512.  Raising it to 514 for the CRC trailer made that logic reject every
 	; single 514-byte transfer -- the low byte of the limit is no longer zero.
 IOCBULK:
+	ld (ioc_bulk_ptr),hl		; kept for the CRC pass after the transfer
+	ld (ioc_bulk_len),de
 	ld a,d
 	cp #(IOC_BULK_MAX_LEN >> 8)
 	jr c,IOCBULK_LEN_OK		; high byte below the limit's: in range
-	jr nz,IOCBULK_BAD_LEN		; high byte above the limit's: too long
+	jp nz,IOCBULK_BAD_LEN		; high byte above the limit's: too long
 	ld a,#(IOC_BULK_MAX_LEN & 0xff)
 	cp e
-	jr c,IOCBULK_BAD_LEN		; same high byte, low byte over: too long
+	jp c,IOCBULK_BAD_LEN		; same high byte, low byte over: too long
 	jr IOCBULK_ARM
 IOCBULK_LEN_OK:
 	ld a,d
 	or e
-	jr z,IOCBULK_BAD_LEN		; zero length is a caller bug
+	jp z,IOCBULK_BAD_LEN		; zero length is a caller bug
 
 	; Arm the receiver: clear any stale error latch, then RX enable in hunt
 	; with Auto Enables.  /DCDA is still deasserted by the MCU at this point,
@@ -707,6 +729,17 @@ IOCBULK_GOT:
 	jp nz,IOCBULK_POLL		; 10
 	jr IOCBULK_CHUNK
 
+	; Payload received.  The CRC trailer follows it on the wire but does NOT
+	; go into the caller's buffer -- callers pass a payload-sized buffer and
+	; never see integrity.  Most significant byte first, matching the MCU.
+IOCBULK_TRAILER:
+	call IOCBULK_GET
+	jp c,IOCBULK_TIMEOUT
+	ld (ioc_bulk_crc + 1),a		; high
+	call IOCBULK_GET
+	jp c,IOCBULK_TIMEOUT
+	ld (ioc_bulk_crc),a		; low
+
 	; All bytes in.  Release RTS, then confirm the MCU ended the bulk phase.
 	; /CTSA is asserted for the duration of the transfer, so it should already
 	; be gone; checking it costs nothing and catches an MCU that died mid
@@ -728,8 +761,50 @@ IOCBULK_CTS_WAIT:
 	ret
 IOCBULK_OK:
 	ei
+	; Only now check integrity: the lane is already released, so a bad CRC
+	; costs one transfer rather than leaving the handshake half-done.
+	ld hl,(ioc_bulk_ptr)
+	ld bc,(ioc_bulk_len)
+	call ioc_crc_block		; DE = computed
+	ld hl,(ioc_bulk_crc)		; HL = received (L = low, H = high)
+	ld a,l
+	cp e
+	jr nz,IOCBULK_CRC_FAIL
+	ld a,h
+	cp d
+	jr nz,IOCBULK_CRC_FAIL
 	xor a
 	ret
+IOCBULK_CRC_FAIL:
+	ld a,#IOC_XPORT_BAD_CRC
+	ret
+
+; Receive one byte from the bulk lane.  Carry set on timeout.
+; Clobbers: AF, DE.
+IOCBULK_GET:
+	ld de,#0
+IOCBULK_GET_WAIT:
+	in a,(SIO_BULK_CTRL_PORT)
+	and #SIO_RX_READY
+	jr nz,IOCBULK_GET_READY
+	dec de
+	ld a,d
+	or e
+	jr nz,IOCBULK_GET_WAIT
+	scf
+	ret
+IOCBULK_GET_READY:
+	in a,(SIO_BULK_DATA_PORT)
+	or a				; clear carry
+	ret
+
+; Bulk transfer scratch.  In the code region, which is RAM after the shadow copy.
+ioc_bulk_ptr:
+	.dw 0
+ioc_bulk_len:
+	.dw 0
+ioc_bulk_crc:
+	.dw 0
 
 IOCBULK_TIMEOUT:
 	call IOCBULK_RTS_OFF
@@ -747,6 +822,225 @@ IOCBULK_RTS_OFF:
 	out (SIO_BULK_CTRL_PORT),a
 	ld a,#SIO_WR5_BULK_RTS_OFF
 	out (SIO_BULK_CTRL_PORT),a
+	ret
+
+; ---------------------------------------------------------------------------
+; IOCBULKW
+; Transmit a bulk payload on SIO1/A (Bulk channel).
+;
+; Mirror of IOCBULK.  Owns the entire handshake: arms channel A for transmit,
+; asserts RTS, sends the alignment preamble, streams the payload, releases RTS
+; and confirms the MCU dropped /CTSA.  The caller touches no SIO register.
+;
+; The preamble is transport, not payload: the MCU cannot know which clock edge
+; the host's transmitter started on, so it searches for 7E 81 and de-shifts the
+; rest against it.  Callers pass payload only.
+;
+; In:  HL = source buffer
+;      DE = byte count, 1..IOC_BULK_MAX_LEN
+; Out: A = IOC_XPORT_OK        all bytes sent, /CTSA seen deasserted
+;        = IOC_XPORT_BAD_FRAME length zero or above IOC_BULK_MAX_LEN
+;        = IOC_XPORT_TIMEOUT   transmitter stalled; RTS released
+;        = IOC_XPORT_HW_ERROR  sent, but the transmitter under-ran or /CTSA
+;                              never released -- the MCU received fill, not data
+; Clobbers: AF, BC, DE, HL
+; ISR-safe: No.  Masks interrupts for the transfer.
+;
+; Why this is not the read loop with the direction flipped:
+;
+;   - the Tx Underrun/EOM latch must be reset AFTER the first byte is in the
+;     buffer.  Reset while empty and the transmitter under-runs immediately,
+;     never consumes what is loaded next, and TBE stops re-asserting.
+;   - a stalled transmitter streams WR7 fill (00h on this channel), which the
+;     MCU receives as a well-formed block of zeros and would commit as data.
+;     RR1 bit 6 is checked afterwards precisely to catch that.
+;   - OUTI, not OTIR: OTIR has no timeout, so a stalled MCU would hang the
+;     machine with no way back to CP/M.
+; ---------------------------------------------------------------------------
+IOCBULKW:
+	ld a,d
+	cp #(IOC_BULK_MAX_LEN >> 8)
+	jr c,IOCBULKW_LEN_OK
+	jp nz,IOCBULKW_BAD_LEN
+	ld a,#(IOC_BULK_MAX_LEN & 0xff)
+	cp e
+	jp c,IOCBULKW_BAD_LEN
+	jr IOCBULKW_ARM
+IOCBULKW_LEN_OK:
+	ld a,d
+	or e
+	jp z,IOCBULKW_BAD_LEN
+
+IOCBULKW_ARM:
+	; CRC the payload BEFORE touching the lane.  The OUTI loop has to keep
+	; pace with the MCU's clock and cannot afford ~0.7 ms of arithmetic
+	; inside it, and ioc_crc_block clobbers HL/BC/DE so the caller's
+	; arguments have to be reloaded afterwards.
+	ld (ioc_bulk_ptr),hl
+	ld (ioc_bulk_len),de
+	push de
+	pop bc
+	call ioc_crc_block		; DE = CRC over the payload
+	ld (ioc_bulk_crc),de
+	ld hl,(ioc_bulk_ptr)
+	ld de,(ioc_bulk_len)
+
+	; Interrupts off for the transfer: the MCU is clock master and does not
+	; wait, so a stall here is lost data rather than latency.
+	di
+
+	; Arm channel A for transmit.  RX stays DISABLED -- nothing is being sent
+	; to us, and with Auto Enables the receiver would be gated by /DCDA anyway.
+	ld a,#SIO_WR0_RESET_ERROR
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#0x03
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#SIO_WR3_BULK_TX
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#0x05
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#SIO_WR5_BULK_RTS_ON
+	out (SIO_BULK_CTRL_PORT),a
+
+	; Preamble byte 0, THEN the EOM reset, THEN byte 1.  See the note above:
+	; the order is not interchangeable.
+	push de
+	ld a,#IOC_BULK_PREAMBLE_0
+	call IOCBULKW_PUT
+	jp c,IOCBULKW_STALL_POP
+	ld a,#SIO_WR0_RESET_EOM
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#IOC_BULK_PREAMBLE_1
+	call IOCBULKW_PUT
+	jp c,IOCBULKW_STALL_POP
+	pop de
+
+	; OUTI loop, 56 T-states per byte, matching IOCBULK's INI loop.  B is the
+	; counter, C the port, HL the source; DE is the whole-transfer stall
+	; budget, so the block count has to live on the stack.
+	ld a,d				; whole 256-byte blocks
+	ld b,e				; remainder
+	push af
+	ld c,#SIO_BULK_DATA_PORT
+	ld de,#0			; whole-transfer stall budget
+	ld a,b
+	or a
+	jp nz,IOCBULKW_POLL		; remainder first
+
+IOCBULKW_CHUNK:
+	pop af
+	or a
+	jp z,IOCBULKW_SENT		; popped and not re-pushed: stack balanced
+	dec a
+	push af
+	ld b,#0				; B = 0 means 256 bytes to OUTI
+
+IOCBULKW_POLL:
+	in a,(SIO_BULK_CTRL_PORT)	; 11
+	and #SIO_TX_READY		;  7
+	jr nz,IOCBULKW_GOT		; 12
+	dec de				;  6
+	ld a,d				;  4
+	or e				;  4
+	jr nz,IOCBULKW_POLL		; 12
+	pop af				; drop the block count
+	jp IOCBULKW_STALL
+IOCBULKW_GOT:
+	outi				; 16  out(C) <- (HL), HL++, B--
+	jp nz,IOCBULKW_POLL		; 10
+	jr IOCBULKW_CHUNK
+
+IOCBULKW_SENT:
+	; CRC trailer, most significant byte first, matching the MCU.  It is
+	; transport, not payload: callers pass a payload-sized buffer.
+	ld a,(ioc_bulk_crc + 1)
+	call IOCBULKW_PUT
+	jp c,IOCBULKW_STALL
+	ld a,(ioc_bulk_crc)
+	call IOCBULKW_PUT
+	jp c,IOCBULKW_STALL
+
+	; Did the transmitter run dry?  RR1 bit 6 was cleared after the first
+	; preamble byte, so finding it set means fill went out in place of data.
+	; There is a small race -- it also sets legitimately once the final byte
+	; finishes shifting -- and erring toward a false alarm is the right side
+	; when the alternative is the MCU committing zeros.
+	ld a,#0x01
+	out (SIO_BULK_CTRL_PORT),a
+	in a,(SIO_BULK_CTRL_PORT)
+	and #SIO_RR1_TX_UNDERRUN
+	jp nz,IOCBULKW_UNDERRUN
+
+	call IOCBULK_RTS_OFF
+	ei
+
+	; /CTSA is held by the MCU for the whole bulk phase -- and for a write it
+	; stays asserted until the card commit finishes, so this also waits out
+	; the SD write.
+	;
+	; Interrupts come back BEFORE the wait, not after.  Every byte is already
+	; out and RTS is down, so nothing here is timing critical -- it is a poll
+	; of a status bit.  Leaving them off would mean holding the machine for
+	; the entire card programming time, which an SD card is entitled to
+	; stretch to a couple of hundred milliseconds on an erase-block boundary.
+	; That is the difference between a DI that guards a transfer and a DI
+	; that guards a wait for someone else's flash.
+	ld de,#0
+IOCBULKW_CTS_WAIT:
+	in a,(SIO_BULK_CTRL_PORT)
+	and #SIO_RR0_CTS
+	jr z,IOCBULKW_OK
+	dec de
+	ld a,d
+	or e
+	jr nz,IOCBULKW_CTS_WAIT
+	ld a,#IOC_XPORT_HW_ERROR
+	ret
+IOCBULKW_OK:
+	xor a
+	ret
+
+IOCBULKW_STALL_POP:
+	pop de
+IOCBULKW_STALL:
+	call IOCBULK_RTS_OFF
+	ei
+	ld a,#IOC_XPORT_TIMEOUT
+	ret
+
+IOCBULKW_UNDERRUN:
+	call IOCBULK_RTS_OFF
+	ei
+	ld a,#IOC_XPORT_HW_ERROR
+	ret
+
+	; Rejected before RTS was asserted and before the DI, so nothing to unwind.
+IOCBULKW_BAD_LEN:
+	ld a,#IOC_XPORT_BAD_FRAME
+	ret
+
+; Send one byte on the bulk lane.  In: A = byte.  Out: carry set on timeout.
+; Clobbers: AF, DE.
+IOCBULKW_PUT:
+	push bc
+	ld c,a
+	ld de,#0
+IOCBULKW_PUT_WAIT:
+	in a,(SIO_BULK_CTRL_PORT)
+	and #SIO_TX_READY
+	jr nz,IOCBULKW_PUT_READY
+	dec de
+	ld a,d
+	or e
+	jr nz,IOCBULKW_PUT_WAIT
+	pop bc
+	scf
+	ret
+IOCBULKW_PUT_READY:
+	ld a,c
+	out (SIO_BULK_DATA_PORT),a
+	pop bc
+	or a
 	ret
 
 IOC_CMD_CODE_END:

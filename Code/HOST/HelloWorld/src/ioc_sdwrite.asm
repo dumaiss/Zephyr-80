@@ -31,9 +31,12 @@
 ; wire; that is the same line that marks the bulk phase for a read, keeping one
 ; meaning for the signal.  /DCDA stays deasserted — our receiver is not wanted.
 ;
-; This is deliberately a user-mode program with an inline transmit loop, the
-; way IOC_BULK.COM still drives the read direction.  Once it is proven the
-; transmit path can move into the BIOS beside IOCBULK.
+; Both of those are now the BIOS's problem, not this program's.  The transmit
+; loop that used to live here has moved into IOCBULKW, alongside IOCBULK for
+; the read direction, and this file writes no SIO register at all — the whole
+; bulk phase is one call.  IOC_BULK.COM keeps its inline loop deliberately, as
+; the control case: if a BIOS change breaks the lane, that program still
+; exercises it directly.
 ;
 ; WARNING: this overwrites block 0, destroying the partition table.  After it
 ; runs, IOC_SDBLK will report "signature BAD at 510: 0xFEFF" — which is the
@@ -48,6 +51,10 @@ BDOS		= 0x0005
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
 IOCALL		= 0xDA3F
+IOCBULKW	= 0xDA48
+
+; Transport status, from cbios_defs.inc
+IOC_XPORT_HW_ERROR = 0x03
 
 CMD_SD_WRITE_BULK = 0x07
 RSP_SD_WRITE_BULK = 0x87
@@ -79,13 +86,6 @@ start:
 
 	call build_ramp
 
-	; Payload CRC, computed before the lane is armed: the transmit loop must
-	; keep pace with the MCU's clock and cannot afford it inline.
-	ld hl,#sector_buf
-	ld bc,#512
-	call crc16_block
-	ld (tx_crc),de
-
 	; ---- build SD_WRITE_BULK(LBA 0) ----
 	call zero_frames
 	ld a,#CMD_SD_WRITE_BULK
@@ -113,146 +113,26 @@ start:
 	ld (ready_id),a			; remember for the DONE check
 
 	; ---- bulk write ----
-	; Arm channel A for transmit.  RX is left DISABLED: nothing is being
-	; sent to us, and with Auto Enables an enabled receiver would be gated
-	; by /DCDA anyway.  Clearing any stale error latch first, as the read
-	; path does.
-	ld a,#WR0_RESET_ERROR
-	out (BULK_CTRL),a
-	ld a,#0x03
-	out (BULK_CTRL),a
-	ld a,#WR3_RX_OFF
-	out (BULK_CTRL),a
-
-	; Assert RTS: "we are ready to move bytes".  The MCU is blocked waiting
-	; on this and clocks nothing until it sees it, so there is no race and
-	; no guard delay on either side.
-	ld a,#0x05
-	out (BULK_CTRL),a
-	ld a,#WR5_TX_RTS_ON
-	out (BULK_CTRL),a
-
-	; Alignment preamble, then the payload.
+	; One call.  IOCBULKW arms channel A for transmit, sends the preamble,
+	; clocks out the 512 bytes, appends the CRC-16 trailer, checks the
+	; transmitter for underrun, drops RTS and waits out the card commit --
+	; all of it behind DI, which a user program has no business asserting
+	; around a transfer of this length.
 	;
-	; ORDER IS LOAD-THEN-RESET, and it is not interchangeable.  The Tx
-	; Underrun/EOM latch must be reset AFTER the first byte is in the
-	; transmit buffer; reset while the buffer is empty, the transmitter
-	; under-runs again immediately, never consumes what is loaded next, and
-	; TBE stops re-asserting.  That presents as a transmit timeout with the
-	; MCU capturing a full block of WR7 fill -- 00h on this channel -- which
-	; looks like a successful transfer of zeros.  ioc_command_send_frame in
-	; the BIOS has the same requirement and the same ordering.
-	ld a,#PREAMBLE_0
-	call put_byte
-	jp c,bulk_timeout
-
-	ld a,#WR0_RESET_EOM
-	out (BULK_CTRL),a
-
-	ld a,#PREAMBLE_1
-	call put_byte
-	jp c,bulk_timeout
-
-	; ---- transmit loop: OUTI-based ----
-	; 56 T-states per byte = 5.6 us at 10 MHz, mirroring the read
-	; direction's INI loop.  This is a HARD requirement, not an
-	; optimisation: the MCU is the clock master and paces this lane, so a
-	; host that cannot refill the transmit buffer in time under-runs the
-	; SIO.  The transmitter then streams its WR7 fill (00h on this channel)
-	; and, once the Tx Underrun latch sets, stops consuming the buffer
-	; entirely -- TBE never re-asserts and everything after this stalls.
-	;
-	; The first version of this loop called put_byte per byte and cost
-	; ~147 T = 14.7 us against the MCU's pacing.  It under-ran on the first
-	; data byte every time, and the MCU committed a block of zeros while
-	; reporting success.
-	;
-	; OUTI does the load, the port write, HL++ and B-- in one 16 T
-	; instruction.  OTIR is not used: it has no timeout, so a stalled MCU
-	; would hang the machine with no way back to CP/M.
-	;
-	; Register budget is forced by OUTI: B is the counter, C is the port,
-	; HL is the source.  DE is left for the stall budget, and because it is
-	; not reloaded per byte it covers the whole transfer.
+	; This program used to do every one of those steps itself, and that is
+	; why it is worth pointing at: the storage driver is not user space.  A
+	; .com file that wants a sector should not have to know that the EOM
+	; reset has to follow the first buffered byte, or that a stalled
+	; transmitter streams WR7 fill the MCU will happily commit.
 	ld hl,#sector_buf
-	ld c,#BULK_DATA
-	ld de,#0			; whole-transfer stall budget
-	ld a,#2
-	ld (tx_chunks),a
-tx_chunk:
-	ld a,(tx_chunks)
+	ld de,#512
+	call IOCBULKW
 	or a
-	jr z,tx_crc_hi			; payload done -> send the CRC trailer
-	dec a
-	ld (tx_chunks),a
-	ld b,#0				; 256 bytes
-tx_poll:
-	in a,(BULK_CTRL)		; 11
-	and #RR0_TX_EMPTY		;  7
-	jr nz,tx_got			; 12
-	dec de				;  6
-	ld a,d				;  4
-	or e				;  4
-	jr nz,tx_poll			; 12
+	jr z,tx_ok
+	cp #IOC_XPORT_HW_ERROR
+	jp z,tx_underrun		; transmitter ran dry: fill went to the card
 	jp bulk_timeout
-tx_got:
-	outi				; 16  out(C)<-(HL), HL++, B--
-	jp nz,tx_poll			; 10
-	jr tx_chunk
-
-	; CRC-16 trailer, most significant byte first.  Reached by a branch, so
-	; it needs its own label -- it must not sit after the loop's
-	; unconditional jr where nothing can reach it.
-tx_crc_hi:
-	ld a,(tx_crc + 1)
-	call put_byte
-	jp c,bulk_timeout
-	ld a,(tx_crc + 0)
-	call put_byte
-	jp c,bulk_timeout
-
-tx_done:
-
-	; Did the transmitter run dry at any point?
-	;
-	; RR1 bit 6 is the Tx Underrun/EOM latch.  It was reset after the first
-	; byte was loaded, so finding it set now means the transmitter ran out
-	; of data mid-block and streamed fill in place of the ramp.  That is the
-	; one failure this program cannot otherwise see: the MCU receives a
-	; well-formed block, the preamble search succeeds, and the fill is
-	; committed to the card as if it were real data.
-	;
-	; There is a small race -- the latch also sets legitimately once the
-	; final byte finishes shifting out, a few microseconds after the loop
-	; ends -- so a spurious trip is possible.  Erring toward a false alarm
-	; is the right side to be on when the alternative is silently writing
-	; zeros to a sector.
-	ld a,#0x01
-	out (BULK_CTRL),a
-	in a,(BULK_CTRL)
-	and #RR1_TX_UNDERRUN
-	jp nz,tx_underrun
-
-	; Release RTS: we are done sending.
-	ld a,#0x05
-	out (BULK_CTRL),a
-	ld a,#WR5_TX_RTS_OFF
-	out (BULK_CTRL),a
-
-	; /CTSA drops when the MCU ends the bulk phase.  Unlike the read path
-	; this is not the end of the story — the card has not been touched yet.
-	ld de,#0
-cts_wait:
-	in a,(BULK_CTRL)
-	and #RR0_CTS
-	jr z,cts_clear
-	dec de
-	ld a,d
-	or e
-	jr nz,cts_wait
-	; Fall through to the DONE query anyway: the command lane is
-	; authoritative and can say what actually happened.
-cts_clear:
+tx_ok:
 
 	ld de,#msg_tx_done
 	ld c,#BDOS_PRINT
@@ -358,63 +238,6 @@ rr_loop:
 	ld de,#msg_crlf
 	ld c,#BDOS_PRINT
 	call BDOS
-	ret
-
-; CRC-16-CCITT (poly 1021h, init 0000h, MSB first) over BC bytes at HL.
-; Must match sio_link_crc16_update() on the MCU.
-; In:  HL = buffer, BC = count.  Out: DE = CRC.  Clobbers AF, BC, DE, HL.
-crc16_block:
-	ld de,#0
-crc_byte:
-	ld a,(hl)
-	xor d
-	ld d,a
-	push bc
-	ld b,#8
-crc_bit:
-	sla e
-	rl d
-	jr nc,crc_nox
-	ld a,d
-	xor #0x10
-	ld d,a
-	ld a,e
-	xor #0x21
-	ld e,a
-crc_nox:
-	djnz crc_bit
-	pop bc
-	inc hl
-	dec bc
-	ld a,b
-	or c
-	jr nz,crc_byte
-	ret
-
-; Send one byte on the bulk lane, polling for transmit-buffer-empty first.
-; In:  A = byte
-; Out: carry set on timeout
-; Clobbers: AF, DE
-put_byte:
-	push bc
-	ld c,a				; hold the data byte
-	ld de,#0			; per-byte stall budget
-pb_wait:
-	in a,(BULK_CTRL)
-	and #RR0_TX_EMPTY
-	jr nz,pb_ready
-	dec de
-	ld a,d
-	or e
-	jr nz,pb_wait
-	pop bc
-	scf				; timeout
-	ret
-pb_ready:
-	ld a,c
-	out (BULK_DATA),a
-	pop bc
-	or a				; clear carry
 	ret
 
 ; Fill the 512-byte buffer with 00..FF twice.
@@ -618,10 +441,6 @@ msg_crlf:
 ready_id:
 	.ds 1
 tx_failed:
-	.ds 1
-tx_crc:
-	.ds 2
-tx_chunks:
 	.ds 1
 tx_frame:
 	.ds 32

@@ -393,10 +393,15 @@ static bool bulk_run_send(void)
         bulk_byte_gap();
     }
 
-    /* CRC-16 trailer, most significant byte first.  The host reads
-     * length + BULK_CRC_BYTES and checks it; the lane has no other integrity
-     * check, so without this a corrupted block is indistinguishable from a
-     * good one at both ends. */
+    /* CRC-16 trailer, most significant byte first.  The lane has no other
+     * integrity check, so without this a corrupted block is indistinguishable
+     * from a good one at both ends.
+     *
+     * The trailer is transport, not payload: the Z80's IOCBULK consumes and
+     * verifies it inside the BIOS, so the caller asks for `length` and gets
+     * `length` bytes in its buffer.  User programs used to request
+     * length + BULK_CRC_BYTES and check the CRC themselves, and each one
+     * carried its own copy of the polynomial. */
     if (ok) {
         if (!sio_link_exchange((uint8_t)(crc >> 8), &discard))
             ok = false;

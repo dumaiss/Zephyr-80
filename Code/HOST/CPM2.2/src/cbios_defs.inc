@@ -239,11 +239,31 @@ SIO_WR3_BULK_RX                 = 0xf1   ; 8-bit RX, Auto Enables, hunt, RX enab
 SIO_WR5_BULK_RTS_ON             = 0xea   ; DTR on, 8-bit TX, TX enable, RTS on
 SIO_WR5_BULK_RTS_OFF            = 0xe8   ; same, RTS off
 
-; Longest transfer IOCBULK will accept: one sector plus the bulk lane's CRC-16
-; trailer.  IOCBULK is a dumb byte pipe and does not know about the CRC -- the
-; caller asks for payload + trailer and checks it itself -- so this bound only
-; has to be large enough to let it through.
-IOC_BULK_MAX_LEN                = 514
+; Bulk WRITE (Z80 -> MCU): the host transmits, so its receiver stays disabled.
+; Auto Enables stays set, which is what makes /CTSA gate the transmitter.
+SIO_WR3_BULK_TX                 = 0xf0   ; 8-bit, Auto Enables, RX DISABLED
+; WR0 command: reset the Tx Underrun/EOM latch.  Must be issued AFTER the first
+; byte is in the transmit buffer -- see IOCBULKW.
+SIO_WR0_RESET_EOM               = 0xc0
+; RR1 bit 6: Tx Underrun/EOM.  Set after a transfer means the transmitter ran
+; dry and streamed WR7 fill in place of data.
+SIO_RR1_TX_UNDERRUN             = 0x40
+
+; Alignment preamble the host sends ahead of a bulk payload.  Receiving is not
+; symmetric with sending: the MCU supplies the clock but cannot know which edge
+; the host's transmitter started on, so it searches for this pattern.  Two bytes,
+; because a lone 7Eh occurs at a shifted offset inside ordinary data.
+IOC_BULK_PREAMBLE_0             = 0x7e
+IOC_BULK_PREAMBLE_1             = 0x81
+
+; Longest bulk PAYLOAD, one SD sector.  Back to 512 now that the CRC trailer is
+; the transport's business: IOCBULK and IOCBULKW carry it on the wire themselves
+; and callers pass a payload-sized buffer and a payload-sized count.
+;
+; It was briefly 514 while the trailer was the caller's problem, and that was a
+; wart -- raising the bound without fixing the 16-bit comparison beneath it
+; rejected every transfer until it was found.
+IOC_BULK_MAX_LEN                = 512
 
 ; External Sync framing: software byte-alignment preamble.  Sent as the first
 ; byte of every frame; the receiver hunts for it to find the frame boundary.
@@ -281,14 +301,22 @@ SIO_COMMAND_TIMEOUT_OUTER       = 0x04
 ; Code placement for IOC Command-channel transport helpers.
 ; The generated map is authoritative for VDRIP_CONSOLE_CODE_END.
 ;
-; Moved down from F52Ch to F400h to give the transport room for command-frame
-; CRC.  F400h-F52Bh is genuine slack: driver slot 4 ends at F3FFh and slot 5
-; begins at F680h, so nothing is displaced.  MOVE_BUFFER was NOT reclaimed --
-; despite looking idle it is live scratch for the VDrip storage backend,
-; cbios_bank's cross-bank MOVE and the ramdisk path.
+; Moved to F000h, taking driver slot 4.
 ;
-; This buys ~300 bytes; the region had 2 free before it.
-CBIOS_IOC_COMMAND_CODE_BASE     = 0xf400
+; First step was F52Ch -> F400h, using the genuine slack between slot 4's end
+; and slot 5's base, which bought ~300 bytes for the command-frame CRC.  That
+; left 124 free, which is not enough for the bulk write entry.
+;
+; Slot 4 (F000h-F3FFh) is nominally part of the VDrip console driver's five-slot
+; reserve, but the driver ends around ECB8h -- slots 3 and 4 have never been
+; used.  Reallocating slot 4 to the transport costs nothing today and is
+; reversible if the console driver ever grows that far; slot 3 remains as its
+; headroom.
+;
+; MOVE_BUFFER was NOT reclaimed for this.  Despite looking idle it is live
+; scratch for the VDrip storage backend, cbios_bank's cross-bank MOVE and the
+; ramdisk path.
+CBIOS_IOC_COMMAND_CODE_BASE     = 0xf000
 
 ; ------------------------------------------------------------------------------
 ; CP/M Page Zero & Environment Setup
@@ -344,12 +372,17 @@ CBIOS_CORE_SIZE                 = CBIOS_CORE_LIMIT - CBIOS_CORE_BASE
 
 ; Existing public symbols kept.
 CBIOS_JUMP_TABLE                = CBIOS_BASE
-CBIOS_CONSOLE_CODE_BASE         = CBIOS_BASE + 0x0179      ; DB79h
-CBIOS_STORAGE_CODE_BASE         = CBIOS_BASE + 0x01c0      ; DBC0h
+CBIOS_CONSOLE_CODE_BASE         = CBIOS_BASE + 0x017c      ; DB7Ch
+CBIOS_STORAGE_CODE_BASE         = CBIOS_BASE + 0x01c3      ; DBC3h
 
 ; Banking is core BIOS, not a driver.
 ; Existing public symbol name kept, moved into the core BIOS region.
-CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x0200      ; DC00h
+; Console, storage and banking bases were each shifted up 3 bytes to make room
+; for the IOCBULKW vector at ZBIOS_EXT_BASE + 15h.  The core run DA00h-DB78h,
+; which holds the CP/M jump table and the extension vectors, was exactly full.
+; Banking had 98 bytes of slack and absorbs the shift; nothing at or above the
+; SIO core base (DD10h) moves, so the IM2 vector entry is untouched.
+CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x0203      ; DC03h
 
 ; ------------------------------------------------------------------------------
 ; Fixed Driver Slots

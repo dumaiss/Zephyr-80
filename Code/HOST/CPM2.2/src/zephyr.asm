@@ -92,6 +92,7 @@ ZBIOS_EXT_BASE:
 	jp IOCALL
 	jp VIDEO_SEND
 	jp IOCBULK
+	jp IOCBULKW
 
 	.include "boot_shadow_copy.asm"
 	.include "cbios_bank_select.asm"

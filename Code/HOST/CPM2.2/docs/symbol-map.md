@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 45628 bytes |
+| Firmware symbol map | `build/firmware.map` | 46512 bytes |
 | Burnable image | `build/zephyr80.bin` | 131072 bytes |
 | Layout manifest | `build/layout.manifest` | 232 bytes |
 
@@ -65,51 +65,52 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `ZBIOS_EXT_BASE + 0Ch` | `DA3Fh` | `IOCALL` |
 | `ZBIOS_EXT_BASE + 0Fh` | `DA42h` | `VIDEO_SEND` |
 | `ZBIOS_EXT_BASE + 12h` | `DA45h` | `IOCBULK` |
+| `ZBIOS_EXT_BASE + 15h` | `DA48h` | `IOCBULKW` |
 
 ## BIOS Implementation Symbols
 
 | Symbol | Address | Notes |
 |---|---:|---|
-| `cpm_rom_entry_high` / `shadow_copy_rom_to_ram` | `DA48h` | Reset copy routine in high firmware memory. |
-| `shadow_copy_rom_to_ram_done` | `DA93h` | Shadow-copy completion branch point. |
-| `cbios_boot_after_rom_copy` | `DA96h` | Stack setup and cold boot handoff. |
-| `BANK_HELPERS_START` | `DA9Ch` | Low-level bank helper code start. |
-| `bank_select_internal` | `DA9Ch` | Selects RAM bank and records current bank. |
-| `select_ram_bank0` | `DAA6h` | Selects RAM bank 0. |
-| `BANK_HELPERS_END` | `DAAAh` | Low-level bank helper code end. |
+| `cpm_rom_entry_high` / `shadow_copy_rom_to_ram` | `DA4Bh` | Reset copy routine in high firmware memory. |
+| `shadow_copy_rom_to_ram_done` | `DA96h` | Shadow-copy completion branch point. |
+| `cbios_boot_after_rom_copy` | `DA99h` | Stack setup and cold boot handoff. |
+| `BANK_HELPERS_START` | `DA9Fh` | Low-level bank helper code start. |
+| `bank_select_internal` | `DA9Fh` | Selects RAM bank and records current bank. |
+| `select_ram_bank0` | `DAA9h` | Selects RAM bank 0. |
+| `BANK_HELPERS_END` | `DAADh` | Low-level bank helper code end. |
 | `sio_init` | `DD12h` | Compatibility entry that jumps to `sio_core_init`. |
-| `boot` | `DAAAh` | Cold boot implementation; starts the CP/M CCP. |
-| `wboot` | `DAD9h` | Warm boot trampoline. |
-| `wboot_resident` | `DADCh` | Protected warm boot implementation; returns to the CP/M CCP. |
-| `WBOOT_RESIDENT_START` | `DADCh` | Resident warm boot body start. |
-| `WBOOT_RESIDENT_END` | `DB07h` | Resident warm boot body end. |
-| `restore_ccp_from_rom` | `DB07h` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
-| `ctc_disable_interrupts` | `DB1Fh` | CTC interrupt disable helper. |
-| `prepare_runnable_bank` | `DB2Ah` | Page-zero and DMA preparation helper. |
-| `init_page_zero` | `DB34h` | Installs `JP WBOOT` and `JP FBASE`. |
-| `runtime_set_default_dma` | `DB49h` | Sets default DMA to `0080h`. |
-| `runtime_clear_default_dma` | `DB57h` | Clears command tail/default DMA area. |
-| `CONSOLE_CODE_START` | `DB79h` | Console BIOS facade start. |
-| `console_init` | `DB79h` | Installs and initializes the default console driver. |
-| `console_set_driver` | `DB82h` | Installs an alternate console driver table. |
-| `const` | `DB86h` | Console status facade. |
-| `conin` | `DB8Ah` | Blocking console input facade. |
-| `conout` | `DB8Eh` | Blocking console output facade. |
-| `list` | `DB92h` | No-op list implementation. |
-| `punch` | `DB96h` | No-op punch implementation. |
-| `reader` | `DB9Ah` | EOF reader implementation. |
-| `listst` | `DB9Eh` | Ready list-status implementation. |
-| `CONSOLE_CODE_END` | `DBC0h` | Console BIOS facade end. |
-| `STORAGE_STUB_CODE_START` | `DBC0h` | Storage BIOS facade start. |
-| `home` | `DBC0h` | Storage HOME facade; routes to VDrip storage backend. |
-| `settrk` | `DBC6h` | Storage SETTRK facade; records selected track. |
-| `setsec` | `DBC9h` | Storage SETSEC facade; records selected sector. |
-| `seldsk` | `DBCCh` | Storage SELDSK facade; returns drive A DPH or no disk. |
-| `setdma` | `DBD5h` | Records DMA address. |
-| `read` | `DBDAh` | Storage READ facade; transfers from VDrip proxy storage. |
-| `write` | `DBE2h` | Storage WRITE facade; transfers to VDrip proxy storage. |
-| `sectran` | `DBFCh` | Returns untranslated 0-based logical sector for no-skew media. |
-| `STORAGE_STUB_CODE_END` | `DBFFh` | Storage BIOS facade end. |
+| `boot` | `DAADh` | Cold boot implementation; starts the CP/M CCP. |
+| `wboot` | `DADCh` | Warm boot trampoline. |
+| `wboot_resident` | `DADFh` | Protected warm boot implementation; returns to the CP/M CCP. |
+| `WBOOT_RESIDENT_START` | `DADFh` | Resident warm boot body start. |
+| `WBOOT_RESIDENT_END` | `DB0Ah` | Resident warm boot body end. |
+| `restore_ccp_from_rom` | `DB0Ah` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
+| `ctc_disable_interrupts` | `DB22h` | CTC interrupt disable helper. |
+| `prepare_runnable_bank` | `DB2Dh` | Page-zero and DMA preparation helper. |
+| `init_page_zero` | `DB37h` | Installs `JP WBOOT` and `JP FBASE`. |
+| `runtime_set_default_dma` | `DB4Ch` | Sets default DMA to `0080h`. |
+| `runtime_clear_default_dma` | `DB5Ah` | Clears command tail/default DMA area. |
+| `CONSOLE_CODE_START` | `DB7Ch` | Console BIOS facade start. |
+| `console_init` | `DB7Ch` | Installs and initializes the default console driver. |
+| `console_set_driver` | `DB85h` | Installs an alternate console driver table. |
+| `const` | `DB89h` | Console status facade. |
+| `conin` | `DB8Dh` | Blocking console input facade. |
+| `conout` | `DB91h` | Blocking console output facade. |
+| `list` | `DB95h` | No-op list implementation. |
+| `punch` | `DB99h` | No-op punch implementation. |
+| `reader` | `DB9Dh` | EOF reader implementation. |
+| `listst` | `DBA1h` | Ready list-status implementation. |
+| `CONSOLE_CODE_END` | `DBC3h` | Console BIOS facade end. |
+| `STORAGE_STUB_CODE_START` | `DBC3h` | Storage BIOS facade start. |
+| `home` | `DBC3h` | Storage HOME facade; routes to VDrip storage backend. |
+| `settrk` | `DBC9h` | Storage SETTRK facade; records selected track. |
+| `setsec` | `DBCCh` | Storage SETSEC facade; records selected sector. |
+| `seldsk` | `DBCFh` | Storage SELDSK facade; returns drive A DPH or no disk. |
+| `setdma` | `DBD8h` | Records DMA address. |
+| `read` | `DBDDh` | Storage READ facade; transfers from VDrip proxy storage. |
+| `write` | `DBE5h` | Storage WRITE facade; transfers to VDrip proxy storage. |
+| `sectran` | `DBFFh` | Returns untranslated 0-based logical sector for no-skew media. |
+| `STORAGE_STUB_CODE_END` | `DC02h` | Storage BIOS facade end. |
 | `VDRIP_TRANSPORT_CODE_START` | `F680h` | Shared Virtual Drip transport start. |
 | `vdrip_send_frame` | `F721h` | Current no-CRC Virtual Drip frame sender. |
 | `vdrip_rx_sink` | `F79Bh` | Single SIO0/B Virtual Drip receive sink. |
@@ -149,14 +150,15 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E012h` | Virtual Drip console init, proxy handshake, VDP setup. |
 | `VDRIP_CONSOLE_CODE_END` | `ECB9h` | Virtual Drip console driver code end. |
-| `BANKING_CODE_START` | `DC00h` | Banking extension implementation start. |
-| `SELMEM` | `DC00h` | Select RAM bank. |
-| `SETBNK` | `DC0Ah` | Record future DMA bank. |
-| `XMOVE` | `DC10h` | Set source/destination banks for next `MOVE`. |
-| `MOVE` | `DC22h` | Same-bank or cross-bank memory move. |
-| `BANKING_CODE_END` | `DCAEh` | Banking extension implementation end. |
+| `BANKING_CODE_START` | `DC03h` | Banking extension implementation start. |
+| `SELMEM` | `DC03h` | Select RAM bank. |
+| `SETBNK` | `DC0Dh` | Record future DMA bank. |
+| `XMOVE` | `DC13h` | Set source/destination banks for next `MOVE`. |
+| `MOVE` | `DC25h` | Same-bank or cross-bank memory move. |
+| `BANKING_CODE_END` | `DCB1h` | Banking extension implementation end. |
 | `VIDEO_SEND` | `DF50h` | Extended BIOS call: raw VDrip display/VDP packet send. |
-| `IOCBULK` | `F57Bh` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
+| `IOCBULK` | `F17Fh` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
+| `IOCBULKW` | `F252h` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
 | `BIOS_EXT_CODE_START` | `DF50h` | BIOS extension code start. |
 | `BIOS_EXT_CODE_END` | `DF78h` | BIOS extension code end. |
 | `BIOS_CODE_END` | `DF78h` | End of core BIOS code. |
