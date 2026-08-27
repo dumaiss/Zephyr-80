@@ -221,7 +221,19 @@ SIO_WR3_CMD_RX_NO_HUNT          = 0xc1
 SIO_WR5_CMD_TX_RTS_OFF          = 0x68
 SIO_WR5_CMD_TX_RTS_ON           = 0x6a
 SIO_WR5_CMD_IDLE                = 0x00
-SIO_EXTSYNC_FILL                = 0x7e
+; MUST NOT equal IOC_SYNC_PREAMBLE.
+;
+; This is the character the SIO shifts out on transmit underrun.  It was 7Eh --
+; byte-identical to the frame preamble the MCU hunts for.  Because RTS was
+; asserted before the Z80 had loaded the preamble, the wire carried one or more
+; fill bytes ahead of it, and the MCU's alignment scan locked onto the FIRST 7Eh
+; it saw, which was fill.  The frame then appeared to start N bytes early: the
+; MCU read garbage as the command class and echoed the host's class byte back in
+; the sequence slot, which the host rejected as BAD_SEQ.
+;
+; FFh is idle marking, which the MCU already discards, so fill is now
+; unambiguously not a preamble.
+SIO_EXTSYNC_FILL                = 0xff
 
 ; Filler clocked after a request frame so the last frame byte is fully shifted
 ; out before IOCALL drops RTS (which disables the transmitter).  FFh is the

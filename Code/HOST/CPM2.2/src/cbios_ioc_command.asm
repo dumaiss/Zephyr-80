@@ -406,8 +406,21 @@ ioc_command_send_frame:
 	; erratum retry, and is required before this ships.
 	di
 
-	; Optional sync preamble first (byte-alignment marker for the MCU), then reset the
-	; Tx Underrun/EOM latch so the transmitter shifts the buffered bytes.
+	; PRELOAD, THEN GRANT.  The preamble goes into the transmitter and the
+	; underrun latch is cleared BEFORE RTS is asserted, so the very first clock
+	; edge the MCU generates shifts out the preamble itself.
+	;
+	; The old order asserted RTS first and loaded the byte afterwards.  The MCU
+	; starts clocking the moment it sees RTS, so the SIO had nothing to send
+	; and emitted WR7 underrun fill until the byte arrived -- a variable number
+	; of bytes, which is what made the frame start at an unpredictable offset
+	; and forced the MCU into a 48-byte capture window and a 128-offset search.
+	;
+	; Nothing shifts without clocks and the MCU is clock master, so preloading
+	; before RTS is safe by construction: the byte simply waits in the
+	; transmitter until the first edge arrives.  This is section 14 of the
+	; transport design, "the Z80 prepares and preloads the transmitter before
+	; asserting /RTSB".
 	ld c,#IOC_SYNC_PREAMBLE
 	call sio_command_put_byte
 	or a
@@ -417,6 +430,9 @@ ioc_command_send_frame:
 IOC_CMD_SEND_EOM:
 	ld a,#0xc0			; WR0: Reset Tx Underrun/EOM latch
 	out (SIO_COMMAND_CTRL_PORT),a
+
+	; Only now hand the MCU its credit to start clocking.
+	call sio_command_rts_assert
 
 	; 32 transparent frame bytes.
 	ld b,#IOC_FRAME_SIZE

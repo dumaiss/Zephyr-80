@@ -145,7 +145,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `SIO_CORE_CODE_END` | `DF50h` | BIOS-owned SIO core code end. |
 | `IOCTRL_CODE_START` | `DF7Bh` | IOCALL transaction code start in core BIOS. |
 | `IOCALL` | `DF7Bh` | Zephyr extended BIOS IO Controller transaction call. |
-| `IOCTRL_CODE_END` | `DFEBh` | IOCALL transaction code end. |
+| `IOCTRL_CODE_END` | `DFE8h` | IOCALL transaction code end. |
 | `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E012h` | Virtual Drip console init, proxy handshake, VDP setup. |
@@ -157,8 +157,8 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `MOVE` | `DC25h` | Same-bank or cross-bank memory move. |
 | `BANKING_CODE_END` | `DCB1h` | Banking extension implementation end. |
 | `VIDEO_SEND` | `DF50h` | Extended BIOS call: raw VDrip display/VDP packet send. |
-| `IOCBULK` | `F17Fh` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
-| `IOCBULKW` | `F252h` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
+| `IOCBULK` | `F182h` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
+| `IOCBULKW` | `F255h` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
 | `BIOS_EXT_CODE_START` | `DF50h` | BIOS extension code start. |
 | `BIOS_EXT_CODE_END` | `DF78h` | BIOS extension code end. |
 | `BIOS_CODE_END` | `DF78h` | End of core BIOS code. |

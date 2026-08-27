@@ -94,9 +94,11 @@ IOCALL:
 	call ioc_frame_stamp		; HL preserved; A = sequence stamped
 	ld (ioc_expect_seq),a
 
-	call sio_command_rts_assert	; assert SIO1/B RTS → MCU starts clocking
-
-	; HL = caller TX frame pointer (preserved by rts_assert which clobbers AF only)
+	; RTS is asserted INSIDE ioc_command_send_frame, after the preamble has been
+	; loaded into the transmitter.  Asserting it here started the MCU clocking
+	; against an empty transmitter; see the note at IOC_CMD_SEND_EOM.
+	;
+	; HL = caller TX frame pointer
 	call ioc_command_send_frame
 	or a
 	jr nz,IOCALL_FAIL_STACKED

@@ -464,13 +464,22 @@ static uint16_t find_alignment_end(void)
  * search costs, and nothing else.
  *
  * They used to return without checking anything, and that was the bug behind a
- * whole class of storage failures.  Both key on 7Eh, described here as an
- * alignment byte "the BIOS currently clocks before the mailbox".  The BIOS does
- * not, and never did in this firmware's lifetime; the only 7Eh on the wire is
- * WR7, the host SIO's transmitter-underrun FILL character, which appears
- * wherever the Z80 momentarily runs dry.  So the shortcuts were hunting through
- * a 48-byte window for a byte that marks nothing, and handing whatever followed
- * it straight to dispatch.
+ * whole class of storage failures.  Both key on 7Eh, which the BIOS really does
+ * send as a deliberate alignment preamble (IOC_SYNC_PREAMBLE) ahead of every
+ * 32-byte frame -- an earlier revision of this comment claimed otherwise and was
+ * simply wrong.
+ *
+ * The defect was subtler than a byte that marks nothing.  The host SIO's
+ * transmit-underrun FILL character (WR7) was ALSO 7Eh, and the BIOS asserted RTS
+ * before loading the preamble, so the wire carried a variable number of fill
+ * bytes ahead of the real preamble -- indistinguishable from it.  The scan
+ * locked onto the first 7Eh, which was fill, and the frame appeared to start
+ * several bytes early.  Accepting that without a CRC check is what let a garbage
+ * class reach dispatch.
+ *
+ * Both ends are fixed now: WR7 fill is FFh, and the BIOS preloads the preamble
+ * before asserting RTS.  The CRC check below stays regardless -- it is what
+ * makes a wrong guess harmless rather than merely unlikely.
  *
  * A frame that validates nowhere returns false, and the caller sends no reply.
  * That is the right failure: the host waits out its receive timeout and retries
