@@ -35,6 +35,10 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
         handler_sd_write_rec(request, reply);
         return true;
 
+    case CMD_LINK_SYNC:
+        handler_link_sync(request, reply);
+        return true;
+
     case CMD_PROFILE:
         handler_profile(request, reply);
         return true;

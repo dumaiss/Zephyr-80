@@ -133,6 +133,7 @@
 #define CMD_SD_WRITE_REC     0x09
 #define CMD_SD_FLUSH         0x0A
 #define CMD_PROFILE          0x0B
+#define CMD_LINK_SYNC        0x0C
 
 /* Response class bytes (MCU → Z80) */
 #define RSP_PING             0x81
@@ -145,12 +146,19 @@
 #define RSP_SD_WRITE_REC     0x89
 #define RSP_SD_FLUSH         0x8A
 #define RSP_PROFILE          0x8B
+#define RSP_LINK_SYNC        0x8C
 
 /* Six 16-bit millisecond totals at bytes 4-15; see timebase.h for the slots. */
 #define IOC_OFF_PROFILE_0        (IOC_OFF_PAYLOAD + 0u)
 #define IOC_OFF_PROFILE_CALLS    (IOC_OFF_PAYLOAD + 12u)
 #define IOC_OFF_PROFILE_ABORTS   (IOC_OFF_PAYLOAD + 14u)
-#define IOC_PROFILE_PAYLOAD_LEN  16u
+/* SD CMD0 response trace, 8 bytes.  Carried by PROFILE because PING has no
+ * spare bytes and this is a bring-up diagnostic, not a hot-path field.
+ * See sd_card.h: all FFh = nothing driving DO; all 00h = DO stuck low; mixed
+ * junk = the card IS talking and the fault is clocking or alignment; 01h
+ * present = CMD0 actually succeeded and the failure is later. */
+#define IOC_OFF_PROFILE_SDTRACE  (IOC_OFF_PAYLOAD + 16u)
+#define IOC_PROFILE_PAYLOAD_LEN  24u
 
 #define RSP_UNKNOWN_COMMAND  0xFE
 
@@ -175,7 +183,7 @@
  *   6  power handshake: /PWR_OFF driven idle from the first instructions of
  *      startup, /SHUTDOWN_RQ latched and debounced, and both reported by PING
  */
-#define IOC_FW_LEVEL  11
+#define IOC_FW_LEVEL  15
 
 /* PING reply: a snapshot of the power handshake pins.
  *
@@ -203,18 +211,47 @@
 #define IOC_PING_SHUTDOWN_PIN   0x08u
 #define IOC_PING_SHUTDOWN_LATCH 0x10u
 #define IOC_PING_SHUTDOWN_WPU   0x20u
+#define IOC_PING_LINK_SYNCED    0x40u
 
 /* PING reply: the firmware level.  In the RESERVED area, not the payload --
  * PING echoes bytes 4..19 verbatim and that echo is what proves the round trip,
  * so it must not be overwritten. */
-/* Silent SD retry counters, little-endian.  See sd_card.h: a retried read is
- * invisible in every other reply field, because it succeeds. */
-#define IOC_OFF_PING_RETRY_LO   22u
-#define IOC_OFF_PING_RETRY_HI   23u
-#define IOC_OFF_PING_REINIT_LO  24u
-#define IOC_OFF_PING_REINIT_HI  25u
+/* Service-loop counters, little-endian.
+ *
+ * These were in the PROFILE reply, which is a SECOND transaction issued right
+ * after PING -- and on an intermittent link the second transaction is precisely
+ * the one that fails, so the most useful counter was behind the least reliable
+ * path.  They displace the SD retry/re-init counters, which have measured zero
+ * on every run since they were added.
+ *
+ * calls  = every entry to service_command_request()
+ * aborts = those that gave up before dispatching, i.e. the request did not
+ *          decode.  The gap between them is requests thrown away. */
+#define IOC_OFF_PING_CALLS_LO   22u
+#define IOC_OFF_PING_CALLS_HI   23u
+#define IOC_OFF_PING_ABORTS_LO  24u
+#define IOC_OFF_PING_ABORTS_HI  25u
 
-/* Bytes 26-29: record reads served and cache misses.  30-31 are the CRC. */
+/* Bytes 26-29: temporary command-lane source-clock diagnostics.
+ *
+ * The PIC routes RB3/SCK back into Timer1 and counts rising edges at the PIC
+ * pin, not calls to sio_link_exchange().  That includes any PPS/SPI transition
+ * the source arithmetic cannot see.  It does not see a transition created
+ * downstream by enabling or disabling a 74AHCT125 gate; matching RB3's idle
+ * level to the gated clock's pull-up prevents those transitions.  A PING
+ * handler runs after its request window but before its reply, so it reports:
+ *
+ *   RX edges  current request window, expected 36 * 8 = 288 (0120h)
+ *   TX edges  preceding reply window, expected 34 * 8 = 272 (0110h)
+ *
+ * This temporarily displaces the record-read/cache-miss counters. */
+#define IOC_OFF_PING_RX_EDGES_LO 26u
+#define IOC_OFF_PING_RX_EDGES_HI 27u
+#define IOC_OFF_PING_TX_EDGES_LO 28u
+#define IOC_OFF_PING_TX_EDGES_HI 29u
+
+/* Legacy names kept so older host tools still assemble; these offsets now
+ * carry the edge counters documented above. */
 #define IOC_OFF_PING_RECREAD_LO 26u
 #define IOC_OFF_PING_RECREAD_HI 27u
 #define IOC_OFF_PING_MISS_LO    28u

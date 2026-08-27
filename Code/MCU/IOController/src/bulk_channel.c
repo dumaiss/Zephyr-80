@@ -377,6 +377,13 @@ static bool bulk_run_send(void)
     CTSA_LAT = CTSA_ASSERTED;
     __delay_us(BULK_DCD_SETTLE_US);
 
+    /* Park SCK at the gated clock's pulled-up idle level before selecting.
+     * Otherwise enabling the '125 while the PIC drives low creates a falling
+     * transition ahead of bit 0; releasing it creates the corresponding extra
+     * rising edge that breaks persistent command-lane alignment. */
+    SIO_SCK_LAT  = 1;
+    SIO_MOSI_LAT = 1;
+
     /* Select last, immediately before clocking, matching channel B.
      *
      * This used to be asserted before the /DCDA settle, leaving the clock gate
@@ -390,17 +397,15 @@ static bool bulk_run_send(void)
      * asymmetry against the command lane for no cost. */
     SIOA_CS_LAT = SIOA_CS_ASSERTED;
 
-    SIO_MOSI_LAT = 1;
-
     /* Two setup clocks with /SYNCA still idle, as on the command lane. */
-    SIO_SCK_LAT = 1;
-    __delay_us(EXTSYNC_BIT_DELAY_US);
     SIO_SCK_LAT = 0;
+    __delay_us(EXTSYNC_BIT_DELAY_US);
+    SIO_SCK_LAT = 1;
     __delay_us(EXTSYNC_BIT_DELAY_US);
     SIO_MOSI_LAT = 0;
-    SIO_SCK_LAT = 1;
-    __delay_us(EXTSYNC_BIT_DELAY_US);
     SIO_SCK_LAT = 0;
+    __delay_us(EXTSYNC_BIT_DELAY_US);
+    SIO_SCK_LAT = 1;
 
     /* Byte 0 carries the sync edge and is still delivered as data. */
     sio_link_clock_sync_byte(armed_buf[0], SIO_LINK_CH_BULK,
@@ -500,6 +505,8 @@ static bool bulk_run_receive(void)
     CTSA_LAT = CTSA_ASSERTED;
     __delay_us(BULK_DCD_SETTLE_US);
 
+    /* Match the gated clock's pulled-up idle before enabling the buffer. */
+    SIO_SCK_LAT = 1;
     SIOA_CS_LAT = SIOA_CS_ASSERTED;
 
     /* Marking idle on MOSI and /SYNCA asserted for the whole window, exactly

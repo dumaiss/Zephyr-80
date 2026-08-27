@@ -13,7 +13,7 @@
 	.globl runtime_clear_default_dma
 	.globl console_init
 	.globl vdrip_console_cold_init
-	.globl sio_core_init,sio_core_enable_interrupts
+	.globl sio_core_init,ioc_link_bringup,ctc_disable_interrupts,sio_core_enable_interrupts
 	.globl WBOOT_RESIDENT_START,WBOOT_RESIDENT_END
 	.globl RUNTIME_WORK_AREA_START,RUNTIME_WORK_AREA_END
 	.globl CURRENT_BANK,cbios_dma_addr
@@ -40,6 +40,18 @@ boot:
 	call select_ram_bank0
 	call ctc_disable_interrupts
 	call sio_core_init
+
+	; Establish IOCALL character synchronisation here, while the SIO channels
+	; are being configured, rather than lazily on whichever IOCALL happens
+	; first.  The MCU's reply to this request carries the falling /SYNC edge
+	; that fixes the receiver's character boundary; after it, neither side
+	; touches synchronisation again.
+	;
+	; Failure is non-fatal and deliberately unchecked: SIO1 shares nothing with
+	; the console or the A: drive, so an unsynchronised IOCALL link costs
+	; storage on B: and leaves the machine fully usable.
+	call ioc_link_bringup
+
 	call vdrip_console_cold_init
 	call boot_print_banner
 	call prepare_runnable_bank
@@ -145,14 +157,6 @@ restore_ccp_from_rom:
 
 ; Reset all Z80 CTC channels with interrupt enable clear. The firmware and
 ; CP/M app launch path are polling-only at this stage.
-ctc_disable_interrupts:
-	ld a,#CTC_RESET_DISABLE
-	out (CTC0_CTRL),a
-	out (CTC1_CTRL),a
-	out (CTC2_CTRL),a
-	out (CTC3_CTRL),a
-	ret
-
 ; Prepare the currently selected runnable bank for CP/M-style execution.
 ; Purpose:
 ;   Install page zero and default DMA state expected by CP/M transient programs.

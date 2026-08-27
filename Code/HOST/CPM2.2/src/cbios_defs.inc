@@ -297,6 +297,22 @@ IOC_BULK_MAX_LEN                = 512
 ; (Mostly-zero PING/RESET payloads cannot contain this pattern.)
 IOC_SYNC_PREAMBLE               = 0x7e
 
+; Link bring-up.  Clears the MCU's "boundary already established" flag so the
+; reply to THIS request carries the falling /SYNC edge the host's receiver needs.
+; Issued once from cold boot, right after the SIO channels are configured; it is
+; idempotent, so it is also the recovery path if synchronisation is ever
+; declared suspect.
+IOC_CMD_LINK_SYNC               = 0x0c
+IOC_RSP_LINK_SYNC               = 0x8c
+
+; Bring-up attempts before giving up.  Each one re-enters Hunt on this side and
+; makes the MCU emit a fresh sync edge, so they are genuinely independent tries
+; rather than the same failed state repeated.
+IOC_LINK_BRINGUP_TRIES          = 4
+
+; Z80 SIO receive FIFO: three buffer registers behind the shift register.
+IOC_RX_FIFO_DEPTH               = 3
+
 ; Reply-marker scan budget.  The PIC bit-bang bring-up clocks a full
 ; SDLC_RX_WINDOW_BYTES receive window while it is collecting the Z80 request.
 ; During that full-duplex phase the Z80 RX side sees idle/fill bytes before the
@@ -480,6 +496,26 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ; storage backend clear of FA80h; check_overlap.py enforces both ends.
 CBIOS_STORAGE_VDRIP_CODE_BASE         = 0xf910                                ; follows common VDrip transport
 CBIOS_VDRIP_TRANSPORT_CODE_BASE       = CBIOS_DRIVER_SLOT5_BASE              ; F680h
+; Reclaimed gap between the banking module (ends DCB0h) and the SIO core, which
+; is pinned at DD10h.  95 bytes that belonged to nothing.
+;
+; It exists because the core BIOS regions are byte-full: boot (DAADh-DB7Bh),
+; banking and the SIO core all have ZERO free bytes, so adding a single 3-byte
+; call to cold boot overflowed into the console facade.  Small self-contained
+; routines are relocated here to buy that space back.
+CBIOS_SPARE_CODE_BASE           = CBIOS_BASE + 0x02b1                  ; DCB1h
+
+; Link diagnostic block, at a FIXED address so a .COM can read it directly when
+; the link itself is too broken to answer a PING.  Written on the reply-marker
+; timeout path.
+;
+;   +0  RR0 at the moment of failure.  Bit 4 is Sync/Hunt: 1 = the receiver is
+;       STILL HUNTING, i.e. the MCU's falling /SYNC edge never landed.
+;   +1  RR1 (receive error latches)
+;   +2  ioc_rx_synced
+;   +3  ioc_link_ready
+CBIOS_IOC_DIAG_BASE             = CBIOS_BASE + 0x02c0                  ; DCC0h
+
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_BIOS_EXT_CODE_BASE        = CBIOS_BASE + 0x0550                  ; DF50h

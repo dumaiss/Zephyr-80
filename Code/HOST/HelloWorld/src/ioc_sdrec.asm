@@ -48,7 +48,7 @@ IOCBULKW	= 0xDA48	; ZBIOS_EXT_BASE + 15h: bulk transmit
 
 CMD_PING	 = 0x01
 RSP_PING	 = 0x81
-IOC_FW_LEVEL	 = 11		; controller firmware this program expects
+IOC_FW_LEVEL	 = 15		; controller firmware this program expects
 ZBIOS_XPORT_LEVEL     = 5	; BIOS transport level this program expects
 ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A	; one byte below IOCALL, readable from ROM
 CMD_SD_READ_REC	 = 0x08

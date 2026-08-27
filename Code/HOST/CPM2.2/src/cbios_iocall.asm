@@ -39,7 +39,7 @@
 
 	.globl IOCALL
 	.globl IOCTRL_CODE_START,IOCTRL_CODE_END
-	.globl sio_command_init
+	.globl sio_command_init,ioc_link_init_once
 	.globl sio_command_rts_assert,sio_command_rts_release
 	.globl ioc_command_send_frame,ioc_command_recv_frame
 
@@ -74,7 +74,11 @@ IOCTRL_CODE_START:
 ; RTS is already high by then, so the MCU cannot mistake that wait for another
 ; request and clock junk windows into a host that is trying to listen.
 IOCALL:
-	call sio_command_init		; (re)init SIO1/B External Sync — Phase 1 workaround
+	; ONCE, not per call.  sio_command_init issues a channel reset, and the SIO
+	; manual lists chip reset as one of the three things that destroy character
+	; synchronisation -- so running it here defeated persistent External Sync
+	; before anything else could.  The helper does nothing after the first call.
+	call ioc_link_init_once
 
 	push de				; save caller RX frame pointer across send
 

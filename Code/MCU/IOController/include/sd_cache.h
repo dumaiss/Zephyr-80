@@ -60,12 +60,10 @@
  * WHEN THE FLUSH RUNS
  * ---------------------------------------------------------------------------
  *
- * From the main loop, between commands, once SD_CACHE_FLUSH_MS have elapsed.
- * It cannot preempt a transaction because nothing here can: the loop is
- * single-threaded and service_command_request() runs to completion including
- * its bulk phase.  "100 ms" therefore means "100 ms of elapsed time, acted on
- * at the next idle moment", not a hard deadline -- which is the right shape for
- * a write-back flush, since the idle gap is exactly when the card is free.
+ * Automatic idle flushing runs only while the SD driver has a successfully
+ * initialised session.  It never initiates or retries card initialisation: an
+ * explicit SD command must recover the card after a failure.  The main loop
+ * then acts on dirty slots after SD_CACHE_FLUSH_MS have elapsed.
  */
 
 /* Block loads actually issued to the card.  Compare against the record-read
@@ -75,6 +73,13 @@ uint16_t sd_cache_misses(void);
 
 #define SD_CACHE_SLOTS      4u
 #define SD_CACHE_FLUSH_MS   100u
+
+/* Set to 0 to disable idle flushing without changing explicit CMD_SD_FLUSH or
+ * the pinned LBA-0 write-through path.  The initialized-state gate in
+ * sd_cache_flush_due() prevents a failed card from creating a retry storm. */
+#ifndef SD_CACHE_AUTO_FLUSH
+#define SD_CACHE_AUTO_FLUSH 1
+#endif
 
 /* Records per block, and the shift/mask that follow from it. */
 #define SD_CACHE_RECORD_SIZE    128u
@@ -98,18 +103,16 @@ SdStatus sd_cache_read_record(uint32_t record, uint8_t *dst);
  * when the record lands in the write-through block. */
 SdStatus sd_cache_write_record(uint32_t record, const uint8_t *src);
 
-/* Commit every dirty slot.  Returns the first failure, or SD_OK. */
+/* Commit dirty slots until all succeed or one card operation fails.  Stopping
+ * on the first failure avoids several re-initialisation attempts in one call. */
 SdStatus sd_cache_flush(void);
 
-/* True when a flush would actually do card work: something is dirty AND the
- * interval has elapsed.  Lets the caller drop COMMAND_READY only when there is
- * really something to wait for, instead of pulsing it after every deferred
- * write. */
+/* With automatic flushing enabled, true when the card is already initialized,
+ * something is dirty, and the interval elapsed.  This query performs no I/O. */
 bool sd_cache_flush_due(void);
 
-/* Flush if SD_CACHE_FLUSH_MS have elapsed and anything is dirty.  Returns true
- * if a card write actually happened, so the caller can drop COMMAND_READY only
- * when there is something to wait for. */
+/* Perform an automatic timed flush when enabled and due.  Returns false without
+ * touching the card when SD_CACHE_AUTO_FLUSH is zero. */
 bool sd_cache_tick(void);
 
 /* True if any slot is dirty.  Lets the main loop skip the whole flush path. */

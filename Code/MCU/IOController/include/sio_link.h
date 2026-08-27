@@ -17,7 +17,8 @@
  */
 
 /* Hand RB1/RB3 between LATB and the SPI2 module.  Glitch-free in both
- * directions: CKP = 0 idles SCK low, which is the level LATB3 holds. */
+ * directions: CKP = 1 idles SCK high, matching both LATB3 and the pull-up on
+ * an unselected gated SIO clock. */
 void sio_link_pins_to_lat(void);
 void sio_link_pins_to_spi(void);
 

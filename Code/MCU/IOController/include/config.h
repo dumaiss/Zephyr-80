@@ -100,7 +100,8 @@
  *
  * SIO_MOSI  RB1  output   PIC -> selected device   (Z80 SIO1/B RXDB)
  * SIO_MISO  RB2  input    PIC <- selected device   (Z80 SIO1/B TXDB)
- * SIO_SCK   RB3  output   PIC -> selected device   (Z80 SIO1/B RXTXCB)
+ * SIO_SCK   RB3  output   PIC -> '125 -> selected device; idle HIGH because
+ *                         the gated SIO clocks have 100k pull-ups
  * --------------------------------------------------------------------------- */
 #define SIO_MOSI_TRIS        TRISBbits.TRISB1
 #define SIO_MOSI_ANSEL       ANSELBbits.ANSELB1
@@ -137,6 +138,10 @@
 #define SIO_MOSI_PPS         RB1PPS   /* output route for SPI2 SDO */
 #define SIO_SCK_PPS          RB3PPS   /* output route for SPI2 SCK */
 #define SIO_PPS_SRC_LAT      0x00u    /* RxyPPS = 0 gives the pin back to LATxy */
+/* PPS input encoding: port B = 001b, pin 3 = 011b -> 00 001 011b.
+ * Timer1 uses this to count the actual RB3 pin edges, including any edge a PPS
+ * handover or SPI enable transition might create outside a byte transfer. */
+#define SIO_SCK_T1CKIPPS     0x0Bu
 
 /* ---------------------------------------------------------------------------
  * Port C external peripheral bus (SPI1)

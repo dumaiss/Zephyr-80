@@ -7,10 +7,10 @@
 /* Port C external peripheral bus (SPI1).
  *
  * Shared by the controller latch, the SD card and (later) the USB HID bridge,
- * with per-device selects on port A.  The devices do not agree on clock rate,
- * so each one calls spi1_bus_configure() before asserting its select.  That is
- * safe because the firmware is a single foreground loop: transactions never
- * interleave.
+ * with per-device selects on port A.  Device drivers do not write those
+ * selects directly: spi1_bus_select() first deasserts all three and then
+ * asserts at most one.  The devices do not agree on clock rate, so each one
+ * calls spi1_bus_configure() before selecting its device.
  *
  * SPI1SCKPPS and SPI1SDIPPS are left at their reset values -- they already
  * select RC3 and RC4, which is how this board is wired.  Only the two output
@@ -28,9 +28,26 @@
 #define SPI1_MSB_FIRST     0u
 #define SPI1_LSB_FIRST     1u
 
+typedef enum {
+    SPI1_DEVICE_NONE = 0,
+    SPI1_DEVICE_CONTROLLER_LATCH,
+    SPI1_DEVICE_SD_CARD,
+    SPI1_DEVICE_USB
+} Spi1BusDevice;
+
 /* Claim RC3/RC4/RC5, route the SPI1 outputs and enable the module.
  * Call once at start-up, before any device driver. */
 void spi1_bus_init(void);
+
+/* The sole run-time owner of the three port-A peripheral selects.
+ *
+ * Every call first drives all selects inactive, then asserts only the requested
+ * device.  SPI1_DEVICE_NONE releases the bus.  This makes electrical one-hot
+ * selection an invariant rather than an assumption spread across drivers.
+ *
+ * The controller latch signal is really the 74HC595 RCLK: selecting it drives
+ * RCLK low for shifting, and selecting NONE raises it to latch the result. */
+void spi1_bus_select(Spi1BusDevice device);
 
 /* Set the clock rate and bit order for the next transaction.
  *

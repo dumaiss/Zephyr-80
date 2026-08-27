@@ -38,19 +38,20 @@
 #define CTRL_UPDATE_MS        500u
 #define CTRL_TICKS_PER_UPDATE (CTRL_UPDATE_MS / TIMEBASE_TICK_MS)
 
+#if CONTROLLER_LATCH_COUNTER_TEST
 static uint16_t last_update;
 static uint8_t  counter;
+#endif
 
 void controller_latch_init(void)
 {
     /* The bus itself is owned by spi1_bus_init(), called from platform_init().
-     * The select is also RCLK, so it must rest deasserted (high). */
-    CTRL_LAT_CS_ANSEL = 0;
-    CTRL_LAT_CS_LAT   = CTRL_LAT_CS_IDLE;
-    CTRL_LAT_CS_TRIS  = 0;
+     * The select is also RCLK; the bus owner already parked it high. */
 
+#if CONTROLLER_LATCH_COUNTER_TEST
     last_update = timebase_ticks();
     counter     = 0u;
+#endif
 
     /* Park the outputs at a known value rather than whatever the 595s powered
      * up holding. */
@@ -63,19 +64,22 @@ void controller_latch_write(uint8_t byte0, uint8_t byte1)
      * settings this device needs.  Reconfiguring also empties the FIFOs. */
     spi1_bus_configure(CTRL_SPI_BAUD, SPI1_MSB_FIRST);
 
-    /* Hold the select asserted for the whole 16-bit shift. */
-    CTRL_LAT_CS_LAT = CTRL_LAT_CS_ASSERTED;
+    /* Hold RCLK low for the whole 16-bit shift.  The central selector first
+     * releases the SD and USB devices, so this transaction is electrically
+     * one-hot even if a previous driver returned through an error path. */
+    spi1_bus_select(SPI1_DEVICE_CONTROLLER_LATCH);
 
     if (spi1_bus_write(byte0))
         (void)spi1_bus_write(byte1);
 
     /* Releasing the select is the RCLK rising edge that commits both devices'
      * shift registers to their output pins. */
-    CTRL_LAT_CS_LAT = CTRL_LAT_CS_IDLE;
+    spi1_bus_select(SPI1_DEVICE_NONE);
 }
 
 void controller_latch_tick(void)
 {
+#if CONTROLLER_LATCH_COUNTER_TEST
     uint16_t now = timebase_ticks();
 
     /* Elapsed-time test, not equality: a long SD access can span several tick
@@ -87,6 +91,7 @@ void controller_latch_tick(void)
 
     /* (0,1) then (1,2) then (2,3)...  Both bytes wrap at 255 independently,
      * which is fine -- the point is only that the monitor shows them counting. */
-    //controller_latch_write(counter, (uint8_t)(counter + 1u));
+    controller_latch_write(counter, (uint8_t)(counter + 1u));
     counter++;
+#endif
 }

@@ -9,8 +9,42 @@
  * (200 kHz) is 40 us, about 640 instruction cycles at 64 MHz. */
 #define SPI1_TIMEOUT_LOOPS 20000u
 
+void spi1_bus_select(Spi1BusDevice device)
+{
+    /* Break-before-make, always.  Even if a caller arrives with stale state,
+     * no two devices can remain selected while ownership changes. */
+    CTRL_LAT_CS_LAT = CTRL_LAT_CS_IDLE;
+    IO_SD_CS_LAT    = IO_SD_CS_IDLE;
+    IO_USB_CS_LAT   = IO_USB_CS_IDLE;
+
+    switch (device) {
+    case SPI1_DEVICE_CONTROLLER_LATCH:
+        CTRL_LAT_CS_LAT = CTRL_LAT_CS_ASSERTED;
+        break;
+    case SPI1_DEVICE_SD_CARD:
+        IO_SD_CS_LAT = IO_SD_CS_ASSERTED;
+        break;
+    case SPI1_DEVICE_USB:
+        IO_USB_CS_LAT = IO_USB_CS_ASSERTED;
+        break;
+    case SPI1_DEVICE_NONE:
+    default:
+        break;
+    }
+}
+
 void spi1_bus_init(void)
 {
+    /* Own all three selects centrally.  Park their latches before enabling the
+     * output drivers so startup cannot briefly select two devices. */
+    CTRL_LAT_CS_ANSEL = 0;
+    IO_SD_CS_ANSEL    = 0;
+    IO_USB_CS_ANSEL   = 0;
+    spi1_bus_select(SPI1_DEVICE_NONE);
+    CTRL_LAT_CS_TRIS = 0;
+    IO_SD_CS_TRIS    = 0;
+    IO_USB_CS_TRIS   = 0;
+
     /* Port C bus pins are digital; RC3/RC5 drive, RC4 listens. */
     PERIPH_SCK_ANSEL  = 0;
     PERIPH_MISO_ANSEL = 0;

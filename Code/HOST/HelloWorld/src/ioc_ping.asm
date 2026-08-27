@@ -27,6 +27,9 @@ BDOS		= 0x0005
 BDOS_CONOUT	= 0x02		; output char in E; no useful return
 BDOS_PRINT	= 0x09
 CMD_PROFILE	= 0x0B
+; Fixed-address link diagnostic block written by the BIOS when a reply never
+; arrives.  Read directly, because a broken link cannot answer a query.
+IOC_DIAG_BASE	= 0xDCC0
 RSP_PROFILE	= 0x8B		; print '$'-terminated string at DE
 IOCALL		= 0xDA3F	; BIOS extended entry: IOC fixed-frame transport
 
@@ -136,6 +139,8 @@ verify_payload:
 	call say_bit_4			; bit 4: was a falling edge seen
 	ld de,#msg_sd_wpu
 	call say_bit_5			; bit 5: is our pull-up on
+	ld de,#msg_link_synced
+	call say_bit_6			; bit 6: PIC steady-sync state
 
 	; Silent SD retry accounting.  A retried read succeeds, so these two
 	; numbers are the only place it is ever visible.
@@ -145,10 +150,10 @@ verify_payload:
 	ld de,#msg_reinit
 	ld hl,#(rx_frame + 24)
 	call say_word
-	ld de,#msg_recread
+	ld de,#msg_rx_edges
 	ld hl,#(rx_frame + 26)
 	call say_word
-	ld de,#msg_miss
+	ld de,#msg_tx_edges
 	ld hl,#(rx_frame + 28)
 	call say_word
 
@@ -209,11 +214,85 @@ zero_rx2:
 	ld de,#msg_aborts
 	ld hl,#(rx_frame + 18)
 	call say_word
+
+	; SD CMD0 response trace; see sd_card.h for how to read it.
+	ld de,#msg_sdtr
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld hl,#(rx_frame + 20)
+	ld b,#8
+sdtr_loop:
+	push bc
+	push hl
+	ld e,#0x20
+	ld c,#BDOS_CONOUT
+	call BDOS
+	pop hl
+	ld a,(hl)
+	push hl
+	call print_hex_byte
+	pop hl
+	inc hl
+	pop bc
+	djnz sdtr_loop
 	ret
 prof_bad:
 	ld de,#msg_proferr
 	ld c,#BDOS_PRINT
 	call BDOS
+	ret
+
+; The fixed-address block the BIOS fills in when a reply never arrives.  Always
+; printed: it costs four lines and it is the only evidence available when the
+; link is too broken to answer anything.
+say_link_diag:
+	ld de,#msg_diag
+	ld a,(IOC_DIAG_BASE + 0)
+	call say_byte
+	ld de,#msg_diag1
+	ld a,(IOC_DIAG_BASE + 1)
+	call say_byte
+	ld de,#msg_diag2
+	ld a,(IOC_DIAG_BASE + 2)
+	call say_byte
+	ld de,#msg_diag3
+	ld a,(IOC_DIAG_BASE + 3)
+	call say_byte
+	ld de,#msg_diag4
+	ld a,(IOC_DIAG_BASE + 4)
+	call say_byte
+
+	ld de,#msg_diag5
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld hl,#(IOC_DIAG_BASE + 5)
+	ld b,#8
+sld_loop:
+	push bc
+	push hl
+	ld e,#0x20
+	ld c,#BDOS_CONOUT
+	call BDOS
+	pop hl
+	ld a,(hl)
+	push hl
+	call print_hex_byte
+	pop hl
+	inc hl
+	pop bc
+	djnz sld_loop
+	ld de,#msg_diag6
+	ld a,(IOC_DIAG_BASE + 13)
+	call say_byte
+	ret
+
+; Print the label at DE then the byte in A.
+say_byte:
+	push af
+	ld c,#BDOS_PRINT
+	call BDOS
+	pop af
+	call print_hex_byte
 	ret
 
 ; Print the label at DE then the little-endian word at HL, high byte first.
@@ -244,6 +323,9 @@ say_word:
 ; Print the label at DE then 0 or 1 for the selected bit of pwr_bits.
 say_bit_5:
 	ld b,#0x20
+	jr say_bit
+say_bit_6:
+	ld b,#0x40
 	jr say_bit
 say_bit_4:
 	ld b,#0x10
@@ -285,6 +367,7 @@ xport_err:
 	pop af
 	call print_hex_byte
 	call dump_rx_frame
+	call say_link_diag
 	ret
 
 bad_reply:
@@ -372,11 +455,13 @@ msg_pwr_pin:	.ascii "  /PWR_OFF     pin reads    : $"
 msg_sd_pin:	.ascii "  /SHUTDOWN_RQ pin reads    : $"
 msg_sd_latch:	.ascii "  /SHUTDOWN_RQ edge latched : $"
 msg_sd_wpu:	.ascii "  /SHUTDOWN_RQ pull-up on   : $"
+msg_link_synced:
+		.ascii "  PIC persistent sync      : $"
 msg_retry:	.db 13,10
-		.ascii "  SD read retries         : $"
-msg_reinit:	.ascii "  SD re-initialisations   : $"
-msg_recread:	.ascii "  SD record reads         : $"
-msg_miss:	.ascii "  SD cache misses         : $"
+		.ascii "  service calls           : $"
+msg_reinit:	.ascii "  .. aborted, no frame    : $"
+msg_rx_edges:	.ascii "  current request clocks  : $"
+msg_tx_edges:	.ascii "  previous reply clocks   : $"
 msg_prof:	.db 13,10
 		.ascii "  ms in rx window         : $"
 msg_p1:		.ascii "  ms in frame decode      : $"
@@ -386,7 +471,17 @@ msg_p4:		.ascii "  ms in bulk phase        : $"
 msg_p5:		.ascii "  ms total (all phases)   : $"
 msg_calls:	.ascii "  service calls           : $"
 msg_aborts:	.ascii "  .. aborted, no frame    : $"
+msg_sdtr:	.db 13,10
+		.ascii "  SD CMD0 trace         :$"
 msg_proferr:	.ascii "  PROFILE failed$"
+msg_diag:	.db 13,10
+		.ascii "  link RR0 (b4=hunting)  : $"
+msg_diag1:	.ascii "  link RR1 (rx errors)  : $"
+msg_diag2:	.ascii "  ioc_rx_synced         : $"
+msg_diag3:	.ascii "  ioc_link_ready        : $"
+msg_diag4:	.ascii "  scan budget left (A0) : $"
+msg_diag5:	.ascii "  first 8 non-FF bytes  :$"
+msg_diag6:	.ascii "  .. count captured     : $"
 msg_crlf:
 	.db 0x0d, 0x0a, '$'
 msg_rx_dump:

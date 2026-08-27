@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 48834 bytes |
+| Firmware symbol map | `build/firmware.map` | 49907 bytes |
 | Burnable image | `build/zephyr80.bin` | 131072 bytes |
 | Layout manifest | `build/layout.manifest` | 232 bytes |
 
@@ -80,16 +80,16 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `BANK_HELPERS_END` | `DAADh` | Low-level bank helper code end. |
 | `sio_init` | `DD12h` | Compatibility entry that jumps to `sio_core_init`. |
 | `boot` | `DAADh` | Cold boot implementation; starts the CP/M CCP. |
-| `wboot` | `DADCh` | Warm boot trampoline. |
-| `wboot_resident` | `DADFh` | Protected warm boot implementation; returns to the CP/M CCP. |
-| `WBOOT_RESIDENT_START` | `DADFh` | Resident warm boot body start. |
-| `WBOOT_RESIDENT_END` | `DB0Ah` | Resident warm boot body end. |
-| `restore_ccp_from_rom` | `DB0Ah` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
-| `ctc_disable_interrupts` | `DB22h` | CTC interrupt disable helper. |
-| `prepare_runnable_bank` | `DB2Dh` | Page-zero and DMA preparation helper. |
-| `init_page_zero` | `DB37h` | Installs `JP WBOOT` and `JP FBASE`. |
-| `runtime_set_default_dma` | `DB4Ch` | Sets default DMA to `0080h`. |
-| `runtime_clear_default_dma` | `DB5Ah` | Clears command tail/default DMA area. |
+| `wboot` | `DADFh` | Warm boot trampoline. |
+| `wboot_resident` | `DAE2h` | Protected warm boot implementation; returns to the CP/M CCP. |
+| `WBOOT_RESIDENT_START` | `DAE2h` | Resident warm boot body start. |
+| `WBOOT_RESIDENT_END` | `DB0Dh` | Resident warm boot body end. |
+| `restore_ccp_from_rom` | `DB0Dh` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
+| `ctc_disable_interrupts` | `DCB1h` | CTC interrupt disable helper. |
+| `prepare_runnable_bank` | `DB25h` | Page-zero and DMA preparation helper. |
+| `init_page_zero` | `DB2Fh` | Installs `JP WBOOT` and `JP FBASE`. |
+| `runtime_set_default_dma` | `DB44h` | Sets default DMA to `0080h`. |
+| `runtime_clear_default_dma` | `DB52h` | Clears command tail/default DMA area. |
 | `CONSOLE_CODE_START` | `DB7Ch` | Console BIOS facade start. |
 | `console_init` | `DB7Ch` | Installs and initializes the default console driver. |
 | `console_set_driver` | `DB85h` | Installs an alternate console driver table. |
@@ -157,8 +157,8 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `MOVE` | `DC25h` | Same-bank or cross-bank memory move. |
 | `BANKING_CODE_END` | `DCB1h` | Banking extension implementation end. |
 | `VIDEO_SEND` | `DF50h` | Extended BIOS call: raw VDrip display/VDP packet send. |
-| `IOCBULK` | `F182h` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
-| `IOCBULKW` | `F255h` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
+| `IOCBULK` | `F1BCh` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
+| `IOCBULKW` | `F28Fh` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
 | `BIOS_EXT_CODE_START` | `DF50h` | BIOS extension code start. |
 | `BIOS_EXT_CODE_END` | `DF78h` | BIOS extension code end. |
 | `BIOS_CODE_END` | `DF78h` | End of core BIOS code. |

@@ -10,7 +10,13 @@
  * output pins on RCLK's rising edge, which is the deselect edge.
  */
 
-/* Bring up SPI1, the port C pins and the 500 ms bring-up timer. */
+/* Diagnostic only.  Leave disabled during SD-card bring-up: when enabled it
+ * deliberately creates periodic MOSI/SCK traffic on the shared SPI1 bus. */
+#ifndef CONTROLLER_LATCH_COUNTER_TEST
+#define CONTROLLER_LATCH_COUNTER_TEST 0
+#endif
+
+/* Initialise the latch outputs to zero.  spi1_bus_init() owns the bus pins. */
 void controller_latch_init(void);
 
 /* Shift two bytes into the cascaded 595s and latch them.
@@ -20,14 +26,13 @@ void controller_latch_init(void);
  * Blocking, for 16 SPI clocks.  Not ISR-safe. */
 void controller_latch_write(uint8_t byte0, uint8_t byte1);
 
-/* Bring-up counter.
+/* Optional bring-up counter.
  *
- * Call from the main loop.  Polls Timer2 and, every 500 ms, writes an
- * incrementing pair (n, n+1) to the latches so the count can be watched on the
- * monitor.  The counter is 8-bit and wraps at 255, which is harmless.
+ * When CONTROLLER_LATCH_COUNTER_TEST is 1, call from the main loop to write an
+ * incrementing pair (n, n+1) every 500 ms.  The counter is disabled by default
+ * so an idle controller produces no shared-bus clocks during SD-card bring-up.
  *
- * Returns without doing anything if the 500 ms period has not elapsed, so it is
- * safe to call as often as the main loop runs. */
+ * With the test disabled this routine is an empty stub. */
 void controller_latch_tick(void);
 
 #endif /* CONTROLLER_LATCH_H */

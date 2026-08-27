@@ -214,6 +214,6 @@ Additional notes:
 - SIO core code starts at `DD10h` inside core BIOS; the Virtual Drip console driver starts at `E000h`, the shared transport starts at `F680h`, and the VDrip storage backend starts at `F910h`.
 - `IOCALL` code is at `DF7Bh` in core BIOS and uses the SIO1/B Command-channel External Sync transport.
 - `VIDEO_SEND` code is at `DF50h` in core BIOS; raw VDP/display writes may desynchronize the V9958 logical-cell state.
-- `WBOOT` resident code starts at `DADFh`, inside protected high BIOS memory.
+- `WBOOT` resident code starts at `DAE2h`, inside protected high BIOS memory.
 - `ZBIOS_EXT_BASE` is at `DA33h` and exposes `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `IOCALL`, `VIDEO_SEND`, `IOCBULK` and `IOCBULKW`.
 - The burnable image is `build/zephyr80.bin`.

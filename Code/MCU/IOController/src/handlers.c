@@ -5,6 +5,7 @@
 #include "config.h"
 #include "sd_card.h"
 #include "sd_cache.h"
+#include "external_sync.h"
 #include "timebase.h"
 
 /* Every record read the host asks for, whether it hits the cache or not.  This
@@ -38,24 +39,27 @@ void handler_ping(const IocFrame *request, IocFrame *reply)
         if (SHUTDOWN_RQ_PORT)      p |= IOC_PING_SHUTDOWN_PIN;
         if (PIR10bits.INT2IF)      p |= IOC_PING_SHUTDOWN_LATCH;
         if (SHUTDOWN_RQ_WPU)       p |= IOC_PING_SHUTDOWN_WPU;
+        if (external_sync_is_established()) p |= IOC_PING_LINK_SYNCED;
         reply->bytes[IOC_OFF_PING_POWER] = p;
     }
 
-    /* Silent SD retry accounting; see sd_card.h. */
+    /* Service-loop accounting, carried by PING itself so it survives a link too
+     * flaky to complete a second transaction. */
     {
-        uint16_t r = sd_card_read_retries();
-        uint16_t i = sd_card_reinits();
-        reply->bytes[IOC_OFF_PING_RETRY_LO]  = (uint8_t)r;
-        reply->bytes[IOC_OFF_PING_RETRY_HI]  = (uint8_t)(r >> 8);
-        reply->bytes[IOC_OFF_PING_REINIT_LO] = (uint8_t)i;
-        reply->bytes[IOC_OFF_PING_REINIT_HI] = (uint8_t)(i >> 8);
+        extern uint16_t svc_calls, svc_aborts;
+        uint16_t r = svc_calls;
+        uint16_t i = svc_aborts;
+        reply->bytes[IOC_OFF_PING_CALLS_LO]  = (uint8_t)r;
+        reply->bytes[IOC_OFF_PING_CALLS_HI]  = (uint8_t)(r >> 8);
+        reply->bytes[IOC_OFF_PING_ABORTS_LO] = (uint8_t)i;
+        reply->bytes[IOC_OFF_PING_ABORTS_HI] = (uint8_t)(i >> 8);
 
-        r = rec_reads;
-        i = sd_cache_misses();
-        reply->bytes[IOC_OFF_PING_RECREAD_LO] = (uint8_t)r;
-        reply->bytes[IOC_OFF_PING_RECREAD_HI] = (uint8_t)(r >> 8);
-        reply->bytes[IOC_OFF_PING_MISS_LO]    = (uint8_t)i;
-        reply->bytes[IOC_OFF_PING_MISS_HI]    = (uint8_t)(i >> 8);
+        r = external_sync_last_rx_edges();
+        i = external_sync_last_tx_edges();
+        reply->bytes[IOC_OFF_PING_RX_EDGES_LO] = (uint8_t)r;
+        reply->bytes[IOC_OFF_PING_RX_EDGES_HI] = (uint8_t)(r >> 8);
+        reply->bytes[IOC_OFF_PING_TX_EDGES_LO] = (uint8_t)i;
+        reply->bytes[IOC_OFF_PING_TX_EDGES_HI] = (uint8_t)(i >> 8);
     }
 }
 
@@ -300,6 +304,20 @@ void handler_xfer_status(const IocFrame *request, IocFrame *reply)
     }
 }
 
+/* Link bring-up.  Releasing /SYNC and clearing the flag BEFORE the reply is
+ * sent is the whole point: external_sync_send() samples it on entry, so this
+ * reply is the one that carries a fresh falling /SYNC edge and re-establishes
+ * the host's character boundary.  Idempotent, so it doubles as recovery. */
+void handler_link_sync(const IocFrame *request, IocFrame *reply)
+{
+    external_sync_request_resync();
+
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_LINK_SYNC;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+}
+
 void handler_unknown(const IocFrame *request, IocFrame *reply)
 {
     memset(reply->bytes, 0, IOC_FRAME_SIZE);
@@ -434,6 +452,13 @@ void handler_profile(const IocFrame *request, IocFrame *reply)
         reply->bytes[IOC_OFF_PROFILE_CALLS + 1u] = (uint8_t)(svc_calls >> 8);
         reply->bytes[IOC_OFF_PROFILE_ABORTS]      = (uint8_t)svc_aborts;
         reply->bytes[IOC_OFF_PROFILE_ABORTS + 1u] = (uint8_t)(svc_aborts >> 8);
+    }
+
+    {
+        const uint8_t *tr = sd_card_trace();
+        uint8_t j;
+        for (j = 0u; j < SD_TRACE_BYTES; j++)
+            reply->bytes[IOC_OFF_PROFILE_SDTRACE + j] = tr[j];
     }
 
     for (i = 0u; i < UPROF_SLOTS; i++) {

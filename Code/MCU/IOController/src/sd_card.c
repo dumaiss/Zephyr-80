@@ -146,9 +146,14 @@ const uint8_t *sd_card_trace(void)
 static bool card_ready;
 static bool block_addressed;
 
+bool sd_card_is_initialized(void)
+{
+    return card_ready;
+}
+
 static void sd_select(void)
 {
-    IO_SD_CS_LAT = IO_SD_CS_ASSERTED;
+    spi1_bus_select(SPI1_DEVICE_SD_CARD);
 }
 
 /* Deselect, then give the card its trailing clock.
@@ -158,7 +163,7 @@ static void sd_select(void)
  * this byte does its job. */
 static void sd_deselect(void)
 {
-    IO_SD_CS_LAT = IO_SD_CS_IDLE;
+    spi1_bus_select(SPI1_DEVICE_NONE);
     (void)spi1_bus_write(0xFFu);
 }
 

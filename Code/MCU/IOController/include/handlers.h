@@ -37,6 +37,7 @@ void handler_sd_read_bulk(const IocFrame *request, IocFrame *reply);
  * most recent bulk phase.  A DONE id that does not match the READY id means a
  * transfer was lost or overlapped. */
 void handler_sd_write_bulk(const IocFrame *request, IocFrame *reply);
+void handler_link_sync(const IocFrame *request, IocFrame *reply);
 void handler_profile(const IocFrame *request, IocFrame *reply);
 void handler_xfer_status(const IocFrame *request, IocFrame *reply);
 

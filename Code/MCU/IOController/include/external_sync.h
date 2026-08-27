@@ -10,7 +10,7 @@
  *
  *   PIC18F57Q84                    Z80 SIO1/B
  *   -----------                    ----------
- *   RB3  SIO_SCK    -------------> RXTXCB
+ *   RB3  SIO_SCK    --'125 gate--> RXTXCB (100k pull-up when unselected)
  *   RB1  SIO_MOSI   -------------> RXDB
  *   RB2  SIO_MISO   <------------- TXDB
  *   RA7  /SYNCB     -------------> /SYNCB
@@ -24,12 +24,12 @@
  *   - /SIO1B_INT low tells the PIC that the Z80 BIOS is inside one IOCALL.
  *   - /SIOB_CS must be asserted for the whole transaction; the board only
  *     activates the clock toward an SIO while its select is asserted.
- *   - The PIC supplies all serial clock edges.
+ *   - The PIC supplies all serial clock edges.  SCK idles HIGH to match the
+ *     gated SIO clock pull-ups; select transitions must not create edges.
  *   - Bytes are shifted least-significant bit first, matching the Z80 SIO
  *     serializer.
- *   - The mailbox body is exactly 32 raw bytes.  The transport does not add
- *     bytes before or after the mailbox body, apart from the required trailing
- *     idle clocks used to flush the SIO receiver.
+ *   - The mailbox body is exactly 32 raw bytes.  A 7Eh alignment marker leads
+ *     it and trailing idle clocks flush the SIO receiver.
  *
  * See docs/external_sync_protocol.md for the timing walkthrough and the SIO
  * manual references behind the /SYNCB handling.
@@ -38,12 +38,12 @@
 /* ---------------------------------------------------------------------------
  * Transport
  *
- * The bulk of every transfer runs on the SPI2 hardware module.  It is a hybrid,
- * not a wholesale replacement: reply byte 0 is still clocked by hand, because
- * /SYNCB has to be asserted at a precise position *inside* that byte (after
- * bit 1's rising edge, before its falling edge) and a hardware shift register
- * cannot be interrupted mid-word.  sync_assert() is idempotent, so every later
- * byte needs no intra-byte GPIO and goes through SPI2.
+ * The bulk of every transfer runs on the SPI2 hardware module.  The first
+ * command reply is the sole hybrid case: its alignment byte is clocked by hand
+ * because /SYNCB has to fall at a precise position *inside* that byte (after
+ * bit 1's rising edge, before its falling edge), which a hardware shift
+ * register cannot do.  /SYNCB then stays low and all later command replies are
+ * entirely SPI-driven, in whole-byte clock counts.
  *
  * The bit-banged receive path and the RX/TX transport switches were removed
  * once the SPI path was confirmed on hardware; see git history if the old
@@ -58,13 +58,13 @@
  * cycles at 64 MHz, so this bound is orders of magnitude wide. */
 #define EXTSYNC_SPI_TIMEOUT_LOOPS 20000u
 
-/* Half-bit time for the ONE hand-clocked byte per transfer.
+/* Half-bit time for a hand-clocked sync-establishing byte.
  *
  * Was 50 us, an unjustified bring-up value, and it cost about 1.15 ms every
  * time it ran: 8 bits x 2 delays, plus one on the sync-drop bit and one more on
- * each bit from 2 up.  It runs twice per record read -- once for the reply's
- * alignment byte, once for byte 0 of the bulk transfer -- so it was roughly
- * 2.5 ms of a 17.5 ms transaction, measured.
+ * each bit from 2 up.  The command lane now pays that cost only when the
+ * persistent boundary is established; the bulk lane still uses the same
+ * primitive for its own sync-establishing byte.
  *
  * The justification for lowering it is in this same file: every OTHER byte of
  * that reply goes out through SPI2 at EXTSYNC_SPI_BAUD, which is 1 MHz -- 1 us
@@ -77,8 +77,8 @@
  * link rather than the fastest.
  *
  * IF FRAMING REGRESSES, THIS IS THE FIRST THING TO PUT BACK.  Restore 50u and
- * re-measure: reply send and bulk phase should each grow by ~1.15 ms per
- * transaction, which the profiler will show directly. */
+ * re-measure: a sync-establishing command reply or bulk phase should grow by
+ * ~1.15 ms, which the profiler will show directly. */
 #define EXTSYNC_BIT_DELAY_US     2u
 #define EXTSYNC_ALIGNMENT_BYTE   0x7Eu
 
@@ -220,7 +220,21 @@
  * NOTE: this value was reverted once while chasing a read regression that a
  * machine reset later cleared.  It was never implicated. */
 #ifndef EXTSYNC_TARGET_BYTE_US
-#define EXTSYNC_TARGET_BYTE_US   16u   /* 8 bits / 32 us = 250 kbit/s */
+/* Byte period on the command lane.
+ *
+ * Its floor is the Z80's receive loop, not anything on this side: IOC_CMD_RECV
+ * -> sio_command_get_byte costs 151 T-states in the best case, which is ~15 us
+ * at 10 MHz.  16 us therefore leaves the host about 1 us of slack per byte.
+ *
+ * This was temporarily 24 us while the two-bit clock drift was being chased,
+ * because the diagnostic capture in the host's scan cost ~1.1 us per byte and
+ * consumed the whole margin.  The drift turned out to be the gated SIO clock
+ * idling low against its pull-ups, not a timing margin, so the slack is no
+ * longer needed and the 50% throughput cost is not worth paying.
+ *
+ * Restoring 16 is also a test: if the link is only stable at 24, there is a
+ * second, genuine margin problem hiding behind the one just fixed. */
+#define EXTSYNC_TARGET_BYTE_US   16u
 #endif
 #define EXTSYNC_SPI_BYTE_US      ((8u * 2u * (EXTSYNC_SPI_BAUD + 1u)) / 64u)
 #define EXTSYNC_BYTE_GAP_US      (EXTSYNC_TARGET_BYTE_US - EXTSYNC_SPI_BYTE_US)
@@ -267,7 +281,23 @@
  * It was 80, of which only 33 are ever used; each byte costs 16 us twice per
  * sector.  Lower it further only with that inequality in mind: too small and a
  * late request silently fails to decode. */
-#define EXTSYNC_RX_WINDOW_BYTES  48u
+/* The capture window, in bytes.
+ *
+ * Was 48 for a 33-byte request (preamble + 32-byte frame), from when the frame
+ * could start anywhere in the window and had to be hunted for.  Preloading the
+ * preamble before asserting RTS removed that: the first clock edge now shifts
+ * the preamble, so the frame starts at byte 0 and the slack is only insurance.
+ *
+ * The excess is not free.  Every byte past the request is an IDLE byte clocked
+ * at the host, and since the receiver now stays enabled through our transmit,
+ * the host's reply scan has to consume them all before the reply arrives -- at
+ * ~15 us against this side's 16 us pacing, which is about 1 us of slack per
+ * byte.  Fifteen bytes of tail is fifteen chances to fall behind, and falling
+ * behind overruns the three-byte FIFO and loses the reply's marker.  Measured:
+ * RR1 bit 5 set, marker never matched, 41 bytes consumed.
+ *
+ * 36 keeps three bytes of alignment slack and cuts the tail by five times. */
+#define EXTSYNC_RX_WINDOW_BYTES  36u
 
 /* How far into the capture window find_frame_start() will look for the frame.
  *
@@ -300,7 +330,19 @@
 #define EXTSYNC_SYNC_DROP_BIT    1u
 
 void external_sync_init(void);
+
+/* Release /SYNC and drop the "character boundary already established" flag, so
+ * the NEXT reply carries a fresh bit-banged falling edge.  Called by the
+ * LINK_SYNC handler; also the hook a recovery path would use if
+ * synchronisation is ever declared suspect. */
+void external_sync_request_resync(void);
 bool external_sync_receive(IocFrame *frame);
+/* Physical RB3/SCK rising-edge counts captured by Timer1.  RX is the current
+ * request window by the time a handler runs; TX is the preceding reply because
+ * the current reply has not been clocked yet. */
+uint16_t external_sync_last_rx_edges(void);
+uint16_t external_sync_last_tx_edges(void);
+bool external_sync_is_established(void);
 /* Transmit a 32-byte reply.  NOT const: the transport stamps the frame's CRC
  * into bytes 30..31 before sending, so handlers never have to know integrity
  * exists.  They set class, sequence (echoed from the request), status, length

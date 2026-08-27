@@ -33,7 +33,7 @@ already claims `RESET()` and `NMI`.
 | 8 | RB0 | `/CTSA` | Output | Low | `CTSA_LAT` | SIO1/A clear-to-send. Parked idle. |
 | 9 | RB1 | `SIO_MOSI` | Output | - | `SIO_MOSI_LAT` | SIO bus data, PIC -> device. Drives SIO1/B `RXDB`. Idle high (marking). SPI2 SDO when the SPI transport is enabled. |
 | 10 | RB2 | `SIO_MISO` | Input | - | `SIO_MISO_PORT` | SIO bus data, device -> PIC. Samples SIO1/B `TXDB` when `/SIOB_CS` is asserted. SPI2 SDI (reset default). |
-| 11 | RB3 | `SIO_SCK` | Output | - | `SIO_SCK_LAT` | SIO bus clock. Drives SIO1/B `RXTXCB`. Idle low. The board only activates it toward an SIO while that SIO's select is asserted. SPI2 SCK (reset default input mapping). |
+| 11 | RB3 | `SIO_SCK` | Output | - | `SIO_SCK_LAT` | SIO bus clock. Drives SIO1/B `RXTXCB` through a 74AHCT125 gate. Idle high to match the gated clock's pull-up. The board only activates it toward an SIO while that SIO's select is asserted. SPI2 SCK (reset default input mapping). |
 | 16 | RB4 | `/DCDA` | Output | Low | `DCDA_LAT` | SIO1/A data-carrier-detect. Parked idle. |
 | 17 | RB5 | `/CTSB` | Output | Low | `CTSB_LAT` | SIO1/B clear-to-send. Parked idle. |
 | 18 | RB6 | `ICSPCLK` | - | - | - | Programming. |
@@ -162,8 +162,13 @@ Z80 BIOS deasserts /SIO1B_INT
 ## Controller Latch Bring-Up
 
 The cascaded 74HC595 pair (2 x 8 bits) is driven over SPI1 on the port C bus.
-`controller_latch_tick()` runs from the main loop and, every 500 ms, writes an
-incrementing pair `(n, n+1)` so the count can be watched on the monitor.
+At boot it is written once with `(0,0)`.  The periodic diagnostic is disabled by
+default (`CONTROLLER_LATCH_COUNTER_TEST=0`), so it produces no idle SCK/MOSI
+traffic while the SD card is being brought up.
+
+If the diagnostic is explicitly enabled, `controller_latch_tick()` writes an
+incrementing pair `(n, n+1)` every 500 ms.  Each write goes through the central
+SPI1 selector, which releases the SD and USB selects before pulsing latch RCLK.
 
 ```text
 Timer2: FOSC/4 16 MHz, 1:128 prescale, T2PR=249, 1:5 postscale -> 10 ms tick

@@ -186,6 +186,12 @@ typedef enum {
  * result is cached and later calls return immediately. */
 SdStatus sd_card_init(void);
 
+/* True only while the driver has a successfully initialised SPI-mode session.
+ * This is a state query: it never selects the card or starts initialisation.
+ * Any failed read/write invalidates the state, while the next explicit card
+ * operation is allowed to initialise it again. */
+bool sd_card_is_initialized(void);
+
 /* Read one 512-byte block into buf.
  *
  * Initialises the card first if that has not happened yet, so callers do not

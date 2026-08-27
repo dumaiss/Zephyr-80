@@ -30,6 +30,14 @@
 	.globl sio_command_put_byte,sio_command_get_byte
 	.globl sio_command_wait_ready
 	.globl ioc_command_send_frame,ioc_command_recv_frame
+	.globl ioc_link_init_once,ioc_rx_synced,ioc_link_ready
+	.globl ioc_diag_capture
+	.globl ioc_link_bringup
+	.globl IOC_DIAG_RR0,IOC_DIAG_RR1,IOC_DIAG_SYNCED,IOC_DIAG_READY
+	.globl IOC_DIAG_SCANLEFT
+	.globl IOC_DIAG_B0,IOC_DIAG_B1,IOC_DIAG_B2,IOC_DIAG_B3
+	.globl IOC_DIAG_B4,IOC_DIAG_B5,IOC_DIAG_B6,IOC_DIAG_B7,IOC_DIAG_BIDX
+	.globl IOCALL,MOVE_BUFFER
 	.globl IOCBULK,IOCBULKW
 	.globl ioc_frame_crc,ioc_crc_block,ioc_frame_stamp,ioc_frame_check
 	.globl IOC_CMD_CODE_START,IOC_CMD_CODE_END
@@ -421,6 +429,22 @@ ioc_command_send_frame:
 	; transmitter until the first edge arrives.  This is section 14 of the
 	; transport design, "the Z80 prepares and preloads the transmitter before
 	; asserting /RTSB".
+	; Enable the transmitter, RTS still off.
+	;
+	; sio_command_rts_release ends every transaction with WR5 = 00h, which
+	; DISABLES the transmitter.  That used to be undone by sio_command_init at
+	; the head of each IOCALL; now that init runs once, nothing restores it, and
+	; the preload below would poll forever for a Transmit Buffer Empty that a
+	; disabled transmitter never reports.  The first transaction after boot
+	; worked and every one after it timed out in the send phase.
+	;
+	; WR5 rather than a channel reset: this re-arms the transmitter without
+	; touching the receiver, so character synchronisation survives.
+	ld a,#0x05
+	out (SIO_COMMAND_CTRL_PORT),a
+	ld a,#SIO_WR5_CMD_TX_RTS_OFF
+	out (SIO_COMMAND_CTRL_PORT),a
+
 	ld c,#IOC_SYNC_PREAMBLE
 	call sio_command_put_byte
 	or a
@@ -512,15 +536,69 @@ IOC_CMD_SEND_TRAIL_NEXT:
 ; are re-enabled once the arm is done and before the scan, which is the WAIT and
 ; may span the MCU's card I/O.
 ioc_command_recv_frame:
-	; RX was disabled during request TX, so the request-capture clock window
-	; cannot fill the SIO RX FIFO with full-duplex junk.  Clear any stale error
-	; latch, then enable RX in hunt mode before the PIC's guarded reply sync
-	; sequence starts.
+	; The receiver stays enabled from one transaction to the next, so it fills
+	; with the MCU's full-duplex idle bytes while we transmit and overruns.
+	; That is harmless: the SIO manual lists exactly three things that end
+	; character assembly -- chip reset, receiver disabled, and Enter Hunt Phase
+	; -- and overrun is not among them.  Alignment survives; only the data is
+	; lost, and the data was idle.  Clearing the error latch is all that is
+	; required.
 	ld a,#SIO_WR0_RESET_ERROR
 	out (SIO_COMMAND_CTRL_PORT),a
+
+	; Enter Hunt ONLY until the boundary has been established once.
+	;
+	; WR3 = D1h sets bit 4, Enter Hunt Phase, which throws character sync away.
+	; Doing that every transaction is what forced the MCU to re-establish the
+	; boundary on every reply, and that in turn is what made the hand-clocked
+	; sync byte necessary.  Once the MCU has supplied the falling /SYNC edge,
+	; C1h keeps the receiver enabled and leaves the boundary alone.
 	ld a,#0x03
 	out (SIO_COMMAND_CTRL_PORT),a
-	ld a,#SIO_WR3_CMD_RX
+	ld a,(ioc_rx_synced)
+	or a
+	ld a,#SIO_WR3_CMD_RX_NO_HUNT
+	jr nz,IOC_CMD_RECV_WR3
+	ld a,#SIO_WR3_CMD_RX		; D1h: hunt, first time only
+IOC_CMD_RECV_WR3:
+	out (SIO_COMMAND_CTRL_PORT),a
+
+	; FLUSH the receive FIFO before listening for the reply.
+	;
+	; The receiver now stays enabled between transactions -- disabling it is one
+	; of the three things that destroy character synchronisation -- so it spends
+	; our whole request transmit assembling the MCU's full-duplex idle bytes and
+	; fills its three-byte FIFO.  Error Reset above clears the error LATCH but
+	; leaves those bytes in place, so the scan below would start on stale data
+	; and the reply's marker would be lost to the overrun that follows.  That is
+	; exactly what RR1 bit 5 reported.
+	;
+	; Safe to do here: the MCU waits EXTSYNC_REPLY_GUARD_US before it clocks the
+	; reply, which is an order of magnitude longer than this loop.
+	; BOUNDED to the FIFO depth.  The first version looped until the FIFO read
+	; empty, which is wrong in both directions: while the MCU is still clocking
+	; its receive window the FIFO empties between every byte, so it exited
+	; early; and if the reply had begun it would have kept reading and eaten the
+	; marker -- a timeout with a perfectly clean RR1, which is what was seen.
+	;
+	; Only the bytes already sitting there need removing, and there can never be
+	; more than three.  Anything that arrives afterwards is harmless: the scan
+	; below skips non-marker bytes, and it consumes at ~15 us against the MCU's
+	; 16 us pacing, so it keeps ahead and cannot overrun.
+	ld b,#(IOC_RX_FIFO_DEPTH + 1)
+IOC_CMD_RECV_DRAIN:
+	xor a
+	out (SIO_COMMAND_CTRL_PORT),a
+	in a,(SIO_COMMAND_CTRL_PORT)
+	and #RR0_RX_AVAILABLE
+	jr z,IOC_CMD_RECV_DRAINED
+	in a,(SIO_COMMAND_DATA_PORT)
+	djnz IOC_CMD_RECV_DRAIN
+IOC_CMD_RECV_DRAINED:
+
+	; Clear the latch again: draining a FIFO that had overrun leaves the error
+	; bit set, and a stale latch would confuse the next failure's diagnostics.
+	ld a,#SIO_WR0_RESET_ERROR
 	out (SIO_COMMAND_CTRL_PORT),a
 
 	; Receiver is armed and hunting; the reply can no longer be missed.
@@ -538,11 +616,36 @@ IOC_CMD_RECV_SYNC:
 	call sio_command_get_byte	; clobbers AF,C; preserves B,DE,HL
 	or a
 	jr nz,IOC_CMD_RECV_SYNC_TIMEOUT
+
+	; The per-byte capture that lived here is gone.  It cost ~1.1 us on every
+	; byte against a scan that has ~1 us of slack at the production pacing, so
+	; it could only ever run while the link was deliberately slowed.  It earned
+	; its keep: the eight contiguous bytes it recorded showed three consecutive
+	; failures as 2-bit rotations of one another, which is what identified the
+	; drift as a clock-count error rather than corruption.
+
 	ld a,c
 	cp #IOC_SYNC_PREAMBLE
-	jr z,IOC_CMD_RECV_BODY
+	jr z,IOC_CMD_RECV_SYNCED
 	cp #IOC_RSP_PING
-	jr z,IOC_CMD_RECV_BODY_FIRST
+	jr z,IOC_CMD_RECV_SYNCED_FIRST
+	jr IOC_CMD_RECV_NEXT
+IOC_CMD_RECV_SYNCED:
+	; A located preamble proves the receiver is delivering aligned characters,
+	; which is the only evidence available that the MCU's falling /SYNC edge
+	; landed.  From here the receiver is left alone: no more Enter Hunt.
+	push af
+	ld a,#1
+	ld (ioc_rx_synced),a
+	pop af
+	jr IOC_CMD_RECV_BODY
+IOC_CMD_RECV_SYNCED_FIRST:
+	push af
+	ld a,#1
+	ld (ioc_rx_synced),a
+	pop af
+	jr IOC_CMD_RECV_BODY_FIRST
+IOC_CMD_RECV_NEXT:
 	djnz IOC_CMD_RECV_SYNC
 	ld a,#IOC_XPORT_BAD_FRAME	; preamble not found in window
 	ret
@@ -576,6 +679,9 @@ IOC_CMD_RECV_LOOP:
 	ret
 
 IOC_CMD_RECV_SYNC_TIMEOUT:
+	; Capture lives in the spare region: slot 4 is full and this is diagnostic
+	; code, which is exactly what belongs somewhere with room.
+	call ioc_diag_capture		; B = unused scan budget
 	ld a,#IOC_XPORT_TIMEOUT_REPLY_MARKER
 	ret
 
@@ -1107,6 +1213,80 @@ IOCBULKW_PUT_READY:
 	pop bc
 	or a
 	ret
+
+;
+; One-time channel initialisation.
+;
+; sio_command_init issues WR0 = 18h, a CHANNEL RESET, which the SIO manual lists
+; as one of the three things that destroy character synchronisation.  Calling it
+; at the head of every IOCALL -- the "Phase 1 workaround" -- therefore made
+; persistent External Sync impossible by construction.  It now runs once.
+;
+; Both flags are cleared by the reset itself, so re-running init re-arms the
+; hunt-once path as well.
+ioc_link_init_once:
+	ld a,(ioc_link_ready)
+	or a
+	ret nz
+	call sio_command_init
+	xor a
+	ld (ioc_rx_synced),a		; boundary not established yet
+	ld a,#1
+	ld (ioc_link_ready),a
+	xor a
+	ret
+
+;
+; Cold-boot link bring-up.
+;
+; Sends one LINK_SYNC request through the ordinary IOCALL path.  That call runs
+; ioc_link_init_once (channel reset and configuration), leaves ioc_rx_synced
+; clear so the receiver enters Hunt exactly once, and the MCU's handler clears
+; its own flag so the reply to this request carries the falling /SYNC edge.
+; Locating that reply's preamble sets ioc_rx_synced, and from then on neither
+; side touches synchronisation again.
+;
+; Returns A = 0 on success.  A failure here is not fatal to the boot: the link
+; is simply unsynchronised, IOCALL reports transport errors, and the machine
+; still runs on the VDrip console and A: drive, which share nothing with SIO1.
+ioc_link_bringup:
+	ld c,#IOC_LINK_BRINGUP_TRIES
+ioc_lb_try:
+	; Re-arm BOTH ends for each attempt.  Clearing ioc_rx_synced puts the
+	; receiver back into Hunt, and the LINK_SYNC request clears the MCU's own
+	; flag so its reply carries a fresh falling /SYNC edge.
+	;
+	; Retrying matters because the MCU sets that flag when it SENDS the edge,
+	; not when the host receives it.  Without this, one missed reply left the
+	; MCU believing the boundary was established and the host hunting for an
+	; edge that would never come again -- an unrecoverable link from a single
+	; lost byte.
+	xor a
+	ld (ioc_rx_synced),a
+
+	ld hl,#MOVE_BUFFER
+	ld b,#IOC_FRAME_SIZE
+ioc_lb_clear:
+	ld (hl),a
+	inc hl
+	djnz ioc_lb_clear
+
+	ld hl,#MOVE_BUFFER
+	ld (hl),#IOC_CMD_LINK_SYNC	; class; seq/status/len stay zero
+	ld de,#(MOVE_BUFFER + IOC_FRAME_SIZE)
+	push bc
+	call IOCALL
+	pop bc
+	or a
+	ret z				; synchronised
+	dec c
+	jr nz,ioc_lb_try
+
+	ld a,#IOC_XPORT_TIMEOUT
+	ret
+
+ioc_link_ready:	.db 0
+ioc_rx_synced:	.db 0
 
 IOC_CMD_CODE_END:
 

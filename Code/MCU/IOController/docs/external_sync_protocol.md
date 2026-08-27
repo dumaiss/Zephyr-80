@@ -79,15 +79,16 @@ and only the two output routes (`RB1PPS`, `RB3PPS`) are claimed.
 
 The SPI path is a hybrid:
 
-- **Receive** is entirely hardware.  `/SYNCB` is asserted for the whole window
-  and MOSI only idles marking, so shifting out `FFh` reproduces it exactly.
-- **Reply byte 0 stays bit-banged.**  `/SYNCB` has to fall between bit 1's
-  rising and falling edges, and a hardware shift register cannot be interrupted
-  mid-word.  `sync_assert()` is idempotent, so bytes 1..31 and the trailing
-  flush byte need no intra-byte GPIO and go through SPI2.
+- **Receive** is entirely hardware.  Once established, `/SYNCB` stays asserted
+  across transactions and MOSI only idles marking, so shifting out `FFh`
+  reproduces it exactly.
+- **The first reply's marker stays bit-banged.**  `/SYNCB` has to fall after
+  bit 1's rising edge and before the next falling edge, and a hardware shift
+  register cannot be interrupted mid-word.  Later replies send the marker and
+  all 32 mailbox bytes through SPI2 in whole-byte clock counts.
 - `RB1PPS`/`RB3PPS` are switched between LATB and SPI2 around the bit-banged
-  phase.  The changeover is glitch-free because `CKP = 0` idles SCK low, which
-  is the level LATB3 already holds.
+  phase.  The changeover is glitch-free because `CKP = 1` idles SCK high,
+  matching LATB3 and the pull-up on each unselected gated SIO clock.
 
 The SPI clock is `SPI2CLK = 0` (Fosc) with `SPI2BAUD = 31`, giving
 `64 MHz / (2 * 32)` = **1.000 MHz**.
@@ -574,9 +575,9 @@ bare:     32 + 1 flush = 33 clocked, 32 readable; host reads 1 scan + 31 body
 preamble: 1 + 32 + 1   = 34 clocked, 33 readable; host reads 1 scan + 32 body
 ```
 
-The reply timing is intentionally written out in `clock_reply_byte()` rather
-than hidden behind a generic byte shifter.  This is the timing that produced a
-working `PING OK`.
+The first reply's marker timing is intentionally written out in
+`sio_link_clock_sync_byte()` rather than hidden behind a generic byte shifter.
+It is the only byte that establishes the persistent character boundary.
 
 Before the first reply byte, the PIC sends two setup clocks while `/SYNCB` is
 high:
@@ -586,34 +587,34 @@ setup bit 0: SIO_MOSI=1, clock pulse
 setup bit 1: SIO_MOSI=0, clock pulse
 ```
 
-Then each reply byte is clocked LSB-first.  For every byte, `/SYNCB` is asserted
-while bit 1 is being clocked, immediately after that bit's rising edge:
+Then the `7Eh` marker is clocked LSB-first.  `/SYNCB` is asserted while bit 1 is
+being clocked, immediately after that bit's rising edge:
 
 ```text
-clock idle low
+clock idle high
 
 bit 0:
   put data bit on SIO_MOSI
   wait
-  SIO_SCK high
-  wait
   SIO_SCK low
+  wait
+  SIO_SCK high
 
 bit 1:
   put data bit on SIO_MOSI
   wait
-  SIO_SCK high
+  SIO_SCK low
   wait
+  SIO_SCK high
   /SYNCB low
   wait
-  SIO_SCK low
 
 bits 2..7:
   put data bit on SIO_MOSI
   wait
-  SIO_SCK high
-  wait
   SIO_SCK low
+  wait
+  SIO_SCK high
   wait
 ```
 
@@ -621,14 +622,15 @@ ASCII timing sketch for the first reply byte:
 
 ```text
           setup        setup        byte0 bit0    byte0 bit1    byte0 bit2
-SIO_SCK   ___/^\___    ___/^\___    ___/^\___     ___/^\___     ___/^\___
+SIO_SCK   ---\_/---    ---\_/---    ---\_/---     ---\_/---     ---\_/---
 SIO_MOSI       1            0          b0[0]         b0[1]         b0[2]
 /SYNCB  ----------------------------- high -------\_____________________
                                                    assert low here
 ```
 
-After the 32 mailbox bytes, the PIC clocks one extra `FFh` marking byte while
-`/SYNCB` remains asserted.  Bench behavior showed that the SIO RX-ready status
+After that first marker, `/SYNCB` remains asserted across transactions.  Each
+steady-state reply is exactly marker + 32 mailbox bytes + one trailing `FFh`,
+all through SPI2.  Bench behavior showed that the SIO RX-ready status
 lags the clocked serial stream by one byte in this setup; the trailing marking
 byte makes the final mailbox byte visible to the Z80 poller.  The BIOS reads
 only the fixed 32-byte reply and discards stale state when it initializes the

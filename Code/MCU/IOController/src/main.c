@@ -105,14 +105,13 @@ static void platform_init(void)
 
     external_sync_init();
 
-    /* Port C peripheral bus.  Claims RC3/RC4/RC5 and enables SPI1; each device
-     * on that bus sets its own clock rate before a transaction.  Nothing uses
-     * it yet -- this step exists to prove it does not disturb the SIO link. */
+    /* Port C peripheral bus.  Claims RC3/RC4/RC5 and all three device-select
+     * pins; each device sets its own clock rate before a transaction. */
     spi1_bus_init();
 
-    /* Controller latch: 500 ms bring-up counter on the same port C bus.  The
-     * SD card is not touched here -- it initialises lazily on the first
-     * SD_READ, so a missing card costs nothing at boot. */
+    /* Park the controller latch at zero.  Its periodic counter test is disabled
+     * during SD-card bring-up, so idle firmware creates no SPI1 traffic.  The
+     * card still initialises lazily on the first SD request. */
     timebase_init();
     controller_latch_init();
     sd_cache_init();
@@ -311,8 +310,7 @@ static void service_command_request(void)
          * the READY reply has actually reached the host.
          *
          * The old PING diagnostic that wrote payload bytes to the controller
-         * latch lived here.  It is gone: the latch now shows the 500 ms
-         * bring-up counter, and the two fight over the same two devices. */
+         * latch lived here.  It is gone; PING does not touch SPI1. */
         t = uprof_now();
         (void)bulk_channel_run_if_armed();
         uprof_add(UPROF_BULK, t);
@@ -383,8 +381,11 @@ int main(void)
          * a transaction -- the loop is single-threaded and
          * service_command_request() completes its bulk phase before returning.
          *
-         * COMMAND_READY is dropped around it because the flush can block for
-         * the length of several card writes.  The Z80 holds /SIO1B_INT until
+         * Automatic flushing is gated on the SD driver's already-initialized
+         * state.  It never starts card initialization or retries a failed
+         * session; an explicit SD operation must recover it first.
+         * COMMAND_READY is dropped because a flush can block for the length of
+         * several card writes.  The Z80 holds /SIO1B_INT until
          * acknowledged, so a request arriving mid-flush is delayed rather than
          * lost; this only tells the host the truth about when to bother
          * asking.  Raised again unconditionally: leaving it low on a failed
@@ -397,7 +398,7 @@ int main(void)
             (void)sd_cache_tick();      /* keeps the interval anchored; no I/O */
         }
 
-        /* Non-blocking: returns immediately unless the 500 ms period elapsed. */
+        /* Empty unless CONTROLLER_LATCH_COUNTER_TEST is explicitly enabled. */
         controller_latch_tick();
 
         NOP();

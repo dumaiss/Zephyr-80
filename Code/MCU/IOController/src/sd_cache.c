@@ -219,25 +219,37 @@ bool sd_cache_dirty(void)
 
 SdStatus sd_cache_flush(void)
 {
-    SdStatus first = SD_OK;
     SdStatus st;
     uint8_t  i;
 
     for (i = 0u; i < SD_CACHE_SLOTS; i++) {
         st = slot_commit(&slots[i]);
-        if ((st != SD_OK) && (first == SD_OK))
-            first = st;             /* keep going: flush what can be flushed */
+        if (st != SD_OK) {
+            /* A failed block write invalidates the SD driver's initialized
+             * state.  Do not turn one flush into several init/write attempts;
+             * preserve this and all later dirty slots for explicit recovery. */
+            last_flush_tick = timebase_ticks();
+            return st;
+        }
     }
 
     last_flush_tick = timebase_ticks();
-    return first;
+    return SD_OK;
 }
 
 bool sd_cache_flush_due(void)
 {
+#if SD_CACHE_AUTO_FLUSH
     uint16_t now = timebase_ticks();
 
     if (!sd_cache_dirty())
+        return false;
+
+    /* Background policy must never initialise or recover the card.  A dirty
+     * slot can only have been created after a successful card access, so false
+     * here means a later operation failed and deliberately invalidated that
+     * session.  Leave the data dirty until an explicit SD command succeeds. */
+    if (!sd_card_is_initialized())
         return false;
 
     /* Unsigned difference so this keeps working across the counter's 11-minute
@@ -245,6 +257,10 @@ bool sd_cache_flush_due(void)
      * than it simply means the flush happens at the next idle moment. */
     return (uint16_t)(now - last_flush_tick) >=
            (uint16_t)(SD_CACHE_FLUSH_MS / TIMEBASE_TICK_MS);
+#else
+    /* Manual bring-up override: explicit flushes still work. */
+    return false;
+#endif
 }
 
 bool sd_cache_tick(void)

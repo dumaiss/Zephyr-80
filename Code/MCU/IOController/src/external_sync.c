@@ -54,14 +54,99 @@
 
 static uint8_t rx_window[EXTSYNC_RX_WINDOW_BYTES];
 
-static void sync_assert(void)
+/* Character synchronisation, once.
+ *
+ * The SIO manual is explicit: in External Sync mode "the SYNC input must be
+ * held Low until character synchronization is lost", and assembly of received
+ * data continues until the SIO is reset, until the receiver is disabled (by
+ * command or by DCD under Auto Enables), or until the CPU sets Enter Hunt
+ * Phase.  That list is exhaustive -- a receive OVERRUN is not on it, so the
+ * Z80's receiver may overrun harmlessly while it transmits a request and keep
+ * its character alignment.
+ *
+ * So /SYNCB is asserted once, at the moment the boundary is established, and
+ * never released.  Releasing it per transaction -- which this firmware used to
+ * do -- forced the host back into Hunt every time and made the hand-clocked
+ * sync byte necessary on every reply.
+ *
+ * Establishing the boundary still needs a falling edge at a precise bit
+ * position, so the bit-banged sequence survives for exactly one reply.  After
+ * that link_synced is set and replies are pure SPI.
+ *
+ * ALIGNMENT RULE for everything that follows: once the host is synchronised it
+ * counts eight clocks per character, so the PIC must never emit a number of
+ * clock edges that is not a multiple of eight.  The two "setup clocks" in the
+ * reply path are exactly such an emission, which is why they now run only in
+ * the sync-establishing branch. */
+static bool link_synced;
+
+/* True when the boundary is already established, i.e. this reply does not carry
+ * the bit-banged sync byte and therefore has to supply the alignment marker as
+ * ordinary data. */
+static bool established_before_this_reply;
+
+/* Timer1 counts the physical RB3/SCK rising edges.  Unlike a software exchange
+ * counter, this sees PPS handover glitches and clocks emitted by the SPI module
+ * itself.  The pin input buffer remains available while RB3 is an output. */
+static uint16_t last_rx_edges;
+static uint16_t last_tx_edges;
+
+static void edge_counter_init(void)
 {
-    LINK_SYNC_LAT = SYNCB_ASSERTED;
+    T1CON    = 0x00u;             /* stopped, 1:1 prescale, synchronized */
+    T1GCON   = 0x00u;             /* no gate */
+    T1CKIPPS = SIO_SCK_T1CKIPPS; /* RB3 */
+    T1CLK    = 0x00u;             /* clock from T1CKIPPS */
+    TMR1     = 0u;
+    T1CON    = 0x02u;             /* RD16, still stopped */
+}
+
+static void edge_counter_start(void)
+{
+    T1CONbits.ON = 0;
+    TMR1 = 0u;
+    T1CONbits.ON = 1;
+}
+
+static uint16_t edge_counter_stop(void)
+{
+    T1CONbits.ON = 0;
+    return TMR1;
+}
+
+static bool link_synced_steady_state(void)
+{
+    return established_before_this_reply;
 }
 
 static void sync_release(void)
 {
     LINK_SYNC_LAT = SYNCB_IDLE;
+}
+
+void external_sync_request_resync(void)
+{
+    /* A fresh falling edge cannot exist unless /SYNCB is first returned high.
+     * LINK_SYNC is the explicit recovery operation, so breaking the persistent
+     * low level here is intentional: the next reply re-establishes the boundary
+     * and then holds /SYNCB low again. */
+    sync_release();
+    link_synced = false;
+}
+
+uint16_t external_sync_last_rx_edges(void)
+{
+    return last_rx_edges;
+}
+
+uint16_t external_sync_last_tx_edges(void)
+{
+    return last_tx_edges;
+}
+
+bool external_sync_is_established(void)
+{
+    return link_synced;
 }
 
 static void bus_select_siob(void)
@@ -91,7 +176,7 @@ void sio_link_pins_to_lat(void)
 {
     /* Park the idle levels the bit-bang path expects before handing the pins
      * back, so the changeover produces no edge on either wire. */
-    LINK_CLK_LAT  = 0;
+    LINK_CLK_LAT  = 1;
     LINK_DOUT_LAT = 1;
     SIO_SCK_PPS  = SIO_PPS_SRC_LAT;
     SIO_MOSI_PPS = SIO_PPS_SRC_LAT;
@@ -99,8 +184,8 @@ void sio_link_pins_to_lat(void)
 
 void sio_link_pins_to_spi(void)
 {
-    /* CKP = 0 means the module also idles SCK low, so this matches the level
-     * LATB3 is already holding and the switch is glitch-free. */
+    /* CKP = 1 means the module also idles SCK high, matching both LATB3 and
+     * the 100k pull-up on each gated SIO clock. */
     SIO_SCK_PPS  = EXTSYNC_PPS_SRC_SPI2_SCK;
     SIO_MOSI_PPS = EXTSYNC_PPS_SRC_SPI2_SDO;
 }
@@ -118,8 +203,15 @@ static void spi_init(void)
     SPI2CON0bits.LSBF  = 1;   /* the Z80 SIO shifts bit 0 first on the wire */
 
     SPI2CON1 = 0x00;
-    SPI2CON1bits.CKP = 0;     /* clock idles low */
-    SPI2CON1bits.CKE = 1;     /* data changes on the falling edge  -> Mode 0 */
+    /* Mode 3: idle high, data changes on falling edges, sample on rising.
+     *
+     * The high idle is mandatory on this board.  /SIOB_CS and /SIOA_CS gate
+     * SCK through a 74AHCT125, and each gated output has a 100k pull-up.  With
+     * CKP = 0, releasing either select changed the SIO clock from driven low to
+     * pulled high: one extra receive-clock edge per phase, two per command
+     * transaction. */
+    SPI2CON1bits.CKP = 1;     /* clock idles high */
+    SPI2CON1bits.CKE = 0;     /* data changes on the falling edge -> Mode 3 */
     SPI2CON1bits.SMP = 0;     /* sample input mid data-output time */
 
     SPI2CON2 = 0x00;
@@ -220,7 +312,7 @@ void sio_link_write_data_bit(uint8_t bit)
  * The bit shape is the electrical protocol, not incidental control flow:
  *
  *   - bits before drop_bit are clocked with /SYNC still high
- *   - drop_bit is clocked, then /SYNC is driven low before the falling edge
+ *   - drop_bit is clocked, then /SYNC is driven low before the next falling edge
  *   - the remaining bits are clocked with /SYNC low
  *   - bits 0 and 1 carry no trailing gap; bits 2..7 do
  *
@@ -239,19 +331,20 @@ void sio_link_clock_sync_byte(uint8_t value, SioLinkChannel channel,
         sio_link_write_data_bit(value & 1u);
         value >>= 1;
         __delay_us(EXTSYNC_BIT_DELAY_US);
-        LINK_CLK_LAT = 1;
+        LINK_CLK_LAT = 0;
         __delay_us(EXTSYNC_BIT_DELAY_US);
 
+        /* Rising edge: the SIO samples this bit. */
+        LINK_CLK_LAT = 1;
+
         if (i == drop_bit) {
-            /* Between this bit's rising and falling edge. */
+            /* After this bit's rising edge, before the next falling edge. */
             if (channel == SIO_LINK_CH_BULK)
                 SYNCA_LAT = SYNCA_ASSERTED;
             else
                 SYNCB_LAT = SYNCB_ASSERTED;
             __delay_us(EXTSYNC_BIT_DELAY_US);
         }
-
-        LINK_CLK_LAT = 0;
 
         if (i >= 2u)
             __delay_us(EXTSYNC_BIT_DELAY_US);
@@ -295,6 +388,7 @@ static bool is_command_class(uint8_t value)
            (value == CMD_SD_WRITE_REC) ||
            (value == CMD_SD_FLUSH) ||
            (value == CMD_PROFILE) ||
+           (value == CMD_LINK_SYNC) ||
            (value == CMD_XFER_STATUS);
 }
 
@@ -401,6 +495,13 @@ static bool find_frame_start(uint16_t *bit_index)
          * sequence slot, and the host rejected the reply as BAD_SEQ. */
         if ((cls == CMD_SD_READ_REC || cls == CMD_SD_WRITE_REC) &&
             len == IOC_SD_RECORD_PAYLOAD_LEN) {
+            if (!frame_crc_ok(start))
+                continue;
+            *bit_index = start;
+            return true;
+        }
+
+        if (cls == CMD_LINK_SYNC && len == 0x00u) {
             if (!frame_crc_ok(start))
                 continue;
             *bit_index = start;
@@ -599,7 +700,7 @@ void external_sync_init(void)
     LINK_SYNC_LAT  = SYNCB_IDLE;
     LINK_SYNC_TRIS = 0;
 
-    LINK_CLK_LAT  = 0;
+    LINK_CLK_LAT  = 1;
     LINK_CLK_TRIS = 0;
 
     LINK_DOUT_LAT  = 1;
@@ -612,6 +713,24 @@ void external_sync_init(void)
     spi_init();
     sio_link_clear_fifos();
     sio_link_pins_to_lat();
+
+    /* Left IDLE HIGH here, deliberately.
+     *
+     * The boundary is established by the FALLING edge of /SYNCB inside the
+     * hand-clocked byte, so the line has to be high beforehand for that edge to
+     * exist at all.  An earlier version of this asserted it here and never
+     * released it, which made sync_assert() inside that byte a no-op and meant
+     * the edge was never delivered -- the receiver would have hunted forever.
+     *
+     * Sequence: idle high from here -> first reply drops it at the proven bit
+     * position -> it stays low for the life of the link, which is what the SIO
+     * manual requires ("the SYNC input must be held Low until character
+     * synchronization is lost"). */
+    link_synced = false;
+    last_rx_edges = 0u;
+    last_tx_edges = 0u;
+    edge_counter_init();
+    sync_release();
 }
 
 bool external_sync_receive(IocFrame *frame)
@@ -621,12 +740,15 @@ bool external_sync_receive(IocFrame *frame)
     uint16_t t_dec;
     bool     ok;
 
+    /* Receive needs no intra-byte GPIO at all: MOSI just idles marking, which
+     * is what shifting out FFh does.  So the entire request window goes through
+     * the SPI module. */
+    /* Park HIGH before selecting the SIO.  The gated SIO clock is already high
+     * through its pull-up, so enabling the '125 now produces no transition. */
+    LINK_CLK_LAT = 1;
+    edge_counter_start();
     bus_select_siob();
-    sync_assert();
 
-    /* Receive needs no intra-byte GPIO at all: /SYNCB is asserted for the whole
-     * window and MOSI just idles marking, which is what shifting out FFh does.
-     * So the entire window goes through the SPI module. */
     sio_link_set_baud(EXTSYNC_SPI_BAUD);
     sio_link_clear_fifos();
     sio_link_pins_to_spi();
@@ -636,16 +758,16 @@ bool external_sync_receive(IocFrame *frame)
             /* Give the pins and the bus back before bailing out, or the next
              * transaction starts with RB1/RB3 still routed to the module. */
             sio_link_pins_to_lat();
-            sync_release();
+            last_rx_edges = edge_counter_stop();
             bus_release_siob();
             return false;
         }
         sio_link_byte_gap();
     }
     sio_link_pins_to_lat();
+    last_rx_edges = edge_counter_stop();
     uprof_add(UPROF_RX, t_rx);
 
-    sync_release();
     bus_release_siob();
 
     t_dec = uprof_now();
@@ -661,17 +783,23 @@ bool external_sync_receive(IocFrame *frame)
  *
  *   1. Wait briefly so the BIOS has switched SIO1/B from request transmit to
  *      reply receive, then take the shared bus with SIOB_CS.
- *   2. Send two setup clocks while /SYNCB is idle high.
- *   3. Clock the 32 reply bytes.  sio_link_clock_sync_byte() asserts /SYNCB at the
- *      proven bit position and keeps it low after that.
- *   4. Clock one trailing FFh byte.  The SIO exposes the final received byte to
+ *   2. On first sync only, send two setup clocks while /SYNCB is idle high.
+ *   3. Lead with 7Eh.  On first sync it is hand-clocked and drops /SYNCB at the
+ *      proven bit position; later it is one ordinary SPI byte.
+ *   4. Clock the 32 reply bytes.
+ *   5. Clock one trailing FFh byte.  The SIO exposes the final received byte to
  *      RR0/RX-ready only after additional clocks arrive on this board.
- *   5. Release /SYNCB and SIOB_CS, and return SIO_MOSI to marking idle high.
+ *   6. Release SIOB_CS and return SIO_MOSI to marking idle high.  /SYNCB stays
+ *      asserted until an explicit LINK_SYNC recovery request.
  */
 void external_sync_send(IocFrame *frame)
 {
     uint8_t i;
     uint16_t crc = 0u;
+
+    /* Sampled BEFORE the establishing branch below can set link_synced, so the
+     * reply that establishes sync does not also emit a second marker byte. */
+    established_before_this_reply = link_synced;
 
     /* Stamp the CRC before a single bit goes out.  The host rejects any reply
      * that fails it, which is what stops a mis-framed or stale reply being
@@ -682,19 +810,28 @@ void external_sync_send(IocFrame *frame)
     frame->bytes[IOC_OFF_CRC_HI] = (uint8_t)(crc >> 8);
 
     __delay_us(EXTSYNC_REPLY_GUARD_US);
-    bus_select_siob();
+    /* Match the gated clock's pulled-up level before enabling its buffer. */
+    LINK_CLK_LAT  = 1;
     LINK_DOUT_LAT = 1;
+    edge_counter_start();
+    bus_select_siob();
 
-    LINK_CLK_LAT = 1;
-    __delay_us(EXTSYNC_BIT_DELAY_US);
-    LINK_CLK_LAT = 0;
+    if (!link_synced) {
+        /* Two setup clocks with /SYNCB still idle high.  These are NOT a
+         * multiple of eight and would shift a synchronised receiver's character
+         * boundary, so they exist only on the path that is establishing the
+         * boundary in the first place. */
+        LINK_CLK_LAT = 0;
+        __delay_us(EXTSYNC_BIT_DELAY_US);
+        LINK_CLK_LAT = 1;
 
-    __delay_us(EXTSYNC_BIT_DELAY_US);
+        __delay_us(EXTSYNC_BIT_DELAY_US);
 
-    LINK_DOUT_LAT = 0;
-    LINK_CLK_LAT = 1;
-    __delay_us(EXTSYNC_BIT_DELAY_US);
-    LINK_CLK_LAT = 0;
+        LINK_DOUT_LAT = 0;
+        LINK_CLK_LAT = 0;
+        __delay_us(EXTSYNC_BIT_DELAY_US);
+        LINK_CLK_LAT = 1;
+    }
 
     /* Lead the reply with the 7Eh alignment byte.
      *
@@ -711,21 +848,45 @@ void external_sync_send(IocFrame *frame)
      *   bare:     32 + 1 flush = 33 clocked, 32 readable; host reads 1 + 31
      *   preamble: 1 + 32 + 1   = 34 clocked, 33 readable; host reads 1 + 32
      *
-     * This byte is also the bit-banged one.  sio_link_clock_sync_byte() drops /SYNCB
-     * between bit 1's rising and falling edges, and no hardware shift register
-     * can be interrupted at that point.  Every later call to sync_assert() is a
-     * no-op because /SYNCB is already low, which is what lets the whole 32-byte
-     * mailbox move to the SPI module without changing an edge that matters.
+     * On initial link sync this is also the bit-banged byte:
+     * sio_link_clock_sync_byte() drops /SYNCB after bit 1's rising edge and
+     * before the next falling edge, a point no hardware shift register can
+     * expose.  /SYNCB then stays low, and subsequent markers and mailboxes use
+     * only whole-byte SPI clocks.
      *
      * If PING regresses, this is the change to back out: restore
      * the call below with frame->bytes[0] and start the loop that follows at
      * i = 1. */
-    sio_link_clock_sync_byte(EXTSYNC_ALIGNMENT_BYTE, SIO_LINK_CH_COMMAND,
-                             EXTSYNC_SYNC_DROP_BIT);
+    if (!link_synced) {
+        /* Hand-clocked, once: /SYNCB drops inside this byte at the proven bit
+         * position, which is the falling edge the host's receiver needs to fix
+         * its character boundary.  A hardware shift register cannot be
+         * interrupted mid-word, which is why this byte alone is bit-banged. */
+        sio_link_clock_sync_byte(EXTSYNC_ALIGNMENT_BYTE, SIO_LINK_CH_COMMAND,
+                                 EXTSYNC_SYNC_DROP_BIT);
+        link_synced = true;
+    }
+
+    /* Park the clock HIGH before the SPI module takes the pins.  CKP = 1 means
+     * both owners agree on the level, so the PPS handover is edge-free.  DOUT
+     * similarly returns to marking idle between characters. */
+    LINK_CLK_LAT  = 1;
+    LINK_DOUT_LAT = 1;
 
     sio_link_set_baud(EXTSYNC_SPI_BAUD);
     sio_link_clear_fifos();
     sio_link_pins_to_spi();
+
+    if (link_synced_steady_state()) {
+        /* The alignment byte still leads every reply, because the host's reply
+         * scanner locks onto it -- but now it is an ordinary SPI byte costing
+         * ~8 us instead of a bit-banged one costing ~1.15 ms.  It carries no
+         * sync edge any more; /SYNCB has been low since the link came up. */
+        uint8_t discard;
+        (void)sio_link_exchange(EXTSYNC_ALIGNMENT_BYTE, &discard);
+        sio_link_byte_gap();
+    }
+
     for (i = 0u; i < IOC_FRAME_SIZE; i++) {
         uint8_t discard;
 
@@ -742,8 +903,13 @@ void external_sync_send(IocFrame *frame)
         (void)sio_link_exchange(0xFFu, &discard);
     }
     sio_link_pins_to_lat();
+    last_tx_edges = edge_counter_stop();
 
-    sync_release();
+    /* /SYNCB is NOT released here.  It was, and that single line defeated the
+     * whole persistent-sync change: the establishing reply delivered the falling
+     * edge and then this put the line straight back high, leaving every
+     * subsequent reply with no edge and a line the manual says must stay low.
+     * It is dropped once, by the hand-clocked byte above, and held. */
     LINK_DOUT_LAT = 1;
     bus_release_siob();
 }

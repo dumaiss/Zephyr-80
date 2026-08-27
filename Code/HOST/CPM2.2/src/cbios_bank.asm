@@ -17,6 +17,13 @@
 	.globl CURRENT_BANK,cbios_dma_addr
 	.globl WBOOT,FBASE
 	
+	.globl ctc_disable_interrupts,ioc_diag_capture
+	.globl ioc_rx_synced,ioc_link_ready
+	.globl IOC_DIAG_RR0,IOC_DIAG_RR1,IOC_DIAG_SYNCED,IOC_DIAG_READY
+	.globl IOC_DIAG_SCANLEFT
+	.globl IOC_DIAG_B0,IOC_DIAG_B1,IOC_DIAG_B2,IOC_DIAG_B3
+	.globl IOC_DIAG_B4,IOC_DIAG_B5,IOC_DIAG_B6,IOC_DIAG_B7,IOC_DIAG_BIDX
+
 	.area CODE (ABS)
 	.org CBIOS_BANKING_CODE_BASE
 
@@ -190,3 +197,68 @@ MOVE_CHUNK_LEN:
 BANKING_STATE_END:
 
 	.area CODE (ABS)
+
+; ---------------------------------------------------------------------------
+; Overflow area: routines relocated out of full core-BIOS regions.
+;
+; Physically after the banking module only because the free bytes happen to be
+; here; nothing below belongs to banking.  Keep entries small, self-contained,
+; and referenced by .globl so they can move again without touching callers.
+; ---------------------------------------------------------------------------
+	.area CODE (ABS)
+	.org CBIOS_SPARE_CODE_BASE
+
+; Reset all Z80 CTC channels with interrupt enable clear.  Relocated from
+; cbios_boot.asm to free three bytes there for the IOCALL link bring-up call.
+ctc_disable_interrupts:
+	ld a,#CTC_RESET_DISABLE
+	out (CTC0_CTRL),a
+	out (CTC1_CTRL),a
+	out (CTC2_CTRL),a
+	out (CTC3_CTRL),a
+	ret
+
+	.area CODE (ABS)
+	.org CBIOS_IOC_DIAG_BASE
+IOC_DIAG_RR0:		.db 0
+IOC_DIAG_RR1:		.db 0
+IOC_DIAG_SYNCED:	.db 0
+IOC_DIAG_READY:		.db 0
+; Scan budget REMAINING when the reply timed out.  SIO_COMMAND_REPLY_SCAN_LIMIT
+; minus this is how many bytes actually arrived before the link went quiet, and
+; that separates "the reply never came" from "the reply came and the marker was
+; missed" -- which need opposite fixes.
+IOC_DIAG_SCANLEFT:	.db 0
+; First four bytes the reply scan actually saw, and the index used to fill them.
+; If the character boundary is wrong these are a bit-rotated 7Eh/81h rather than
+; the marker and class -- 7Eh is 01111110, so a one-bit slip reads as FCh or 3Fh
+; and a four-bit slip as E7h.  Nothing else distinguishes "wrong alignment" from
+; "wrong bytes".
+IOC_DIAG_B0:		.db 0
+IOC_DIAG_B1:		.db 0
+IOC_DIAG_B2:		.db 0
+IOC_DIAG_B3:		.db 0
+IOC_DIAG_B4:		.db 0
+IOC_DIAG_B5:		.db 0
+IOC_DIAG_B6:		.db 0
+IOC_DIAG_B7:		.db 0
+IOC_DIAG_BIDX:		.db 0
+
+; Record why a reply never arrived.  In: B = unused scan budget.
+; Clobbers AF only, so the caller's error code is still its own to set.
+ioc_diag_capture:
+	ld a,b
+	ld (IOC_DIAG_SCANLEFT),a
+	xor a
+	out (SIO_COMMAND_CTRL_PORT),a	; point at RR0
+	in a,(SIO_COMMAND_CTRL_PORT)
+	ld (IOC_DIAG_RR0),a
+	ld a,#0x01
+	out (SIO_COMMAND_CTRL_PORT),a	; point at RR1
+	in a,(SIO_COMMAND_CTRL_PORT)
+	ld (IOC_DIAG_RR1),a
+	ld a,(ioc_rx_synced)
+	ld (IOC_DIAG_SYNCED),a
+	ld a,(ioc_link_ready)
+	ld (IOC_DIAG_READY),a
+	ret
