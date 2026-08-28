@@ -24,6 +24,9 @@
                                    * initialisation window */
 #define SPI1_BAUD_200KHZ   159u   /* 64 MHz / 320 = 200 kHz */
 #define SPI1_BAUD_1MHZ     31u    /* 64 MHz /  64 = 1.000 MHz */
+#define SPI1_BAUD_1_33MHZ  23u    /* 64 MHz /  48 = 1.333 MHz */
+#define SPI1_BAUD_2MHZ     15u    /* 64 MHz /  32 = 2.000 MHz */
+#define SPI1_BAUD_4MHZ      7u    /* 64 MHz /  16 = 4.000 MHz */
 
 #define SPI1_MSB_FIRST     0u
 #define SPI1_LSB_FIRST     1u

@@ -56,12 +56,11 @@
 #define SD_DATA_RESP_ACCEPTED    0x05u
 /* Busy-wait after a write: the card holds DO low while it programs.
  *
- * 60000 bytes at the 1 MHz data clock is 8 us each, so ~480 ms -- just past the
- * 500 ms the SD spec allows for a single-block program, and comfortably inside
- * the host's ~10.7 s IOCALL patience.  It also has to fit the uint16_t loop
- * counter: a larger bound silently folds both comparisons to constants and the
- * timeout stops existing. */
-#define SD_WRITE_BUSY_BYTES      60000u
+ * The byte count is derived from SD_DATA_BYTE_US, preserving the ~480 ms
+ * real-time bound when the stretch-test clock is scaled back.  At 4 MHz this
+ * is 240000 bytes, so the polling loop deliberately uses uint32_t. */
+#define SD_WRITE_BUSY_TIMEOUT_US 480000uL
+#define SD_WRITE_BUSY_BYTES      (SD_WRITE_BUSY_TIMEOUT_US / SD_DATA_BYTE_US)
 
 #define SD_IF_COND_ARG           0x000001AAuL  /* 2.7-3.6 V, check pattern AAh */
 #define SD_OCR_CCS               0x40000000uL  /* block addressing when set */
@@ -79,13 +78,13 @@
  * So the whole SD operation has to finish comfortably inside ~10 s, and it is
  * far better to give up early with a status code than to run long.
  *
- * Byte times: 400 kHz init clock -> 20 us/byte; 1 MHz data clock -> 8 us/byte.
+ * Byte times: 400 kHz init clock -> 20 us/byte; 4 MHz data clock -> 2 us/byte.
  * One sd_command() is at most 17 bytes (1 idle + 6 command + 10 R1 polls).
  *
  *   sd_command at init speed   ~ 340 us
  *   ACMD41 iteration (x2 cmds) ~ 680 us
  *   1200 iterations            ~ 0.8 s   <- SD spec allows 1 s for ACMD41
- *   token poll, 25000 bytes    ~ 0.2 s   <- SD spec read access max is 100 ms
+ *   token poll, 75000 bytes    ~ 0.15 s  <- SD spec read access max is 100 ms
  *
  * Worst case total is therefore about 1 s, an order of magnitude inside the
  * host timeout.
@@ -105,16 +104,19 @@
 /* Clock for the data phase, once the card is initialised.  Separate from the
  * init rate because the card is only obliged to accept 100-400 kHz until it
  * reports ready.  Lower this first if CMD17 or the data token misbehave: a
- * card that initialises cleanly at 125 kHz and then fails at 1 MHz is a signal
- * integrity problem, not a protocol one. */
-#define SD_DATA_BAUD             SPI1_BAUD_1MHZ
+ * card that initialises cleanly at 125 kHz and then fails at the data rate is
+ * a signal-integrity problem, not a protocol one. */
+#define SD_DATA_BAUD             SPI1_BAUD_4MHZ
+#define SD_DATA_BYTE_US          \
+    ((8uL * 2uL * (SD_DATA_BAUD + 1uL)) / 64uL)
 
 /* Whole-read attempts.  Only CRC failures and a missing data token are retried
  * -- see sd_card_read_block().  A rejected CMD17 or an absent card fails the
  * same way every time. */
 #define SD_READ_ATTEMPTS         3u
 #define SD_ACMD41_RETRIES        1200u
-#define SD_TOKEN_POLL_BYTES      25000u
+#define SD_TOKEN_TIMEOUT_US      150000uL
+#define SD_TOKEN_POLL_BYTES      (SD_TOKEN_TIMEOUT_US / SD_DATA_BYTE_US)
 
 /* CRC-16-CCITT (poly 1021h, init 0000h, MSB first) -- the algorithm SD uses
  * for data blocks.  Nibble table: two lookups per byte, 32 bytes of flash, and
@@ -395,6 +397,7 @@ static SdStatus sd_read_block_inner(uint32_t lba, uint8_t *buf)
     uint8_t  r1;
     uint8_t  token;
     uint32_t address;
+    uint32_t token_count;
     uint16_t i;
     uint16_t crc;
     uint16_t card_crc;
@@ -427,7 +430,7 @@ static SdStatus sd_read_block_inner(uint32_t lba, uint8_t *buf)
 
     /* The card sends FFh until its data is ready, then the FEh start token. */
     token = 0xFFu;
-    for (i = 0u; i < SD_TOKEN_POLL_BYTES; i++) {
+    for (token_count = 0uL; token_count < SD_TOKEN_POLL_BYTES; token_count++) {
         token = sd_xfer(0xFFu);
         if (token != 0xFFu)
             break;
@@ -503,6 +506,7 @@ static SdStatus sd_write_block_inner(uint32_t lba, const uint8_t *buf)
     uint8_t  r1;
     uint8_t  resp;
     uint32_t address;
+    uint32_t busy_count;
     uint16_t i;
     uint16_t crc;
 
@@ -556,7 +560,7 @@ static SdStatus sd_write_block_inner(uint32_t lba, const uint8_t *buf)
     }
 
     /* Card holds DO low while programming.  Any non-zero byte means done. */
-    for (i = 0u; i < SD_WRITE_BUSY_BYTES; i++) {
+    for (busy_count = 0uL; busy_count < SD_WRITE_BUSY_BYTES; busy_count++) {
         if (sd_xfer(0xFFu) != 0x00u)
             break;
         if (bus_failed)
@@ -568,7 +572,7 @@ static SdStatus sd_write_block_inner(uint32_t lba, const uint8_t *buf)
         return SD_ERR_BUS;
     }
 
-    if (i >= SD_WRITE_BUSY_BYTES) {
+    if (busy_count >= SD_WRITE_BUSY_BYTES) {
         sd_deselect();
         return SD_ERR_WRITE_BUSY;
     }

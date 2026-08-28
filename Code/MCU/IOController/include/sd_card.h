@@ -32,11 +32,10 @@
  *                                     access                        100-400 kHz window; the
  *                                                                   most forgiving of a long
  *                                                                   mezzanine path
- *   SD_DATA_BAUD           1 MHz      --              2-4 MHz       raise only after the CRC
- *                                                                   check has been clean for
- *                                                                   a while; a card that inits
- *                                                                   and then fails is signal
- *                                                                   integrity, not protocol
+ *   SD_DATA_BAUD           4 MHz      --              2/1.33 MHz    stretch test; scale back
+ *                                                                   if CRC, token or command
+ *                                                                   errors appear after clean
+ *                                                                   initialisation
  *   SD_INIT_CLOCK_BYTES    12 (96)    ~1 ms           10 (80)       spec minimum is 74
  *   init clocks with CS    CS high    --              (keep)        REQUIRED, not optional:
  *   high                                                            this is what puts the card

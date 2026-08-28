@@ -46,7 +46,10 @@
  * Waiting for RTS replaces the fixed start guard this lane used to need.  The
  * guard was the single largest cost in a sector transfer and it was a guess;
  * this is deterministic. */
-#define BULK_HOST_READY_TIMEOUT_MS  500u
+#define BULK_HOST_READY_TIMEOUT_MS     500u
+#define BULK_PROFILE_TICKS_PER_MS      31u
+#define BULK_HOST_READY_TIMEOUT_TICKS  \
+    (BULK_HOST_READY_TIMEOUT_MS * BULK_PROFILE_TICKS_PER_MS)
 
 /* After advertising admission, give the host enough time to observe the RR0
  * level and enter its byte loop before opening SIO1/A's clock gate. */
@@ -82,12 +85,16 @@
  * for about 3.2 us/byte at a 10 MHz clock, so it is not the constraint either.
  *
  * The direct payload loop below overlaps CRC work with those four wire
- * microseconds and adds the remaining gap explicitly.  DMA is only relevant if
- * a later design tries to go below the host-safe six-microsecond byte period. */
+ * microseconds.  The zero-gap version proved too fast for the host: the first
+ * transfer timed out before a complete header was captured.  Keep a one-us
+ * payload guard here; fixed packet bytes retain the full two-us gap because
+ * they do not perform overlapping CRC work.  DMA is only relevant if a later
+ * design tries to go below the host-safe byte period. */
 #define BULK_SPI_BAUD         15u   /* 64 MHz / (2 * 16) = 2 MHz */
 #define BULK_SPI_BYTE_US      ((8u * 2u * (BULK_SPI_BAUD + 1u)) / 64u)
 #define BULK_TARGET_BYTE_US   6u
 #define BULK_BYTE_GAP_US      (BULK_TARGET_BYTE_US - BULK_SPI_BYTE_US)
+#define BULK_PAYLOAD_GAP_US   1u
 
 /* The direct payload loop uses an 8-bit guard instead of rebuilding the
  * generic exchange routine's 16-bit, slowest-baud timeout for every byte.
@@ -247,15 +254,20 @@ static uint8_t        last_status;
  * arrives fails one transfer instead of wedging the controller. */
 static bool wait_for_host_ready(void)
 {
-    uint16_t ms;
+    uint16_t start = uprof_now();
 
-    for (ms = 0u; ms < BULK_HOST_READY_TIMEOUT_MS; ms++) {
+    for (;;) {
         if (SIO1A_INT_PORT == SIO1A_INT_ACTIVE)
             return true;
-        __delay_ms(1);
-    }
 
-    return false;
+        /* The request is a persistent level, so there is no reason to sleep
+         * for one millisecond between samples.  Timer3 gives the same bounded
+         * 500 ms failure contract without adding ~1 ms to every good transfer.
+         * Unsigned subtraction remains valid across one Timer3 wrap. */
+        if ((uint16_t)(uprof_now() - start) >=
+            (uint16_t)BULK_HOST_READY_TIMEOUT_TICKS)
+            return false;
+    }
 }
 
 static void sync_a_release(void)
@@ -517,8 +529,11 @@ static bool bulk_run_send(void)
         if (!ok)
             break;
 
+        /* CRC and loop work overlap the SPI shift, but are not by themselves
+         * enough pacing for the 10 MHz host.  Zero gap failed on transfer 0;
+         * one us retains half of the optimization without outrunning INI. */
         discard = SPI2RXB;
-        __delay_us(BULK_BYTE_GAP_US);
+        __delay_us(BULK_PAYLOAD_GAP_US);
         remaining--;
     }
 
