@@ -46,9 +46,9 @@
  * That is an ADDRESS rule, not a filesystem rule, and the distinction is the
  * whole point: this module knows nothing about directories, extents or
  * allocation vectors, and must not learn.  It happens that LBA 0 is where CP/M
- * keeps the head of its directory, so committing it synchronously buys back
- * most of the exposure a write-back cache creates, at one card write per
- * directory update.
+ * keeps the head of its directory, so it is committed synchronously.  LBA 0
+ * otherwise participates in the ordinary LRU policy; no slot is reserved for
+ * it.
  *
  * Be honest about the coverage: with BLS=4096 and AL0=F0h the directory is four
  * blocks -- 16 KiB, LBA 0..31.  Write-through on LBA 0 covers 1/32 of it.  The
@@ -71,11 +71,13 @@
  * should show roughly one miss per four records. */
 uint16_t sd_cache_misses(void);
 
-#define SD_CACHE_SLOTS      4u
+/* Eight entries double the original cache capacity without making a timed
+ * write-back pass unreasonably long or consuming most of the MCU's data RAM. */
+#define SD_CACHE_SLOTS      8u
 #define SD_CACHE_FLUSH_MS   100u
 
 /* Set to 0 to disable idle flushing without changing explicit CMD_SD_FLUSH or
- * the pinned LBA-0 write-through path.  The initialized-state gate in
+ * the LBA-0 write-through path.  The initialized-state gate in
  * sd_cache_flush_due() prevents a failed card from creating a retry storm. */
 #ifndef SD_CACHE_AUTO_FLUSH
 #define SD_CACHE_AUTO_FLUSH 1

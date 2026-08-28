@@ -1,6 +1,6 @@
 ; Zephyr-80 CP/M storage backend: SD card via the IO Controller record cache.
 ;
-; Drive A.  The MCU owns a 4-slot LRU cache of 512-byte blocks and serves
+; Drive A.  The MCU owns an 8-slot LRU cache of 512-byte blocks and serves
 ; 128-byte CP/M records out of it, so this backend never sees a block and does
 ; no deblocking.  That is the whole point of the split: deblocking on the Z80
 ; would cost a 512-byte buffer in a BIOS that does not have one to spare, plus

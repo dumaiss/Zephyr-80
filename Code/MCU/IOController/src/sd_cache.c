@@ -4,12 +4,8 @@
 #include "sd_card.h"
 #include "timebase.h"
 
-/* One cached 512-byte block.
- *
- * Slot 0 is pinned to LBA 0 and is never chosen as a victim, so the head of the
- * CP/M directory stays resident no matter what the allocation traffic does.
- * It is also the write-through slot; see the header for why that is an address
- * rule and not a filesystem rule. */
+/* One cached 512-byte block.  Every slot participates in the same LRU policy;
+ * LBA 0 remains write-through, but is no longer pinned in SRAM. */
 typedef struct {
     uint32_t lba;
     uint8_t  data[SD_BLOCK_SIZE];
@@ -17,9 +13,6 @@ typedef struct {
     bool     valid;
     bool     dirty;
 } SdCacheSlot;
-
-#define SD_CACHE_PINNED_SLOT  0u
-#define SD_CACHE_PINNED_LBA   0uL
 
 static SdCacheSlot slots[SD_CACHE_SLOTS];
 static uint16_t    last_flush_tick;
@@ -83,18 +76,18 @@ static SdCacheSlot *lookup(uint32_t lba)
 }
 
 /* Choose a victim: an invalid slot if there is one, otherwise the least
- * recently used.  Slot 0 is skipped entirely -- it belongs to LBA 0. */
+ * recently used. */
 static SdCacheSlot *choose_victim(void)
 {
     uint8_t i;
-    uint8_t oldest = 1u;
+    uint8_t oldest = 0u;
 
-    for (i = 1u; i < SD_CACHE_SLOTS; i++) {
+    for (i = 0u; i < SD_CACHE_SLOTS; i++) {
         if (!slots[i].valid)
             return &slots[i];
     }
 
-    for (i = 2u; i < SD_CACHE_SLOTS; i++) {
+    for (i = 1u; i < SD_CACHE_SLOTS; i++) {
         /* Unsigned difference, so the comparison survives use_counter wrapping
          * at 65536.  Comparing the raw values would pick the wrong victim once
          * per wrap, which is a bug that would surface roughly never and be
@@ -131,8 +124,7 @@ static SdCacheSlot *acquire(uint32_t lba, SdStatus *st)
      * per read means the cache is being thrashed rather than used. */
     cache_misses++;
 
-    s = (lba == SD_CACHE_PINNED_LBA) ? &slots[SD_CACHE_PINNED_SLOT]
-                                     : choose_victim();
+    s = choose_victim();
 
     /* Evicting a dirty block means committing it first.  If that fails the
      * cache must NOT reuse the slot: doing so would discard data the host was
@@ -199,7 +191,7 @@ SdStatus sd_cache_write_record(uint32_t record, const uint8_t *src)
            SD_CACHE_RECORD_SIZE);
     s->dirty = true;
 
-    if (lba == SD_CACHE_PINNED_LBA)
+    if (lba == 0uL)
         return slot_commit(s);      /* write-through */
 
     return SD_OK;

@@ -138,6 +138,11 @@ command request
     -> DONE(id, status), when required
 ```
 
+The command request and the READY/DONE replies all travel on SIO1/B, the
+Command lane.  SIO1/A carries only the framed bulk packet for the admitted
+phase.  The host does not send an SD command over SIO1/A and wait for its reply
+on that same lane.
+
 READY provides the TYPE/SEQ context that the BIOS binds to the bulk packet.
 The Bulk lane is not an unframed pipe.
 
@@ -168,6 +173,43 @@ Bulk byte loops mask interrupts for the bounded stream because the MCU clock
 does not pause. That prevents RX overrun and TX underrun from depending on ISR
 duration. Card I/O happens outside the MCU-to-Z80 byte stream. Z80-to-MCU writes
 always query DONE because receiving DATA does not prove the SD commit succeeded.
+
+## Future optimization: SIO `/WAIT` block transfer
+
+The board connects the `W/~RDYA` and `W/~RDYB` outputs of both SIO chips to the
+CPU `/WAIT` net.  The current BIOS deliberately leaves the SIO Wait/Ready
+function disabled and polls RR0 before each payload byte.  On the successful
+receive path that loop costs about 56 T-states per byte at 10 MHz.
+
+The SIO supports a CPU block-transfer mode that can replace the RR0 loop:
+
+- configure WR1 for **Wait**, never Ready;
+- select receive-Wait for `IOCBULK` and transmit-Wait for `IOCBULKW`;
+- execute `INIR` or `OTIR`; and
+- let the SIO stretch each data-port I/O cycle until its receive or transmit
+  buffer is ready.
+
+A repeating Z80 `INIR`/`OTIR` iteration costs about 21 T-states before inserted
+wait states, versus the current 56-T-state poll-and-transfer loop.  WR1 does not
+disable the receiver or issue Enter Hunt, so using Wait need not disturb
+persistent External Sync.
+
+There are two non-negotiable constraints:
+
+1. All four SIO W/RDY outputs share one net.  Wait mode is open-drain and is
+   compatible with that wired connection; Ready mode actively drives both
+   levels and must never be enabled.  Wait/Ready must remain disabled on every
+   SIO channel except the one performing the current block operation.
+2. Once the SIO holds `/WAIT` low, software cannot run a timeout.  If the MCU
+   stops producing or consuming clocks halfway through a block, the CPU can
+   remain trapped in that I/O cycle until hardware reset.  The existing polled
+   loop is slower but recoverable.
+
+Treat this as a transport optimization, not an SD optimization.  Prove it first
+in a standalone Bulk diagnostic at the existing clock and pacing, then test
+removing the payload gap and raising the clock in separate steps.  Do not change
+the BIOS path until receive-Wait and transmit-Wait have each passed packet CRC,
+persistent-sync, interrupt-load and failure-recovery testing.
 
 ## The SIO receive pipeline
 
