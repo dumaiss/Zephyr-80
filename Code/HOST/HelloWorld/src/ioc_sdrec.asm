@@ -59,7 +59,7 @@ IOC_BULK_DIAG_EXPECT_SEQ = 0xDCE3
 
 CMD_PING	 = 0x01
 RSP_PING	 = 0x81
-IOC_FW_LEVEL	 = 19		; controller firmware this program expects
+IOC_FW_LEVEL	 = 21		; controller firmware this program expects
 ZBIOS_XPORT_LEVEL     = 7	; BIOS transport level this program expects
 ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A	; one byte below IOCALL, readable from ROM
 CMD_SD_READ_REC	 = 0x08

@@ -318,6 +318,7 @@ static void service_command_request(void)
     }
 
     uprof_add(UPROF_TOTAL, t_total);
+    uprof_apply_pending_reset();
 }
 
 int main(void)

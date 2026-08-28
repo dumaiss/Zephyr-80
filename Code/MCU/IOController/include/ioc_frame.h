@@ -161,6 +161,15 @@
  * present = CMD0 actually succeeded and the failure is later. */
 #define IOC_OFF_PROFILE_SDTRACE  (IOC_OFF_PAYLOAD + 16u)
 #define IOC_PROFILE_PAYLOAD_LEN  24u
+/* A one-byte PROFILE request with this value asks for a clean measurement
+ * interval.  The reset is deferred until the reply has completely left the
+ * command lane, so the reset transaction is not counted in the new interval. */
+#define IOC_OFF_PROFILE_CONTROL  IOC_OFF_PAYLOAD
+#define IOC_OFF_PROFILE_PAGE     (IOC_OFF_PAYLOAD + 1u)
+#define IOC_PROFILE_RESET        0x01u
+#define IOC_PROFILE_PAGE_SUMMARY 0x00u
+#define IOC_PROFILE_PAGE_BULK_TX 0x01u
+#define IOC_PROFILE_BULK_TX_LEN  8u
 
 #define RSP_UNKNOWN_COMMAND  0xFE
 
@@ -188,8 +197,12 @@
  *      command and bulk lanes; persistent External Sync is unchanged
  *  19  first-transfer sync byte is disposable; a complete A5/5A packet always
  *      follows through SPI, so packet marking is independent of /SYNC timing
+ *  20  PROFILE owns Timer3 instead of the command edge counter, and a one-byte
+ *      IOC_PROFILE_RESET request starts a clean measurement interval
+ *  21  PROFILE page 1 reports bulk-TX wait, preparation, data and teardown
+ *      totals; the bulk payload loop streams CRC while SPI2 shifts each byte
  */
-#define IOC_FW_LEVEL  19
+#define IOC_FW_LEVEL  21
 
 /* PING reply: a snapshot of the power handshake pins.
  *

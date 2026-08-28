@@ -448,7 +448,8 @@ void handler_sd_flush(const IocFrame *request, IocFrame *reply)
     reply_header(request, reply, RSP_SD_FLUSH, sd_status_to_ioc(st), 0u);
 }
 
-/* Accumulated microsecond profile, as six 16-bit millisecond totals.
+/* Accumulated microsecond profile.  Page 0 returns the original six 16-bit
+ * millisecond totals; page 1 returns four bulk-TX subphase totals.
  *
  * A separate command rather than more PING fields: PING's payload bytes 4-19
  * carry a test pattern the host echoes back and verifies, and overwriting them
@@ -456,6 +457,28 @@ void handler_sd_flush(const IocFrame *request, IocFrame *reply)
 void handler_profile(const IocFrame *request, IocFrame *reply)
 {
     uint8_t i;
+    uint8_t page = IOC_PROFILE_PAGE_SUMMARY;
+
+    if ((request->bytes[IOC_OFF_LEN] >= 1u) &&
+        (request->bytes[IOC_OFF_PROFILE_CONTROL] == IOC_PROFILE_RESET))
+        uprof_request_reset();
+
+    if (request->bytes[IOC_OFF_LEN] >= 2u)
+        page = request->bytes[IOC_OFF_PROFILE_PAGE];
+
+    if (page == IOC_PROFILE_PAGE_BULK_TX) {
+        reply_header(request, reply, RSP_PROFILE, IOC_STATUS_OK,
+                     IOC_PROFILE_BULK_TX_LEN);
+
+        for (i = 0u; i < 4u; i++) {
+            uint16_t ms = uprof_ms((uint8_t)(UPROF_BULK_WAIT + i));
+            reply->bytes[IOC_OFF_PROFILE_0 + (uint8_t)(i * 2u)] =
+                (uint8_t)ms;
+            reply->bytes[IOC_OFF_PROFILE_0 + (uint8_t)(i * 2u) + 1u] =
+                (uint8_t)(ms >> 8);
+        }
+        return;
+    }
 
     reply_header(request, reply, RSP_PROFILE, IOC_STATUS_OK,
                  IOC_PROFILE_PAYLOAD_LEN);
@@ -475,7 +498,7 @@ void handler_profile(const IocFrame *request, IocFrame *reply)
             reply->bytes[IOC_OFF_PROFILE_SDTRACE + j] = tr[j];
     }
 
-    for (i = 0u; i < UPROF_SLOTS; i++) {
+    for (i = 0u; i < UPROF_PUBLIC_SLOTS; i++) {
         uint16_t ms = uprof_ms(i);
         reply->bytes[IOC_OFF_PROFILE_0 + (uint8_t)(i * 2u)]      = (uint8_t)ms;
         reply->bytes[IOC_OFF_PROFILE_0 + (uint8_t)(i * 2u) + 1u] = (uint8_t)(ms >> 8);

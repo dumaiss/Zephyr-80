@@ -4,7 +4,7 @@
 
 This document describes the implemented transport paired by:
 
-- controller firmware level `13h` (`IOC_FW_LEVEL = 19`); and
+- controller firmware level `15h` (`IOC_FW_LEVEL = 21`); and
 - BIOS transport level `07h` (`ZBIOS_XPORT_LEVEL = 7`).
 
 SIO1/B is the Command lane and SIO1/A is the Bulk lane. Both use the same
@@ -234,13 +234,14 @@ SIO1/A or SIO1/B directly.
 | `SDWRT.COM` | 512-byte bulk write plus DONE | yes, destructive to block 0 |
 | `SDREC.COM` | 128-byte cached record read/write/flush | yes, destructive test records |
 | `SDSOAK.COM` | repeated bulk write/read/verify | yes, destructive test LBAs |
+| `SDBENCH.COM` | timed raw CMD17/CMD24 read/write flood at LBA `00100000h` | yes, destructive to that LBA |
 | `SDFMT.COM` | record writes plus flush | yes, destructive directory format |
 | `RESET.COM` | command request followed by reset | terminal by design |
 | `RTSPROBE.COM` | direct WR5 electrical probe | **no; cold boot afterward** |
 
-`PING`, `SDREC`, `SDSOAK`, and `SDFMT` reject mismatched BIOS/controller
-protocol levels. `RTSPROBE` is intentionally outside the protocol and may
-invalidate the SIO state.
+`PING`, `SDREC`, `SDSOAK`, `SDBENCH`, and `SDFMT` reject mismatched
+BIOS/controller protocol levels. `RTSPROBE` is intentionally outside the
+protocol and may invalidate the SIO state.
 
 ## Source map
 

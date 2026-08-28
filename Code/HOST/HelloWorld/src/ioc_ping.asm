@@ -36,7 +36,7 @@ IOCALL		= 0xDA3F	; BIOS extended entry: IOC compatibility transport
 
 CMD_PING	= 0x01
 RSP_PING	= 0x81
-IOC_FW_LEVEL	= 19
+IOC_FW_LEVEL	= 21
 ZBIOS_XPORT_LEVEL = 7
 ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A
 

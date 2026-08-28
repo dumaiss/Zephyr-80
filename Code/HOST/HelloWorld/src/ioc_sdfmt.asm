@@ -41,7 +41,7 @@ IOCBULKW	= 0xDA48
 
 ZBIOS_XPORT_LEVEL      = 7
 ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A
-IOC_FW_LEVEL           = 19
+IOC_FW_LEVEL           = 21
 
 CMD_PING         = 0x01
 RSP_PING         = 0x81
@@ -324,7 +324,7 @@ msg_banner:	.ascii "SDFMT: initialise the CP/M directory on the SD card"
 msg_stale:	.ascii "BIOS transport level mismatch -- re-flash ROM"
 		.db 13,10,'$'
 msg_stale_controller:
-		.ascii "controller protocol mismatch -- flash firmware level 13"
+		.ascii "controller protocol mismatch -- flash firmware level 15"
 		.db 13,10,'$'
 msg_confirm:	.ascii "This ERASES the SD card directory.  Proceed (y/N)? $"
 msg_abort:	.ascii "aborted"

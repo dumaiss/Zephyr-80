@@ -6,6 +6,7 @@
 #include "sio_link.h"
 #include "ioc_frame.h"
 #include "bulk_channel.h"
+#include "timebase.h"
 
 /* ---------------------------------------------------------------------------
  * Bulk lane on SIO1/A
@@ -80,12 +81,18 @@
  * at 10 MHz, so the host keeps up with margin to spare.  The SIO itself is good
  * for about 3.2 us/byte at a 10 MHz clock, so it is not the constraint either.
  *
- * Going faster means attacking the ~2 us of PIC software per byte, which needs
- * DMA feeding SPI2 rather than a polled loop. */
+ * The direct payload loop below overlaps CRC work with those four wire
+ * microseconds and adds the remaining gap explicitly.  DMA is only relevant if
+ * a later design tries to go below the host-safe six-microsecond byte period. */
 #define BULK_SPI_BAUD         15u   /* 64 MHz / (2 * 16) = 2 MHz */
 #define BULK_SPI_BYTE_US      ((8u * 2u * (BULK_SPI_BAUD + 1u)) / 64u)
 #define BULK_TARGET_BYTE_US   6u
 #define BULK_BYTE_GAP_US      (BULK_TARGET_BYTE_US - BULK_SPI_BYTE_US)
+
+/* The direct payload loop uses an 8-bit guard instead of rebuilding the
+ * generic exchange routine's 16-bit, slowest-baud timeout for every byte.
+ * At 16 MIPS this still allows many times the expected 4 us SPI transfer. */
+#define BULK_SPI_TIMEOUT_POLLS 255u
 
 #if (BULK_TARGET_BYTE_US <= BULK_SPI_BYTE_US)
 #error "BULK_TARGET_BYTE_US must exceed the SPI clocking time per byte"
@@ -398,11 +405,17 @@ uint8_t bulk_channel_next_xfer_id(void)
  * searches A5 5A before accepting LEN/TYPE/SEQ/STATUS/data. */
 static bool bulk_run_send(void)
 {
-    uint16_t i;
     uint16_t packet_length;
     uint16_t crc;
+    uint16_t remaining;
+    uint16_t t;
+    const uint8_t *payload;
     uint8_t  discard;
+    uint8_t  guard;
+    uint8_t  value;
     bool     ok = true;
+
+    t = uprof_now();
 
     /* Advertise RX admission and mark the bulk phase live.  Auto Enables is
      * off, so these are status levels; they never disable the host receiver. */
@@ -452,13 +465,6 @@ static bool bulk_run_send(void)
     }
 
     packet_length = (uint16_t)(IOC_PACKET_FIXED_LEN + armed_length);
-    crc = sio_link_crc16_update(0u, (uint8_t)packet_length);
-    crc = sio_link_crc16_update(crc, (uint8_t)(packet_length >> 8));
-    crc = sio_link_crc16_update(crc, armed_type);
-    crc = sio_link_crc16_update(crc, armed_sequence);
-    crc = sio_link_crc16_update(crc, armed_status);
-    for (i = 0u; i < armed_length; i++)
-        crc = sio_link_crc16_update(crc, armed_buf[i]);
 
     /* Back to the gated clock's idle level before the module takes the pins. */
     SIO_SCK_LAT = 1;
@@ -467,16 +473,55 @@ static bool bulk_run_send(void)
     sio_link_clear_fifos();
     sio_link_pins_to_spi();
 
+    uprof_add(UPROF_BULK_PREP, t);
+    t = uprof_now();
+
     /* Always send the complete marker as ordinary aligned packet bytes. */
     ok = bulk_send_packet_byte(IOC_PACKET_SYNC0);
     if (ok) ok = bulk_send_packet_byte(IOC_PACKET_SYNC1);
+
+    /* CRC covers LEN through the payload, not the A5/5A marker.  Header setup
+     * is fixed cost; the 512-byte payload below updates CRC while SPI2 is
+     * already shifting the same byte, removing the old complete pre-pass. */
+    crc = 0u;
+    crc = sio_link_crc16_update(crc, (uint8_t)packet_length);
     if (ok) ok = bulk_send_packet_byte((uint8_t)packet_length);
+    crc = sio_link_crc16_update(crc, (uint8_t)(packet_length >> 8));
     if (ok) ok = bulk_send_packet_byte((uint8_t)(packet_length >> 8));
+    crc = sio_link_crc16_update(crc, armed_type);
     if (ok) ok = bulk_send_packet_byte(armed_type);
+    crc = sio_link_crc16_update(crc, armed_sequence);
     if (ok) ok = bulk_send_packet_byte(armed_sequence);
+    crc = sio_link_crc16_update(crc, armed_status);
     if (ok) ok = bulk_send_packet_byte(armed_status);
-    for (i = 0u; ok && i < armed_length; i++)
-        ok = bulk_send_packet_byte(armed_buf[i]);
+
+    payload = armed_buf;
+    remaining = armed_length;
+    while (ok && (remaining != 0u)) {
+        value = *payload++;
+
+        /* Start the wire first, then spend its four-microsecond shift time on
+         * CRC work.  Direct register access avoids two calls, a pointer
+         * argument and a 16-bit timeout setup on every payload byte. */
+        SPI2TXB = value;
+        crc = sio_link_crc16_update(crc, value);
+
+        guard = BULK_SPI_TIMEOUT_POLLS;
+        while (!PIR5bits.SPI2RXIF) {
+            if (--guard == 0u) {
+                ok = false;
+                break;
+            }
+        }
+
+        if (!ok)
+            break;
+
+        discard = SPI2RXB;
+        __delay_us(BULK_BYTE_GAP_US);
+        remaining--;
+    }
+
     if (ok) ok = bulk_send_packet_byte((uint8_t)(crc >> 8));
     if (ok) ok = bulk_send_packet_byte((uint8_t)crc);
 
@@ -484,6 +529,9 @@ static bool bulk_run_send(void)
      * receive window.  Marker search, not payload positioning, consumes it. */
     (void)sio_link_exchange(0xFFu, &discard);
     sio_link_pins_to_lat();
+
+    uprof_add(UPROF_BULK_DATA, t);
+    t = uprof_now();
 
     /* /SYNCA is NOT released.  Dropped once by the hand-clocked byte above and
      * held for the life of the link, as the SIO manual requires of an External
@@ -505,6 +553,8 @@ static bool bulk_run_send(void)
      * bulk_run_receive(), which defers DONE until the commit has run. */
     last_xfer_id = armed_xfer_id;
     last_status  = ok ? IOC_STATUS_OK : IOC_STATUS_BULK_FAIL;
+
+    uprof_add(UPROF_BULK_DONE, t);
 
     return ok;
 }
@@ -668,17 +718,22 @@ static bool bulk_run_receive(void)
 
 bool bulk_channel_run_if_armed(void)
 {
+    uint16_t t;
+
     if (armed_length == 0u)
         return true;
 
     /* READY has gone out; wait for the host to say it is ready to move bytes.
      * Same signal in both directions: RTS on channel A. */
+    t = uprof_now();
     if (!wait_for_host_ready()) {
+        uprof_add(UPROF_BULK_WAIT, t);
         armed_length = 0u;
         last_xfer_id = armed_xfer_id;
         last_status  = IOC_STATUS_BULK_NO_HOST;
         return false;
     }
+    uprof_add(UPROF_BULK_WAIT, t);
 
     if (armed_dir == BULK_DIR_Z80_TO_MCU)
         return bulk_run_receive();
