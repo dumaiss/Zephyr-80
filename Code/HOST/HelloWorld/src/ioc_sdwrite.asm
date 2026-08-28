@@ -5,7 +5,7 @@
 ;   Z80                         PIC
 ;    |-- CMD_SD_WRITE_BULK(LBA) ->|   command lane (IOCALL, SIO1/B)
 ;    |<-- READY(id, dir, 512) ----|   command lane
-;    |====== 7E 81 + 512 bytes ==>|   bulk lane (SIO1/A, ports 30h/31h)
+;    |====== common packet ======>|   bulk lane (SIO1/A, via IOCBULKW)
 ;    |                            |-- write sector to the card
 ;    |-- CMD_XFER_STATUS -------->|   command lane, ALWAYS
 ;    |<-- DONE(id, status) -------|   command lane
@@ -18,25 +18,20 @@
 ;    card is only touched AFTER the last byte arrives.  The status that matters
 ;    comes back on the command lane or not at all.
 ;
-; 2. THE PAYLOAD IS LED BY A 7E 81 PREAMBLE.  Sending is not symmetric with
-;    receiving.  When the MCU sends, it places the /SYNC edge and owns the byte
-;    boundary.  When we send, the MCU supplies the clock but cannot know which
-;    edge our transmitter started shifting on, so it searches for this pattern
-;    and de-shifts the rest of the stream against it.  Two bytes rather than
-;    one: a lone 7Eh occurs at a shifted offset inside a 00-FF ramp, and a
-;    false lock would rotate the whole block silently.
+; 2. THE PAYLOAD USES THE SAME A5 5A/LEN/TYPE/SEQ/STATUS/CRC ENVELOPE as the
+;    command lane.  The MCU still searches the marker at arbitrary bit phase,
+;    because it supplies the clock but cannot know which edge the host
+;    transmitter began on.
 ;
-; Handshake is otherwise the read's mirror image.  /CTSA gates THIS channel's
-; transmitter via Auto Enables, so the MCU decides when we may put bits on the
-; wire; that is the same line that marks the bulk phase for a read, keeping one
-; meaning for the signal.  /DCDA stays deasserted — our receiver is not wanted.
+; Handshake is otherwise the read's mirror image.  Auto Enables is off so the
+; receiver never loses persistent character alignment.  IOCBULKW polls /CTSA
+; as software transmit admission; /DCDA remains deasserted in this direction.
 ;
 ; Both of those are now the BIOS's problem, not this program's.  The transmit
 ; loop that used to live here has moved into IOCBULKW, alongside IOCBULK for
 ; the read direction, and this file writes no SIO register at all — the whole
-; bulk phase is one call.  IOC_BULK.COM keeps its inline loop deliberately, as
-; the control case: if a BIOS change breaks the lane, that program still
-; exercises it directly.
+; bulk phase is one call.  IOC_BULK.COM uses that same BIOS routine so every
+; normal diagnostic exercises the production packet path.
 ;
 ; WARNING: this overwrites block 0, destroying the partition table.  After it
 ; runs, IOC_SDBLK will report "signature BAD at 510: 0xFEFF" — which is the
@@ -60,21 +55,6 @@ CMD_SD_WRITE_BULK = 0x07
 RSP_SD_WRITE_BULK = 0x87
 CMD_XFER_STATUS	= 0x06
 RSP_XFER_STATUS	= 0x86
-
-BULK_DATA	= 0x30		; SIO1/A data
-BULK_CRC_BYTES	= 2		; CRC-16 trailer the MCU expects
-BULK_CTRL	= 0x31		; SIO1/A control
-WR0_RESET_ERROR	= 0x30
-WR0_RESET_EOM	= 0xc0		; reset Tx Underrun/EOM latch
-WR3_RX_OFF	= 0xf0		; Auto Enables, RX disabled: we only transmit
-WR5_TX_RTS_ON	= 0xea		; DTR on, 8-bit TX, TX enable, RTS on
-WR5_TX_RTS_OFF	= 0xe8		; same with RTS off
-RR0_TX_EMPTY	= 0x04		; RR0 bit 2: transmit buffer empty
-RR0_CTS		= 0x20		; set while /CTSA is asserted (bulk phase live)
-RR1_TX_UNDERRUN	= 0x40		; RR1 bit 6: Tx Underrun/EOM latch
-
-PREAMBLE_0	= 0x7e
-PREAMBLE_1	= 0x81
 
 start:
 	ld de,#msg_banner
@@ -212,7 +192,8 @@ rp_loop:
 	ret
 
 ; Print the first 8 RAW bytes off the wire, before the MCU de-shifted them.
-; Expect 7E 81 then the ramp at some bit offset.  7E 81 followed by zeros means
+; Expect a disposable lead-in, then A5 5A and the common header at some bit
+; offset.  A5 5A followed by zeros means
 ; the transmitter stopped after the preamble; a ramp visible here but zeros in
 ; "MCU received" means the de-shift is at fault.
 report_raw:

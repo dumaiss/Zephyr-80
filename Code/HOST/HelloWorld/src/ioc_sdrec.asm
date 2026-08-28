@@ -46,10 +46,21 @@ IOCALL		= 0xDA3F	; ZBIOS_EXT_BASE + 0Ch
 IOCBULK		= 0xDA45	; ZBIOS_EXT_BASE + 12h: bulk receive
 IOCBULKW	= 0xDA48	; ZBIOS_EXT_BASE + 15h: bulk transmit
 
+IOC_BULK_DIAG_REASON	= 0xDCCE
+IOC_BULK_DIAG_COUNT	= 0xDCCF
+IOC_BULK_DIAG_SCAN	= 0xDCD0
+IOC_BULK_DIAG_HEADER	= 0xDCD8
+IOC_BULK_DIAG_RR0	= 0xDCDD
+IOC_BULK_DIAG_RR1	= 0xDCDE
+IOC_BULK_DIAG_SYNCED	= 0xDCDF
+IOC_BULK_DIAG_EXPECT_LEN = 0xDCE0
+IOC_BULK_DIAG_EXPECT_TYPE = 0xDCE2
+IOC_BULK_DIAG_EXPECT_SEQ = 0xDCE3
+
 CMD_PING	 = 0x01
 RSP_PING	 = 0x81
-IOC_FW_LEVEL	 = 15		; controller firmware this program expects
-ZBIOS_XPORT_LEVEL     = 5	; BIOS transport level this program expects
+IOC_FW_LEVEL	 = 19		; controller firmware this program expects
+ZBIOS_XPORT_LEVEL     = 7	; BIOS transport level this program expects
 ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A	; one byte below IOCALL, readable from ROM
 CMD_SD_READ_REC	 = 0x08
 RSP_SD_READ_REC	 = 0x88
@@ -271,6 +282,28 @@ np_go:
 ; this program expects, else a failure code.
 ; ---------------------------------------------------------------------------
 check_level:
+	; BIOS level first: it is a memory read, needs no controller, and a stale
+	; ROM cannot reliably speak the packet used by the PING below.
+	ld de,#msg_bios
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
+	call print_hex_byte
+	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
+	cp #ZBIOS_XPORT_LEVEL
+	jr z,cl_bios_ok
+	ld (fail_info),a
+	ld de,#msg_stale_bios
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,#ZBIOS_XPORT_LEVEL
+	call print_hex_byte
+	ld de,#msg_reflash_rom
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,#0x44
+	ret
+cl_bios_ok:
 	call zero_frames
 	ld a,#CMD_PING
 	ld (tx_frame + 0),a
@@ -285,25 +318,6 @@ check_level:
 	cp #RSP_PING
 	jr nz,cl_class
 
-	; BIOS level first: it is a memory read, needs no controller, and a stale
-	; ROM is indistinguishable from a transport fault once a capture is in
-	; hand.  Checking the pair is the only way to know a wire change is
-	; actually on the wire.
-	ld de,#msg_bios
-	ld c,#BDOS_PRINT
-	call BDOS
-	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
-	call print_hex_byte
-	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
-	cp #ZBIOS_XPORT_LEVEL
-	jr z,cl_bios_ok
-	ld (fail_info),a
-	ld de,#msg_stale_bios
-	ld c,#BDOS_PRINT
-	call BDOS
-	ld a,#0x44
-	ret
-cl_bios_ok:
 	ld de,#msg_fw
 	ld c,#BDOS_PRINT
 	call BDOS
@@ -321,6 +335,11 @@ cl_bios_ok:
 cl_stale:
 	ld (fail_info),a
 	ld de,#msg_stale
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,#IOC_FW_LEVEL
+	call print_hex_byte
+	ld de,#msg_reflash_fw
 	ld c,#BDOS_PRINT
 	call BDOS
 	ld a,#0x41			; controller firmware is not the expected level
@@ -560,8 +579,8 @@ wr_done:
 	; Keep the MCU's own view of the transfer.  DONE carries the de-shifted
 	; head of the receive buffer and the RAW capture window, and for a sync
 	; failure the raw bytes are the whole story: all FF means the host never
-	; put a bit on the wire, data with no 7E 81 means the preamble was mangled
-	; or landed outside the 64-bit search, and 7E 81 present means the search
+		; put a bit on the wire, data with no A5 5A means the marker was mangled
+		; or landed outside the 128-bit search, and A5 5A present means the search
 	; found it late.  Without this the status byte alone cannot tell those
 	; apart.
 	ld hl,#(rx_frame + 6)
@@ -739,12 +758,92 @@ fail:
 	ld a,(fail_code)
 	cp #0x30
 	call z,report_mismatch
+	call report_rdbuf
+	ld a,(fail_code)
+	cp #0x05
+	call z,report_bulk_transport_diag
 	ld a,(diag_valid)
 	or a
 	call nz,report_diag
 	ld de,#msg_crlf
 	ld c,#BDOS_PRINT
 	call BDOS
+	ret
+
+; First eight bytes of the READ buffer, whatever the failure was.
+;
+; A read that fails its bulk CRC leaves the received data here and nothing else
+; reports it -- diag_valid is only armed on the write DONE path.  The point is
+; the SHAPE: the expected content is a ramp, so a bit-shifted stream shows up as
+; a ramp with a doubled step (00 02 04 06 for a one-bit slip), and the step says
+; how far the character boundary has moved.  That is how the command lane's
+; two-bit-per-transaction drift was identified.
+report_rdbuf:
+	ld de,#msg_rdbuf
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld hl,#rd_buf
+	ld b,#8
+	jp dump_bytes
+
+; BIOS-side reason for an IOCBULK error.  Error 05/info 02 alone says only
+; "bad frame"; this separates a missing/rotated marker from LEN, TYPE, SEQ or
+; STATUS rejection and shows the bytes on which that decision was made.
+report_bulk_transport_diag:
+	ld de,#msg_bulk_diag_reason
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(IOC_BULK_DIAG_REASON)
+	call print_hex_byte
+	ld de,#msg_bulk_diag_count
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(IOC_BULK_DIAG_COUNT)
+	call print_hex_byte
+	ld de,#msg_bulk_diag_scan
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld hl,#IOC_BULK_DIAG_SCAN
+	ld b,#1
+	call dump_bytes
+	ld de,#msg_bulk_diag_header
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld hl,#IOC_BULK_DIAG_HEADER
+	ld b,#5
+	call dump_bytes
+	ld de,#msg_bulk_diag_rr
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(IOC_BULK_DIAG_RR0)
+	call print_hex_byte
+	ld e,#0x20
+	ld c,#BDOS_CONOUT
+	call BDOS
+	ld a,(IOC_BULK_DIAG_RR1)
+	call print_hex_byte
+	ld de,#msg_bulk_diag_sync
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(IOC_BULK_DIAG_SYNCED)
+	call print_hex_byte
+	ld de,#msg_bulk_diag_expect
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(IOC_BULK_DIAG_EXPECT_LEN + 1)
+	call print_hex_byte
+	ld a,(IOC_BULK_DIAG_EXPECT_LEN)
+	call print_hex_byte
+	ld e,#0x20
+	ld c,#BDOS_CONOUT
+	call BDOS
+	ld a,(IOC_BULK_DIAG_EXPECT_TYPE)
+	call print_hex_byte
+	ld e,#0x20
+	ld c,#BDOS_CONOUT
+	call BDOS
+	ld a,(IOC_BULK_DIAG_EXPECT_SEQ)
+	call print_hex_byte
 	ret
 
 ; First eight bytes of the reply frame exactly as received.
@@ -815,8 +914,8 @@ report_diag:
 	; Walk the raw window in 8-byte slices rather than printing the one slice
 	; the DONE reply happened to carry.  Eight bytes cannot distinguish "the
 	; host never transmitted" from "the preamble arrived past the search" --
-	; both open with idle and fill.  Six slices covers the 64-bit search plus
-	; the start of the payload, which is where the answer is.
+	; both open with idle and fill.  Six slices covers the start of the 128-bit
+	; search and is followed by a separate tail range below.
 	xor a
 	ld (raw_off),a
 rd_slice:
@@ -837,7 +936,23 @@ rd_slice:
 	ld a,(raw_off)
 	add a,#8
 	ld (raw_off),a
-	cp #48
+	cp #0x30
+	jr c,rd_slice
+
+	; Second range: the payload TAIL and the CRC trailer.
+	;
+	; The first range answers "did the preamble arrive, and where"; it cannot
+	; answer "is the payload intact", because a transfer whose head de-shifts
+	; correctly can still fail its CRC on a byte 100 further along.  With the
+	; preamble at raw byte 2 the 128-byte payload ends near 0x84 and the two
+	; CRC bytes follow it, so that is where a tail fault shows.
+	cp #0x78
+	jr nc,rd_tail
+	ld a,#0x78
+	ld (raw_off),a
+	jr rd_slice
+rd_tail:
+	cp #0xa0
 	jr c,rd_slice
 	ret
 
@@ -925,15 +1040,27 @@ msg_at:		.ascii " at $"
 msg_exp:	.ascii " exp $"
 msg_got:	.ascii " got $"
 msg_bios:	.ascii "bios xport level $"
-msg_stale_bios:	.ascii " -- EXPECTED 05, RE-FLASH ROM"
+msg_stale_bios:	.ascii " -- STALE ROM, expected $"
+msg_reflash_rom:	.ascii ", RE-FLASH ROM"
 		.db 13,10,'$'
 msg_fw:		.ascii ", controller fw level $"
-msg_stale:	.ascii " -- EXPECTED 05, RE-FLASH"
+msg_stale:	.ascii " -- STALE FW, expected $"
+msg_reflash_fw:	.ascii ", RE-FLASH CONTROLLER"
 		.db 13,10,'$'
 msg_peek:	.db 13,10
 		.ascii "  buf:$"
 msg_raw:	.db 13,10
 		.ascii "  raw $"
+msg_rdbuf:	.db 13,10
+		.ascii "  rd_buf:$"
+msg_bulk_diag_reason:	.db 13,10
+		.ascii "  bulk reason=$"
+msg_bulk_diag_count:	.ascii " count=$"
+msg_bulk_diag_scan:	.ascii " last$"
+msg_bulk_diag_header:	.ascii " hdr$"
+msg_bulk_diag_rr:	.ascii " rr=$"
+msg_bulk_diag_sync:	.ascii " sync=$"
+msg_bulk_diag_expect:	.ascii " exp(len/type/seq)=$"
 msg_crlf:	.db 13,10,'$'
 
 base_rec:	.ds 2

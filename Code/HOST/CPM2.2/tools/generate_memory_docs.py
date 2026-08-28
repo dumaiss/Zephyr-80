@@ -126,6 +126,12 @@ IMPLEMENTATION_SYMBOLS = [
     (("IOCTRL_CODE_START",), "IOCALL transaction code start in core BIOS."),
     (("IOCALL",), "Zephyr extended BIOS IO Controller transaction call."),
     (("IOCTRL_CODE_END",), "IOCALL transaction code end."),
+    (("IOC_CMD_CODE_START",), "Common-packet Command-lane helper code start."),
+    (("IOC_CMD_CODE_END",), "Common-packet Command-lane helper code end."),
+    (("IOC_BULK_CODE_START",), "Common-packet Bulk-write helper code start."),
+    (("IOC_BULK_CODE_END",), "Common-packet Bulk-write helper code end."),
+    (("SD_STORAGE_CODE_START",), "SD-card BIOS backend code start."),
+    (("SD_STORAGE_CODE_END",), "SD-card BIOS backend code end."),
     (("VDRIP_CONSOLE_CODE_START",), "Virtual Drip console driver code start."),
     (("vdrip_console_driver",), "Virtual Drip console driver dispatch table."),
     (("vdrip_console_init",), "Virtual Drip console init, proxy handshake, VDP setup."),
@@ -193,13 +199,16 @@ DRIVER_SLOT_OWNERS = {
     0: "Virtual Drip console driver",
     1: "Virtual Drip console driver",
     2: "Virtual Drip console driver",
-    3: "Virtual Drip console driver",
-    4: "Virtual Drip console driver",
+    3: "IOC Bulk transport overflow",
+    4: "IOC Command transport",
     5: "VDrip transport and storage",
 }
 
 DRIVER_DECLARATIONS = [
     ("Virtual Drip console driver", "VDRIP_CONSOLE_CODE_START", "VDRIP_CONSOLE_CODE_END", 0, 5),
+    ("IOC Bulk transport overflow", "IOC_BULK_CODE_START", "IOC_BULK_CODE_END", 3, 3),
+    ("IOC Command transport", "IOC_CMD_CODE_START", "IOC_CMD_CODE_END", 4, 5),
+    ("SD-card BIOS backend", "SD_STORAGE_CODE_START", "SD_STORAGE_CODE_END", 4, 5),
     ("Shared VDrip transport", "VDRIP_TRANSPORT_CODE_START", "VDRIP_TRANSPORT_CODE_END", 5, 5),
     ("VDrip storage backend", "VDRIP_STORAGE_CODE_START", "VDRIP_STORAGE_CODE_END", 5, 5),
 ]
@@ -846,7 +855,7 @@ def write_memory_map(
         range_row(span(require_symbol(symbols, "CBASE"), require_symbol(symbols, "CCPSTACK")), "CP/M CCP", f"`CBASE` is `{h4(require_symbol(symbols, 'CBASE'))}`."),
         range_row(span(require_symbol(symbols, "FBASE"), cbios_base - 1), "CP/M BDOS and state", f"`FBASE` is `{h4(require_symbol(symbols, 'FBASE'))}` in the current assembled image."),
         range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, SIO core, VIDEO_SEND extension, and IOCALL transport."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END")), "Driver slots 0-4", "Virtual Drip V9958 console driver (code, printable-run buffer, input queue, parser, and cursor state)."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END")), "Driver slots 0-4", "Virtual Drip console in slots 0-2, IOC Bulk overflow in slot 3, and IOC Command transport beginning in slot 4."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slot 5", "VDrip storage backend."),
         range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch/storage buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `VDRIP_STORAGE_DPHDPB` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DPHDPB_BASE'))}`; `VDRIP_STORAGE_DIRBUF` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DIRBUF'))}`; `VDRIP_STORAGE_ALV` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_ALV'))}`."),
         range_row(span(runtime_start, runtime_end), "BIOS runtime state", "Current bank, DMA address, banking state, storage state, SIO core state, and console driver state."),
@@ -885,8 +894,12 @@ def write_memory_map(
             )
         elif slot == 0:
             contents = f"`{span(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'), require_symbol(symbols, 'VDRIP_CONSOLE_CODE_END') - 1)}` VDrip V9958 code, run/input queues, parser, and sprite-cursor state."
+        elif slot == 3:
+            contents = f"`{span(require_symbol(symbols, 'IOC_BULK_CODE_START'), require_symbol(symbols, 'IOC_BULK_CODE_END') - 1)}` IOC common-packet Bulk-write and link helpers."
+        elif slot == 4:
+            contents = f"IOC common-packet Command and Bulk-receive helpers start here at `{h4(require_symbol(symbols, 'IOC_CMD_CODE_START'))}` and end at `{h4(require_symbol(symbols, 'IOC_CMD_CODE_END') - 1)}` in the pre-storage gap."
         else:
-            contents = "Part of Virtual Drip console driver above."
+            contents = "Reserved console slot; current console code ends in slot 2."
         lines.append(
             f"| {slot} | `{h4(slot_start)}` | `{h4(slot_limit - 1)}` | "
             f"{slot_limit - slot_start} bytes | {owner} | {contents} |"
@@ -899,7 +912,7 @@ def write_memory_map(
             "",
             "| Range | Owner | Notes |",
             "|---|---|---|",
-            f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core | BIOS-owned SIO0/B async setup with CTS-polled TX and software-managed RTS helpers, legacy SIO1/A sync setup, SIO IRQ control, RX sink registration, byte I/O APIs, IO Controller RTS helpers, RX diagnostics, RX kick, ISR, and compatibility labels. |",
+            f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core | BIOS-owned SIO0/B async console setup plus cold initialization and compatibility helpers for the SIO1 IOC channels. |",
             f"| `{span(require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_START'), require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_END') - 1)}` | SIO core | Exact two-byte IM2 vector table entry. |",
             "",
             "SIO_CH_CONSOLE is the BIOS-owned SIO0/B async console link used by the Virtual Drip console driver. RTS/CTS are connected, /DCD is tied active-low, and WR3 Auto Enables are enabled. The VDrip console driver also manages RTS through high/low watermarks for host-to-Zephyr backpressure and display-traffic gating.",
@@ -911,8 +924,9 @@ def write_memory_map(
             f"| `{span(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'), require_symbol(symbols, 'VDRIP_CONSOLE_CODE_END') - 1)}` | Virtual Drip V9958 console driver | CP/M console semantics, G6 command streams, CP850 atlas upload, input queue, printable-run buffer, and sprite-cursor state. |",
             f"| `{span(require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_START'), require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_END') - 1)}` | Shared Virtual Drip transport | Current no-CRC frame sender, packetized readiness, single RX sink, parser, PTY dispatch, and storage reply dispatch. |",
             "",
-            "SIO_CH_IOCTRL is the legacy BIOS-owned SIO1/A synchronous helper path. Phase 1 IOCALL uses the SIO1/B Command-channel External Sync transport; SIO1/A remains inactive for Bulk in this phase.",
-            f"`IOCALL` code is at `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` in core BIOS.",
+            "The IOC transport uses SIO1/B as its Command lane and SIO1/A as its Bulk lane. Both run the common A5/5A packet with persistent External Sync and Auto Enables off.",
+            f"`IOCALL` mailbox code is at `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` in core BIOS; packet helpers occupy `{span(require_symbol(symbols, 'IOC_CMD_CODE_START'), require_symbol(symbols, 'IOC_CMD_CODE_END') - 1)}` and `{span(require_symbol(symbols, 'IOC_BULK_CODE_START'), require_symbol(symbols, 'IOC_BULK_CODE_END') - 1)}`.",
+            f"The SD-card BIOS backend follows at `{span(require_symbol(symbols, 'SD_STORAGE_CODE_START'), require_symbol(symbols, 'SD_STORAGE_CODE_END') - 1)}`; the generated overlap check validates these adjacent ranges.",
             "",
         "## BIOS Jump Table Layout",
         "",
@@ -1022,7 +1036,7 @@ def write_memory_map(
             f"- `CBIOS_BASE` is `{h4(cbios_base)}`; CBIOS layout constants are derived from this base.",
             f"- `CBIOS_CODE_LIMIT` is `{h4(code_limit)}`; no resident code may cross into scratch/staging.",
             f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the Virtual Drip console driver starts at `{h4(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'))}`, the shared transport starts at `{h4(require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_START'))}`, and the VDrip storage backend starts at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_CODE_START'))}`.",
-            f"- `IOCALL` code is at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` in core BIOS and uses the SIO1/B Command-channel External Sync transport.",
+            f"- `IOCALL` code is at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` in core BIOS; SIO1/B Command and SIO1/A Bulk use the same persistent-External-Sync common packet.",
             f"- `VIDEO_SEND` code is at `{h4(require_symbol(symbols, 'BIOS_EXT_CODE_START'))}` in core BIOS; raw VDP/display writes may desynchronize the V9958 logical-cell state.",
             f"- `WBOOT` resident code starts at `{h4(require_symbol(symbols, 'WBOOT_RESIDENT_START'))}`, inside protected high BIOS memory.",
             f"- `ZBIOS_EXT_BASE` is at `{h4(ext_base)}` and exposes `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `IOCALL`, `VIDEO_SEND`, `IOCBULK` and `IOCBULKW`.",

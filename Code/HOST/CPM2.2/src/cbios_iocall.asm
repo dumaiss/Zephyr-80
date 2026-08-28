@@ -1,6 +1,6 @@
-; Zephyr-80 BIOS IOC Command-channel transport — Phase 1.
+; Zephyr-80 BIOS IOC two-lane transport.
 ;
-; IOCALL fixed-frame contract:
+; IOCALL compatibility-mailbox contract:
 ;   In:
 ;     HL = pointer to caller-owned 32-byte TX frame in visible application RAM.
 ;     DE = pointer to caller-owned 32-byte RX frame buffer in visible application RAM.
@@ -12,25 +12,21 @@
 ;   On error:
 ;     RX buffer contents are undefined.
 ;
-; IOCALL is a dumb transport: send one 32-byte TX frame, receive one 32-byte RX
-; frame, return transport status.  IOCALL does not decode PING, RESET, or any
-; other command.  Callers decode the 32-byte frame themselves.
+; IOCALL maps one 32-byte caller mailbox to the common variable-length packet,
+; validates the reply packet, and maps it back.  It does not decode PING, RESET,
+; or any other command; callers interpret the compatibility mailbox themselves.
 ;
 ; Channel:
 ;   Command channel = SIO1/B, DATA port 32h, CTRL port 33h (bring-up retarget;
 ;   SIO1/A channel-A outputs failed hardware probing).
 ;   The MCU is the synchronous clock master.  Z80 SIO1/B is externally clocked.
-;   Framing is transparent External Sync (preamble + 32-byte frame); the MCU
-;   drives /SYNCB and clocks the exchange.
+;   Framing is A5 5A LEN TYPE SEQ STATUS DATA CRC in persistent External Sync;
+;   the MCU drives /SYNCB and clocks the exchange.
 ;   No WAIT/READY; no INIR/OTIR; foreground polled byte I/O only.
 ;   No SIO1/B interrupts in Phase 1.
 ;
-; sio_command_init:
-;   Initialises SIO1/B for External Sync.  Defined here in the IOCTRL code area because
-;   sio_core.asm and cbios_boot.asm have no room for additional code in Phase 1.
-;   Phase 1 workaround: IOCALL calls sio_command_init at the start of each
-;   transaction to ensure clean SIO state.  In a future phase, when space is
-;   reclaimed, move the call into the BIOS startup sequence so it runs once.
+; sio_command_init initialises SIO1/B once.  Repeating it would reset the SIO
+; character boundary and defeat persistent sync.
 ;
 ; RESET note:
 ;   RESET is a terminal/disruptive command.  If the MCU executes RESET, the
@@ -42,6 +38,7 @@
 	.globl sio_command_init,ioc_link_init_once
 	.globl sio_command_rts_assert,sio_command_rts_release
 	.globl ioc_command_send_frame,ioc_command_recv_frame
+	.globl ioc_bulk_tx_type,ioc_bulk_tx_seq,ioc_bulk_rx_type,ioc_bulk_rx_seq
 
 	.area CODE (ABS)
 
@@ -56,7 +53,7 @@
 IOCTRL_CODE_START:
 
 ; ---------------------------------------------------------------------------
-; IOCALL — fixed-frame Command-channel transport entry point
+; IOCALL — compatibility-mailbox Command-channel entry point
 ; ---------------------------------------------------------------------------
 ; RTS here means "I have an unacknowledged request for you", NOT "a transaction
 ; is in progress".  It is released as soon as the request frame is delivered,
@@ -91,12 +88,13 @@ IOCALL:
 	or a
 	jr nz,IOCALL_FAIL_STACKED
 
-	; Stamp the outgoing sequence and CRC.  Callers build class, status,
-	; length and payload; integrity is the transport's business and they
-	; never see it.  Done before RTS so the frame is complete the moment the
-	; MCU starts clocking.
+	; Stamp the outgoing sequence.  The send helper maps this compatibility
+	; mailbox to the common variable-length wire packet and supplies its CRC.
 	call ioc_frame_stamp		; HL preserved; A = sequence stamped
 	ld (ioc_expect_seq),a
+	ld (ioc_bulk_tx_seq),a
+	ld a,(hl)
+	ld (ioc_bulk_tx_type),a
 
 	; RTS is asserted INSIDE ioc_command_send_frame, after the preamble has been
 	; loaded into the transmitter.  Asserting it here started the MCU clocking
@@ -124,15 +122,8 @@ IOCALL:
 	or a
 	ret nz				; transport error: nothing to validate
 
-	; The reply arrived intact enough to copy.  Now decide whether to believe
-	; it.  ioc_frame_check clobbers HL too, so keep a copy across it.
-	push hl
-	call ioc_frame_check
-	pop hl
-	or a
-	jr nz,IOCALL_CRC_FAIL
-
-	; CRC is good, so the sequence byte can be trusted.  A reply echoing a
+	; recv_frame has already verified the exact wire CRC, so the sequence byte
+	; can be trusted.  A reply echoing a
 	; different sequence belongs to an earlier transaction -- accepting it
 	; would answer this request with a stale one.
 	inc hl				; IOC_OFF_SEQ
@@ -140,11 +131,16 @@ IOCALL:
 	cp (hl)
 	jr nz,IOCALL_SEQ_FAIL
 
-	xor a
-	ret
+	; The following IOCBULK is the data phase of this command transaction.
+	; Preserve the verified response metadata so the bulk packet can be matched
+	; to the READY response that authorized it.
+	ld a,(hl)
+	ld (ioc_bulk_rx_seq),a
+	dec hl
+	ld a,(hl)
+	ld (ioc_bulk_rx_type),a
 
-IOCALL_CRC_FAIL:
-	ld a,#IOC_XPORT_BAD_CRC
+	xor a
 	ret
 
 IOCALL_SEQ_FAIL:
@@ -168,7 +164,8 @@ IOCALL_FAIL_STACKED:
 ; ---------------------------------------------------------------------------
 ; Purpose:
 ;   Configure SIO1/B for External Sync mode with external clock.  Idempotent.
-;   Called at the start of each IOCALL in Phase 1 (see header note).
+;   Called once by ioc_link_init_once; later IOCALLs leave the receiver and its
+;   External Sync character boundary intact.
 ;
 ; Command channel = SIO1/B, CTRL port 33h.
 ; MCU is the synchronous clock master; Z80 SIO1/B is externally clocked x1.
@@ -178,8 +175,8 @@ IOCALL_FAIL_STACKED:
 ;   WR0 0x18  channel reset
 ;   WR1 0x00  no interrupts, no WAIT/DMA
 ;   WR4 0x30  External Sync mode, x1 clock, no parity
-;   WR7 0x7E  receive sync char / TX underrun fill (sync is via /SYNC pin)
-;   WR3 0xC0  8-bit RX format, receiver disabled during request TX
+;   WR7 0xFF  TX underrun fill (sync is via /SYNC pin)
+;   WR3 0xC0  8-bit RX format, receiver disabled before first establishment
 ;   WR5 0x68  8-bit TX, TX enable, TX CRC disabled, RTS inactive
 ;   WR9 via SIO1B_CTRL: SIO1 master interrupt disabled (chip-wide, already 0)
 ;
@@ -206,15 +203,15 @@ sio_command_init:
 	ld a,#SIO_WR4_CMD_EXTSYNC
 	out (SIO_COMMAND_CTRL_PORT),a
 
-	; WR7: External Sync fill/preamble byte = 7Eh.
+	; WR7: marking underrun fill; packet framing uses A5 5A in software.
 	ld a,#0x07
 	out (SIO_COMMAND_CTRL_PORT),a
 	ld a,#SIO_EXTSYNC_FILL
 	out (SIO_COMMAND_CTRL_PORT),a
 
-	; WR3: 8-bit RX format, receiver disabled during request TX.  The BIOS does
-	; not need SIO RX while the PIC captures the Z80 request; leaving RX off
-	; avoids full-duplex junk bytes and overrun before the real reply.
+	; WR3: 8-bit RX format, initially disabled.  This is before a character
+	; boundary exists.  Once the first reply establishes sync, the receiver is
+	; enabled and is never disabled again except during explicit link recovery.
 	ld a,#0x03
 	out (SIO_COMMAND_CTRL_PORT),a
 	ld a,#SIO_WR3_CMD_RX_OFF

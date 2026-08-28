@@ -11,11 +11,8 @@
 ;    |-- CMD_XFER_STATUS ------->|   command lane, ERROR PATH ONLY
 ;    |<-- DONE(id, status) ------|   command lane
 ;
-; This program owns no SIO registers at all — IOCBULK does the arming, the RTS
-; handshake and the /CTSA check.  IOC_BULK.COM still drives the bulk lane with
-; its own inline loop and is kept deliberately as the A/B control: if this one
-; regresses and that one does not, the fault is in the BIOS entry rather than in
-; the transport or the MCU.
+; This program owns no SIO registers at all — IOCBULK does the arming, software
+; admission, common-packet validation, CRC check, RTS and /CTSA handling.
 ;
 ; On the happy path the DONE query is skipped: receiving every byte and seeing
 ; the PIC drop /CTSA already proves the read completed.  DONE is still issued
@@ -24,8 +21,8 @@
 ; The MCU reads the card BEFORE replying READY, so SD latency is outside the
 ; bulk transaction.  It then waits for RTS on channel A before clocking — RTS
 ; that IOCBULK asserts — so the handoff is deterministic rather than timed.
-; /DCDA gates this channel's receiver via Auto Enables and /CTSA marks the bulk
-; phase; both are the MCU's to drive and neither is visible from here.
+; Auto Enables is off so RX remains continuously enabled.  IOCBULK polls /DCDA
+; for software receive admission, while /CTSA marks the bulk phase.
 ;
 ; Verification: reports the first 16 bytes, and checks the 55 AA signature at
 ; offset 510.  Getting both right means the whole 512-byte transfer landed in
@@ -41,7 +38,7 @@
 BDOS		= 0x0005
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
-IOCALL		= 0xDA3F	; ZBIOS_EXT_BASE + 0Ch: fixed-frame command transport
+IOCALL		= 0xDA3F	; ZBIOS_EXT_BASE + 0Ch: compatibility mailbox transport
 IOCBULK		= 0xDA45	; ZBIOS_EXT_BASE + 12h: bulk-lane receive
 
 CMD_SD_READ_BULK = 0x05

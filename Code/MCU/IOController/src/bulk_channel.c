@@ -17,15 +17,16 @@
  *      command lane   /SIOB_CS (RA4)   /SYNCB (RA7)
  *      bulk lane      /SIOA_CS (RA5)   /SYNCA (RA6)
  *
- * The byte sequence mirrors external_sync_send(): two setup clocks, one
- * hand-clocked byte carrying the /SYNC edge, then the remainder through SPI2,
- * then a trailing flush byte.  The hand-clocked byte is now shared with the
- * command lane as sio_link_clock_sync_byte(); the ONLY difference between the
- * two lanes is BULK_SYNC_DROP_BIT below.
+ * The establishing byte sequence mirrors external_sync_send(): two setup
+ * clocks, one hand-clocked byte carrying the /SYNC edge, then the remainder
+ * through SPI2 and a trailing flush byte.  Later transfers use SPI2 for every
+ * data byte.  The hand-clocked byte is shared with the command lane as
+ * sio_link_clock_sync_byte(); the only alignment difference is
+ * BULK_SYNC_DROP_BIT below.
  *
- * Note the first data byte is the one that carries the sync edge, exactly as
- * the 7Eh preamble does on the command lane.  It is still delivered to the
- * host, so the host reads exactly `length` bytes: this stays a dumb pipe.
+ * A disposable byte carries the one-time sync edge.  The complete packet then
+ * starts with aligned SPI bytes A5 5A, which the host scans before accepting
+ * its declared DATA bytes.
  * --------------------------------------------------------------------------- */
 
 /* ---------------------------------------------------------------------------
@@ -35,24 +36,20 @@
  * Three signals, all on the SIO1/A modem-control pins:
  *
  *   RF1  /SIO1A_INT   in   the host's RTS: "I am in my read loop, go"
- *   RB4  /DCDA        out  with Auto Enables set on channel A (WR3 bit 5),
- *                          this gates the host's RECEIVER.  Held deasserted
- *                          outside a transfer, so stray clocks cannot produce
- *                          stray bytes -- BULK_ACTIVE enforced in hardware.
+ *   RB4  /DCDA        out  software RX-admission level.  The host polls it
+ *                          after asserting RTS and before reading a byte.
  *   RB0  /CTSA        out  asserted for the duration of the bulk phase.  The
- *                          host can watch it deassert instead of paying for a
- *                          DONE round trip.  With Auto Enables this same line
- *                          gates the host's TRANSMITTER, which is exactly what
- *                          a future Z80 -> MCU write needs it to mean, so the
- *                          signal keeps one meaning: "the bulk phase is live".
+ *                          host polls it before transmitting and watches it
+ *                          deassert for completion.
  *
  * Waiting for RTS replaces the fixed start guard this lane used to need.  The
  * guard was the single largest cost in a sector transfer and it was a guess;
  * this is deterministic. */
 #define BULK_HOST_READY_TIMEOUT_MS  500u
 
-/* Let the SIO act on /DCDA before the first clock edge arrives. */
-#define BULK_DCD_SETTLE_US          100u
+/* After advertising admission, give the host enough time to observe the RR0
+ * level and enter its byte loop before opening SIO1/A's clock gate. */
+#define BULK_ADMISSION_GUARD_US     100u
 
 /* ---------------------------------------------------------------------------
  * Bulk byte pacing
@@ -101,17 +98,19 @@
  * search covers BULK_RX_SEARCH_BITS bit positions, so the window needs that
  * many bits of headroom plus one byte for the bit-shifted tail read. */
 /* Widened from 64.  The host now sends a sacrificial lead-in byte before the
- * preamble, because the first byte out of its transmitter is fill rather than
- * what was buffered, so 7E 81 starts a byte later than it used to.  64 bits
+ * marker, because the first byte out of its transmitter is fill rather than
+ * what was buffered, so A5 5A starts a byte later than it used to.  64 bits
  * would still cover that, but the margin for a late start is what absorbs this
  * class of fault and it should not be spent on a known, fixed cost.
  *
  * A wider search means more candidate positions and so more chances of a false
- * lock on 16 bits of payload that happen to read 7E 81.  That is survivable
- * only because the payload carries its own CRC: a false lock de-shifts into
+ * lock on 16 payload bits that happen to read A5 5A.  That is survivable only
+ * because the whole packet carries a CRC: a false lock de-shifts into
  * garbage and is rejected rather than committed. */
 #define BULK_RX_SEARCH_BITS   128u
-#define BULK_RX_WINDOW_BYTES  (BULK_MAX_LENGTH + BULK_CRC_BYTES + 2u + (BULK_RX_SEARCH_BITS / 8u) + 2u)
+#define BULK_PACKET_OVERHEAD  (2u + 2u + IOC_PACKET_FIXED_LEN + IOC_PACKET_CRC_BYTES)
+#define BULK_RX_WINDOW_BYTES  (BULK_MAX_LENGTH + BULK_PACKET_OVERHEAD + \
+                               (BULK_RX_SEARCH_BITS / 8u) + 2u)
 
 static uint8_t rx_window[BULK_RX_WINDOW_BYTES];
 
@@ -153,6 +152,16 @@ static bool find_bulk_start(uint16_t *bit_index)
 static void bulk_byte_gap(void)
 {
     __delay_us(BULK_BYTE_GAP_US);
+}
+
+static bool bulk_send_packet_byte(uint8_t value)
+{
+    uint8_t discard;
+
+    if (!sio_link_exchange(value, &discard))
+        return false;
+    bulk_byte_gap();
+    return true;
 }
 
 /* ---------------------------------------------------------------------------
@@ -197,13 +206,6 @@ static void bulk_byte_gap(void)
  * and it buys tolerance of the interrupt load that real console traffic will
  * produce.  Reads are unaffected: their 3-byte RX FIFO already absorbs ~18 us
  * and they ran clean under the same load. */
-/* BISECT: back to the 12 us that ran 1864 passes clean.
- *
- * 24 us was correct reasoning for interrupt headroom on the write path, but
- * reads started failing their CRC after it went in and I have no mechanism --
- * this constant is used only in bulk_run_receive(), the WRITE direction, and
- * writes are passing while every read fails.  Restoring the known-good value
- * to confirm the changes are even the cause. */
 #define BULK_RX_TARGET_BYTE_US  24u
 #define BULK_RX_BYTE_GAP_US     (BULK_RX_TARGET_BYTE_US - BULK_SPI_BYTE_US)
 
@@ -227,6 +229,9 @@ static BulkCommitFn   armed_commit;
 static uint8_t        armed_dir;
 static uint16_t       armed_length;
 static uint8_t        armed_xfer_id;
+static uint8_t        armed_type;
+static uint8_t        armed_sequence;
+static uint8_t        armed_status;
 static uint8_t        xfer_id_counter;
 static uint8_t        last_xfer_id;
 static uint8_t        last_status;
@@ -249,6 +254,24 @@ static bool wait_for_host_ready(void)
 static void sync_a_release(void)
 {
     SYNCA_LAT = SYNCA_IDLE;
+}
+
+/* Persistent External Sync on this lane, exactly as on the command lane.
+ *
+ * /SYNCA idles high, is driven low ONCE by the hand-clocked byte below, and is
+ * then held there for the life of the link.  Releasing it per transfer -- which
+ * this lane did until now -- forces the host back into Hunt every time and makes
+ * the bit-banged byte mandatory on every transfer.
+ *
+ * The two lanes must behave identically apart from block size, so everything
+ * here mirrors external_sync.c; only BULK_SYNC_DROP_BIT and the baud differ. */
+static bool bulk_synced;
+void bulk_channel_request_resync(void)
+{
+    /* Release the line first, so the next establishing transfer has a HIGH
+     * level to produce a real falling edge from. */
+    sync_a_release();
+    bulk_synced = false;
 }
 
 /* Bit position, within the hand-clocked byte, where /SYNCA is driven low.
@@ -308,7 +331,8 @@ static void sync_a_release(void)
  * registers -- establishes framing. */
 #define BULK_SYNC_DROP_BIT  0u
 
-void bulk_channel_arm(const uint8_t *buf, uint16_t length, uint8_t xfer_id)
+void bulk_channel_arm(const uint8_t *buf, uint16_t length, uint8_t xfer_id,
+                      uint8_t type, uint8_t sequence, uint8_t status)
 {
     armed_buf     = buf;
     armed_rx_buf  = 0;
@@ -316,9 +340,13 @@ void bulk_channel_arm(const uint8_t *buf, uint16_t length, uint8_t xfer_id)
     armed_dir     = BULK_DIR_MCU_TO_Z80;
     armed_length  = length;
     armed_xfer_id = xfer_id;
+    armed_type    = type;
+    armed_sequence = sequence;
+    armed_status  = status;
 }
 
 void bulk_channel_arm_receive(uint8_t *buf, uint16_t length, uint8_t xfer_id,
+                              uint8_t type, uint8_t sequence,
                               BulkCommitFn commit)
 {
     armed_buf     = 0;
@@ -328,6 +356,9 @@ void bulk_channel_arm_receive(uint8_t *buf, uint16_t length, uint8_t xfer_id,
     armed_dir     = BULK_DIR_Z80_TO_MCU;
     armed_length  = length;
     armed_xfer_id = xfer_id;
+    armed_type    = type;
+    armed_sequence = sequence;
+    armed_status  = IOC_STATUS_OK;
 }
 
 const uint8_t *bulk_channel_rx_target(void)
@@ -363,19 +394,21 @@ uint8_t bulk_channel_next_xfer_id(void)
     return xfer_id_counter;
 }
 
-/* MCU -> Z80.  The MCU places the /SYNC edge, so it owns the byte boundary
- * and the host simply reads `length` bytes. */
+/* MCU -> Z80 common packet.  A5 carries the one-time /SYNCA edge; the host
+ * searches A5 5A before accepting LEN/TYPE/SEQ/STATUS/data. */
 static bool bulk_run_send(void)
 {
     uint16_t i;
+    uint16_t packet_length;
     uint16_t crc;
     uint8_t  discard;
     bool     ok = true;
 
-    /* Enable the host's receiver, and mark the bulk phase live. */
+    /* Advertise RX admission and mark the bulk phase live.  Auto Enables is
+     * off, so these are status levels; they never disable the host receiver. */
     DCDA_LAT = DCDA_ASSERTED;
     CTSA_LAT = CTSA_ASSERTED;
-    __delay_us(BULK_DCD_SETTLE_US);
+    __delay_us(BULK_ADMISSION_GUARD_US);
 
     /* Park SCK at the gated clock's pulled-up idle level before selecting.
      * Otherwise enabling the '125 while the PIC drives low creates a falling
@@ -397,63 +430,69 @@ static bool bulk_run_send(void)
      * asymmetry against the command lane for no cost. */
     SIOA_CS_LAT = SIOA_CS_ASSERTED;
 
-    /* Two setup clocks with /SYNCA still idle, as on the command lane. */
-    SIO_SCK_LAT = 0;
-    __delay_us(EXTSYNC_BIT_DELAY_US);
-    SIO_SCK_LAT = 1;
-    __delay_us(EXTSYNC_BIT_DELAY_US);
-    SIO_MOSI_LAT = 0;
-    SIO_SCK_LAT = 0;
-    __delay_us(EXTSYNC_BIT_DELAY_US);
-    SIO_SCK_LAT = 1;
+    if (!bulk_synced) {
+        /* Two setup clocks with /SYNCA still idle, as on the command lane.
+         * NOT a multiple of eight, so they would move a synchronised receiver's
+         * character boundary -- which is why they run only on the path that is
+         * establishing that boundary. */
+        SIO_SCK_LAT = 0;
+        __delay_us(EXTSYNC_BIT_DELAY_US);
+        SIO_SCK_LAT = 1;
+        __delay_us(EXTSYNC_BIT_DELAY_US);
+        SIO_MOSI_LAT = 0;
+        SIO_SCK_LAT = 0;
+        __delay_us(EXTSYNC_BIT_DELAY_US);
+        SIO_SCK_LAT = 1;
 
-    /* Byte 0 carries the sync edge and is still delivered as data. */
-    sio_link_clock_sync_byte(armed_buf[0], SIO_LINK_CH_BULK,
-                             BULK_SYNC_DROP_BIT);
-    crc = sio_link_crc16_update(0u, armed_buf[0]);
+        /* Disposable sync byte.  The complete packet marker follows through
+         * SPI, independent of the channel-specific /SYNCA drop position. */
+        sio_link_clock_sync_byte(EXTSYNC_ESTABLISH_BYTE, SIO_LINK_CH_BULK,
+                                 BULK_SYNC_DROP_BIT);
+        bulk_synced = true;
+    }
+
+    packet_length = (uint16_t)(IOC_PACKET_FIXED_LEN + armed_length);
+    crc = sio_link_crc16_update(0u, (uint8_t)packet_length);
+    crc = sio_link_crc16_update(crc, (uint8_t)(packet_length >> 8));
+    crc = sio_link_crc16_update(crc, armed_type);
+    crc = sio_link_crc16_update(crc, armed_sequence);
+    crc = sio_link_crc16_update(crc, armed_status);
+    for (i = 0u; i < armed_length; i++)
+        crc = sio_link_crc16_update(crc, armed_buf[i]);
+
+    /* Back to the gated clock's idle level before the module takes the pins. */
+    SIO_SCK_LAT = 1;
 
     sio_link_set_baud(BULK_SPI_BAUD);
     sio_link_clear_fifos();
     sio_link_pins_to_spi();
-    for (i = 1u; i < armed_length; i++) {
-        if (!sio_link_exchange(armed_buf[i], &discard)) {
-            ok = false;
-            break;
-        }
-        crc = sio_link_crc16_update(crc, armed_buf[i]);
-        bulk_byte_gap();
-    }
 
-    /* CRC-16 trailer, most significant byte first.  The lane has no other
-     * integrity check, so without this a corrupted block is indistinguishable
-     * from a good one at both ends.
-     *
-     * The trailer is transport, not payload: the Z80's IOCBULK consumes and
-     * verifies it inside the BIOS, so the caller asks for `length` and gets
-     * `length` bytes in its buffer.  User programs used to request
-     * length + BULK_CRC_BYTES and check the CRC themselves, and each one
-     * carried its own copy of the polynomial. */
-    if (ok) {
-        if (!sio_link_exchange((uint8_t)(crc >> 8), &discard))
-            ok = false;
-        bulk_byte_gap();
-    }
-    if (ok) {
-        if (!sio_link_exchange((uint8_t)crc, &discard))
-            ok = false;
-        bulk_byte_gap();
-    }
+    /* Always send the complete marker as ordinary aligned packet bytes. */
+    ok = bulk_send_packet_byte(IOC_PACKET_SYNC0);
+    if (ok) ok = bulk_send_packet_byte(IOC_PACKET_SYNC1);
+    if (ok) ok = bulk_send_packet_byte((uint8_t)packet_length);
+    if (ok) ok = bulk_send_packet_byte((uint8_t)(packet_length >> 8));
+    if (ok) ok = bulk_send_packet_byte(armed_type);
+    if (ok) ok = bulk_send_packet_byte(armed_sequence);
+    if (ok) ok = bulk_send_packet_byte(armed_status);
+    for (i = 0u; ok && i < armed_length; i++)
+        ok = bulk_send_packet_byte(armed_buf[i]);
+    if (ok) ok = bulk_send_packet_byte((uint8_t)(crc >> 8));
+    if (ok) ok = bulk_send_packet_byte((uint8_t)crc);
 
-    /* The SIO exposes its final received byte only after further clocks. */
+    /* This flush byte becomes the harmless stale byte at the head of the next
+     * receive window.  Marker search, not payload positioning, consumes it. */
     (void)sio_link_exchange(0xFFu, &discard);
     sio_link_pins_to_lat();
 
-    sync_a_release();
+    /* /SYNCA is NOT released.  Dropped once by the hand-clocked byte above and
+     * held for the life of the link, as the SIO manual requires of an External
+     * Sync input.  Releasing it here per transfer is what made the bit-banged
+     * byte mandatory on every transfer. */
     SIO_MOSI_LAT = 1;
 
-    /* Deasserting /CTSA is the completion edge the host watches for.
-     * Deasserting /DCDA disables its receiver again, so nothing that happens
-     * on the shared clock afterwards can be mistaken for bulk data. */
+    /* Close software admission after every byte has been clocked.  The host
+     * receiver itself remains enabled and retains its character boundary. */
     CTSA_LAT = CTSA_IDLE;
     DCDA_LAT = DCDA_IDLE;
 
@@ -471,13 +510,15 @@ static bool bulk_run_send(void)
 }
 
 /* Z80 -> MCU.  The MCU still supplies every clock edge, but the host owns the
- * byte boundary, so the payload is captured raw and de-shifted afterwards.
+ * byte phase, so the entire common packet is captured raw and de-shifted after
+ * its A5/5A marker is found.
  *
- * /CTSA is what makes this direction work: under Auto Enables it gates the
- * host's TRANSMITTER, so the host cannot put a bit on the wire until the MCU
- * says so.  /DCDA stays IDLE throughout -- that gates the host's RECEIVER, and
- * nothing is being sent to it.  Leaving it deasserted means the clocks driven
- * here cannot be latched by the host as phantom received bytes. */
+ * /CTSA is software TX admission: the host stages its lead-in, asserts RTS,
+ * and waits for /CTSA before streaming.  The staged byte still cannot move
+ * early because this MCU supplies every clock and keeps /SIOA_CS closed until
+ * after admission.  /DCDA stays idle because no receive admission is offered;
+ * the host receiver nevertheless stays enabled and may collect harmless FFh
+ * full-duplex bytes, which it drains before the next read. */
 static bool bulk_run_receive(void)
 {
     uint16_t i;
@@ -495,25 +536,23 @@ static bool bulk_run_receive(void)
      * received data. */
     length = armed_length;
 
-    /* Payload, CRC trailer, preamble, and slack for a late-starting
-     * transmitter. */
-    window = (uint16_t)(length + BULK_CRC_BYTES + 2u +
+    /* Complete common packet plus slack for a late-starting transmitter. */
+    window = (uint16_t)(length + BULK_PACKET_OVERHEAD +
                         (BULK_RX_SEARCH_BITS / 8u) + 2u);
     if (window > BULK_RX_WINDOW_BYTES)
         window = BULK_RX_WINDOW_BYTES;
 
     CTSA_LAT = CTSA_ASSERTED;
-    __delay_us(BULK_DCD_SETTLE_US);
+    __delay_us(BULK_ADMISSION_GUARD_US);
 
     /* Match the gated clock's pulled-up idle before enabling the buffer. */
     SIO_SCK_LAT = 1;
     SIOA_CS_LAT = SIOA_CS_ASSERTED;
 
-    /* Marking idle on MOSI and /SYNCA asserted for the whole window, exactly
-     * as external_sync_receive() does on the command lane.  Receiving needs no
-     * intra-byte GPIO: there is no sync edge to place in this direction. */
+    /* Marking idle on MOSI.  /SYNCA is already low and stays low; no
+     * per-window assert, matching
+     * external_sync_receive() on the command lane. */
     SIO_MOSI_LAT = 1;
-    SYNCA_LAT    = SYNCA_ASSERTED;
 
     sio_link_set_baud(BULK_SPI_BAUD);
     sio_link_clear_fifos();
@@ -527,7 +566,7 @@ static bool bulk_run_receive(void)
     }
     sio_link_pins_to_lat();
 
-    sync_a_release();
+    /* No release here either -- see the send path. */
     SIO_MOSI_LAT = 1;
 
     SIOA_CS_LAT = SIOA_CS_IDLE;
@@ -569,7 +608,36 @@ static bool bulk_run_receive(void)
         return false;
     }
 
-    crc = 0u;
+    /* bit_index names LEN_LO, immediately after A5 5A. */
+    {
+        uint16_t declared;
+        uint8_t type;
+        uint8_t sequence;
+        uint8_t status;
+
+        declared = rx_wire_byte(bit_index);
+        declared |= (uint16_t)rx_wire_byte((uint16_t)(bit_index + 8u)) << 8;
+        type = rx_wire_byte((uint16_t)(bit_index + 16u));
+        sequence = rx_wire_byte((uint16_t)(bit_index + 24u));
+        status = rx_wire_byte((uint16_t)(bit_index + 32u));
+
+        if (declared != (uint16_t)(IOC_PACKET_FIXED_LEN + length) ||
+            type != armed_type || sequence != armed_sequence ||
+            status != IOC_STATUS_OK) {
+            last_status = IOC_STATUS_BULK_NO_SYNC;
+            CTSA_LAT = CTSA_IDLE;
+            return false;
+        }
+
+        crc = 0u;
+        crc = sio_link_crc16_update(crc, (uint8_t)declared);
+        crc = sio_link_crc16_update(crc, (uint8_t)(declared >> 8));
+        crc = sio_link_crc16_update(crc, type);
+        crc = sio_link_crc16_update(crc, sequence);
+        crc = sio_link_crc16_update(crc, status);
+    }
+
+    bit_index = (uint16_t)(bit_index + 40u);
     for (i = 0u; i < length; i++) {
         armed_rx_buf[i] = rx_wire_byte((uint16_t)(bit_index + (i * 8u)));
         crc = sio_link_crc16_update(crc, armed_rx_buf[i]);

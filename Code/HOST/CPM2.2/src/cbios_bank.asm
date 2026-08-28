@@ -18,11 +18,17 @@
 	.globl WBOOT,FBASE
 	
 	.globl ctc_disable_interrupts,ioc_diag_capture
+	.globl ioc_bulk_synced
 	.globl ioc_rx_synced,ioc_link_ready
 	.globl IOC_DIAG_RR0,IOC_DIAG_RR1,IOC_DIAG_SYNCED,IOC_DIAG_READY
 	.globl IOC_DIAG_SCANLEFT
 	.globl IOC_DIAG_B0,IOC_DIAG_B1,IOC_DIAG_B2,IOC_DIAG_B3
 	.globl IOC_DIAG_B4,IOC_DIAG_B5,IOC_DIAG_B6,IOC_DIAG_B7,IOC_DIAG_BIDX
+	.globl IOC_DIAG_BULK_REASON,IOC_DIAG_BULK_COUNT
+	.globl IOC_DIAG_BULK_B0,IOC_DIAG_BULK_HEADER
+	.globl IOC_DIAG_BULK_RR0,IOC_DIAG_BULK_RR1,IOC_DIAG_BULK_SYNCED
+	.globl IOC_DIAG_BULK_EXPECT_LEN,IOC_DIAG_BULK_EXPECT_TYPE
+	.globl IOC_DIAG_BULK_EXPECT_SEQ
 
 	.area CODE (ABS)
 	.org CBIOS_BANKING_CODE_BASE
@@ -229,11 +235,10 @@ IOC_DIAG_READY:		.db 0
 ; that separates "the reply never came" from "the reply came and the marker was
 ; missed" -- which need opposite fixes.
 IOC_DIAG_SCANLEFT:	.db 0
-; First four bytes the reply scan actually saw, and the index used to fill them.
-; If the character boundary is wrong these are a bit-rotated 7Eh/81h rather than
-; the marker and class -- 7Eh is 01111110, so a one-bit slip reads as FCh or 3Fh
-; and a four-bit slip as E7h.  Nothing else distinguishes "wrong alignment" from
-; "wrong bytes".
+; First eight bytes the reply scan actually saw, and the index used to fill
+; them.  If the character boundary is wrong A5h/5Ah and the following header
+; appear bit-rotated.  Nothing else distinguishes "wrong alignment" from
+; "wrong bytes" when the marker is never accepted.
 IOC_DIAG_B0:		.db 0
 IOC_DIAG_B1:		.db 0
 IOC_DIAG_B2:		.db 0
@@ -243,6 +248,23 @@ IOC_DIAG_B5:		.db 0
 IOC_DIAG_B6:		.db 0
 IOC_DIAG_B7:		.db 0
 IOC_DIAG_BIDX:		.db 0
+
+; Bounded SIO1/A receive rejection trace.  Error 02 otherwise merges "marker
+; absent" with every header-field mismatch, which makes a scope the only way
+; to distinguish character alignment from bad metadata.  On marker exhaustion
+; COUNT is the scan limit and B0 is the last byte considered; B1..B7 are
+; reserved.  HEADER is populated after the complete wire stream is drained.
+IOC_DIAG_BULK_REASON:	.db 0
+IOC_DIAG_BULK_COUNT:	.db 0
+IOC_DIAG_BULK_B0:	.db 0
+			.ds 7
+IOC_DIAG_BULK_HEADER:	.ds 5
+IOC_DIAG_BULK_RR0:	.db 0
+IOC_DIAG_BULK_RR1:	.db 0
+IOC_DIAG_BULK_SYNCED:	.db 0
+IOC_DIAG_BULK_EXPECT_LEN:	.dw 0
+IOC_DIAG_BULK_EXPECT_TYPE:	.db 0
+IOC_DIAG_BULK_EXPECT_SEQ:	.db 0
 
 ; Record why a reply never arrived.  In: B = unused scan budget.
 ; Clobbers AF only, so the caller's error code is still its own to set.
@@ -262,3 +284,8 @@ ioc_diag_capture:
 	ld a,(ioc_link_ready)
 	ld (IOC_DIAG_READY),a
 	ret
+
+; Set once the bulk lane has completed a CRC-verified transfer, which is the
+; only evidence its character boundary was established.  Cleared by LINK_SYNC.
+; Lives here rather than in slot 4, which is full to the byte.
+ioc_bulk_synced:	.db 0

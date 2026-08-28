@@ -4,7 +4,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* All IO Controller command frames are fixed at 32 bytes.
+/* BIOS-facing command mailboxes remain fixed at 32 bytes.  They are no longer
+ * the wire format: both SIO lanes use the common variable-length packet below,
+ * and the transport maps between that packet and this compatibility mailbox.
  *
  * Layout:
  *   byte 0      class / command / response type
@@ -16,26 +18,26 @@
  */
 #define IOC_FRAME_SIZE  32
 
-/* Frame integrity: CRC-16 over bytes 0..29, stored little-endian at 30..31.
+/* Common packet used on BOTH command and bulk lanes:
  *
- * Not decoration.  find_frame_start() walks candidate bit offsets and used to
- * dispatch on a header whose class, sequence, status and length all validated
- * -- which is four bytes of evidence, and a wrong bit alignment can supply them
- * by coincidence.  Two observed consequences:
+ *   A5 5A LEN_LO LEN_HI TYPE SEQ STATUS DATA... CRC_HI CRC_LO
  *
- *   - a CMD_SD_READ_BULK decoded as CMD_PING, replying RSP_PING and putting
- *     every later reply one transaction out of step;
- *   - a write landing on a sector nobody asked for, reporting success, because
- *     the LBA payload was never checked by anything.
+ * LEN counts TYPE + SEQ + STATUS + DATA.  STATUS is the first protocol
+ * payload byte in both directions; requests send zero.  CRC-16-CCITT uses
+ * polynomial 1021h, initial value 0000h, MSB-first processing, no final XOR,
+ * and covers LEN_LO through the final DATA byte (not A5 5A).
  *
- * The second is silent destruction of unrelated data.  A frame is now dispatched
- * only if the CRC passes; the header check survives purely as a cheap pre-filter
- * so the search does not compute 128 CRCs per window.
- *
- * Same CRC-16-CCITT as the bulk lane, so sio_link_crc16_update() is shared. */
-#define IOC_OFF_CRC_LO   30u
-#define IOC_OFF_CRC_HI   31u
-#define IOC_CRC_COVERED  30u
+ * Keeping STATUS in every packet gives the existing mailbox a lossless mapping:
+ * bytes 0/1/2 are TYPE/SEQ/STATUS, byte 3 is the derived DATA length, and bytes
+ * 4.. are DATA.  Bytes 30/31 are ordinary compatibility-mailbox reserve now;
+ * the transport CRC exists only on the wire. */
+#define IOC_PACKET_SYNC0           0xA5u
+#define IOC_PACKET_SYNC1           0x5Au
+#define IOC_PACKET_FIXED_LEN       3u
+#define IOC_PACKET_CRC_BYTES       2u
+#define IOC_COMMAND_MAX_DATA       (IOC_FRAME_SIZE - IOC_OFF_PAYLOAD - 2u)
+#define IOC_COMMAND_MAX_WIRE       (2u + 2u + IOC_PACKET_FIXED_LEN + \
+                                    IOC_COMMAND_MAX_DATA + IOC_PACKET_CRC_BYTES)
 
 /* Byte offsets within a frame */
 #define IOC_OFF_CLASS    0
@@ -109,8 +111,8 @@
 #define IOC_OFF_DONE_PEEK        (IOC_OFF_PAYLOAD + 2u)
 #define IOC_DONE_PEEK_BYTES      8u
 /* Raw capture window, before de-shifting.  With the de-shifted peek above this
- * separates "the host never transmitted" from "the de-shift is wrong": the raw
- * bytes should begin 7E 81 followed by the payload at some bit offset. */
+ * separates "the host never transmitted" from "the de-shift is wrong": it
+ * should contain A5 5A followed by LEN/TYPE/SEQ/STATUS/DATA at some bit phase. */
 #define IOC_OFF_DONE_RAW         (IOC_OFF_PAYLOAD + 2u + IOC_DONE_PEEK_BYTES)
 #define IOC_DONE_RAW_BYTES       8u
 #define IOC_DONE_PAYLOAD_LEN     (2u + IOC_DONE_PEEK_BYTES + IOC_DONE_RAW_BYTES)
@@ -182,8 +184,12 @@
  *      the receive search widened to 128 bits to keep its late-start margin
  *   6  power handshake: /PWR_OFF driven idle from the first instructions of
  *      startup, /SHUTDOWN_RQ latched and debounced, and both reported by PING
+ *  18  common A5/5A LEN16 TYPE SEQ STATUS/DATA CRC16 packet envelope on both
+ *      command and bulk lanes; persistent External Sync is unchanged
+ *  19  first-transfer sync byte is disposable; a complete A5/5A packet always
+ *      follows through SPI, so packet marking is independent of /SYNC timing
  */
-#define IOC_FW_LEVEL  15
+#define IOC_FW_LEVEL  19
 
 /* PING reply: a snapshot of the power handshake pins.
  *
@@ -213,9 +219,8 @@
 #define IOC_PING_SHUTDOWN_WPU   0x20u
 #define IOC_PING_LINK_SYNCED    0x40u
 
-/* PING reply: the firmware level.  In the RESERVED area, not the payload --
- * PING echoes bytes 4..19 verbatim and that echo is what proves the round trip,
- * so it must not be overwritten. */
+/* PING reply diagnostics.  PING echoes request DATA bytes 4..19, then appends
+ * fields at 20..29 and declares the full 26-byte command DATA length. */
 /* Service-loop counters, little-endian.
  *
  * These were in the PROFILE reply, which is a SECOND transaction issued right
@@ -242,7 +247,12 @@
  * handler runs after its request window but before its reply, so it reports:
  *
  *   RX edges  current request window, expected 36 * 8 = 288 (0120h)
- *   TX edges  preceding reply window, expected 34 * 8 = 272 (0110h)
+ *   TX edges  preceding steady-state full PING reply plus its trailer,
+ *             expected 36 * 8 = 288 (0120h)
+ *
+ * The first establishing PING reply also has two setup clocks and one
+ * disposable sync byte, so it measures 298 (012Ah).  A shorter preceding
+ * response legitimately reports fewer.
  *
  * This temporarily displaces the record-read/cache-miss counters. */
 #define IOC_OFF_PING_RX_EDGES_LO 26u

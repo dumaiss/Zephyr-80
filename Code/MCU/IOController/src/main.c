@@ -72,7 +72,8 @@ static void platform_init(void)
     CTRL_LAT_CS_LAT  = CTRL_LAT_CS_IDLE;
     CTRL_LAT_CS_TRIS = 0;
 
-    /* SIO1/A External Sync is wired but unused; park it deasserted. */
+    /* SIO1/A External Sync starts high; the first MCU->host Bulk transfer
+     * drops it once and then holds it low until an explicit link resync. */
     SYNCA_LAT  = SYNCA_IDLE;
     SYNCA_TRIS = 0;
 

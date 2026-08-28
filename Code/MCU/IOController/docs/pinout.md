@@ -23,18 +23,18 @@ already claims `RESET()` and `NMI`.
 | 24 | RA3 | `/IO_USB_CS` | Output | Low | `IO_USB_CS_LAT` | USB bridge select. Held idle by the current firmware. |
 | 25 | RA4 | `/SIOB_CS` | Output | Low | `SIOB_CS_LAT` | Puts SIO1/B on the shared bus and enables the TXDB buffer. Held asserted for a whole command transaction. |
 | 26 | RA5 | `/SIOA_CS` | Output | Low | `SIOA_CS_LAT` | Puts SIO1/A on the bus for a bulk transfer. Asserted for the whole bulk phase. |
-| 33 | RA6 | `/SYNCA` | Output | Low | `SYNCA_LAT` | SIO1/A External Sync strobe, dropped inside byte 0 of a bulk transfer. Note it drops one bit earlier than `/SYNCB` does; see docs/external_sync_protocol.md. |
+| 33 | RA6 | `/SYNCA` | Output | Low | `SYNCA_LAT` | Persistent SIO1/A External Sync: starts high, drops inside byte 0 of the establishing MCU-to-host transfer, then remains low. |
 | 32 | RA7 | `/SYNCB` | Output | Low | `SYNCB_LAT` | SIO1/B External Sync strobe. |
 
 ## Port B — SIO serial bus, SIO1/A modem control, ICSP
 
 | Pin | Port | Signal | Direction | Active | Macro | Notes |
 |---|---|---|---|---|---|---|
-| 8 | RB0 | `/CTSA` | Output | Low | `CTSA_LAT` | SIO1/A clear-to-send. Parked idle. |
+| 8 | RB0 | `/CTSA` | Output | Low | `CTSA_LAT` | SIO1/A software TX-admission and bulk-active level; held asserted throughout a transfer and through write commit. |
 | 9 | RB1 | `SIO_MOSI` | Output | - | `SIO_MOSI_LAT` | SIO bus data, PIC -> device. Drives SIO1/B `RXDB`. Idle high (marking). SPI2 SDO when the SPI transport is enabled. |
 | 10 | RB2 | `SIO_MISO` | Input | - | `SIO_MISO_PORT` | SIO bus data, device -> PIC. Samples SIO1/B `TXDB` when `/SIOB_CS` is asserted. SPI2 SDI (reset default). |
 | 11 | RB3 | `SIO_SCK` | Output | - | `SIO_SCK_LAT` | SIO bus clock. Drives SIO1/B `RXTXCB` through a 74AHCT125 gate. Idle high to match the gated clock's pull-up. The board only activates it toward an SIO while that SIO's select is asserted. SPI2 SCK (reset default input mapping). |
-| 16 | RB4 | `/DCDA` | Output | Low | `DCDA_LAT` | SIO1/A data-carrier-detect. Parked idle. |
+| 16 | RB4 | `/DCDA` | Output | Low | `DCDA_LAT` | SIO1/A software RX-admission level. Auto Enables is off, so it never gates or disables the receiver. |
 | 17 | RB5 | `/CTSB` | Output | Low | `CTSB_LAT` | SIO1/B clear-to-send. Parked idle. |
 | 18 | RB6 | `ICSPCLK` | - | - | - | Programming. |
 | 19 | RB7 | `ICSPDAT` | - | - | - | Programming. |
@@ -122,7 +122,7 @@ The header numbering runs opposite to the port bit numbering: `GPIO0` is RD7 and
 | Pin | Port | Signal | Direction | Active | Macro | Notes |
 |---|---|---|---|---|---|---|
 | 36 | RF0 | `/SIO1B_INT` | Input | Low | `SIO1B_INT_PORT` | SIO1/B service request. A falling edge starts one command transaction. |
-| 37 | RF1 | `/SIO1A_INT` | Input | Low | `SIO1A_INT_PORT` | SIO1/A service request. Wired but unused: the bulk lane currently uses a fixed start guard instead of a handshake. Using this pin would remove that guard. |
+| 37 | RF1 | `/SIO1A_INT` | Input | Low | `SIO1A_INT_PORT` | Host SIO1/A RTS/service request. The PIC waits for it before advertising admission or clocking Bulk. |
 | 38 | RF2 | `RESET` | Output | Low | `HOST_RESET_LAT` | System reset to Z80 and bus. |
 | 39 | RF3 | `RESET_HIGH` | Output | High | `HOST_RESET_HIGH_LAT` | Complementary reset signal. |
 | 12 | RF4 | `NMI_RQ` | Input | High | `NMI_RQ_PORT` | Incoming NMI request. Unused by the current firmware. |

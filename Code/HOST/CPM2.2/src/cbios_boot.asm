@@ -13,7 +13,7 @@
 	.globl runtime_clear_default_dma
 	.globl console_init
 	.globl vdrip_console_cold_init
-	.globl sio_core_init,ioc_link_bringup,ctc_disable_interrupts,sio_core_enable_interrupts
+	.globl sio_core_init,sio1_ioc_init,ioc_link_bringup,ctc_disable_interrupts,sio_core_enable_interrupts
 	.globl WBOOT_RESIDENT_START,WBOOT_RESIDENT_END
 	.globl RUNTIME_WORK_AREA_START,RUNTIME_WORK_AREA_END
 	.globl CURRENT_BANK,cbios_dma_addr
@@ -40,6 +40,11 @@ boot:
 	call select_ram_bank0
 	call ctc_disable_interrupts
 	call sio_core_init
+
+	; SIO1/A is a cold-init device.  WBOOT must not repeat this call: its
+	; channel reset would destroy the persistent Bulk character boundary while
+	; the host and MCU sync flags remain set.
+	call sio1_ioc_init
 
 	; Establish IOCALL character synchronisation here, while the SIO channels
 	; are being configured, rather than lazily on whichever IOCALL happens
@@ -109,6 +114,8 @@ wboot_resident:
 	; Protected stack handoff happens immediately after bank 0 selection.
 	ld sp,#CBIOS_STACK_TOP
 	call ctc_disable_interrupts
+	; Rebuild the console only.  SIO1/A deliberately retains its receiver state
+	; and persistent External-Sync character boundary across CP/M warm boots.
 	call sio_core_init
 	call restore_font_from_rom
 	call restore_ccp_from_rom

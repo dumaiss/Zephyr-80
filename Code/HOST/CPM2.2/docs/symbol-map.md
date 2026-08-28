@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 49907 bytes |
+| Firmware symbol map | `build/firmware.map` | 51933 bytes |
 | Burnable image | `build/zephyr80.bin` | 131072 bytes |
 | Layout manifest | `build/layout.manifest` | 232 bytes |
 
@@ -80,16 +80,16 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `BANK_HELPERS_END` | `DAADh` | Low-level bank helper code end. |
 | `sio_init` | `DD12h` | Compatibility entry that jumps to `sio_core_init`. |
 | `boot` | `DAADh` | Cold boot implementation; starts the CP/M CCP. |
-| `wboot` | `DADFh` | Warm boot trampoline. |
-| `wboot_resident` | `DAE2h` | Protected warm boot implementation; returns to the CP/M CCP. |
-| `WBOOT_RESIDENT_START` | `DAE2h` | Resident warm boot body start. |
-| `WBOOT_RESIDENT_END` | `DB0Dh` | Resident warm boot body end. |
-| `restore_ccp_from_rom` | `DB0Dh` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
+| `wboot` | `DAE2h` | Warm boot trampoline. |
+| `wboot_resident` | `DAE5h` | Protected warm boot implementation; returns to the CP/M CCP. |
+| `WBOOT_RESIDENT_START` | `DAE5h` | Resident warm boot body start. |
+| `WBOOT_RESIDENT_END` | `DB10h` | Resident warm boot body end. |
+| `restore_ccp_from_rom` | `DB10h` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
 | `ctc_disable_interrupts` | `DCB1h` | CTC interrupt disable helper. |
-| `prepare_runnable_bank` | `DB25h` | Page-zero and DMA preparation helper. |
-| `init_page_zero` | `DB2Fh` | Installs `JP WBOOT` and `JP FBASE`. |
-| `runtime_set_default_dma` | `DB44h` | Sets default DMA to `0080h`. |
-| `runtime_clear_default_dma` | `DB52h` | Clears command tail/default DMA area. |
+| `prepare_runnable_bank` | `DB28h` | Page-zero and DMA preparation helper. |
+| `init_page_zero` | `DB32h` | Installs `JP WBOOT` and `JP FBASE`. |
+| `runtime_set_default_dma` | `DB47h` | Sets default DMA to `0080h`. |
+| `runtime_clear_default_dma` | `DB55h` | Clears command tail/default DMA area. |
 | `CONSOLE_CODE_START` | `DB7Ch` | Console BIOS facade start. |
 | `console_init` | `DB7Ch` | Installs and initializes the default console driver. |
 | `console_set_driver` | `DB85h` | Installs an alternate console driver table. |
@@ -127,25 +127,31 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |
 | `CONSOLE_IM2_VECTOR_TABLE_END` | `DD12h` | SIO core exact IM2 vector table end. |
 | `sio_core_init` | `DD15h` | Initializes BIOS-owned SIO services, SIO0/B async mode, and SIO1/A sync mode. |
-| `sio1_ioc_init` | `DD4Dh` | Initializes SIO1/A synchronous external-clock/external-sync IO Controller mode. |
-| `sio_core_enable_interrupts` | `DD91h` | Enables BIOS-owned SIO/IM2 interrupts. |
-| `sio_core_disable_interrupts` | `DDCAh` | Disables BIOS-owned SIO interrupts. |
-| `sio_register_rx_sink` | `DDEBh` | Registers one RX byte sink for a BIOS-owned SIO channel. |
-| `sio_send_byte` | `DE00h` | Blocking send-byte API for BIOS-owned SIO channels. |
-| `sio_recv_byte` | `DE39h` | Polling receive-byte API for BIOS-owned SIO channels. |
-| `sio0b_rts_assert` | `DEDFh` | Asserts SIO0/B RTS for software-managed console RX flow control. |
-| `sio0b_rts_release` | `DEE9h` | Releases SIO0/B RTS for software-managed console RX flow control. |
-| `sio1_ioc_rts_assert` | `DE56h` | Asserts SIO1/A RTS as an IO Controller service request. |
-| `sio1_ioc_rts_release` | `DE60h` | Releases SIO1/A RTS after an IO Controller transaction. |
-| `sio1_ioc_put_byte` | `DE6Ah` | SIO1/A IO Controller byte transmit helper. |
-| `sio1_ioc_get_byte` | `DE6Fh` | SIO1/A IO Controller byte receive helper. |
-| `sio_rx_kick` | `DE74h` | Foreground RX poll/dispatch helper. |
-| `sio_core_isr` | `DEAFh` | BIOS-owned SIO interrupt service routine. |
-| `sio_console_isr` | `DF4Dh` | Compatibility label that jumps to `sio_core_isr`. |
-| `SIO_CORE_CODE_END` | `DF50h` | BIOS-owned SIO core code end. |
+| `sio1_ioc_init` | `DD4Ah` | Initializes SIO1/A synchronous external-clock/external-sync IO Controller mode. |
+| `sio_core_enable_interrupts` | `DD8Eh` | Enables BIOS-owned SIO/IM2 interrupts. |
+| `sio_core_disable_interrupts` | `DDC7h` | Disables BIOS-owned SIO interrupts. |
+| `sio_register_rx_sink` | `DDE8h` | Registers one RX byte sink for a BIOS-owned SIO channel. |
+| `sio_send_byte` | `DDFDh` | Blocking send-byte API for BIOS-owned SIO channels. |
+| `sio_recv_byte` | `DE36h` | Polling receive-byte API for BIOS-owned SIO channels. |
+| `sio0b_rts_assert` | `DEDCh` | Asserts SIO0/B RTS for software-managed console RX flow control. |
+| `sio0b_rts_release` | `DEE6h` | Releases SIO0/B RTS for software-managed console RX flow control. |
+| `sio1_ioc_rts_assert` | `DE53h` | Asserts SIO1/A RTS as an IO Controller service request. |
+| `sio1_ioc_rts_release` | `DE5Dh` | Releases SIO1/A RTS after an IO Controller transaction. |
+| `sio1_ioc_put_byte` | `DE67h` | SIO1/A IO Controller byte transmit helper. |
+| `sio1_ioc_get_byte` | `DE6Ch` | SIO1/A IO Controller byte receive helper. |
+| `sio_rx_kick` | `DE71h` | Foreground RX poll/dispatch helper. |
+| `sio_core_isr` | `DEACh` | BIOS-owned SIO interrupt service routine. |
+| `sio_console_isr` | `DF4Ah` | Compatibility label that jumps to `sio_core_isr`. |
+| `SIO_CORE_CODE_END` | `DF4Dh` | BIOS-owned SIO core code end. |
 | `IOCTRL_CODE_START` | `DF7Bh` | IOCALL transaction code start in core BIOS. |
 | `IOCALL` | `DF7Bh` | Zephyr extended BIOS IO Controller transaction call. |
-| `IOCTRL_CODE_END` | `DFE8h` | IOCALL transaction code end. |
+| `IOCTRL_CODE_END` | `DFEDh` | IOCALL transaction code end. |
+| `IOC_CMD_CODE_START` | `F000h` | Common-packet Command-lane helper code start. |
+| `IOC_CMD_CODE_END` | `F41Bh` | Common-packet Command-lane helper code end. |
+| `IOC_BULK_CODE_START` | `ED00h` | Common-packet Bulk-write helper code start. |
+| `IOC_BULK_CODE_END` | `EF3Bh` | Common-packet Bulk-write helper code end. |
+| `SD_STORAGE_CODE_START` | `F430h` | SD-card BIOS backend code start. |
+| `SD_STORAGE_CODE_END` | `F642h` | SD-card BIOS backend code end. |
 | `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E012h` | Virtual Drip console init, proxy handshake, VDP setup. |
@@ -157,8 +163,8 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `MOVE` | `DC25h` | Same-bank or cross-bank memory move. |
 | `BANKING_CODE_END` | `DCB1h` | Banking extension implementation end. |
 | `VIDEO_SEND` | `DF50h` | Extended BIOS call: raw VDrip display/VDP packet send. |
-| `IOCBULK` | `F1BCh` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
-| `IOCBULKW` | `F28Fh` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
+| `IOCBULK` | `F2B7h` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
+| `IOCBULKW` | `ED00h` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
 | `BIOS_EXT_CODE_START` | `DF50h` | BIOS extension code start. |
 | `BIOS_EXT_CODE_END` | `DF78h` | BIOS extension code end. |
 | `BIOS_CODE_END` | `DF78h` | End of core BIOS code. |

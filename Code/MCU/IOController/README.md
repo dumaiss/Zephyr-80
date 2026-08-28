@@ -34,8 +34,9 @@ reply:   PIC RB1 SIO_MOSI -> Z80 SIO1/B RXDB, clocked by PIC RB3 SIO_SCK
 sync:    PIC RA7 drives SIO1/B /SYNCB
 ```
 
-The bulk of the transfer runs on the SPI2 hardware module; reply byte 0 is still
-clocked by hand for the `/SYNCB` edge. See
+The bulk of the transfer runs on SPI2. A disposable byte is clocked by hand only
+while establishing that lane's persistent `/SYNC` boundary; the complete
+`A5 5A` packet marker then follows through SPI. See
 [docs/external_sync_protocol.md](docs/external_sync_protocol.md) for what stays
 bit-banged and why.
 
@@ -45,23 +46,25 @@ not against the SPI clock — see the header for the T-state budget.
 
 See [docs/pinout.md](docs/pinout.md) for the full pin map.
 
-Frames are fixed 32-byte `IocFrame` mailboxes. The active commands are:
+Both lanes use `A5 5A LEN TYPE SEQ STATUS DATA CRC` packets. The 32-byte
+`IocFrame` is only the command-side compatibility mailbox. Active commands are:
 
 - `CMD_PING`: return `RSP_PING` with the sequence, status, length, and payload
   echoed.
 - `CMD_RESET`: assert `RESET` / `RESET_HIGH`, then reset the PIC.
 
-The PIC transport clocks the raw 32-byte frame only.
+The transport maps command mailboxes to variable-length CRC-protected packets.
 
 ## Two-Lane Transport
 
 The two SIO1 channels are one transport with two lanes: SIO1/B carries commands
-and is authoritative, SIO1/A is a dumb byte pipe with no framing of its own.
+and SIO1/A carries large DATA. Both use the same packet framing and persistent
+External Sync discipline.
 Commands that move more than a mailbox-worth of data use an explicit
 READY -> BULK -> DONE lifecycle:
 
 ```text
-CMD_SD_READ_BULK(LBA) -> READY(id, dir, 512) -> 512 bytes on SIO1/A
+CMD_SD_READ_BULK(LBA) -> READY(id, dir, 512) -> one 512-DATA packet on SIO1/A
                       -> CMD_XFER_STATUS -> DONE(id, status)
 ```
 

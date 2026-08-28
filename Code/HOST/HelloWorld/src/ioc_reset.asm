@@ -23,7 +23,7 @@
 
 BDOS		= 0x0005
 BDOS_PRINT	= 0x09		; print '$'-terminated string at DE
-IOCALL		= 0xDA3F	; BIOS extended entry: IOC fixed-frame transport
+IOCALL		= 0xDA3F	; BIOS extended entry: IOC compatibility transport
 
 CMD_RESET	= 0x02
 

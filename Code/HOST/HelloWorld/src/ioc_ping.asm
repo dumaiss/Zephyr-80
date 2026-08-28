@@ -1,8 +1,9 @@
 ; IOC_PING.COM — Send a PING command to the IO Controller and report the result.
 ;
 ; Uses the IOCALL BIOS extension at DA3Fh (ZBIOS_EXT_BASE + 0Ch).
-; Builds a 32-byte fixed frame with CMD_PING (01h), issues it via IOCALL, and
-; verifies that the MCU replies with RSP_PING (81h).
+; Builds a 32-byte compatibility mailbox with CMD_PING (01h), issues it via
+; IOCALL, and verifies that the MCU replies with RSP_PING (81h).  IOCALL maps
+; the mailbox to the common A5/5A variable-length packet on the wire.
 ;
 ; Frame layout (32 bytes, Z80 -> MCU):
 ;   byte  0  command class:  CMD_PING = 01h
@@ -31,15 +32,21 @@ CMD_PROFILE	= 0x0B
 ; arrives.  Read directly, because a broken link cannot answer a query.
 IOC_DIAG_BASE	= 0xDCC0
 RSP_PROFILE	= 0x8B		; print '$'-terminated string at DE
-IOCALL		= 0xDA3F	; BIOS extended entry: IOC fixed-frame transport
+IOCALL		= 0xDA3F	; BIOS extended entry: IOC compatibility transport
 
 CMD_PING	= 0x01
 RSP_PING	= 0x81
+IOC_FW_LEVEL	= 19
+ZBIOS_XPORT_LEVEL = 7
+ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A
 
 start:
 	ld de,#msg_banner
 	ld c,#BDOS_PRINT
 	call BDOS
+	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
+	cp #ZBIOS_XPORT_LEVEL
+	jp nz,stale_bios
 
 	; Zero the entire TX frame before filling header fields.
 	xor a
@@ -98,7 +105,7 @@ copy_payload:
 	or a
 	jp nz,bad_reply
 	ld a,(rx_frame + 3)
-	cp #0x10
+	cp #0x1a			; diagnostics extend through mailbox byte 29
 	jp nz,bad_reply
 	ld hl,#(rx_frame + 4)
 	ld de,#ping_payload
@@ -121,6 +128,9 @@ verify_payload:
 	call BDOS
 	ld a,(rx_frame + 20)		; IOC_OFF_PING_LEVEL
 	call print_hex_byte
+	ld a,(rx_frame + 20)
+	cp #IOC_FW_LEVEL
+	jp nz,stale_fw
 
 	; Decode the power snapshot rather than printing a hex byte nobody can
 	; read at a glance.  Each line is one question the handshake raises.
@@ -382,6 +392,18 @@ bad_reply:
 	call BDOS
 	ret
 
+stale_bios:
+	ld de,#msg_stale_bios
+	ld c,#BDOS_PRINT
+	call BDOS
+	ret
+
+stale_fw:
+	ld de,#msg_stale_fw
+	ld c,#BDOS_PRINT
+	call BDOS
+	ret
+
 ; Print the byte in A as two uppercase hex digits via BDOS CONOUT (fn 2).
 ; Clobbers: AF, BC, DE (via BDOS).
 print_hex_byte:
@@ -447,6 +469,12 @@ msg_xport_err:
 msg_bad_reply:
 	.ascii " - unexpected reply 0x"
 	.db '$'
+msg_stale_bios:
+	.ascii " - BIOS transport level mismatch (need 07)"
+	.db 0x0d, 0x0a, '$'
+msg_stale_fw:
+	.ascii " - controller firmware level mismatch (need 13)"
+	.db 0x0d, 0x0a, '$'
 msg_fw:		.ascii "fw level $"
 msg_pwr_drv:	.db 13,10
 		.ascii "  /PWR_OFF     driven by us : $"

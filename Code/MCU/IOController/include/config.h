@@ -265,8 +265,8 @@
  * SIO1 modem-control outputs (RB0 / RB4 / RB5 / RE0)
  *
  * /CTS and /DCD are inputs on the Z80 SIO, so the PIC drives all four.  They
- * are parked deasserted at boot; the Auto Enables configuration in the BIOS
- * decides what they gate.
+ * are parked deasserted at boot.  Auto Enables is off on both IOC lanes, so
+ * these pins are software admission/status levels and never disable a receiver.
  * --------------------------------------------------------------------------- */
 #define CTSA_TRIS            TRISBbits.TRISB0
 #define CTSA_ANSEL           ANSELBbits.ANSELB0

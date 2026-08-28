@@ -28,8 +28,10 @@
  *     gated SIO clock pull-ups; select transitions must not create edges.
  *   - Bytes are shifted least-significant bit first, matching the Z80 SIO
  *     serializer.
- *   - The mailbox body is exactly 32 raw bytes.  A 7Eh alignment marker leads
- *     it and trailing idle clocks flush the SIO receiver.
+ *   - Both directions use A5 5A LEN TYPE SEQ STATUS DATA CRC packets.  The
+ *     32-byte command mailbox exists only at the BIOS/API boundary.
+ *   - Trailing idle clocks expose the SIO receiver's final pipeline byte; they
+ *     are never part of a packet and marker search skips any stale one.
  *
  * See docs/external_sync_protocol.md for the timing walkthrough and the SIO
  * manual references behind the /SYNCB handling.
@@ -80,7 +82,12 @@
  * re-measure: a sync-establishing command reply or bulk phase should grow by
  * ~1.15 ms, which the profiler will show directly. */
 #define EXTSYNC_BIT_DELAY_US     2u
-#define EXTSYNC_ALIGNMENT_BYTE   0x7Eu
+/* Establishing the SIO character boundary and marking a packet are separate
+ * jobs.  This disposable byte carries the one-time /SYNC edge; the complete
+ * A5 5A packet follows through SPI on both physical lanes.  Conflating the two
+ * worked on channel B but lost A5 on channel A, whose measured /SYNC drop is
+ * one bit earlier. */
+#define EXTSYNC_ESTABLISH_BYTE   0xFFu
 
 /* ---------------------------------------------------------------------------
  * Reply turnaround guard
@@ -173,52 +180,6 @@
  * dropping the per-byte call/timeout gets it to about 62 T-states (6.2 us,
  * ~1.3 Mbit/s), which is what a 1 Mbps target actually needs.
  * --------------------------------------------------------------------------- */
-/* 32 us, not 16, and the reason is interrupt headroom rather than throughput.
- *
- * sio_command_get_byte costs 151 T-states = 15.1 us at 10 MHz, so 16 us left
- * this lane 0.9 us of slack per byte.  A CTC interrupt measured at 117 T-states
- * (98 T of handler plus 19 T of IM2 acknowledge) is 11.7 us -- thirteen times
- * that margin.  Under interrupt load the host lost bytes, and the failures
- * presented as missing replies and wrong reply classes rather than as anything
- * recognisably timing-related.
- *
- * 32 us gives 16.9 us of slack, comfortably more than one ISR.  It costs almost
- * nothing: a frame is 34 bytes, so 0.54 ms becomes 1.09 ms PER TRANSACTION --
- * not per sector byte, which is what the bulk lane carries.  Sector throughput
- * is unaffected.
- *
- * The real fix for this lane is the host loop, not the pacing.  151 T-states is
- * mostly per-byte call/ret, push/pop and a 24-bit timeout reload; inlining it
- * the way IOCBULK's INI loop is inlined gets it to about 62 T, at which point
- * the pacing could come back down and the lane would still tolerate interrupts.
- * Until then, buy the margin here -- it is nearly free. */
-/* 32 us, for interrupt headroom -- and unlike the bulk lane this IS a margin
- * bet rather than a structural fix.  It is taken knowingly.
- *
- * sio_command_get_byte costs 151 T-states = 15.1 us at 10 MHz, so 16 us left
- * 0.9 us of slack per byte against an 11.7 us ISR.  32 us gives 16.9 us, which
- * covers one interrupt.  The cost is trivial because this lane carries 34 bytes
- * per TRANSACTION, not per sector: 0.54 ms becomes 1.09 ms, and sector
- * throughput is untouched.
- *
- * The bulk lane got a DI critical section instead, which removes the dependency
- * on ISR duration entirely.  That is NOT available here: the MCU performs card
- * I/O inside a command transaction -- handler_sd_read_bulk reads the sector
- * before it replies -- so a DI spanning the reply would blackout for ~10 ms
- * typically and up to ~1 s during card initialisation.  Unlike the bulk case
- * that is not bounded by anything the host controls.
- *
- * The principled fixes, in increasing order of work:
- *   1. Inline the host receive loop.  151 T is mostly per-byte call/ret,
- *      push/pop and a 24-bit timeout reload; IOCBULK's INI loop shows ~62 T is
- *      reachable.  That alone gives 9.8 us at 16 us pacing -- still under one
- *      ISR, so it needs ~20 us pacing with it, but that is faster than today.
- *   2. Split the transaction so the reply is not a blocking wait spanning card
- *      I/O, at which point a DI becomes possible here too.
- *   3. Burst flow control, as described for the bulk lane.
- *
- * NOTE: this value was reverted once while chasing a read regression that a
- * machine reset later cleared.  It was never implicated. */
 #ifndef EXTSYNC_TARGET_BYTE_US
 /* Byte period on the command lane.
  *
@@ -261,32 +222,12 @@
 #define EXTSYNC_PPS_SRC_SPI2_SDO 0x35u
 #define EXTSYNC_PPS_SRC_SPI2_SCK 0x34u
 
-/* The host request currently occupies either:
- *   byte 0..31: direct frame, or
- *   byte 1..32: one leading host alignment byte, then the frame.
- *
- * Clock a small fixed window so the firmware stays simple while the host BIOS
- * is still being simplified.
- */
-/* The window must be long enough that the whole 32-byte mailbox still fits
- * after wherever the host's 7Eh alignment byte lands:
- *
- *     copy_received_frame() requires  start_bits + 256 <= WINDOW * 8
- *
- * so a 48-byte window tolerates the alignment byte appearing up to 16 bytes in.
- * In practice it lands within the first byte or two -- the host asserts RTS and
- * is transmitting a few microseconds later, against a 16 us byte time -- so 16
- * bytes is roughly ten times the observed need.
- *
- * It was 80, of which only 33 are ever used; each byte costs 16 us twice per
- * sector.  Lower it further only with that inequality in mind: too small and a
- * late request silently fails to decode. */
 /* The capture window, in bytes.
  *
- * Was 48 for a 33-byte request (preamble + 32-byte frame), from when the frame
- * could start anywhere in the window and had to be hunted for.  Preloading the
- * preamble before asserting RTS removed that: the first clock edge now shifts
- * the preamble, so the frame starts at byte 0 and the slack is only insurance.
+ * The largest command packet is 35 bytes.  One byte of slack keeps the complete
+ * packet in the window if the transmitter begins slightly late; A5 5A is
+ * searched at every bit phase, so phase tolerance no longer depends on finding
+ * a plausible command header.
  *
  * The excess is not free.  Every byte past the request is an IDLE byte clocked
  * at the host, and since the receiver now stays enabled through our transmit,
@@ -296,30 +237,15 @@
  * behind overruns the three-byte FIFO and loses the reply's marker.  Measured:
  * RR1 bit 5 set, marker never matched, 41 bytes consumed.
  *
- * 36 keeps three bytes of alignment slack and cuts the tail by five times. */
+ * 36 also preserves the measured command-lane pacing and edge budget. */
 #define EXTSYNC_RX_WINDOW_BYTES  36u
 
-/* How far into the capture window find_frame_start() will look for the frame.
- *
- * The window is deliberately larger than a frame so the host's transmission can
- * start late and still be captured whole.  The search must therefore cover that
- * entire slack: anything less throws away the tolerance the window was sized to
- * provide.
- *
- * It used to search 16 bits -- two bytes -- against 15 bytes of slack.  That
- * held for one-shot .COM programs, where the delay between the host asserting
- * RTS and its first byte reaching the wire was consistent.  Under back-to-back
- * transactions it is not: the PIC begins clocking at varying points relative to
- * the host, and a request arriving later than two byte-times was either missed
- * outright or, worse, matched at a wrong alignment inside those 16 bits.  A
- * mis-locked header dispatches the WRONG HANDLER -- an observed case decoded a
- * CMD_SD_READ_BULK as CMD_PING and replied RSP_PING, after which every
- * subsequent reply was off by one transaction.
- *
- * The bound is derived from the window so it cannot drift out of step: the
- * 32-byte frame must still fit after the start offset. */
+/* The marker may begin at any bit through the last position that still leaves
+ * room for the minimum packet. */
+#define EXTSYNC_PACKET_MIN_BYTES \
+    (2u + 2u + IOC_PACKET_FIXED_LEN + IOC_PACKET_CRC_BYTES)
 #define EXTSYNC_FRAME_SEARCH_BITS \
-    ((uint16_t)((EXTSYNC_RX_WINDOW_BYTES - IOC_FRAME_SIZE) * 8u))
+    ((uint16_t)((EXTSYNC_RX_WINDOW_BYTES - EXTSYNC_PACKET_MIN_BYTES) * 8u + 1u))
 
 /* Bit position, within the hand-clocked byte, where /SYNCB is driven low.
  *
@@ -343,10 +269,7 @@ bool external_sync_receive(IocFrame *frame);
 uint16_t external_sync_last_rx_edges(void);
 uint16_t external_sync_last_tx_edges(void);
 bool external_sync_is_established(void);
-/* Transmit a 32-byte reply.  NOT const: the transport stamps the frame's CRC
- * into bytes 30..31 before sending, so handlers never have to know integrity
- * exists.  They set class, sequence (echoed from the request), status, length
- * and payload; everything else is the transport's business. */
-void external_sync_send(IocFrame *frame);
+/* Transmit one common packet mapped from the compatibility mailbox. */
+void external_sync_send(const IocFrame *frame);
 
 #endif /* EXTERNAL_SYNC_H */

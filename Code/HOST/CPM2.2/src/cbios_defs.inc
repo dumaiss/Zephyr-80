@@ -87,7 +87,8 @@ SIO_CH_CONSOLE                  = 0x00
 SIO_CH_IOCTRL                   = 0x01
 
 ; IOCALL caller-provided request block offsets (legacy variable-length protocol).
-; Retained for reference; the active IOCALL now uses the fixed-frame contract.
+; Retained for reference; active callers use the 32-byte compatibility mailbox,
+; which IOCALL maps to and from the common variable-length wire packet.
 IOCALL_CHAN                     = 0x00
 IOCALL_CMD                      = 0x01
 IOCALL_TX_LEN                   = 0x02
@@ -107,7 +108,7 @@ IOC_STATUS_BAD_LEN              = 0x03
 IOC_STATUS_BUSY                 = 0x04
 
 ; ------------------------------------------------------------------------------
-; IOC Fixed-Frame Transport Constants
+; IOC compatibility-mailbox and common-packet constants
 ; ------------------------------------------------------------------------------
 ; Command channel (IOCALL transport) = SIO1/B (ports 32h data, 33h ctrl).
 ; Bulk    channel                     = SIO1/A (ports 30h data, 31h ctrl).
@@ -124,8 +125,10 @@ SIO_COMMAND_CTRL_PORT           = SIO1B_CTRL      ; 33h — Command channel cont
 SIO_BULK_DATA_PORT              = SIO1A_DATA      ; 30h — Bulk channel data
 SIO_BULK_CTRL_PORT              = SIO1A_CTRL      ; 31h — Bulk channel control
 
-; All IOC Command-channel frames are exactly 32 bytes.
-; Frame layout (owned by callers/consumers — BIOS transport does not decode):
+; BIOS-facing compatibility mailboxes remain 32 bytes.  The wire format on both
+; SIO lanes is the common variable-length packet below.
+;
+; Mailbox layout (owned by callers/consumers):
 ;   byte 0      class / command / response type
 ;   byte 1      sequence number
 ;   byte 2      status / flags
@@ -133,26 +136,28 @@ SIO_BULK_CTRL_PORT              = SIO1A_CTRL      ; 31h — Bulk channel control
 ;   bytes 4-19  payload bytes
 ;   bytes 20-31 reserved / command-specific
 IOC_FRAME_SIZE                  = 0x20
+IOC_OFF_CLASS                   = 0x00
+IOC_OFF_STATUS                  = 0x02
+IOC_OFF_LEN                     = 0x03
+IOC_OFF_PAYLOAD                 = 0x04
 
-; Frame integrity, owned entirely by IOCALL.  Callers build class/status/length/
-; payload and never touch these: IOCALL stamps the sequence and CRC on send, and
-; verifies both on receive.
-;
-; The CRC covers bytes 0..29 and lives little-endian at 30..31, inside the
-; existing reserved area -- so the frame layout callers already use is unchanged.
-;
-; Why it exists: the MCU's frame search walks candidate bit offsets and used to
-; dispatch on a header alone.  A wrong alignment can supply a plausible header by
-; coincidence, and did -- once decoding a CMD_SD_READ_BULK as CMD_PING, and once
-; handing a write a garbage LBA so it landed on a sector nobody asked for while
-; reporting success.
+; Common packet, both lanes and both directions:
+;   A5 5A LEN_LO LEN_HI TYPE SEQ STATUS DATA... CRC_HI CRC_LO
+; LEN counts TYPE + SEQ + STATUS + DATA.  CRC covers LEN_LO through DATA,
+; polynomial 1021h, init 0000h, MSB-first, no final XOR.
+IOC_PACKET_SYNC0                = 0xa5
+IOC_PACKET_SYNC1                = 0x5a
+IOC_PACKET_FIXED_LEN            = 0x03
+IOC_PACKET_CRC_BYTES            = 0x02
+IOC_COMMAND_MAX_DATA            = 0x1a       ; bytes 4..29 in compatibility frame
+
+; Sequence ownership is transport-wide.  Callers build type/status/length/data;
+; IOCALL stamps the sequence, puts the CRC only on the wire, and verifies both
+; before returning.  Compatibility-mailbox bytes 30 and 31 remain reserved.
 IOC_OFF_SEQ                     = 0x01
-IOC_OFF_CRC_LO                  = 0x1e
-IOC_OFF_CRC_HI                  = 0x1f
-IOC_CRC_COVERED                 = 0x1e
 
 ; BIOS transport status codes returned by IOCALL.
-; These are transport-layer codes; MCU command status is in the 32-byte frame.
+; These are transport-layer codes; MCU command status is in mailbox byte 2.
 IOC_XPORT_OK                    = 0x00
 IOC_XPORT_TIMEOUT               = 0x01
 IOC_XPORT_BAD_FRAME             = 0x02
@@ -163,7 +168,7 @@ IOC_XPORT_BAD_SEQ               = 0x06       ; reply echoed the wrong sequence
 IOC_XPORT_TIMEOUT_REPLY_MARKER  = 0x11       ; bring-up diagnostic: no reply byte seen
 IOC_XPORT_TIMEOUT_REPLY_BODY    = 0x12       ; bring-up diagnostic: reply began, then stalled
 
-; IOC fixed-frame command/response class bytes used by bring-up diagnostics.
+; IOC command/response type bytes used by bring-up diagnostics.
 IOC_CMD_PING                    = 0x01
 IOC_RSP_PING                    = 0x81
 
@@ -174,8 +179,8 @@ IOC_RSP_PING                    = 0x81
 ; MCU-owned net (it also gates the SIO->MCU MISO buffer), and SDLC/Monosync/
 ; Bisync drive /SYNC as an OUTPUT, contending with the MCU.  External Sync mode
 ; makes /SYNC an INPUT (MCU-owned), so the MCU drives it low for the whole
-; transaction with no contention.  Framing is transparent bytes: an optional
-; software preamble followed by a 32-byte frame.  No SIO hardware CRC/FCS is used.
+; transaction with no contention.  Framing is the common A5/5A variable-length
+; packet described above.  No SIO hardware CRC/FCS is used.
 ;
 ; WR4 = 0x30:  bits 5:4 = 11 = External Sync mode, bits 7:6 = 00 = x1 clock
 ; WR3 = 0xC0:  8-bit RX format, receiver disabled.
@@ -237,23 +242,34 @@ SIO_EXTSYNC_FILL                = 0xff
 
 ; Filler clocked after a request frame so the last frame byte is fully shifted
 ; out before IOCALL drops RTS (which disables the transmitter).  FFh is the
-; marking idle level, and is deliberately NOT the 7Eh preamble so it can never
+; marking idle level, and is deliberately not the A5/5A marker so it can never
 ; be mistaken for the start of another frame.
 IOC_SEND_TRAILER_BYTES          = 2
 IOC_SEND_TRAILER_FILL           = 0xff
 
-; Bulk channel (SIO1/A) register values.  Deliberately different from the
-; command channel: AUTO ENABLES (WR3 bit 5) is set, so /DCDA gates the receiver
-; and /CTSA gates the transmitter in hardware.  The MCU holds /DCDA deasserted
-; outside a transfer, which is what makes it safe to arm this lane and leave it
-; armed — stray clocks cannot produce stray bytes.
-SIO_WR3_BULK_RX                 = 0xf1   ; 8-bit RX, Auto Enables, hunt, RX enable
+; Bulk channel (SIO1/A) register values, matching the command lane's persistent
+; receiver discipline.
+;
+; Auto Enables is OFF on both variants.  With it on, /DCDA can disable the
+; receiver in hardware -- and a disabled receiver is one of the three things the
+; SIO manual says destroys character synchronisation, which makes persistent
+; External Sync impossible.  The flow control it provided is belt-and-braces
+; anyway: IOCBULK and IOCBULKW already poll /CTSA and /DCDA as RR0 status bits.
+;
+; HUNT is used only until the boundary has been established once; after that
+; NO_HUNT keeps the receiver enabled and leaves the boundary alone.
+SIO_WR3_BULK_RX_HUNT            = 0xd1   ; 8-bit RX, hunt, RX enable
+SIO_WR3_BULK_RX_NO_HUNT         = 0xc1   ; 8-bit RX, RX enable, boundary kept
 SIO_WR5_BULK_RTS_ON             = 0xea   ; DTR on, 8-bit TX, TX enable, RTS on
 SIO_WR5_BULK_RTS_OFF            = 0xe8   ; same, RTS off
+SIO_WR5_BULK_IDLE               = 0xe0   ; same format, TX disabled, RTS off
 
-; Bulk WRITE (Z80 -> MCU): the host transmits, so its receiver stays disabled.
-; Auto Enables stays set, which is what makes /CTSA gate the transmitter.
-SIO_WR3_BULK_TX                 = 0xf0   ; 8-bit, Auto Enables, RX DISABLED
+; Bulk WRITE (Z80 -> MCU): the receiver stays ENABLED during transmit.  The
+; host polls /CTSA before streaming instead of using Auto Enables to gate TX.
+; The old per-transfer resync tolerated disabling RX; with a persistent
+; boundary, that throws the boundary away.  The idle bytes collected while the
+; host transmits are removed by the drain before the next receive.
+SIO_WR3_BULK_TX                 = 0xc1   ; 8-bit RX, RX stays enabled
 ; WR0 command: reset the Tx Underrun/EOM latch.  Must be issued AFTER the first
 ; byte is in the transmit buffer -- see IOCBULKW.
 SIO_WR0_RESET_EOM               = 0xc0
@@ -261,27 +277,36 @@ SIO_WR0_RESET_EOM               = 0xc0
 ; dry and streamed WR7 fill in place of data.
 SIO_RR1_TX_UNDERRUN             = 0x40
 
-; Alignment preamble the host sends ahead of a bulk payload.  Receiving is not
+; RR1 bit 0, "All Sent": the transmitter has no buffered byte AND nothing left
+; in its shift register.  It is the only way to know a byte written with
+; put_byte has actually reached the wire, because put_byte returns as soon as
+; the BUFFER is free -- one byte earlier than that.
+SIO_RR1_ALL_SENT                = 0x01
+
+; Bounded wait for All Sent.  One byte at the bulk lane's pacing is ~24 us, so
+; a couple of byte times is generous; this only has to outlast the shift
+; register, not the transfer.
+SIO_BULK_DRAIN_TIMEOUT          = 0x2000
+
+; Packet marker the host sends ahead of a bulk packet.  Receiving is not
 ; symmetric with sending: the MCU supplies the clock but cannot know which edge
-; the host's transmitter started on, so it searches for this pattern.  Two bytes,
-; because a lone 7Eh occurs at a shifted offset inside ordinary data.
+; the host's transmitter started on, so it searches for both bytes at arbitrary
+; bit phase and accepts only a length/header/CRC-consistent candidate.
 ; Sacrificial lead-in, sent before the preamble.
 ;
-; The first byte out of the transmitter is not trustworthy.  With Auto Enables
-; the shift register cannot load until the MCU asserts /CTSA, so the opening bit
-; times go out as fill and the byte in the buffer is lost.  Measured on a failing
-; transfer: aligning 48 bytes of the MCU's raw capture against the expected
-; stream fits at a -6 bit offset with 9 bad bits in 378, and all nine are in the
-; preamble -- 7E arrived as 00, 81 arrived one bit late, and every payload bit
-; after that was correct.
+; The first byte out of the transmitter was measured as unreliable during the
+; original Auto-Enables bring-up.  Persistent sync no longer uses Auto Enables,
+; but retaining the sacrificial byte keeps the established wire format and
+; costs essentially nothing.
 ;
-; Nothing can make the first byte reliable from this side, so it is made
-; disposable instead: the lead-in absorbs the startup and 7E 81 follows on a
-; transmitter that is already running.  00h rather than something distinctive on
-; purpose -- it must not be mistaken for the preamble by the MCU's bit search.
+; Keep it disposable: the lead-in absorbs any startup transient and A5 5A
+; follows on a transmitter that is already running.  00h rather than something
+; distinctive on purpose -- it must not be mistaken for the preamble by the
+; MCU's bit search.
 IOC_BULK_LEADIN                 = 0x00
-IOC_BULK_PREAMBLE_0             = 0x7e
-IOC_BULK_PREAMBLE_1             = 0x81
+IOC_BULK_PREAMBLE_0             = IOC_PACKET_SYNC0
+IOC_BULK_PREAMBLE_1             = IOC_PACKET_SYNC1
+IOC_BULK_PACKET_SCAN_LIMIT      = 0x08
 
 ; Longest bulk PAYLOAD, one SD sector.  Back to 512 now that the CRC trailer is
 ; the transport's business: IOCBULK and IOCBULKW carry it on the wire themselves
@@ -295,7 +320,8 @@ IOC_BULK_MAX_LEN                = 512
 ; External Sync framing: software byte-alignment preamble.  Sent as the first
 ; byte of every frame; the receiver hunts for it to find the frame boundary.
 ; (Mostly-zero PING/RESET payloads cannot contain this pattern.)
-IOC_SYNC_PREAMBLE               = 0x7e
+IOC_SYNC_PREAMBLE               = IOC_PACKET_SYNC0
+IOC_SYNC_PREAMBLE_1             = IOC_PACKET_SYNC1
 
 ; Link bring-up.  Clears the MCU's "boundary already established" flag so the
 ; reply to THIS request carries the falling /SYNC edge the host's receiver needs.
@@ -360,6 +386,12 @@ SIO_COMMAND_TIMEOUT_OUTER       = 0x04
 ; scratch for the VDrip storage backend, cbios_bank's cross-bank MOVE and the
 ; ramdisk path.
 CBIOS_IOC_COMMAND_CODE_BASE     = 0xf000
+
+; Overflow half of the unified IOC transport.  The active VDrip console image
+; ends at ECB9h, leaving ED00h-EFFFh unused inside its reserved slot-3
+; headroom.  IOCBULKW and the small link helpers live here so the SD backend
+; remains contiguous and no scratch/TPA allocation is consumed.
+CBIOS_IOC_BULK_CODE_BASE        = 0xed00
 
 ; ------------------------------------------------------------------------------
 ; CP/M Page Zero & Environment Setup
@@ -506,14 +538,21 @@ CBIOS_VDRIP_TRANSPORT_CODE_BASE       = CBIOS_DRIVER_SLOT5_BASE              ; F
 CBIOS_SPARE_CODE_BASE           = CBIOS_BASE + 0x02b1                  ; DCB1h
 
 ; Link diagnostic block, at a FIXED address so a .COM can read it directly when
-; the link itself is too broken to answer a PING.  Written on the reply-marker
-; timeout path.
+; the link itself is too broken to answer a PING.  The command portion is
+; written on reply-marker timeout; the Bulk portion is refreshed by IOCBULK.
 ;
 ;   +0  RR0 at the moment of failure.  Bit 4 is Sync/Hunt: 1 = the receiver is
 ;       STILL HUNTING, i.e. the MCU's falling /SYNC edge never landed.
 ;   +1  RR1 (receive error latches)
 ;   +2  ioc_rx_synced
 ;   +3  ioc_link_ready
+;   +4..+13  command marker-scan state
+;   +0Eh      Bulk rejection stage
+;   +0Fh      Bulk marker-scan count (on marker exhaustion)
+;   +10h      last Bulk marker-scan byte; +11h..+17h reserved
+;   +18h..+1Ch decoded Bulk LEN/TYPE/SEQ/STATUS header
+;   +1Dh..+1Fh Bulk RR0, RR1, and verified-sync flag
+;   +20h..+23h expected Bulk LEN, TYPE, and SEQ
 CBIOS_IOC_DIAG_BASE             = CBIOS_BASE + 0x02c0                  ; DCC0h
 
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
@@ -533,8 +572,12 @@ CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x057B                  ; DF7Bh �
 ; sit at fixed offsets from CBIOS_BASE and IOCALL's address is already published
 ; ABI, so this address moves only if the vector table's target does.
 ;
-;   5  bulk writes lead with a sacrificial byte before the 7E 81 preamble
-ZBIOS_XPORT_LEVEL               = 0x05
+;   5  bulk writes lead with a sacrificial byte before their marker
+;   6  both lanes use A5 5A/LEN/TYPE/SEQ/STATUS/DATA/CRC packets and persistent
+;      External Sync; command mailboxes remain a compatibility API only
+;   7  the hand-clocked sync-establishing byte is disposable; the complete
+;      A5 5A packet marker always follows as aligned SPI bytes on both lanes
+ZBIOS_XPORT_LEVEL               = 0x07
 ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_IOCTRL_CODE_BASE - 1           ; DF7Ah
 
 ; VDrip CP850 font placement in bank 0 TPA.
@@ -682,7 +725,14 @@ VDRIP_STORAGE_PROTO_DRIVE             = 0x00
 ; SD storage backend: second half of driver slot 4.  The transport occupies
 ; F000h-F334h, so the split at F400h leaves it 204 bytes of headroom and gives
 ; the backend 640.
-CBIOS_STORAGE_SD_CODE_BASE            = 0xf400
+; Moved up from F400h to give slot 4 room.
+;
+; Slot 4 (F000h-F3FFh) holds the IOC transport helpers and is full to the byte;
+; adding the bulk transmitter drain overflowed it by one.  The SD storage code
+; below ends around F611h with roughly 110 spare bytes before FA80h, so the
+; cheapest space is on this side of the boundary.  check_overlap.py enforces
+; both ends, so a mistake here fails the build rather than the machine.
+CBIOS_STORAGE_SD_CODE_BASE            = 0xf430
 CBIOS_STORAGE_SD_CODE_LIMIT           = 0xf680
 
 ; Per-drive state.  The allocation vector is the only large piece; it lands in

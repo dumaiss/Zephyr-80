@@ -21,7 +21,9 @@ void handler_ping(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_CLASS]  = RSP_PING;
     reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
     reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
-    reply->bytes[IOC_OFF_LEN]    = request->bytes[IOC_OFF_LEN];
+    /* The common packet is variable length.  Include every diagnostic byte
+     * through offset 29; the first 16 payload bytes still echo the request. */
+    reply->bytes[IOC_OFF_LEN]    = IOC_COMMAND_MAX_DATA;
     /* Echo test pattern from payload bytes 4-19 */
     memcpy(&reply->bytes[IOC_OFF_PAYLOAD],
            &request->bytes[IOC_OFF_PAYLOAD],
@@ -178,7 +180,9 @@ void handler_bulk_test(const IocFrame *request, IocFrame *reply)
     /* Staged, not sent: the bytes must not be clocked until this READY reply
      * has actually reached the host. */
     bulk_channel_arm(xfer_block, length,
-                     reply->bytes[IOC_OFF_READY_XFER_ID]);
+                     reply->bytes[IOC_OFF_READY_XFER_ID],
+                     RSP_BULK_TEST, request->bytes[IOC_OFF_SEQ],
+                     IOC_STATUS_OK);
 }
 
 /* Read one sector and hand it to the bulk lane.
@@ -221,7 +225,9 @@ void handler_sd_read_bulk(const IocFrame *request, IocFrame *reply)
     reply_echo_lba(reply, lba);
 
     bulk_channel_arm(xfer_block, SD_BLOCK_SIZE,
-                     reply->bytes[IOC_OFF_READY_XFER_ID]);
+                     reply->bytes[IOC_OFF_READY_XFER_ID],
+                     RSP_SD_READ_BULK, request->bytes[IOC_OFF_SEQ],
+                     IOC_STATUS_OK);
 }
 
 /* LBA staged by handler_sd_write_bulk for the commit callback.  The bulk
@@ -269,6 +275,7 @@ void handler_sd_write_bulk(const IocFrame *request, IocFrame *reply)
 
     bulk_channel_arm_receive(xfer_block, SD_BLOCK_SIZE,
                              reply->bytes[IOC_OFF_READY_XFER_ID],
+                             CMD_SD_WRITE_BULK, request->bytes[IOC_OFF_SEQ],
                              commit_sd_write);
 }
 
@@ -310,7 +317,11 @@ void handler_xfer_status(const IocFrame *request, IocFrame *reply)
  * the host's character boundary.  Idempotent, so it doubles as recovery. */
 void handler_link_sync(const IocFrame *request, IocFrame *reply)
 {
+    /* BOTH lanes.  They are kept behaviourally identical apart from block size,
+     * so a link bring-up re-establishes both character boundaries rather than
+     * leaving the bulk lane in whatever state it happened to be in. */
     external_sync_request_resync();
+    bulk_channel_request_resync();
 
     memset(reply->bytes, 0, IOC_FRAME_SIZE);
     reply->bytes[IOC_OFF_CLASS]  = RSP_LINK_SYNC;
@@ -383,7 +394,9 @@ void handler_sd_read_rec(const IocFrame *request, IocFrame *reply)
     reply_echo_lba(reply, record);
 
     bulk_channel_arm(xfer_record, IOC_SD_RECORD_BYTES,
-                     reply->bytes[IOC_OFF_READY_XFER_ID]);
+                     reply->bytes[IOC_OFF_READY_XFER_ID],
+                     RSP_SD_READ_REC, request->bytes[IOC_OFF_SEQ],
+                     IOC_STATUS_OK);
 }
 
 static uint32_t pending_write_record;
@@ -417,6 +430,7 @@ void handler_sd_write_rec(const IocFrame *request, IocFrame *reply)
 
     bulk_channel_arm_receive(xfer_record, IOC_SD_RECORD_BYTES,
                              reply->bytes[IOC_OFF_READY_XFER_ID],
+                             CMD_SD_WRITE_REC, request->bytes[IOC_OFF_SEQ],
                              commit_sd_write_record);
 }
 

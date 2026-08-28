@@ -1,8 +1,8 @@
-; Zephyr-80 BIOS IOC Command-channel byte helpers — Phase 1.
+; Zephyr-80 BIOS IOC common-packet helpers.
 ;
-; These routines provide polled byte I/O and fixed-frame send/receive for
-; the IO Controller Command channel (SIO1/B — bring-up retarget; see
-; cbios_defs.inc).
+; These routines provide polled packet I/O for the Command lane (SIO1/B) and
+; the Bulk lane (SIO1/A).  Both use the same wire envelope and persistent
+; External Sync; only admission timing and maximum DATA length differ.
 ;
 ; Command channel = SIO1/B
 ;   DATA port = SIO_COMMAND_DATA_PORT = 32h
@@ -18,29 +18,37 @@
 ;   External Sync byte window.  No WAIT/READY; no INIR/OTIR; polled byte I/O only.
 ;   No SIO1/B interrupts in Phase 1.
 ;
-; SIO1/B External Sync framing:
-;   BIOS sends a software preamble byte followed by 32 transparent IOC payload
-;   bytes.  The MCU drives /SYNCB and the clock; BIOS receives bytes from the
-;   SIO RX buffer and hunts the preamble before copying the 32-byte reply.
+; Wire framing, both lanes and directions:
+;   A5 5A LEN_LO LEN_HI TYPE SEQ STATUS DATA... CRC_HI CRC_LO
+; The MCU drives /SYNC and the clocks.  IOCALL maps this to the existing
+; 32-byte command mailbox; IOCBULK/IOCBULKW expose DATA only to their callers.
 ;
 ; Placement:
-;   CBIOS_IOC_COMMAND_CODE_BASE = F52Ch (gap after VDrip console driver).
+;   command helpers at F000h; overflow bulk-write helpers at ED00h.
 
 	.globl sio_command_rts_assert,sio_command_rts_release
 	.globl sio_command_put_byte,sio_command_get_byte
 	.globl sio_command_wait_ready
 	.globl ioc_command_send_frame,ioc_command_recv_frame
 	.globl ioc_link_init_once,ioc_rx_synced,ioc_link_ready
+	.globl ioc_bulk_synced
 	.globl ioc_diag_capture
 	.globl ioc_link_bringup
 	.globl IOC_DIAG_RR0,IOC_DIAG_RR1,IOC_DIAG_SYNCED,IOC_DIAG_READY
 	.globl IOC_DIAG_SCANLEFT
 	.globl IOC_DIAG_B0,IOC_DIAG_B1,IOC_DIAG_B2,IOC_DIAG_B3
 	.globl IOC_DIAG_B4,IOC_DIAG_B5,IOC_DIAG_B6,IOC_DIAG_B7,IOC_DIAG_BIDX
+	.globl IOC_DIAG_BULK_REASON,IOC_DIAG_BULK_COUNT
+	.globl IOC_DIAG_BULK_B0,IOC_DIAG_BULK_HEADER
+	.globl IOC_DIAG_BULK_RR0,IOC_DIAG_BULK_RR1,IOC_DIAG_BULK_SYNCED
+	.globl IOC_DIAG_BULK_EXPECT_LEN,IOC_DIAG_BULK_EXPECT_TYPE
+	.globl IOC_DIAG_BULK_EXPECT_SEQ
 	.globl IOCALL,MOVE_BUFFER
 	.globl IOCBULK,IOCBULKW
-	.globl ioc_frame_crc,ioc_crc_block,ioc_frame_stamp,ioc_frame_check
+	.globl ioc_crc_block,ioc_frame_stamp,ioc_packet_crc_mailbox
+	.globl ioc_bulk_tx_type,ioc_bulk_tx_seq,ioc_bulk_rx_type,ioc_bulk_rx_seq
 	.globl IOC_CMD_CODE_START,IOC_CMD_CODE_END
+	.globl IOC_BULK_CODE_START,IOC_BULK_CODE_END
 
 	.area CODE (ABS)
 	.org CBIOS_IOC_COMMAND_CODE_BASE
@@ -215,29 +223,9 @@ SIO_CMD_GET_READY:
 	ret
 
 ; ---------------------------------------------------------------------------
-; ioc_frame_crc
-; CRC-16-CCITT (poly 1021h, init 0000h, MSB first) over the first
-; IOC_CRC_COVERED bytes of the frame at HL.
-;
-; Nibble table: two lookups per byte, 32 bytes of table, ~70 T-states per byte.
-; 30 bytes costs ~210 us, paid twice per transaction against a ~2 ms transfer.
-; A bitwise loop would be ~720 us each and a 256-entry table would cost 512
-; bytes of BIOS for a saving that does not matter at this frame size.
-;
-; Must match sio_link_crc16_update() on the MCU, which is the same algorithm.
-;
-; In:  HL = frame
-; Out: DE = CRC
-; Clobbers: AF, BC, DE, HL
-; ---------------------------------------------------------------------------
-ioc_frame_crc:
-	ld bc,#IOC_CRC_COVERED
-	; fall through
-
-; ---------------------------------------------------------------------------
 ; ioc_crc_block
-; Same CRC over an arbitrary run, so one engine serves both lanes: 30-byte
-; command frames and 512-byte bulk payloads.
+; CRC-16-CCITT over an arbitrary run.  ioc_crc_continue is the seeded entry
+; used to cover the packet header and DATA as one logical run.
 ;
 ; The counter is 16-bit because the bulk lane needs it, which costs ~13 T-states
 ; per byte over the djnz form (dec bc sets no flags).  For a 512-byte sector
@@ -250,6 +238,10 @@ ioc_frame_crc:
 ; ---------------------------------------------------------------------------
 ioc_crc_block:
 	ld de,#0			; crc = 0
+ioc_crc_continue:
+	ld a,b
+	or c
+	ret z
 IOC_CRC_BYTE:
 	ld a,(hl)
 	push bc
@@ -323,10 +315,8 @@ ioc_crc_table:
 	.dw 0x8108, 0x9129, 0xa14a, 0xb16b
 	.dw 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef
 
-; ---------------------------------------------------------------------------
-; ioc_frame_stamp — write the outgoing sequence and CRC into the frame at HL.
-; In:  HL = frame.  Out: A = the sequence stamped.  Clobbers: AF, BC, DE, HL.
-; ---------------------------------------------------------------------------
+; Stamp only the rolling sequence into the compatibility mailbox.  CRC belongs
+; to the packet on the wire and is prepared by ioc_packet_crc_mailbox.
 ioc_frame_stamp:
 	; Next sequence.  Rolls modulo 256; 0 is not special.
 	ld a,(ioc_seq)
@@ -338,45 +328,60 @@ ioc_frame_stamp:
 	ld (hl),a
 	pop hl
 
-	push hl
-	call ioc_frame_crc		; DE = CRC over bytes 0..IOC_CRC_COVERED-1
-	pop hl
-
-	push hl
-	ld bc,#IOC_OFF_CRC_LO
-	add hl,bc
-	ld (hl),e
-	inc hl
-	ld (hl),d
-	pop hl
-
 	ld a,(ioc_seq)
 	ret
 
 ; ---------------------------------------------------------------------------
-; ioc_frame_check — verify the CRC of the frame at HL.
-; Out: A = 0 if the CRC matches, non-zero otherwise.  Clobbers: AF, BC, DE, HL.
+; Map a compatibility mailbox to the common packet header and calculate the
+; exact wire CRC: LEN_LO LEN_HI TYPE SEQ STATUS DATA.
+;
+; In:  HL = mailbox.  Out: A = IOC_XPORT_OK or IOC_XPORT_BAD_FRAME.
+; Preserves HL.  Stores header, DATA pointer/length and CRC in packet scratch.
 ; ---------------------------------------------------------------------------
-ioc_frame_check:
-	push hl
-	call ioc_frame_crc		; DE = computed
-	pop hl
-	push hl
-	ld bc,#IOC_OFF_CRC_LO
+ioc_packet_crc_mailbox:
+	ld (ioc_packet_frame_ptr),hl
+	ld bc,#IOC_OFF_LEN
 	add hl,bc
 	ld a,(hl)
-	cp e
-	jr nz,IOC_CRC_BAD
+	cp #(IOC_COMMAND_MAX_DATA + 1)
+	jr nc,IOC_PACKET_MAILBOX_BAD
+	ld (ioc_packet_data_len),a
+	add a,#IOC_PACKET_FIXED_LEN
+	ld (ioc_packet_header),a	; LEN low
+	xor a
+	ld (ioc_packet_header + 1),a	; LEN high
+
+	ld hl,(ioc_packet_frame_ptr)
+	ld a,(hl)
+	ld (ioc_packet_header + 2),a	; TYPE
 	inc hl
 	ld a,(hl)
-	cp d
-	jr nz,IOC_CRC_BAD
-	pop hl
+	ld (ioc_packet_header + 3),a	; SEQ
+	inc hl
+	ld a,(hl)
+	ld (ioc_packet_header + 4),a	; STATUS
+	inc hl				; mailbox LEN
+	inc hl				; DATA
+	ld (ioc_packet_data_ptr),hl
+
+	ld hl,#ioc_packet_header
+	ld bc,#5
+	call ioc_crc_block
+	ld a,(ioc_packet_data_len)
+	or a
+	jr z,IOC_PACKET_MAILBOX_CRC_DONE
+	ld c,a
+	ld b,#0
+	ld hl,(ioc_packet_data_ptr)
+	call ioc_crc_continue
+IOC_PACKET_MAILBOX_CRC_DONE:
+	ld (ioc_packet_crc),de
+	ld hl,(ioc_packet_frame_ptr)
 	xor a
 	ret
-IOC_CRC_BAD:
-	pop hl
-	ld a,#1
+IOC_PACKET_MAILBOX_BAD:
+	ld hl,(ioc_packet_frame_ptr)
+	ld a,#IOC_XPORT_BAD_FRAME
 	ret
 
 ; Rolling transaction sequence.  Lives in the code region, which is RAM at
@@ -384,20 +389,42 @@ IOC_CRC_BAD:
 ioc_seq:
 	.db 0
 
+; Common packet scratch.  The command and bulk paths are mutually exclusive.
+ioc_packet_header:	.ds 5	; LEN_LO LEN_HI TYPE SEQ STATUS
+ioc_packet_frame_ptr:	.dw 0
+ioc_packet_data_ptr:	.dw 0
+ioc_packet_data_len:	.db 0
+ioc_packet_crc:		.dw 0
+ioc_packet_wire_crc:	.dw 0
+
+; Metadata joining a READY command exchange to its following bulk data phase.
+; IOCALL records both directions; IOCBULK/IOCBULKW require the common packet to
+; agree, preventing a delayed data phase from being accepted by a newer command.
+ioc_bulk_tx_type:	.db 0
+ioc_bulk_tx_seq:		.db 0
+ioc_bulk_rx_type:	.db 0
+ioc_bulk_rx_seq:		.db 0
+
 ; ---------------------------------------------------------------------------
 ; ioc_command_send_frame
-; Send exactly IOC_FRAME_SIZE (32) bytes via SIO1/B (Command channel) in
-; External Sync mode (transparent bytes; optional software preamble only).
+; Map one BIOS-facing compatibility mailbox to the common wire packet:
+;   A5 5A LEN_LO LEN_HI TYPE SEQ STATUS DATA... CRC_HI CRC_LO
 ;
 ; Z80 SIO synchronous-transmit requirement: after the first data byte is loaded
 ; the Tx Underrun/EOM latch must be reset (WR0 = 0xC0) so the transmitter leaves
 ; its idle/mark state and shifts the buffered data.  Without this the first byte
 ; is never consumed, TBE never re-asserts, and the send times out.
-; In:  HL = pointer to 32-byte TX frame in caller RAM
-; Out: A = IOC_XPORT_OK or IOC_XPORT_TIMEOUT on error
+; In:  HL = pointer to 32-byte compatibility mailbox in caller RAM
+; Out: A = IOC_XPORT_OK, IOC_XPORT_BAD_FRAME or IOC_XPORT_TIMEOUT
 ; Clobbers: AF, B, C, DE, HL
 ; ---------------------------------------------------------------------------
 ioc_command_send_frame:
+	; Build the exact wire header and CRC before entering the timing-critical
+	; section.  This also rejects a mailbox length above the command limit.
+	call ioc_packet_crc_mailbox
+	or a
+	ret nz
+
 	; Interrupts OFF for the frame transfer.
 	;
 	; The MCU is clock master and does not wait, so a stall inside this loop
@@ -445,12 +472,10 @@ ioc_command_send_frame:
 	ld a,#SIO_WR5_CMD_TX_RTS_OFF
 	out (SIO_COMMAND_CTRL_PORT),a
 
-	ld c,#IOC_SYNC_PREAMBLE
+	ld c,#IOC_PACKET_SYNC0
 	call sio_command_put_byte
 	or a
-	jr z,IOC_CMD_SEND_EOM
-	ei
-	ret				; return error code on timeout
+	jp nz,IOC_CMD_SEND_ERROR
 IOC_CMD_SEND_EOM:
 	ld a,#0xc0			; WR0: Reset Tx Underrun/EOM latch
 	out (SIO_COMMAND_CTRL_PORT),a
@@ -458,18 +483,46 @@ IOC_CMD_SEND_EOM:
 	; Only now hand the MCU its credit to start clocking.
 	call sio_command_rts_assert
 
-	; 32 transparent frame bytes.
-	ld b,#IOC_FRAME_SIZE
-IOC_CMD_SEND_LOOP:
+	; Marker byte two, then the five-byte common header.
+	ld c,#IOC_PACKET_SYNC1
+	call sio_command_put_byte
+	or a
+	jp nz,IOC_CMD_SEND_ERROR
+	ld hl,#ioc_packet_header
+	ld b,#5
+IOC_CMD_SEND_HEADER:
 	ld c,(hl)
 	call sio_command_put_byte
 	or a
-	jr z,IOC_CMD_SEND_NEXT
-	ei
-	ret				; return error code on timeout
-IOC_CMD_SEND_NEXT:
+	jp nz,IOC_CMD_SEND_ERROR
 	inc hl
-	djnz IOC_CMD_SEND_LOOP
+	djnz IOC_CMD_SEND_HEADER
+
+	; Variable DATA body from mailbox bytes 4 onward.
+	ld a,(ioc_packet_data_len)
+	or a
+	jr z,IOC_CMD_SEND_CRC
+	ld b,a
+	ld hl,(ioc_packet_data_ptr)
+IOC_CMD_SEND_DATA:
+	ld c,(hl)
+	call sio_command_put_byte
+	or a
+	jp nz,IOC_CMD_SEND_ERROR
+	inc hl
+	djnz IOC_CMD_SEND_DATA
+
+IOC_CMD_SEND_CRC:
+	ld a,(ioc_packet_crc + 1)	; CRC high first
+	ld c,a
+	call sio_command_put_byte
+	or a
+	jp nz,IOC_CMD_SEND_ERROR
+	ld a,(ioc_packet_crc)
+	ld c,a
+	call sio_command_put_byte
+	or a
+	jp nz,IOC_CMD_SEND_ERROR
 
 	; Trailing filler, and it is NOT optional.
 	;
@@ -493,9 +546,7 @@ IOC_CMD_SEND_TRAILER:
 	ld c,#IOC_SEND_TRAILER_FILL
 	call sio_command_put_byte
 	or a
-	jr z,IOC_CMD_SEND_TRAIL_NEXT
-	ei
-	ret
+	jp nz,IOC_CMD_SEND_ERROR
 IOC_CMD_SEND_TRAIL_NEXT:
 	djnz IOC_CMD_SEND_TRAILER
 
@@ -506,7 +557,7 @@ IOC_CMD_SEND_TRAIL_NEXT:
 	; then.  Re-enabling here let a pending interrupt -- one is always pending,
 	; the send masks for ~1.1 ms -- run before the arm, and with console
 	; interrupts stacking on top the receiver could be armed part-way through
-	; the reply.  It then synced on a later edge, saw no 7Eh, and timed out:
+	; the reply.  It then synced on a later edge, saw no A5/5A marker, and timed out:
 	; RR0 showed hunt CLEAR with no byte available.
 	;
 	; ioc_command_recv_frame arms the receiver and re-enables interrupts before
@@ -515,14 +566,17 @@ IOC_CMD_SEND_TRAIL_NEXT:
 	xor a
 	ret
 
+IOC_CMD_SEND_ERROR:
+	ei
+	ret
+
 ; ---------------------------------------------------------------------------
 ; ioc_command_recv_frame
-; Receive exactly IOC_FRAME_SIZE (32) bytes from SIO1/B (Command channel).
-; BIOS hunts the optional software preamble when present, or accepts a direct
-; PING reply class byte at the start of the receive window during bring-up.
+; Locate, receive and validate one common packet from SIO1/B, then map it into
+; the caller's 32-byte compatibility mailbox.
 ; In:  DE = pointer to 32-byte RX frame buffer in caller RAM
 ; Out: A = IOC_XPORT_OK or IOC_XPORT_TIMEOUT on error
-;      32-byte frame written to buffer at DE on success.
+;      compatibility mailbox written to buffer at DE on success.
 ; Clobbers: AF, B, C, DE, HL
 ;
 ; DE IS CLOBBERED -- this said "AF, B, C, HL" for a long time and it was wrong.
@@ -536,6 +590,7 @@ IOC_CMD_SEND_TRAIL_NEXT:
 ; are re-enabled once the arm is done and before the scan, which is the WAIT and
 ; may span the MCU's card I/O.
 ioc_command_recv_frame:
+	ld (ioc_packet_frame_ptr),de
 	; The receiver stays enabled from one transaction to the next, so it fills
 	; with the MCU's full-duplex idle bytes while we transmit and overruns.
 	; That is harmless: the SIO manual lists exactly three things that end
@@ -608,74 +663,149 @@ IOC_CMD_RECV_DRAINED:
 	push de
 	pop hl				; HL = RX buffer pointer
 
-	; Skip received bytes until the sync preamble is seen (byte boundary is
-	; provided by the SIO RX via /SYNC; we just locate the frame start).
-	; Bounded so a missing preamble fails rather than spinning.
+	; Search the bounded reply window for the full A5 5A marker.  The previous
+	; transaction's trailing FF can become FIFO-visible only when this reply's
+	; first clocks arrive, so marker search -- not byte zero -- defines framing.
 	ld b,#SIO_COMMAND_REPLY_SCAN_LIMIT
-IOC_CMD_RECV_SYNC:
+IOC_CMD_RECV_SYNC0:
 	call sio_command_get_byte	; clobbers AF,C; preserves B,DE,HL
 	or a
-	jr nz,IOC_CMD_RECV_SYNC_TIMEOUT
-
-	; The per-byte capture that lived here is gone.  It cost ~1.1 us on every
-	; byte against a scan that has ~1 us of slack at the production pacing, so
-	; it could only ever run while the link was deliberately slowed.  It earned
-	; its keep: the eight contiguous bytes it recorded showed three consecutive
-	; failures as 2-bit rotations of one another, which is what identified the
-	; drift as a clock-count error rather than corruption.
-
+	jp nz,IOC_CMD_RECV_SYNC_TIMEOUT
 	ld a,c
-	cp #IOC_SYNC_PREAMBLE
-	jr z,IOC_CMD_RECV_SYNCED
-	cp #IOC_RSP_PING
-	jr z,IOC_CMD_RECV_SYNCED_FIRST
-	jr IOC_CMD_RECV_NEXT
-IOC_CMD_RECV_SYNCED:
-	; A located preamble proves the receiver is delivering aligned characters,
-	; which is the only evidence available that the MCU's falling /SYNC edge
-	; landed.  From here the receiver is left alone: no more Enter Hunt.
-	push af
-	ld a,#1
-	ld (ioc_rx_synced),a
-	pop af
-	jr IOC_CMD_RECV_BODY
-IOC_CMD_RECV_SYNCED_FIRST:
-	push af
-	ld a,#1
-	ld (ioc_rx_synced),a
-	pop af
-	jr IOC_CMD_RECV_BODY_FIRST
-IOC_CMD_RECV_NEXT:
-	djnz IOC_CMD_RECV_SYNC
+	cp #IOC_PACKET_SYNC0
+	jr z,IOC_CMD_RECV_SYNC1
+	djnz IOC_CMD_RECV_SYNC0
+	jr IOC_CMD_RECV_BAD_FRAME_READY
+
+IOC_CMD_RECV_SYNC1:
+	call sio_command_get_byte
+	or a
+	jp nz,IOC_CMD_RECV_SYNC_TIMEOUT
+	ld a,c
+	cp #IOC_PACKET_SYNC1
+	jr z,IOC_CMD_RECV_PACKET
+	cp #IOC_PACKET_SYNC0		; overlapping A5 A5 5A
+	jr z,IOC_CMD_RECV_SYNC1
+	djnz IOC_CMD_RECV_SYNC0
+IOC_CMD_RECV_BAD_FRAME_READY:
 	ld a,#IOC_XPORT_BAD_FRAME	; preamble not found in window
 	ret
 
-; The preamble scan above runs with interrupts ENABLED: it is the WAIT for the
+; The marker scan above runs with interrupts ENABLED: it is the WAIT for the
 ; MCU's reply, and that wait spans any card I/O the command triggered -- up to a
 ; second.  Masking it would be the multi-millisecond blackout the design
 ; explicitly rules out.
 ;
 ; From here the bytes are streaming and the MCU will not pause, so the body is
-; masked.  32 bytes at the command pacing, ~1 ms.
-IOC_CMD_RECV_BODY_FIRST:
+; masked.  The longest command packet body is 33 bytes, about 1 ms.
+IOC_CMD_RECV_PACKET:
 	di
-	ld (hl),c			; no preamble visible; first byte is reply class
+	ld hl,#ioc_packet_header
+	ld b,#5				; LEN_LO LEN_HI TYPE SEQ STATUS
+IOC_CMD_RECV_HEADER:
+	call sio_command_get_byte
+	or a
+	jp nz,IOC_CMD_RECV_BODY_TIMEOUT
+	ld (hl),c
 	inc hl
-	ld b,#(IOC_FRAME_SIZE - 1)
-	jr IOC_CMD_RECV_LOOP
+	djnz IOC_CMD_RECV_HEADER
 
-IOC_CMD_RECV_BODY:
-	di
-	ld b,#IOC_FRAME_SIZE
-IOC_CMD_RECV_LOOP:
+	; Command mailboxes can carry at most 26 DATA bytes.  The high length byte
+	; must be zero, and LEN includes the three metadata bytes.
+	ld a,(ioc_packet_header + 1)
+	or a
+	jr nz,IOC_CMD_RECV_BAD_FRAME_MASKED
+	ld a,(ioc_packet_header)
+	cp #IOC_PACKET_FIXED_LEN
+	jr c,IOC_CMD_RECV_BAD_FRAME_MASKED
+	cp #(IOC_PACKET_FIXED_LEN + IOC_COMMAND_MAX_DATA + 1)
+	jr nc,IOC_CMD_RECV_BAD_FRAME_MASKED
+	sub #IOC_PACKET_FIXED_LEN
+	ld (ioc_packet_data_len),a
+
+	; Map fixed metadata into the compatibility mailbox.
+	ld hl,(ioc_packet_frame_ptr)
+	ld a,(ioc_packet_header + 2)
+	ld (hl),a
+	inc hl
+	ld a,(ioc_packet_header + 3)
+	ld (hl),a
+	inc hl
+	ld a,(ioc_packet_header + 4)
+	ld (hl),a
+	inc hl
+	ld a,(ioc_packet_data_len)
+	ld (hl),a
+	inc hl
+
+	; Receive only the declared DATA bytes.
+	or a
+	jr z,IOC_CMD_RECV_CRC
+	ld b,a
+IOC_CMD_RECV_DATA:
 	call sio_command_get_byte
 	or a
 	jr nz,IOC_CMD_RECV_BODY_TIMEOUT
 	ld (hl),c
 	inc hl
-	djnz IOC_CMD_RECV_LOOP
+	djnz IOC_CMD_RECV_DATA
+
+IOC_CMD_RECV_CRC:
+	call sio_command_get_byte
+	or a
+	jr nz,IOC_CMD_RECV_BODY_TIMEOUT
+	ld a,c
+	ld (ioc_packet_wire_crc + 1),a	; high
+	call sio_command_get_byte
+	or a
+	jr nz,IOC_CMD_RECV_BODY_TIMEOUT
+	ld a,c
+	ld (ioc_packet_wire_crc),a	; low
+
+	; Preserve the old fixed-mailbox contract by clearing bytes the variable
+	; packet did not carry, including the former CRC slots 30 and 31.
+	ld a,(ioc_packet_data_len)
+	ld c,a
+	ld a,#(IOC_FRAME_SIZE - IOC_OFF_PAYLOAD)
+	sub c
+	jr z,IOC_CMD_RECV_VERIFY
+	ld b,a
+	xor a
+IOC_CMD_RECV_CLEAR_TAIL:
+	ld (hl),a
+	inc hl
+	djnz IOC_CMD_RECV_CLEAR_TAIL
+
+IOC_CMD_RECV_VERIFY:
+	ld hl,(ioc_packet_frame_ptr)
+	call ioc_packet_crc_mailbox
+	or a
+	jr nz,IOC_CMD_RECV_BAD_FRAME_MASKED
+	ld de,(ioc_packet_crc)
+	ld hl,(ioc_packet_wire_crc)
+	ld a,l
+	cp e
+	jr nz,IOC_CMD_RECV_BAD_CRC
+	ld a,h
+	cp d
+	jr nz,IOC_CMD_RECV_BAD_CRC
+
+	; CRC verification is the proof that the persistent character boundary is
+	; established.  Never issue Enter Hunt again until explicit link recovery.
+	ld a,#1
+	ld (ioc_rx_synced),a
 	ei
 	xor a
+	ret
+
+IOC_CMD_RECV_BAD_CRC:
+	ei
+	ld a,#IOC_XPORT_BAD_CRC
+	ret
+
+IOC_CMD_RECV_BAD_FRAME_MASKED:
+	ei
+	ld a,#IOC_XPORT_BAD_FRAME
 	ret
 
 IOC_CMD_RECV_SYNC_TIMEOUT:
@@ -755,10 +885,12 @@ IOCBULK_LEN_OK:
 	or e
 	jp z,IOCBULK_BAD_LEN		; zero length is a caller bug
 
-	; Arm the receiver: clear any stale error latch, then RX enable in hunt
-	; with Auto Enables.  /DCDA is still deasserted by the MCU at this point,
-	; so the receiver stays gated off and nothing can be latched early.
+	; Arm the receiver: clear any stale error latch, then keep RX enabled.
+	; Auto Enables is deliberately off: /DCDA is software admission, never a
+	; hardware action that disables the receiver and destroys character sync.
 IOCBULK_ARM:
+	call IOC_BULK_DIAG_RESET
+
 	; Interrupts OFF for the whole transfer.
 	;
 	; The MCU is clock master and NEVER waits mid-transfer -- it emits a byte
@@ -789,7 +921,12 @@ IOCBULK_ARM:
 	out (SIO_BULK_CTRL_PORT),a
 	ld a,#0x03
 	out (SIO_BULK_CTRL_PORT),a
-	ld a,#SIO_WR3_BULK_RX
+	ld a,(ioc_bulk_synced)
+	or a
+	ld a,#SIO_WR3_BULK_RX_NO_HUNT
+	jr nz,IOCBULK_WR3
+	ld a,#SIO_WR3_BULK_RX_HUNT	; first transfer only
+IOCBULK_WR3:
 	out (SIO_BULK_CTRL_PORT),a
 
 	; Drain anything the previous transfer left in the receive FIFO.
@@ -805,12 +942,23 @@ IOCBULK_ARM:
 	; the previous transfer's CRC bytes prepended, and every CRC check failed.
 	;
 	; Enabling RX in hunt does not empty the FIFO; only reading it does.
+	;
+	; BOUNDED to the FIFO depth, for the same reason the command lane's drain
+	; is.  Unbounded, it reads until the FIFO happens to be empty -- and since
+	; the receiver now stays enabled through our own transmit, that races the
+	; MCU's reply and swallows its first byte.  Measured: rd_buf came back as
+	; ff 01 02 03 04 05 06 07 -- a perfect ramp with byte 0 missing and fill in
+	; its place, which is a consumed byte, not a misaligned one.
+	;
+	; There can never be more than three stale bytes to remove.  Anything
+	; arriving after that is the transfer itself and belongs to the caller.
+	ld b,#(IOC_RX_FIFO_DEPTH + 1)
 IOCBULK_DRAIN:
 	in a,(SIO_BULK_CTRL_PORT)
 	and #SIO_RX_READY
 	jr z,IOCBULK_DRAINED_FIFO
 	in a,(SIO_BULK_DATA_PORT)
-	jr IOCBULK_DRAIN
+	djnz IOCBULK_DRAIN
 IOCBULK_DRAINED_FIFO:
 
 	; Tell the MCU we are in the read loop.  It is blocked waiting on this.
@@ -818,6 +966,61 @@ IOCBULK_DRAINED_FIFO:
 	out (SIO_BULK_CTRL_PORT),a
 	ld a,#SIO_WR5_BULK_RTS_ON
 	out (SIO_BULK_CTRL_PORT),a
+
+	; RX admission.  With Auto Enables off, /DCDA no longer gates the receiver,
+	; so wait for its asserted LEVEL in software before entering the byte loop.
+	; The PIC asserts /DCDA, waits 100 us, and only then opens SIO1/A's clock
+	; gate.  Its 1 ms RTS polling therefore adds latency but cannot race us: no
+	; receive clock exists until after this poll succeeds.
+	; BC is free here, so use it for the timeout and preserve DE = payload
+	; length for the transfer loop that follows.
+	ld bc,#0
+IOCBULK_DCD_WAIT:
+	ld a,#SIO_WR0_RESET_EXT_STATUS
+	out (SIO_BULK_CTRL_PORT),a
+	in a,(SIO_BULK_CTRL_PORT)
+	and #SIO_RR0_DCD
+	jr nz,IOCBULK_ADMITTED
+	dec bc
+	ld a,b
+	or c
+	jr nz,IOCBULK_DCD_WAIT
+	jp IOCBULK_TIMEOUT
+IOCBULK_ADMITTED:
+	; Locate the complete common marker.  A trailing FF from the preceding
+	; transaction can remain in the SIO receive pipeline until these clocks
+	; promote it into the FIFO, so the first visible byte is not a frame start.
+	ld b,#IOC_BULK_PACKET_SCAN_LIMIT
+IOCBULK_SYNC0:
+	call IOCBULK_GET
+	jp c,IOCBULK_TIMEOUT
+	cp #IOC_PACKET_SYNC0
+	jr z,IOCBULK_SYNC1
+	djnz IOCBULK_SYNC0
+	jp IOC_BULK_REJECT_MARKER
+IOCBULK_SYNC1:
+	call IOCBULK_GET
+	jp c,IOCBULK_TIMEOUT
+	cp #IOC_PACKET_SYNC1
+	jr z,IOCBULK_HEADER
+	cp #IOC_PACKET_SYNC0
+	jr z,IOCBULK_SYNC1		; overlapping A5 A5 5A
+	djnz IOCBULK_SYNC0
+	jp IOC_BULK_REJECT_MARKER
+
+IOCBULK_HEADER:
+	; The MCU is already streaming at the 6 us payload rate.  Calling the
+	; general byte helper five times costs more than one wire byte per byte,
+	; and validating the header here used to pause for long enough to overflow
+	; the three-byte SIO FIFO before the payload loop began.  Capture all five
+	; bytes with the same INI-shaped loop as the payload and validate them only
+	; after the complete stream is safely in RAM.
+	call IOCBULK_GET_HEADER
+	jp c,IOCBULK_TIMEOUT
+
+	; IOCBULK_GET used DE as its timeout, so reload the caller's payload shape.
+	ld hl,(ioc_bulk_ptr)
+	ld de,(ioc_bulk_len)
 
 	ld a,d				; whole 256-byte blocks
 	ld b,e				; remainder byte count
@@ -845,7 +1048,7 @@ IOCBULK_POLL:
 	or e				;  4
 	jr nz,IOCBULK_POLL		; 12
 	pop af				; drop the block count before leaving
-	jr IOCBULK_TIMEOUT
+	jp IOCBULK_TIMEOUT
 IOCBULK_GOT:
 	ini				; 16  (HL) <- in(C), HL++, B--
 	jp nz,IOCBULK_POLL		; 10
@@ -884,6 +1087,8 @@ IOCBULK_DRAINED:
 	call IOCBULK_RTS_OFF
 	ld de,#0
 IOCBULK_CTS_WAIT:
+	ld a,#SIO_WR0_RESET_EXT_STATUS
+	out (SIO_BULK_CTRL_PORT),a
 	in a,(SIO_BULK_CTRL_PORT)
 	and #SIO_RR0_CTS
 	jr z,IOCBULK_OK
@@ -896,11 +1101,44 @@ IOCBULK_CTS_WAIT:
 	ret
 IOCBULK_OK:
 	ei
+	call IOC_BULK_DIAG_HEADER
+
+	; Bind the packet to the READY reply that authorized this phase.  This is
+	; deliberately after reception: the MCU does not stop after the header, so
+	; parsing it in the middle of the wire stream overruns the receive FIFO.
+	; No untrusted length is used to receive data -- the command-authoritative
+	; length supplied by the caller controlled the byte loop above.
+	ld hl,(ioc_bulk_len)
+	ld de,#IOC_PACKET_FIXED_LEN
+	add hl,de
+	ld a,(ioc_packet_header)
+	cp l
+	jp nz,IOC_BULK_REJECT_LENGTH
+	ld a,(ioc_packet_header + 1)
+	cp h
+	jp nz,IOC_BULK_REJECT_LENGTH
+	ld a,(ioc_bulk_rx_type)
+	ld c,a
+	ld a,(ioc_packet_header + 2)
+	cp c
+	jp nz,IOC_BULK_REJECT_TYPE
+	ld a,(ioc_bulk_rx_seq)
+	ld c,a
+	ld a,(ioc_packet_header + 3)
+	cp c
+	jp nz,IOC_BULK_REJECT_SEQ
+	ld a,(ioc_packet_header + 4)
+	or a
+	jp nz,IOC_BULK_REJECT_STATUS
+
 	; Only now check integrity: the lane is already released, so a bad CRC
 	; costs one transfer rather than leaving the handshake half-done.
+	ld hl,#ioc_packet_header
+	ld bc,#5
+	call ioc_crc_block
 	ld hl,(ioc_bulk_ptr)
 	ld bc,(ioc_bulk_len)
-	call ioc_crc_block		; DE = computed
+	call ioc_crc_continue		; DE = CRC(header + payload)
 	ld hl,(ioc_bulk_crc)		; HL = received (L = low, H = high)
 	ld a,l
 	cp e
@@ -908,30 +1146,16 @@ IOCBULK_OK:
 	ld a,h
 	cp d
 	jr nz,IOCBULK_CRC_FAIL
+
+	; A CRC-verified transfer is the only evidence the bulk lane's character
+	; boundary was established.  From here the receiver is left alone: no more
+	; Enter Hunt on this lane.
+	ld a,#1
+	ld (ioc_bulk_synced),a
 	xor a
 	ret
 IOCBULK_CRC_FAIL:
-	ld a,#IOC_XPORT_BAD_CRC
-	ret
-
-; Receive one byte from the bulk lane.  Carry set on timeout.
-; Clobbers: AF, DE.
-IOCBULK_GET:
-	ld de,#0
-IOCBULK_GET_WAIT:
-	in a,(SIO_BULK_CTRL_PORT)
-	and #SIO_RX_READY
-	jr nz,IOCBULK_GET_READY
-	dec de
-	ld a,d
-	or e
-	jr nz,IOCBULK_GET_WAIT
-	scf
-	ret
-IOCBULK_GET_READY:
-	in a,(SIO_BULK_DATA_PORT)
-	or a				; clear carry
-	ret
+	jp IOC_BULK_REJECT_CRC
 
 ; Bulk transfer scratch.  In the code region, which is RAM after the shadow copy.
 ioc_bulk_ptr:
@@ -947,15 +1171,25 @@ IOCBULK_TIMEOUT:
 	ld a,#IOC_XPORT_TIMEOUT
 	ret
 
-	; Rejected before RTS was asserted, so there is no handshake to unwind.
-IOCBULK_BAD_LEN:
+IOCBULK_BAD_PACKET:
+	call IOCBULK_RTS_OFF
+	call IOC_BULK_DIAG_FINISH
+	ei
 	ld a,#IOC_XPORT_BAD_FRAME
 	ret
 
+	; Rejected before RTS was asserted, so there is no handshake to unwind.
+IOCBULK_BAD_LEN:
+	jp IOC_BULK_REJECT_INPUT
+
 IOCBULK_RTS_OFF:
+	; In External Sync an enabled transmitter streams fill on underrun and may
+	; never reach the empty state required for delayed RTS deassertion.  Disable
+	; TX, exactly as on the Command lane, to guarantee /RTSA returns high.  WR5
+	; does not touch the receiver or its character boundary.
 	ld a,#0x05
 	out (SIO_BULK_CTRL_PORT),a
-	ld a,#SIO_WR5_BULK_RTS_OFF
+	ld a,#SIO_WR5_BULK_IDLE
 	out (SIO_BULK_CTRL_PORT),a
 	ret
 
@@ -967,9 +1201,10 @@ IOCBULK_RTS_OFF:
 ; asserts RTS, sends the alignment preamble, streams the payload, releases RTS
 ; and confirms the MCU dropped /CTSA.  The caller touches no SIO register.
 ;
-; The preamble is transport, not payload: the MCU cannot know which clock edge
-; the host's transmitter started on, so it searches for 7E 81 and de-shifts the
-; rest against it.  Callers pass payload only.
+; The packet envelope is transport, not payload: the MCU cannot know which
+; clock edge the host transmitter started on, so it searches for A5 5A at
+; arbitrary bit phase and validates LEN/TYPE/SEQ/STATUS/CRC.  Callers pass DATA
+; only.
 ;
 ; In:  HL = source buffer
 ;      DE = byte count, 1..IOC_BULK_MAX_LEN
@@ -992,6 +1227,12 @@ IOCBULK_RTS_OFF:
 ;   - OUTI, not OTIR: OTIR has no timeout, so a stalled MCU would hang the
 ;     machine with no way back to CP/M.
 ; ---------------------------------------------------------------------------
+IOC_CMD_CODE_END:
+
+	.area CODE (ABS)
+	.org CBIOS_IOC_BULK_CODE_BASE
+IOC_BULK_CODE_START:
+
 IOCBULKW:
 	ld a,d
 	cp #(IOC_BULK_MAX_LEN >> 8)
@@ -1007,15 +1248,28 @@ IOCBULKW_LEN_OK:
 	jp z,IOCBULKW_BAD_LEN
 
 IOCBULKW_ARM:
-	; CRC the payload BEFORE touching the lane.  The OUTI loop has to keep
+	; Build the common header and CRC it with the payload BEFORE touching the
+	; lane.  The OUTI loop has to keep
 	; pace with the MCU's clock and cannot afford ~0.7 ms of arithmetic
 	; inside it, and ioc_crc_block clobbers HL/BC/DE so the caller's
 	; arguments have to be reloaded afterwards.
 	ld (ioc_bulk_ptr),hl
 	ld (ioc_bulk_len),de
-	push de
-	pop bc
-	call ioc_crc_block		; DE = CRC over the payload
+	ld hl,#IOC_PACKET_FIXED_LEN
+	add hl,de
+	ld (ioc_packet_header),hl	; LEN low/high
+	ld a,(ioc_bulk_tx_type)
+	ld (ioc_packet_header + 2),a
+	ld a,(ioc_bulk_tx_seq)
+	ld (ioc_packet_header + 3),a
+	xor a
+	ld (ioc_packet_header + 4),a	; request status
+	ld hl,#ioc_packet_header
+	ld bc,#5
+	call ioc_crc_block
+	ld hl,(ioc_bulk_ptr)
+	ld bc,(ioc_bulk_len)
+	call ioc_crc_continue		; DE = CRC(header + payload)
 	ld (ioc_bulk_crc),de
 	ld hl,(ioc_bulk_ptr)
 	ld de,(ioc_bulk_len)
@@ -1024,13 +1278,23 @@ IOCBULKW_ARM:
 	; wait, so a stall here is lost data rather than latency.
 	di
 
-	; Arm channel A for transmit.  RX stays DISABLED -- nothing is being sent
-	; to us, and with Auto Enables the receiver would be gated by /DCDA anyway.
+	; Arm channel A for transmit without touching the persistent RX boundary.
+	; The full-duplex idle bytes received while we send are drained by IOCBULK
+	; before the next MCU -> Z80 transfer.
 	ld a,#SIO_WR0_RESET_ERROR
 	out (SIO_BULK_CTRL_PORT),a
 	ld a,#0x03
 	out (SIO_BULK_CTRL_PORT),a
 	ld a,#SIO_WR3_BULK_TX
+	out (SIO_BULK_CTRL_PORT),a
+
+	; The common RTS-off path disables TX so External Sync can actually release
+	; /RTSA.  Re-enable the transmitter for this preload without touching WR3
+	; or the receiver's persistent boundary; no clock exists yet, so it cannot
+	; shift until the PIC admits the transfer.
+	ld a,#0x05
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#SIO_WR5_BULK_RTS_OFF
 	out (SIO_BULK_CTRL_PORT),a
 
 	; STAGE THE FIRST PREAMBLE BYTE BEFORE RAISING RTS.
@@ -1045,7 +1309,7 @@ IOCBULKW_ARM:
 	; bit times late, past the 64-bit search, and the MCU reports BULK_NO_SYNC
 	; having captured a window that opens with idle marking and ten bits of
 	; fill before any data.  That is exactly what a failing transfer's raw
-	; capture showed: no 7E 81 anywhere, but the payload ramp present further
+	; capture showed: no complete marker anywhere, but the payload ramp present further
 	; in.
 	;
 	; Intermittent because it is a race: whether it fails depends on where the
@@ -1053,12 +1317,10 @@ IOCBULKW_ARM:
 	; removes the race rather than making it less likely -- there is no longer
 	; a moment when RTS is high and the transmitter is empty.
 	;
-	; The buffer is empty on entry and /CTSA is still deasserted, so this PUT
-	; cannot block: with the transmitter gated off nothing is shifting, and the
-	; SIO reports the buffer free immediately.
-	; The lead-in goes first and is expected to be damaged.  See
-	; IOC_BULK_LEADIN: the byte the transmitter emits as it starts is fill,
-	; not what was buffered, so the preamble must not be that byte.
+	; The buffer is empty on entry and the PIC has not opened SIO1/A's clock
+	; gate, so this PUT cannot race the transfer.  The sacrificial lead-in is
+	; retained from the proven wire format; the real preamble follows only after
+	; admission, on a transmitter that is already running.
 	push de
 	ld a,#IOC_BULK_LEADIN
 	call IOCBULKW_PUT
@@ -1074,6 +1336,24 @@ IOCBULKW_ARM:
 	ld a,#SIO_WR5_BULK_RTS_ON
 	out (SIO_BULK_CTRL_PORT),a
 
+	; TX admission.  Auto Enables used to make /CTSA hold the transmitter shut;
+	; now it is an explicit level handshake.  The staged lead-in cannot shift
+	; early because the PIC owns the clock and keeps /SIOA_CS closed until after
+	; it asserts /CTSA and its 100 us setup guard expires.
+	ld de,#0
+IOCBULKW_CTS_ADMIT_WAIT:
+	ld a,#SIO_WR0_RESET_EXT_STATUS
+	out (SIO_BULK_CTRL_PORT),a
+	in a,(SIO_BULK_CTRL_PORT)
+	and #SIO_RR0_CTS
+	jr nz,IOCBULKW_ADMITTED
+	dec de
+	ld a,d
+	or e
+	jr nz,IOCBULKW_CTS_ADMIT_WAIT
+	jp IOCBULKW_STALL_POP
+IOCBULKW_ADMITTED:
+
 	; Byte 1 goes in after RTS of necessity: the SIO holds one buffered byte
 	; plus the shift register, so a second write cannot complete until the
 	; first has started shifting -- which needs the clock, which needs RTS.
@@ -1084,7 +1364,18 @@ IOCBULKW_ARM:
 	ld a,#IOC_BULK_PREAMBLE_1
 	call IOCBULKW_PUT
 	jp c,IOCBULKW_STALL_POP
+
+	; Same five-byte header used by the command lane.
+	ld hl,#ioc_packet_header
+	ld b,#5
+IOCBULKW_HEADER:
+	ld a,(hl)
+	call IOCBULKW_PUT
+	jp c,IOCBULKW_STALL_POP
+	inc hl
+	djnz IOCBULKW_HEADER
 	pop de
+	ld hl,(ioc_bulk_ptr)
 
 	; OUTI loop, 56 T-states per byte, matching IOCBULK's INI loop.  B is the
 	; counter, C the port, HL the source; DE is the whole-transfer stall
@@ -1142,6 +1433,44 @@ IOCBULKW_SENT:
 	and #SIO_RR1_TX_UNDERRUN
 	jp nz,IOCBULKW_UNDERRUN
 
+	; WAIT FOR THE LAST BYTE TO REACH THE WIRE.
+	;
+	; IOCBULKW_PUT returns when the transmit BUFFER is free, which is one byte
+	; earlier than the wire.  IOCBULK_RTS_OFF then writes WR5 = 00h and
+	; DISABLES the transmitter, so a byte still sitting in the buffer or shift
+	; register is simply discarded.
+	;
+	; Measured: the CRC trailer's second byte never reached the MCU.  The raw
+	; window showed the payload complete through its last byte, then the CRC
+	; MSB, then fill -- and the byte after a value with a clear MSB has to be
+	; even under the wire's one-bit shift, so the FFh there could only be fill.
+	; The MCU read fill as the CRC low byte and rejected the transfer.
+	;
+	; This is the bulk lane's version of the trailing filler the command lane
+	; clocks for exactly the same reason.
+	; PUSH THE LAST CRC BYTE ONTO THE WIRE with trailing filler.
+	;
+	; IOCBULKW_PUT returns when the transmit BUFFER is free, one byte before
+	; the wire, and IOCBULK_RTS_OFF then disables the transmitter -- discarding
+	; whatever is still in the shift register.  Measured: the CRC high byte
+	; arrived correctly and the low byte was replaced by fill.
+	;
+	; Two fillers, not one.  PUT waits for buffer-empty, so the first
+	; guarantees the CRC low byte has moved buffer -> shift register, and the
+	; second guarantees it has finished shifting.  This is what the command
+	; lane does; RR1's All Sent bit is an ASYNCHRONOUS-mode status and a
+	; synchronous transmitter never idles -- it shifts sync characters on
+	; underrun -- so waiting on it exits immediately and buys nothing.
+	;
+	; The MCU ignores these: it de-shifts exactly payload+CRC bytes from the
+	; preamble, and the fillers land past that inside the same window.
+	ld a,#IOC_BULK_LEADIN
+	call IOCBULKW_PUT
+	jp c,IOCBULKW_STALL
+	ld a,#IOC_BULK_LEADIN
+	call IOCBULKW_PUT
+	jp c,IOCBULKW_STALL
+
 	call IOCBULK_RTS_OFF
 	ei
 
@@ -1158,6 +1487,8 @@ IOCBULKW_SENT:
 	; that guards a wait for someone else's flash.
 	ld de,#0
 IOCBULKW_CTS_WAIT:
+	ld a,#SIO_WR0_RESET_EXT_STATUS
+	out (SIO_BULK_CTRL_PORT),a
 	in a,(SIO_BULK_CTRL_PORT)
 	and #SIO_RR0_CTS
 	jr z,IOCBULKW_OK
@@ -1222,8 +1553,8 @@ IOCBULKW_PUT_READY:
 ; at the head of every IOCALL -- the "Phase 1 workaround" -- therefore made
 ; persistent External Sync impossible by construction.  It now runs once.
 ;
-; Both flags are cleared by the reset itself, so re-running init re-arms the
-; hunt-once path as well.
+; Cold initialization reset both SIO channels; clear both software flags here
+; so the hunt-once paths agree with that hardware state.
 ioc_link_init_once:
 	ld a,(ioc_link_ready)
 	or a
@@ -1231,6 +1562,7 @@ ioc_link_init_once:
 	call sio_command_init
 	xor a
 	ld (ioc_rx_synced),a		; boundary not established yet
+	ld (ioc_bulk_synced),a		; SIO1/A was reset by cold init too
 	ld a,#1
 	ld (ioc_link_ready),a
 	xor a
@@ -1261,8 +1593,12 @@ ioc_lb_try:
 	; MCU believing the boundary was established and the host hunting for an
 	; edge that would never come again -- an unrecoverable link from a single
 	; lost byte.
+	; Both lanes.  The MCU's LINK_SYNC handler resyncs command and bulk
+	; together, so the host must re-arm Hunt on both or the two ends disagree
+	; about which boundaries are still valid.
 	xor a
 	ld (ioc_rx_synced),a
+	ld (ioc_bulk_synced),a
 
 	ld hl,#MOVE_BUFFER
 	ld b,#IOC_FRAME_SIZE
@@ -1288,6 +1624,142 @@ ioc_lb_clear:
 ioc_link_ready:	.db 0
 ioc_rx_synced:	.db 0
 
-IOC_CMD_CODE_END:
+; ---------------------------------------------------------------------------
+; Bounded Bulk receive diagnostics.
+;
+; These helpers live in the overflow region so observing a rejection does not
+; consume the last bytes in the F000h command-transport slot.  They never run
+; in the timed byte stream: only before admission, after the stream has been
+; drained, or on the error exit.
+; ---------------------------------------------------------------------------
+
+; Start a fresh trace and retain the metadata supplied by the READY reply.
+; Clobbers: AF, BC, DE, HL.  Called before the transfer critical section.
+IOC_BULK_DIAG_RESET:
+	xor a
+	ld hl,#IOC_DIAG_BULK_REASON
+	ld b,#15			; reason, count, scan[8], header[5]
+IOC_BULK_DIAG_CLEAR:
+	ld (hl),a
+	inc hl
+	djnz IOC_BULK_DIAG_CLEAR
+	ld hl,(ioc_bulk_len)
+	ld de,#IOC_PACKET_FIXED_LEN
+	add hl,de			; expected common-packet LEN
+	ld (IOC_DIAG_BULK_EXPECT_LEN),hl
+	ld a,(ioc_bulk_rx_type)
+	ld (IOC_DIAG_BULK_EXPECT_TYPE),a
+	ld a,(ioc_bulk_rx_seq)
+	ld (IOC_DIAG_BULK_EXPECT_SEQ),a
+	ret
+
+; Copy the fully received LEN/TYPE/SEQ/STATUS header to fixed diagnostic RAM.
+; Clobbers: BC, DE, HL.
+IOC_BULK_DIAG_HEADER:
+	ld hl,#ioc_packet_header
+	ld de,#IOC_DIAG_BULK_HEADER
+	ld bc,#5
+	ldir
+	ret
+
+; Snapshot the SIO state on a rejected packet.  WR0 and WR1 are read only;
+; the receiver is neither disabled nor returned to Hunt.
+; Clobbers: AF.
+IOC_BULK_DIAG_FINISH:
+	xor a
+	out (SIO_BULK_CTRL_PORT),a
+	in a,(SIO_BULK_CTRL_PORT)
+	ld (IOC_DIAG_BULK_RR0),a
+	ld a,#0x01
+	out (SIO_BULK_CTRL_PORT),a
+	in a,(SIO_BULK_CTRL_PORT)
+	ld (IOC_DIAG_BULK_RR1),a
+	ld a,(ioc_bulk_synced)
+	ld (IOC_DIAG_BULK_SYNCED),a
+	ret
+
+; Error-02 rejection stages:
+;   1 invalid caller length, 2 marker absent, 3 LEN, 4 TYPE, 5 SEQ, 6 STATUS.
+IOC_BULK_REJECT_MARKER:
+	ld (IOC_DIAG_BULK_B0),a		; last byte considered before exhaustion
+	ld a,#IOC_BULK_PACKET_SCAN_LIMIT
+	ld (IOC_DIAG_BULK_COUNT),a
+	ld a,#2
+	jr IOC_BULK_REJECT_PACKET
+IOC_BULK_REJECT_LENGTH:
+	ld a,#3
+	jr IOC_BULK_REJECT_PACKET
+IOC_BULK_REJECT_TYPE:
+	ld a,#4
+	jr IOC_BULK_REJECT_PACKET
+IOC_BULK_REJECT_SEQ:
+	ld a,#5
+	jr IOC_BULK_REJECT_PACKET
+IOC_BULK_REJECT_STATUS:
+	ld a,#6
+IOC_BULK_REJECT_PACKET:
+	ld (IOC_DIAG_BULK_REASON),a
+	jp IOCBULK_BAD_PACKET
+
+IOC_BULK_REJECT_INPUT:
+	ld a,#1
+	ld (IOC_DIAG_BULK_REASON),a
+	ld a,#IOC_XPORT_BAD_FRAME
+	ret
+
+; The lane is already released and interrupts restored before CRC comparison.
+IOC_BULK_REJECT_CRC:
+	ld a,#7
+	ld (IOC_DIAG_BULK_REASON),a
+	call IOC_BULK_DIAG_FINISH
+	ld a,#IOC_XPORT_BAD_CRC
+	ret
+
+; Receive the five-byte common header without falling behind the MCU's Bulk
+; byte rate.  A single whole-header timeout budget replaces five call/return
+; pairs and five reloads.  INI provides the same 56-T-state ready path as the
+; payload loop below it.
+; Out: carry set on timeout.  Clobbers: AF, BC, DE, HL.
+IOCBULK_GET_HEADER:
+	ld hl,#ioc_packet_header
+	ld b,#5
+	ld c,#SIO_BULK_DATA_PORT
+	ld de,#0
+IOCBULK_GET_HEADER_WAIT:
+	in a,(SIO_BULK_CTRL_PORT)
+	and #SIO_RX_READY
+	jr nz,IOCBULK_GET_HEADER_READY
+	dec de
+	ld a,d
+	or e
+	jr nz,IOCBULK_GET_HEADER_WAIT
+	scf
+	ret
+IOCBULK_GET_HEADER_READY:
+	ini
+	jp nz,IOCBULK_GET_HEADER_WAIT
+	or a				; clear carry
+	ret
+
+; Receive one byte from the bulk lane.  Carry set on timeout.
+; Clobbers: AF, DE.
+IOCBULK_GET:
+	ld de,#0
+IOCBULK_GET_WAIT:
+	in a,(SIO_BULK_CTRL_PORT)
+	and #SIO_RX_READY
+	jr nz,IOCBULK_GET_READY
+	dec de
+	ld a,d
+	or e
+	jr nz,IOCBULK_GET_WAIT
+	scf
+	ret
+IOCBULK_GET_READY:
+	in a,(SIO_BULK_DATA_PORT)
+	or a				; clear carry
+	ret
+
+IOC_BULK_CODE_END:
 
 	.area CODE (ABS)

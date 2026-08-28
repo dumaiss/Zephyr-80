@@ -7,7 +7,7 @@
 ;
 ; What this module owns:
 ;   - SIO0/B asynchronous setup for the console / Virtual Drip serial link.
-;   - SIO1/A synchronous setup for the IO Controller transaction link.
+;   - The SIO1/A synchronous setup entry used once by cold boot.
 ;   - IM2 setup for the current SIO RX interrupt path.
 ;   - The exact IM2 vector table word consumed by the Z80 during interrupt
 ;     acknowledge.
@@ -152,17 +152,15 @@ sio_init:
 
 ; Initialize BIOS-owned SIO services.
 ; Purpose:
-;   Set up SIO0/B for the existing async console path, set up SIO1/A for the
-;   synchronous IO Controller link, clear registered sinks, and leave
-;   BIOS-owned SIO interrupts disabled.
+;   Set up SIO0/B for the existing async console path, clear registered sinks,
+;   and leave BIOS-owned SIO interrupts disabled.  Cold boot calls
+;   sio1_ioc_init separately; warm boot deliberately does not reset SIO1/A.
 ; Inputs: none.
 ; Outputs:
 ;   SIO0/B is configured 115200 8N1 with WR1 interrupts disabled, WR3 Auto
 ;   Enables on (/CTS gates TX in hardware; /DCD tied active-low), CTS also
 ;   polled before TX on the console path, and software-managed RTS released
 ;   until the console client is ready.
-;   SIO1/A is configured synchronous 8-bit, external clock/sync, no parity/CRC,
-;   no IRQs, and RTS inactive.
 ; Clobbers: AF.
 ; Important invariants:
 ;   This does not configure application-owned SIO0/A as a channel and does not
@@ -206,7 +204,6 @@ sio_core_init:
 	out (SIO0B_CTRL_PORT),a
 
 	call sio0b_discard_rx_pending
-	call sio1_ioc_init
 	jp sio_core_disable_interrupts
 
 ; Initialize SIO1/A for the BIOS-owned IO Controller link.

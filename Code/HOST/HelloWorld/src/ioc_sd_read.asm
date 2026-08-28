@@ -1,7 +1,7 @@
 ; IOC_SDRD.COM — Read block 0 from the SD card via the IO Controller.
 ;
 ; Uses the IOCALL BIOS extension at DA3Fh (ZBIOS_EXT_BASE + 0Ch), same as
-; IOC_PING.COM.  Builds a 32-byte fixed frame with CMD_SD_READ (03h), issues it,
+; IOC_PING.COM.  Builds a 32-byte compatibility mailbox with CMD_SD_READ (03h),
 ; and dumps the first 16 bytes of the card's block 0 as hex and ASCII.
 ;
 ; Frame layout (32 bytes, Z80 -> MCU):
@@ -33,7 +33,7 @@
 BDOS		= 0x0005
 BDOS_CONOUT	= 0x02		; output char in E; no useful return
 BDOS_PRINT	= 0x09		; print '$'-terminated string at DE
-IOCALL		= 0xDA3F	; BIOS extended entry: IOC fixed-frame transport
+IOCALL		= 0xDA3F	; BIOS extended entry: IOC compatibility transport
 
 CMD_SD_READ	= 0x03
 RSP_SD_READ	= 0x83

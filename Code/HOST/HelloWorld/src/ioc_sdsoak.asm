@@ -15,7 +15,7 @@
 ;    returns the WRONG block fails loudly instead of passing silently.
 ;
 ; 2. INTERRUPT LATENCY.  The MCU is clock master and never waits mid-transfer:
-;    it clocks a byte every 6 us reading, 12 us writing, whatever the Z80 is
+;    it clocks a byte every 6 us reading, 24 us writing, whatever the Z80 is
 ;    doing.  So any host-side stall inside the INI/OUTI loop is unrecoverable.
 ;    On a read the SIO's 3-byte RX FIFO overflows and bytes are lost; on a
 ;    write the transmitter under-runs and streams fill.  Both corrupt data
@@ -23,8 +23,10 @@
 ;    budget -- about 7% headroom, less than one interrupt's latency.
 ;
 ;    The CTC gives a repeatable interrupt rate, which beats hammering the
-;    keyboard.  Interrupts stay enabled through IOCALL and IOCBULK (neither
-;    executes DI), so they genuinely land inside transfers.
+;    keyboard.  The BIOS now masks interrupts only while each byte stream is
+;    active, because the MCU clock cannot pause.  This mode therefore tests
+;    the bounded blackout and recovery between transfers, not ISR tolerance
+;    inside the INI/OUTI loop.
 ;
 ; NEVER test with all-zero data: zeros are indistinguishable from transmit
 ; underrun fill, which is exactly the failure that hid a de-shift bug for
@@ -47,7 +49,23 @@ CMD_TAIL	= 0x0080	; CP/M command tail: length byte then text
 IOCALL		= 0xDA3F
 IOCBULK		= 0xDA45
 IOCBULKW	= 0xDA48
+ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A
+ZBIOS_XPORT_LEVEL      = 7
+IOC_FW_LEVEL            = 19
 
+IOC_BULK_DIAG_REASON	= 0xDCCE
+IOC_BULK_DIAG_COUNT	= 0xDCCF
+IOC_BULK_DIAG_SCAN	= 0xDCD0
+IOC_BULK_DIAG_HEADER	= 0xDCD8
+IOC_BULK_DIAG_RR0	= 0xDCDD
+IOC_BULK_DIAG_RR1	= 0xDCDE
+IOC_BULK_DIAG_SYNCED	= 0xDCDF
+IOC_BULK_DIAG_EXPECT_LEN = 0xDCE0
+IOC_BULK_DIAG_EXPECT_TYPE = 0xDCE2
+IOC_BULK_DIAG_EXPECT_SEQ = 0xDCE3
+
+CMD_PING		  = 0x01
+RSP_PING		  = 0x81
 CMD_SD_READ_BULK  = 0x05
 RSP_SD_READ_BULK  = 0x85
 CMD_XFER_STATUS	  = 0x06
@@ -55,25 +73,10 @@ RSP_XFER_STATUS	  = 0x86
 CMD_SD_WRITE_BULK = 0x07
 RSP_SD_WRITE_BULK = 0x87
 
-BULK_DATA	= 0x30
-BULK_CTRL	= 0x31
-WR0_RESET_ERROR	= 0x30
-WR0_RESET_EOM	= 0xc0
-WR3_RX_OFF	= 0xf0
-WR5_TX_RTS_ON	= 0xea
-WR5_TX_RTS_OFF	= 0xe8
-RR0_TX_EMPTY	= 0x04
-RR0_CTS		= 0x20
-RR1_TX_UNDERRUN	= 0x40
-
-PREAMBLE_0	= 0x7e
-PREAMBLE_1	= 0x81
+PREAMBLE_0	= 0xa5
+PREAMBLE_1	= 0x5a
 
 BLOCK_SIZE	= 512
-BULK_CRC_BYTES	= 2
-CMD_CTRL	= 0x33		; SIO1/B control -- command lane
-RR1_RX_OVERRUN	= 0x20		; RR1 bit 5: receive overrun
-RR0_SYNC_HUNT	= 0x10		; RR0 bit 4: receiver still hunting for sync
 NUM_LBA		= 8
 MAX_DETAIL	= 8		; detailed mismatch reports before counting only
 
@@ -121,6 +124,18 @@ start:
 
 	ld de,#msg_banner
 	call puts
+	call check_level
+	or a
+	jr z,protocol_ok
+	push af
+	ld de,#msg_protocol
+	call puts
+	pop af
+	call print_hex_byte
+	call crlf
+	ld sp,(entry_sp)
+	ret
+protocol_ok:
 
 	call parse_tail
 
@@ -444,7 +459,7 @@ bp_aa_loop:
 
 	; pattern 3: the alignment preamble itself, repeated.  This is the
 	; adversarial case for find_bulk_start: if the search can false-lock on
-	; a 7E 81 inside the payload, this is what finds it.
+	; an A5 5A inside the payload, this is what finds it.
 bp_preamble:
 	ld e,#PREAMBLE_0
 bp_pre_loop:
@@ -690,6 +705,9 @@ dr_fail_n:
 	ld a,(fail_rr1)
 	call print_hex_byte
 	call crlf
+	ld a,(fail_code)
+	cp #4				; IOCBULK failure, not READY/SD metadata
+	call z,report_bulk_transport_diag
 	xor a
 	ld (fail_info),a
 	ld (fail_rr1),a
@@ -754,7 +772,7 @@ vf_bad:
 	ld de,#msg_everify
 	call report_lba_err
 
-	; Which pattern was in flight.  Pattern 3 is the repeated 7E 81, the
+	; Which pattern was in flight.  Pattern 3 is the repeated A5 5A, the
 	; adversarial case for find_bulk_start -- if mismatches cluster there,
 	; the preamble can false-lock inside payload data and that is a design
 	; fault, not a timing one.
@@ -827,6 +845,74 @@ rp_done:
 	call crlf
 	ret
 
+; Fixed-RAM trace captured by IOCBULK before it returns a transport error.
+report_bulk_transport_diag:
+	ld de,#msg_bulk_diag_reason
+	call puts
+	ld a,(IOC_BULK_DIAG_REASON)
+	call print_hex_byte
+	ld de,#msg_bulk_diag_count
+	call puts
+	ld a,(IOC_BULK_DIAG_COUNT)
+	call print_hex_byte
+	ld de,#msg_bulk_diag_scan
+	call puts
+	ld hl,#IOC_BULK_DIAG_SCAN
+	ld b,#1
+	call dump_bytes
+	ld de,#msg_bulk_diag_header
+	call puts
+	ld hl,#IOC_BULK_DIAG_HEADER
+	ld b,#5
+	call dump_bytes
+	ld de,#msg_bulk_diag_rr
+	call puts
+	ld a,(IOC_BULK_DIAG_RR0)
+	call print_hex_byte
+	ld e,#0x20
+	ld c,#BDOS_CONOUT
+	call BDOS
+	ld a,(IOC_BULK_DIAG_RR1)
+	call print_hex_byte
+	ld de,#msg_bulk_diag_sync
+	call puts
+	ld a,(IOC_BULK_DIAG_SYNCED)
+	call print_hex_byte
+	ld de,#msg_bulk_diag_expect
+	call puts
+	ld a,(IOC_BULK_DIAG_EXPECT_LEN + 1)
+	call print_hex_byte
+	ld a,(IOC_BULK_DIAG_EXPECT_LEN)
+	call print_hex_byte
+	ld e,#0x20
+	ld c,#BDOS_CONOUT
+	call BDOS
+	ld a,(IOC_BULK_DIAG_EXPECT_TYPE)
+	call print_hex_byte
+	ld e,#0x20
+	ld c,#BDOS_CONOUT
+	call BDOS
+	ld a,(IOC_BULK_DIAG_EXPECT_SEQ)
+	call print_hex_byte
+	jp crlf
+
+; B bytes at HL, prefixed with spaces.
+dump_bytes:
+	push bc
+	push hl
+	ld e,#0x20
+	ld c,#BDOS_CONOUT
+	call BDOS
+	pop hl
+	ld a,(hl)
+	push hl
+	call print_hex_byte
+	pop hl
+	inc hl
+	pop bc
+	djnz dump_bytes
+	ret
+
 copy_lba_to_frame:
 	ld hl,#cur_lba
 	ld de,#(tx_frame + 4)
@@ -851,6 +937,38 @@ zf_rx:
 	djnz zf_rx
 	ret
 
+; Refuse a long destructive soak unless both ends advertise this wire format.
+; A = 0 on match; E0 BIOS, E1 PING transport/class, E2 controller level.
+check_level:
+	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
+	cp #ZBIOS_XPORT_LEVEL
+	jr nz,check_level_bios
+	call zero_frames
+	ld a,#CMD_PING
+	ld (tx_frame + 0),a
+	ld hl,#tx_frame
+	ld de,#rx_frame
+	call IOCALL
+	or a
+	jr nz,check_level_link
+	ld a,(rx_frame + 0)
+	cp #RSP_PING
+	jr nz,check_level_link
+	ld a,(rx_frame + 20)
+	cp #IOC_FW_LEVEL
+	jr nz,check_level_fw
+	xor a
+	ret
+check_level_bios:
+	ld a,#0xe0
+	ret
+check_level_link:
+	ld a,#0xe1
+	ret
+check_level_fw:
+	ld a,#0xe2
+	ret
+
 ; ---------------------------------------------------------------------------
 ; Data
 ; ---------------------------------------------------------------------------
@@ -869,6 +987,9 @@ lba_table:
 msg_banner:
 	.ascii "IOC SD SOAK - write/read/verify"
 	.db 0x0d, 0x0a, '$'
+msg_protocol:
+	.ascii "protocol level mismatch code "
+	.db '$'
 msg_hint:
 	.ascii "any key stops.  counts are hex."
 	.db 0x0d, 0x0a, '$'
@@ -919,6 +1040,27 @@ msg_rr1:
 	.db '$'
 msg_info:
 	.ascii " info="
+	.db '$'
+msg_bulk_diag_reason:
+	.ascii "  bulk reason="
+	.db '$'
+msg_bulk_diag_count:
+	.ascii " count="
+	.db '$'
+msg_bulk_diag_scan:
+	.ascii " last"
+	.db '$'
+msg_bulk_diag_header:
+	.ascii " hdr"
+	.db '$'
+msg_bulk_diag_rr:
+	.ascii " rr="
+	.db '$'
+msg_bulk_diag_sync:
+	.ascii " sync="
+	.db '$'
+msg_bulk_diag_expect:
+	.ascii " exp(len/type/seq)="
 	.db '$'
 msg_lba:
 	.ascii " lba="
@@ -1011,6 +1153,6 @@ cur_lba:	.ds 4
 tx_frame:	.ds 32
 rx_frame:	.ds 32
 ref_buf:	.ds BLOCK_SIZE
-rd_buf:		.ds (BLOCK_SIZE + BULK_CRC_BYTES)
+rd_buf:		.ds BLOCK_SIZE
 	.ds 192				; BDOS nesting plus an ISR frame
 stack_top:

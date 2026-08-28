@@ -39,8 +39,12 @@ BDOS_CONIN	= 0x01
 IOCALL		= 0xDA3F
 IOCBULKW	= 0xDA48
 
-ZBIOS_XPORT_LEVEL      = 5
+ZBIOS_XPORT_LEVEL      = 7
 ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A
+IOC_FW_LEVEL           = 19
+
+CMD_PING         = 0x01
+RSP_PING         = 0x81
 
 CMD_SD_WRITE_REC = 0x09
 RSP_SD_WRITE_REC = 0x89
@@ -67,6 +71,28 @@ start:
 	call BDOS
 	ret
 level_ok:
+	; This tool is destructive, so require the matching controller build too.
+	; A current BIOS paired with old firmware is still an incompatible wire.
+	call zero_frames
+	ld a,#CMD_PING
+	ld (tx_frame + 0),a
+	ld hl,#tx_frame
+	ld de,#rx_frame
+	call IOCALL
+	or a
+	jr nz,controller_stale
+	ld a,(rx_frame + 0)
+	cp #RSP_PING
+	jr nz,controller_stale
+	ld a,(rx_frame + 20)
+	cp #IOC_FW_LEVEL
+	jr z,controller_ok
+controller_stale:
+	ld de,#msg_stale_controller
+	ld c,#BDOS_PRINT
+	call BDOS
+	ret
+controller_ok:
 
 	; Confirm, because this is not reversible.
 	ld de,#msg_confirm
@@ -296,6 +322,9 @@ phx_out:
 msg_banner:	.ascii "SDFMT: initialise the CP/M directory on the SD card"
 		.db 13,10,'$'
 msg_stale:	.ascii "BIOS transport level mismatch -- re-flash ROM"
+		.db 13,10,'$'
+msg_stale_controller:
+		.ascii "controller protocol mismatch -- flash firmware level 13"
 		.db 13,10,'$'
 msg_confirm:	.ascii "This ERASES the SD card directory.  Proceed (y/N)? $"
 msg_abort:	.ascii "aborted"

@@ -1,6 +1,10 @@
 ; IOC_RTS_PROBE.COM -- slow SIO1 RTS pin probe.
 ;
 ; This intentionally does not call IOCALL and does not require the MCU to clock.
+; It is an ELECTRICAL PROBE, not a protocol diagnostic.  It writes SIO registers
+; behind the BIOS and therefore invalidates both lanes' persistent-sync state.
+; Cold boot after running it; do not run PING, BULK, SDREC or SDSOAK in the same
+; session and interpret the result as a transport failure.
 ; It writes SIO WR5 directly and slowly toggles:
 ;
 ;   1. SIO1/B Command control port 33h with Phase 1 SDLC WR5 values 6Dh/6Fh

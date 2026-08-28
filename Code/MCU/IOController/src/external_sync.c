@@ -1,6 +1,7 @@
 #include <xc.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 #include "external_sync.h"
 #include "timebase.h"
 #include "config.h"
@@ -80,11 +81,6 @@ static uint8_t rx_window[EXTSYNC_RX_WINDOW_BYTES];
  * the sync-establishing branch. */
 static bool link_synced;
 
-/* True when the boundary is already established, i.e. this reply does not carry
- * the bit-banged sync byte and therefore has to supply the alignment marker as
- * ordinary data. */
-static bool established_before_this_reply;
-
 /* Timer1 counts the physical RB3/SCK rising edges.  Unlike a software exchange
  * counter, this sees PPS handover glitches and clocks emitted by the SPI module
  * itself.  The pin input buffer remains available while RB3 is an output. */
@@ -112,11 +108,6 @@ static uint16_t edge_counter_stop(void)
 {
     T1CONbits.ON = 0;
     return TMR1;
-}
-
-static bool link_synced_steady_state(void)
-{
-    return established_before_this_reply;
 }
 
 static void sync_release(void)
@@ -392,212 +383,8 @@ static bool is_command_class(uint8_t value)
            (value == CMD_XFER_STATUS);
 }
 
-/* Verify the CRC of a candidate frame sitting at an arbitrary bit offset.
- *
- * This is the authority for dispatch.  The header checks below only exist to
- * keep the search from computing a CRC at all 128 candidate offsets, which
- * would cost about 2 ms per window; a header match narrows it to typically one.
- */
-static bool frame_crc_ok(uint16_t bit_index)
-{
-    uint16_t crc = 0u;
-    uint16_t wire;
-    uint8_t  i;
-
-    for (i = 0u; i < IOC_CRC_COVERED; i++)
-        crc = sio_link_crc16_update(crc,
-                  read_wire_byte((uint16_t)(bit_index + ((uint16_t)i * 8u))));
-
-    wire  = (uint16_t)read_wire_byte(
-                (uint16_t)(bit_index + ((uint16_t)IOC_OFF_CRC_LO * 8u)));
-    wire |= (uint16_t)read_wire_byte(
-                (uint16_t)(bit_index + ((uint16_t)IOC_OFF_CRC_HI * 8u))) << 8;
-
-    return wire == crc;
-}
-
-static bool find_frame_start(uint16_t *bit_index)
-{
-    uint16_t start;
-
-    for (start = 0u; start < EXTSYNC_FRAME_SEARCH_BITS; start++) {
-        uint8_t cls = read_wire_byte(start);
-        uint8_t status = read_wire_byte((uint16_t)(start + 16u));
-        uint8_t len = read_wire_byte((uint16_t)(start + 24u));
-
-        if (!is_command_class(cls))
-            continue;
-
-        /* The sequence number is now rolling, so it can no longer be matched
-         * against a constant -- that evidence is replaced by the CRC below,
-         * which is worth far more than the one byte it displaces. */
-        if (status != 0x00u)
-            continue;
-
-        if (cls == CMD_RESET && len == 0x00u) {
-            if (!frame_crc_ok(start))
-                continue;
-            *bit_index = start;
-            return true;
-        }
-
-        if (cls == CMD_PING && (len == 0x00u || len == 0x10u)) {
-            if (!frame_crc_ok(start))
-                continue;
-            *bit_index = start;
-            return true;
-        }
-
-        /* The per-class length match is strict on purpose and is NOT redundant
-         * with the class check above.  This loop walks 16 candidate bit offsets
-         * and takes the first that looks like a header, so the header fields
-         * are the only thing distinguishing the correct bit alignment from a
-         * wrong one.  Every field that stops matching makes a false lock more
-         * likely.  Adding a command means adding a clause here, deliberately. */
-        if (cls == CMD_SD_READ && len == 0x00u) {
-            if (!frame_crc_ok(start))
-                continue;
-            *bit_index = start;
-            return true;
-        }
-
-        if (cls == CMD_BULK_TEST && (len == 0x00u || len == 0x02u)) {
-            if (!frame_crc_ok(start))
-                continue;
-            *bit_index = start;
-            return true;
-        }
-
-        if (cls == CMD_SD_READ_BULK && len == IOC_SD_LBA_PAYLOAD_LEN) {
-            if (!frame_crc_ok(start))
-                continue;
-            *bit_index = start;
-            return true;
-        }
-
-        if (cls == CMD_SD_WRITE_BULK && len == IOC_SD_LBA_PAYLOAD_LEN) {
-            if (!frame_crc_ok(start))
-                continue;
-            *bit_index = start;
-            return true;
-        }
-
-        /* Record-addressed access.  These were added with the SD storage
-         * driver and NOT registered here, which is what this comment block
-         * exists to prevent: find_frame_start() is the only path that checks a
-         * candidate alignment against the CRC, so an unregistered class could
-         * never be framed by it.  Those commands fell through to the alignment
-         * heuristics in copy_received_frame(), which key on 7Eh -- a byte the
-         * BIOS never sends, but which the host SIO emits as WR7 transmitter-
-         * underrun fill.  The result was a frame locked on noise, dispatched
-         * unverified: the PIC read a garbage class and answered
-         * RSP_UNKNOWN_COMMAND with the host's class byte sitting in the
-         * sequence slot, and the host rejected the reply as BAD_SEQ. */
-        if ((cls == CMD_SD_READ_REC || cls == CMD_SD_WRITE_REC) &&
-            len == IOC_SD_RECORD_PAYLOAD_LEN) {
-            if (!frame_crc_ok(start))
-                continue;
-            *bit_index = start;
-            return true;
-        }
-
-        if (cls == CMD_LINK_SYNC && len == 0x00u) {
-            if (!frame_crc_ok(start))
-                continue;
-            *bit_index = start;
-            return true;
-        }
-
-        if (cls == CMD_PROFILE && len == 0x00u) {
-            if (!frame_crc_ok(start))
-                continue;
-            *bit_index = start;
-            return true;
-        }
-
-        if (cls == CMD_SD_FLUSH && len == 0x00u) {
-            if (!frame_crc_ok(start))
-                continue;
-            *bit_index = start;
-            return true;
-        }
-
-        if (cls == CMD_XFER_STATUS && len == 0x00u) {
-            if (!frame_crc_ok(start))
-                continue;
-            *bit_index = start;
-            return true;
-        }
-    }
-
-    return false;
-}
-
-/* Locate the host alignment byte.
- *
- * The BIOS currently clocks a single 7Eh byte before the 32-byte mailbox.  The
- * PIC does not require it for framing, but accepting it keeps the firmware
- * compatible with the current BIOS while the host side is still in bring-up.
- * This scan is a byte-alignment aid only; it is not packet framing.
- */
-static uint16_t find_alignment_end(void)
-{
-    uint16_t bit_index;
-    uint8_t shift = 0u;
-
-    for (bit_index = 0u;
-         bit_index < (uint16_t)(EXTSYNC_RX_WINDOW_BYTES * 8u);
-         bit_index++) {
-        shift = (uint8_t)((shift >> 1) | (rx_wire_bit(bit_index) << 7u));
-        if (bit_index >= 7u && shift == EXTSYNC_ALIGNMENT_BYTE)
-            return (uint16_t)(bit_index + 1u);
-    }
-
-    return 0xFFFFu;
-}
-
-/* Extract the request frame from the capture window.
- *
- * THE CRC DECIDES.  Every path below proposes a candidate alignment and then
- * asks frame_crc_ok() whether it is right; none of them may accept a guess on
- * its own authority.  The first two are shortcuts that skip the bit search when
- * the frame happens to sit on a byte boundary -- they save the ~2 ms a full
- * search costs, and nothing else.
- *
- * They used to return without checking anything, and that was the bug behind a
- * whole class of storage failures.  Both key on 7Eh, which the BIOS really does
- * send as a deliberate alignment preamble (IOC_SYNC_PREAMBLE) ahead of every
- * 32-byte frame -- an earlier revision of this comment claimed otherwise and was
- * simply wrong.
- *
- * The defect was subtler than a byte that marks nothing.  The host SIO's
- * transmit-underrun FILL character (WR7) was ALSO 7Eh, and the BIOS asserted RTS
- * before loading the preamble, so the wire carried a variable number of fill
- * bytes ahead of the real preamble -- indistinguishable from it.  The scan
- * locked onto the first 7Eh, which was fill, and the frame appeared to start
- * several bytes early.  Accepting that without a CRC check is what let a garbage
- * class reach dispatch.
- *
- * Both ends are fixed now: WR7 fill is FFh, and the BIOS preloads the preamble
- * before asserting RTS.  The CRC check below stays regardless -- it is what
- * makes a wrong guess harmless rather than merely unlikely.
- *
- * A frame that validates nowhere returns false, and the caller sends no reply.
- * That is the right failure: the host waits out its receive timeout and retries
- * with RTS already released, which costs one transaction.  Answering a frame
- * that was never sent costs lane synchronisation, which costs everything after
- * it.
- */
-/* The bit offset that last decoded a frame successfully.
- *
- * Frames arrive at a stable alignment -- the host asserts RTS and the PIC
- * starts clocking, so the phase relationship barely moves between transactions.
- * Trying the previous answer first turns the common case from a 128-offset walk
- * into a single 30-byte CRC.  It cannot cause a mis-decode: the CRC still has to
- * pass, exactly as it does for every other candidate.
- *
- * Measured before this existed: the alignment search was 4946 ms of a 9526 ms
- * SC2 load, 52% of the wall time. */
+/* The bit offset of the last CRC-verified marker.  Requests normally retain a
+ * stable transmitter phase, so trying it first avoids a complete bit search. */
 static uint16_t last_good_bit;
 static bool     last_good_valid;
 
@@ -625,65 +412,96 @@ static bool window_is_idle(void)
     return true;
 }
 
+/* Decode and validate one common packet whose A5 marker begins at start_bit. */
+static bool packet_at(uint16_t start_bit, IocFrame *frame)
+{
+    uint16_t cursor;
+    uint16_t end_bit;
+    uint16_t length;
+    uint16_t crc = 0u;
+    uint16_t wire_crc;
+    uint8_t type;
+    uint8_t sequence;
+    uint8_t status;
+    uint8_t data_len;
+    uint8_t i;
+
+    if (read_wire_byte(start_bit) != IOC_PACKET_SYNC0 ||
+        read_wire_byte((uint16_t)(start_bit + 8u)) != IOC_PACKET_SYNC1)
+        return false;
+
+    cursor = (uint16_t)(start_bit + 16u);
+    length = read_wire_byte(cursor);
+    crc = sio_link_crc16_update(crc, (uint8_t)length);
+    cursor = (uint16_t)(cursor + 8u);
+    length |= (uint16_t)read_wire_byte(cursor) << 8;
+    crc = sio_link_crc16_update(crc, (uint8_t)(length >> 8));
+
+    if (length < IOC_PACKET_FIXED_LEN ||
+        length > (uint16_t)(IOC_PACKET_FIXED_LEN + IOC_COMMAND_MAX_DATA))
+        return false;
+
+    end_bit = (uint16_t)(start_bit +
+              (uint16_t)(2u + 2u + length + IOC_PACKET_CRC_BYTES) * 8u);
+    if (end_bit > (uint16_t)(EXTSYNC_RX_WINDOW_BYTES * 8u))
+        return false;
+
+    cursor = (uint16_t)(cursor + 8u);
+    type = read_wire_byte(cursor);
+    if (!is_command_class(type))
+        return false;
+    crc = sio_link_crc16_update(crc, type);
+
+    cursor = (uint16_t)(cursor + 8u);
+    sequence = read_wire_byte(cursor);
+    crc = sio_link_crc16_update(crc, sequence);
+
+    cursor = (uint16_t)(cursor + 8u);
+    status = read_wire_byte(cursor);
+    if (status != IOC_STATUS_OK)
+        return false;
+    crc = sio_link_crc16_update(crc, status);
+
+    data_len = (uint8_t)(length - IOC_PACKET_FIXED_LEN);
+    memset(frame->bytes, 0, IOC_FRAME_SIZE);
+    frame->bytes[IOC_OFF_CLASS] = type;
+    frame->bytes[IOC_OFF_SEQ] = sequence;
+    frame->bytes[IOC_OFF_STATUS] = status;
+    frame->bytes[IOC_OFF_LEN] = data_len;
+    for (i = 0u; i < data_len; i++) {
+        cursor = (uint16_t)(cursor + 8u);
+        frame->bytes[IOC_OFF_PAYLOAD + i] = read_wire_byte(cursor);
+        crc = sio_link_crc16_update(crc,
+                                    frame->bytes[IOC_OFF_PAYLOAD + i]);
+    }
+
+    cursor = (uint16_t)(cursor + 8u);
+    wire_crc = (uint16_t)read_wire_byte(cursor) << 8;
+    cursor = (uint16_t)(cursor + 8u);
+    wire_crc |= read_wire_byte(cursor);
+    return wire_crc == crc;
+}
+
 static bool copy_received_frame(IocFrame *frame)
 {
     uint16_t start;
-    uint8_t i;
 
     if (window_is_idle())
         return false;
 
-    /* Last known alignment, CRC-verified like any other candidate. */
-    if (last_good_valid &&
-        ((uint16_t)(last_good_bit + (uint16_t)(IOC_FRAME_SIZE * 8u)) <=
-         (uint16_t)(EXTSYNC_RX_WINDOW_BYTES * 8u)) &&
-        frame_crc_ok(last_good_bit)) {
-        for (i = 0u; i < IOC_FRAME_SIZE; i++)
-            frame->bytes[i] =
-                read_wire_byte((uint16_t)(last_good_bit + (uint16_t)i * 8u));
+    if (last_good_valid && packet_at(last_good_bit, frame))
         return true;
-    }
 
-    /* Shortcut: an alignment byte opens the window, so the frame would start on
-     * the next byte boundary.  read_wire_byte(8n) == rx_window[n], so bit 8
-     * names exactly that candidate. */
-    if (rx_window[0] == EXTSYNC_ALIGNMENT_BYTE && frame_crc_ok(8u)) {
-        for (i = 0u; i < IOC_FRAME_SIZE; i++)
-            frame->bytes[i] = rx_window[(uint8_t)(i + 1u)];
-        last_good_bit   = 8u;
+    for (start = 0u; start < EXTSYNC_FRAME_SEARCH_BITS; start++) {
+        if (!packet_at(start, frame))
+            continue;
+
+        last_good_bit = start;
         last_good_valid = true;
         return true;
     }
 
-    /* Shortcut: an alignment byte somewhere further in.  Bounds first -- a
-     * start that late leaves no room for 32 bytes, and frame_crc_ok() would
-     * read off the end of the window. */
-    start = find_alignment_end();
-    if ((start != 0xFFFFu) &&
-        ((uint16_t)(start + (uint16_t)(IOC_FRAME_SIZE * 8u)) <=
-         (uint16_t)(EXTSYNC_RX_WINDOW_BYTES * 8u)) &&
-        frame_crc_ok(start)) {
-        for (i = 0u; i < IOC_FRAME_SIZE; i++)
-            frame->bytes[i] =
-                read_wire_byte((uint16_t)(start + (uint16_t)i * 8u));
-        last_good_bit   = start;
-        last_good_valid = true;
-        return true;
-    }
-
-    /* The authority: walk every bit offset at which a frame still fits and take
-     * the first whose header matches a registered command AND whose CRC
-     * verifies. */
-    if (!find_frame_start(&start))
-        return false;
-
-    for (i = 0u; i < IOC_FRAME_SIZE; i++)
-        frame->bytes[i] = read_wire_byte((uint16_t)(start + (uint16_t)i * 8u));
-
-    last_good_bit   = start;
-    last_good_valid = true;
-
-    return true;
+    return false;
 }
 
 void external_sync_init(void)
@@ -777,37 +595,28 @@ bool external_sync_receive(IocFrame *frame)
     return ok;
 }
 
-/* Send one 32-byte reply mailbox.
- *
- * Walkthrough:
- *
- *   1. Wait briefly so the BIOS has switched SIO1/B from request transmit to
- *      reply receive, then take the shared bus with SIOB_CS.
- *   2. On first sync only, send two setup clocks while /SYNCB is idle high.
- *   3. Lead with 7Eh.  On first sync it is hand-clocked and drops /SYNCB at the
- *      proven bit position; later it is one ordinary SPI byte.
- *   4. Clock the 32 reply bytes.
- *   5. Clock one trailing FFh byte.  The SIO exposes the final received byte to
- *      RR0/RX-ready only after additional clocks arrive on this board.
- *   6. Release SIOB_CS and return SIO_MOSI to marking idle high.  /SYNCB stays
- *      asserted until an explicit LINK_SYNC recovery request.
- */
-void external_sync_send(IocFrame *frame)
+/* Send one common packet mapped from a BIOS-facing mailbox. */
+void external_sync_send(const IocFrame *frame)
 {
     uint8_t i;
+    uint8_t discard;
+    uint8_t data_len = frame->bytes[IOC_OFF_LEN];
+    uint16_t length;
     uint16_t crc = 0u;
 
-    /* Sampled BEFORE the establishing branch below can set link_synced, so the
-     * reply that establishes sync does not also emit a second marker byte. */
-    established_before_this_reply = link_synced;
+    if (data_len > IOC_COMMAND_MAX_DATA)
+        data_len = IOC_COMMAND_MAX_DATA;
+    length = (uint16_t)(IOC_PACKET_FIXED_LEN + data_len);
 
-    /* Stamp the CRC before a single bit goes out.  The host rejects any reply
-     * that fails it, which is what stops a mis-framed or stale reply being
-     * accepted as the answer to the outstanding request. */
-    for (i = 0u; i < IOC_CRC_COVERED; i++)
-        crc = sio_link_crc16_update(crc, frame->bytes[i]);
-    frame->bytes[IOC_OFF_CRC_LO] = (uint8_t)crc;
-    frame->bytes[IOC_OFF_CRC_HI] = (uint8_t)(crc >> 8);
+    /* Exact wire-order CRC coverage. */
+    crc = sio_link_crc16_update(crc, (uint8_t)length);
+    crc = sio_link_crc16_update(crc, (uint8_t)(length >> 8));
+    crc = sio_link_crc16_update(crc, frame->bytes[IOC_OFF_CLASS]);
+    crc = sio_link_crc16_update(crc, frame->bytes[IOC_OFF_SEQ]);
+    crc = sio_link_crc16_update(crc, frame->bytes[IOC_OFF_STATUS]);
+    for (i = 0u; i < data_len; i++)
+        crc = sio_link_crc16_update(crc,
+                                    frame->bytes[IOC_OFF_PAYLOAD + i]);
 
     __delay_us(EXTSYNC_REPLY_GUARD_US);
     /* Match the gated clock's pulled-up level before enabling its buffer. */
@@ -833,36 +642,13 @@ void external_sync_send(IocFrame *frame)
         LINK_CLK_LAT = 1;
     }
 
-    /* Lead the reply with the 7Eh alignment byte.
-     *
-     * The Z80 BIOS reply scanner (IOC_CMD_RECV_SYNC) locks onto a frame start
-     * only on 7Eh or on a hard-coded RSP_PING (81h).  A bare mailbox therefore
-     * works for PING and nothing else: any other response class is scanned past
-     * and reported as IOC_XPORT_BAD_FRAME with the host's buffer untouched.
-     * Emitting 7Eh puts every reply on the BIOS's generic path, so response
-     * classes can be added with no host-side change.
-     *
-     * The byte count is unaffected.  Both shapes sit at the same margin against
-     * the SIO's one-byte RX-ready lag:
-     *
-     *   bare:     32 + 1 flush = 33 clocked, 32 readable; host reads 1 + 31
-     *   preamble: 1 + 32 + 1   = 34 clocked, 33 readable; host reads 1 + 32
-     *
-     * On initial link sync this is also the bit-banged byte:
-     * sio_link_clock_sync_byte() drops /SYNCB after bit 1's rising edge and
-     * before the next falling edge, a point no hardware shift register can
-     * expose.  /SYNCB then stays low, and subsequent markers and mailboxes use
-     * only whole-byte SPI clocks.
-     *
-     * If PING regresses, this is the change to back out: restore
-     * the call below with frame->bytes[0] and start the loop that follows at
-     * i = 1. */
+    /* The hand-clocked byte establishes the SIO character boundary only.  It
+     * is deliberately not packet marker A5: the physical channels require
+     * different /SYNC drop positions, so its CPU-visible value is not a safe
+     * protocol byte.  The complete packet marker follows through SPI. */
     if (!link_synced) {
-        /* Hand-clocked, once: /SYNCB drops inside this byte at the proven bit
-         * position, which is the falling edge the host's receiver needs to fix
-         * its character boundary.  A hardware shift register cannot be
-         * interrupted mid-word, which is why this byte alone is bit-banged. */
-        sio_link_clock_sync_byte(EXTSYNC_ALIGNMENT_BYTE, SIO_LINK_CH_COMMAND,
+        sio_link_clock_sync_byte(EXTSYNC_ESTABLISH_BYTE,
+                                 SIO_LINK_CH_COMMAND,
                                  EXTSYNC_SYNC_DROP_BIT);
         link_synced = true;
     }
@@ -877,31 +663,34 @@ void external_sync_send(IocFrame *frame)
     sio_link_clear_fifos();
     sio_link_pins_to_spi();
 
-    if (link_synced_steady_state()) {
-        /* The alignment byte still leads every reply, because the host's reply
-         * scanner locks onto it -- but now it is an ordinary SPI byte costing
-         * ~8 us instead of a bit-banged one costing ~1.15 ms.  It carries no
-         * sync edge any more; /SYNCB has been low since the link came up. */
-        uint8_t discard;
-        (void)sio_link_exchange(EXTSYNC_ALIGNMENT_BYTE, &discard);
+    /* Always send the complete marker as ordinary aligned packet bytes. */
+    (void)sio_link_exchange(IOC_PACKET_SYNC0, &discard);
+    sio_link_byte_gap();
+    (void)sio_link_exchange(IOC_PACKET_SYNC1, &discard);
+    sio_link_byte_gap();
+    (void)sio_link_exchange((uint8_t)length, &discard);
+    sio_link_byte_gap();
+    (void)sio_link_exchange((uint8_t)(length >> 8), &discard);
+    sio_link_byte_gap();
+    (void)sio_link_exchange(frame->bytes[IOC_OFF_CLASS], &discard);
+    sio_link_byte_gap();
+    (void)sio_link_exchange(frame->bytes[IOC_OFF_SEQ], &discard);
+    sio_link_byte_gap();
+    (void)sio_link_exchange(frame->bytes[IOC_OFF_STATUS], &discard);
+    sio_link_byte_gap();
+    for (i = 0u; i < data_len; i++) {
+        (void)sio_link_exchange(frame->bytes[IOC_OFF_PAYLOAD + i], &discard);
         sio_link_byte_gap();
     }
+    (void)sio_link_exchange((uint8_t)(crc >> 8), &discard);
+    sio_link_byte_gap();
+    (void)sio_link_exchange((uint8_t)crc, &discard);
+    sio_link_byte_gap();
 
-    for (i = 0u; i < IOC_FRAME_SIZE; i++) {
-        uint8_t discard;
-
-        if (!sio_link_exchange(frame->bytes[i], &discard))
-            break;
-        sio_link_byte_gap();
-    }
-
-    /* The SIO reports the final byte ready only after more clock edges arrive.
-     * One trailing marking byte flushes byte 31 to the Z80 poller.  The host
-     * does not consume this idle byte as part of the fixed 32-byte frame. */
-    {
-        uint8_t discard;
-        (void)sio_link_exchange(0xFFu, &discard);
-    }
+    /* The SIO reports the final CRC byte ready only after further clocks.  This
+     * FF remains in its receive pipeline and is deliberately ignored by the
+     * next packet's A5/5A marker search. */
+    (void)sio_link_exchange(0xFFu, &discard);
     sio_link_pins_to_lat();
     last_tx_edges = edge_counter_stop();
 
