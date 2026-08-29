@@ -11,6 +11,61 @@ each attempt ruled in or out, and what is still open. Append to it; do not prune
 the ruled-out section, because its whole value is stopping the same ground being
 covered twice.
 
+## Level 62: HID reports become terminal input
+
+The first post-bring-up input layer is now implemented, but still awaits a run
+on the machine.  It deliberately stops before BIOS integration:
+
+```text
+TinyUSB boot-keyboard report
+  -> new-key transition detector
+  -> US-keyboard / control / VT100 translation
+  -> 128-byte IOC HID input queue
+  -> CMD_HID_INPUT (0Eh)
+  -> HIDKEY.COM test program
+  -> existing CP/M console output
+```
+
+The translator lives entirely in `src/ioc_hid.c`; storage, the SD cache, the
+bulk lane and BIOS `CONST`/`CONIN` are unchanged.  Printable US keys, Shift,
+Caps Lock, Ctrl combinations, keypad characters, cursor/navigation keys and
+F1-F12 are covered.  Cursor keys use `ESC [ A/B/C/D`, F1-F4 use `ESC O P-S`,
+and the remaining function/navigation keys use the usual numbered CSI forms.
+Each multi-byte sequence is admitted atomically, so a full queue cannot leave a
+partial escape sequence for the host.  The saturating dropped-sequence count is
+reported by the command.
+
+`CMD_HID_INPUT` is nonblocking.  Its one-byte request payload is the maximum
+number of bytes wanted (zero is status-only); its reply payload is:
+
+```text
+byte 0      bytes still queued after this dequeue
+byte 1      dropped-sequence count, saturated at FFh
+bytes 2..   zero to 24 terminal-input bytes
+```
+
+`HIDKEY.COM` polls this command directly and echoes returned bytes through
+`CONOUT`; it never calls `CONST` or `CONIN`.  Ctrl-C exits.  This is the intended
+bring-up boundary before the queue is wired into the BIOS console input path.
+
+Only key-down transitions are emitted in this first cut.  An unchanged held
+key does not repeat at the USB polling rate; deliberate host-side typematic is
+still to be designed after the translation and queue have been exercised.
+
+A clean level-62 firmware link reports:
+
+```text
+Data space used       7,416 of 12,800 bytes (57.9%)
+Data stack reserved     512 bytes
+Conservative total    7,928 of 12,800 bytes (61.9%)
+Physical headroom     4,872 bytes             (38.1%)
+```
+
+The 256-byte US translation table linked in `MEDIUMCONST` (program space), not
+SRAM.  The queue itself is 128 bytes.  Both firmware and `HIDKEY.COM` build
+cleanly apart from the pre-existing XC8/TinyUSB warnings; hardware validation
+is the next test.
+
 ## Current SRAM checkpoint (level 61, before key translation)
 
 The firmware that enumerates the hub and keyboard and receives HID reports is
@@ -2894,10 +2949,322 @@ timing risk) — see the section above. Once the keyboard works, that trade
 should be re-measured rather than left as folklore, because every future
 TinyUSB call path carries the same latent risk.
 
+## Phase 3: keyboard input is one keystroke behind
+
+Reports work and `HIDKEY.COM` echoes them to the console, but each keypress
+prints the **previous** character: `a`, `b`, `c` produce `ab` and then `c` on the
+fourth press.
+
+### What was measured, and what it ruled out
+
+| Observation | Rules out |
+|---|---|
+| `N` presses before starting hidkey yield `N-1` characters | a timing race; the deficit is exactly one, always |
+| Holding `a` gives `last report : 00 00 04` | the report not arriving; decode does see the press |
+| Pressing `a`,`b`,`c` prints `ab` | a lost first report — it is a genuine shift, not a dropped head |
+| hidkey never prints `!` | the byte sitting undelivered in the queue |
+
+That last row needs a caveat: the `!` detector only fires when a poll returns
+zero bytes *while* the queue is non-empty. If a byte is drained on the very next
+poll — microseconds later — that window never exists, so no `!` is equally
+consistent with correct operation. It was presented at the time as though it
+discriminated, and it did not. The `a`/`b`/`c` test is what actually settled the
+shape.
+
+The full path was read line by line — decode ordering, `translate_key`, the ring
+buffer, `handler_hid_input`, the frame offsets, the main loop and hidkey's emit
+loop — and every piece is correct in isolation.
+
+### Hypothesis: zero-length completions
+
+```c
+uint8_t copy = (len < 8u) ? (uint8_t)len : 8u;
+for (i = 2u; i < copy; i++) { ...decode... }     // len == 0: never runs
+for (i = 0u; i < copy; i++) keyboard_last[i] = report[i];
+for (; i < 8u; i++) keyboard_last[i] = 0u;       // ...and clears the history
+```
+
+A completion carrying **no data** decodes nothing *and* wipes `keyboard_last`.
+The following completion then presents the previous keystroke against an empty
+history, so it decodes as new. That produces exactly the observed shift: press
+`a` emits nothing, press `b` emits `a`.
+
+A plausible source is `hcd_int_handler()` servicing `HXFRDN` in a pass where
+`RCVDAV` has not yet been latched: the transfer completes with the buffer
+untouched, and the data arrives against the next armed transfer.
+
+### Level 63
+
+The callback records the length of every completion and counts the zero-length
+ones:
+
+```text
+last rpt len    len of the most recent completion; 08 expected
+zero-len rpts   completions that carried no data
+```
+
+`zero-len rpts` climbing in step with keypresses confirms it. If it stays at
+zero, the shift is elsewhere and the decode is being fed full reports that are
+themselves stale, which is a different fault in the HCD buffer path.
+
+### Level 63/64: the zero-length hypothesis dies, and so does the queue
+
+`zero-len rpts` read `00`. Every completion carried a full eight bytes, so the
+decode was never fed an empty report and `keyboard_last` was never wiped. The
+hypothesis above is wrong; it is left in place because the reasoning was sound
+and only the measurement settled it.
+
+Level 64 then instrumented the two ends of the ring buffer itself —
+`input_put_total` and `input_get_total`, reported on HIDSTAT page 5 as
+`queue put tot` / `queue get tot`. That produced the measurement that ended the
+hunt:
+
+```text
+queue put tot = 00      queue get tot = 00      (idle)
+press "a"
+queue put tot = 01      queue get tot = 00      (hidkey not running)
+start hidkey, press "b", Ctrl-C to exit
+queue put tot = 03      queue get tot = 03
+```
+
+Three bytes in — `a`, `b`, Ctrl-C — and **three bytes out**. The queue accepted
+and handed over every byte. One character reached the screen.
+
+That single line retires the entire controller-side search. Combined with two
+properties of the transport that were then read out of the code rather than
+guessed at:
+
+- `external_sync_send()` is LEN-driven and CRCs the length word and exactly
+  `data_len` payload bytes; `ioc_command_recv_frame` validates that CRC before
+  mapping the packet into the mailbox. hidkey never reported a transport error,
+  so the host provably received the exact bytes and the exact count the IOC
+  sent.
+- `IOC_HID_INPUT_META_LEN` is 2, the handler sets `LEN = 2 + count`, and hidkey
+  computes `byte_count = LEN - 2`. The two ends agree.
+
+So `HIDKEY.COM` called BDOS CONOUT once per byte, for every byte. The USB stack,
+the ring buffer, the frame layout and the wire were all correct the whole time.
+
+### The lag was the console, and it was never a HID fault
+
+`text_put_printable` does not display anything:
+
+```asm
+text_put_printable:
+	call v9958_append_printable	; accumulate into print_run_buffer
+	ld a,(text_col)
+	cp #(TEXT_LOG_COLUMNS - 1)	; only at end of line...
+	jr nz,text_put_printable_advance
+	call v9958_flush_print_run	; ...does the run get published
+```
+
+Printable characters are batched into one `OP_TEXT_RUN` — deliberate, to avoid a
+packet per character. The run is published (flush, cursor write, `OP_PRESENT`)
+from **`vdrip_console_const` and `vdrip_console_conin` only**, and
+`vdrip_console_const` carries a comment that describes this exact trap:
+
+> Publish pending output before input polling. Programs such as TP3 poll CONST
+> between echoed characters without necessarily entering CONIN, so a flush
+> without OP_PRESENT would leave each character invisible until the next
+> keypress.
+
+Every normal program gets that publish for free, because the CCP and BDOS poll
+console input constantly. hidkey does not: it polls the IOC through IOCALL and
+never touches console input.
+
+What turned "invisible" into "exactly one behind" is CP/M 2.2's own output
+routine, `OUTCHAR` in `cpm22.asm`:
+
+```asm
+OUTCHAR:...
+        CALL    CKCONSOL        ;check console (we don't care whats there).
+        ...
+        CALL    CONOUT          ;output (C) to the screen.
+```
+
+`CKCONSOL` calls CONST **before** CONOUT. So every BDOS function 2 call
+publishes the run accumulated so far — all *previous* characters — and then
+appends the current one, which stays invisible until the next call. One
+character behind, released one at a time by the following character.
+
+This accounts for every observation at once, including the two that were most
+misleading:
+
+| Observation | Explanation |
+| --- | --- |
+| `N` presses yield `N-1` characters | the last character is still in the run buffer |
+| `a`,`b`,`c` prints `ab` then `c` later | each CONOUT publishes the previous character |
+| `put == get` | the controller side was always correct |
+| hidkey never printed `!` | the queue was never stuck; it was being drained normally |
+| HIDSTAT always looked fine | it exits to the CCP, whose CONST loop publishes the run |
+
+Fix, in `hidkey.asm` only — no firmware change:
+
+```asm
+emit_done:
+	call console_publish
+	jp poll
+
+console_publish:
+	push hl
+	ld c,#BDOS_CONSTAT	; BDOS 11 -> BIOS CONST -> flush, cursor, present
+	call BDOS
+	pop hl
+	ret
+```
+
+`vdrip_console_const` returns immediately when the run is empty and is
+documented as safe for hot polling loops, so this costs nothing when idle. The
+stuck-detector output is routed through the same helper.
+
+This is a test-harness artifact, not a defect in the console driver: the
+batching design is intentional and its publish points are documented. It will
+not recur once HID input is delivered through CONST/CONIN, because those are the
+very calls that publish the run. It is recorded here because it cost a long
+hunt on the wrong side of the link, and because **any** future polling program
+that writes to the console without touching console input will hit it again.
+
+
+## Keymap survey
+
+With the display lag closed, the keymap was surveyed key by key. Working as
+intended: printable US layout, Caps Lock (no LED, expected), backspace,
+keypad (always NumLock, no LED, expected), no auto-repeat (expected), and Tab —
+`term_tab` advances to the next 8-column stop, which from column 0 is
+indistinguishable from eight spaces but is the correct VT100 behaviour.
+
+Everything that looked wrong turned out to be the **terminal output parser**,
+not the keymap. `HIDKEY.COM` echoes IOC input straight to CONOUT, so escape
+sequences generated by the keyboard are fed to `term_process_byte` and
+*executed* as terminal commands rather than displayed. The survey was measuring
+the wrong direction.
+
+The reference measurement settles it: on the VDrip console, F1 reads `^[OP` and
+Ctrl-C reads `^C`. That is CP/M echoing console input in caret notation, and
+`^[OP` is `1B 4F 50`. `translate_key()` emits `input_put_escape('O', 'P')` —
+the same three bytes. **The USB keymap agrees byte-for-byte with the proxy
+keyboard already in use.**
+
+| Observation | Cause |
+| --- | --- |
+| Home goes upper left | `ESC[H` is CUP; the terminal *executes* cursor-home rather than delivering a Home key |
+| Insert reads `^[[2~` | correct — it is Insert's sequence, not a misdispatched Home. Home reads `^[[H` |
+| End does nothing | `ESC[F` is correct; `'F'` is not a final byte in `ansi_dispatch_public`, so it is consumed |
+| F5–F12 do nothing | `ESC[15~`..`ESC[24~` are correct; `'~'` is likewise not a handled final |
+| F1–F4 print `P`/`Q`/`R`/`S` | **real parser bug** — see below |
+| Ctrl-`n` does nothing | correct: 0x01–0x1A are generated, and the terminal ignores control bytes below 0x20 except BS/TAB/CR/LF. Ctrl-C only exits because hidkey intercepts 0x03 |
+
+### SS3 leaked its final byte
+
+`term_process_esc` recognised `ESC #`, `ESC (`, `ESC )` and a list of single-byte
+finals, but not `ESC O` — SS3, the application keypad/function-key introducer.
+The `'O'` fell through unmatched and was swallowed, leaving the *final* byte to
+arrive in NORMAL state and print as text. F1 typed a literal `P`.
+
+Fixed by routing `'O'` to the existing `TERM_STATE_CHARSET` one-byte-consume
+path, alongside `ESC (` / `ESC )`. This is a genuine defect independent of the
+keyboard — any program printing an SS3 sequence would have leaked a stray
+character.
+
+`ESC[F` and the `~` finals were deliberately **not** added. Those are input
+sequences: a keyboard sends them, programs do not print them, and inventing a
+display action for "End" as an output command is meaningless. They are consumed
+silently, which is correct.
+
+### hidkey now shows bytes instead of executing them
+
+`HIDKEY.COM` renders control bytes in caret notation, matching the CP/M echo
+convention that produced the `^[OP` reference above, so a key's sequence is
+legible instead of disappearing into the ANSI parser. CR and LF still pass
+through raw — their display action is more useful than their name, and without
+them the survey runs off one line.
+
+Note that this stops hidkey exercising the terminal parser at all: it no longer
+emits raw ESC, so the SS3 fix is not observable through it. That fix is verified
+by inspection and by any program that prints SS3 directly.
+
+### Survey re-run: clean
+
+With the ROM and the caret-notation harness in place, every key reads correctly:
+
+```text
+F1-F4    ^[OP ^[OQ ^[OR ^[OS      SS3 -- these are the VT100 PF1-PF4 keypad keys
+F5-F12   ^[[15~ ^[[17~ ^[[18~ ^[[19~ ^[[20~ ^[[21~ ^[[23~ ^[[24~
+Home     ^[[H          End       ^[[F
+Insert   ^[[2~         Delete    ^[[3~
+PgUp     ^[[5~         PgDn      ^[[6~
+Tab      ^I            Backspace ^H
+```
+
+Two things in that table look like defects and are not, so they are recorded
+here to stop a later "fix":
+
+- **F5-F12 skip 16 and 22.** The sequence is 15,17,18,19,20,21,23,24. That is
+  the historical VT220/xterm numbering, not an off-by-one.
+- **F1-F4 use a different form from F5-F12.** SS3 rather than CSI-tilde,
+  because on a real VT100 they are the PF1-PF4 keypad keys.
+
+The keymap is complete. What remains is delivery, not translation.
+
+
+## Level 65: LEDs and auto-repeat
+
+**Keyboard LEDs.** Caps Lock and Num Lock now drive the physical lights via a
+HID SET_REPORT (output report, one byte: NumLock 0x01, CapsLock 0x02).
+
+Two things constrain where that call can live:
+
+- The report buffer **must be static**. SET_REPORT is an asynchronous control
+  transfer and TinyUSB still references the buffer after
+  `tuh_hid_set_report()` returns. A local would be a use-after-return that
+  works right up until the stack is reused promptly.
+- It is issued from `hid_host_task()`, not from `translate_key()`. Calling it
+  from inside the report callback would re-enter the control pipe in the middle
+  of USB processing. If the pipe is busy the call fails and `led_dirty` simply
+  stays set for the next pass, so a lost race costs one task iteration.
+
+`led_dirty` is forced true at mount rather than going through `led_refresh()`:
+a freshly enumerated keyboard has its LEDs dark, so the state we want and the
+state it is in agree numerically while disagreeing physically.
+
+**Num Lock became real.** The keypad was unconditionally numeric, which was
+invisible and therefore harmless. With a light on the key it would be a lie, so
+Num Lock off now puts the keypad on its navigation layer (7/8/9 -> Home/Up/PgUp
+and so on). That test has to run **before** the ASCII table, which has entries
+for the keypad digits and would otherwise answer first. Power-on and mount both
+default to Num Lock on, matching the previous behaviour.
+
+**Auto-repeat.** Boot keyboards report on state change only -- nothing at all
+arrives while a key is simply held -- so repeat is synthesised in
+`hid_host_task()` against `tusb_time_millis_api()`: 500 ms initial delay, then
+60 ms period.
+
+- The newest pressed key takes over the repeat and restarts the delay; the
+  current one continues only while still held. `keyboard_last` is updated
+  before the check, so `key_was_down()` reads there as "is still held".
+- Lock keys are excluded -- repeating them would flap the state.
+- Modifiers are re-sampled every report, so shifting mid-repeat changes what
+  repeats.
+- Repeat is skipped while the queue is more than half full. A key held with
+  nothing draining would otherwise spend the whole buffer and start counting
+  drops, losing real keystrokes behind it.
+
+`task_now_ms` is a file-static, not a local. It lives across a call into
+`translate_key()` and its nested helpers, which is exactly the shape XC8's
+static-auto overlay corrupts.
+
+Build at level 65: program 49.5%, data 58.1%. The 100% data-stack figure is the
+fixed `hybrid:512` reservation, not a warning.
+
+
 ## Still open
 
-1. Keymap and transport: decode boot reports to characters, buffer them in the
-   IOC, and expose them to CP/M. Not started.
+1. BIOS CONST/CONIN integration. Decode, the IOC-side queue and the
+   `CMD_HID_INPUT` transport all work end to end, and `HIDKEY.COM` exercises
+   them. What remains is delivering those bytes through the BIOS console
+   entry points instead of a polling test program, so that ordinary CP/M
+   programs see USB keystrokes. hidkey stays a harness and is not the
+   destination.
 2. `possible hardware stack overflow detected; estimated stack depth: unknown
    (due to recursion)` at `main.c` appeared once the enumeration path became
    reachable. This is the PIC18 **hardware** call stack, not the data stack

@@ -36,7 +36,7 @@ IOCALL		= 0xDA3F	; BIOS extended entry: IOC compatibility transport
 
 CMD_PING	= 0x01
 RSP_PING	= 0x81
-IOC_FW_LEVEL	= 61
+IOC_FW_LEVEL	= 62
 ZBIOS_XPORT_LEVEL = 7
 ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A
 
@@ -473,7 +473,7 @@ msg_stale_bios:
 	.ascii " - BIOS transport level mismatch (need 07)"
 	.db 0x0d, 0x0a, '$'
 msg_stale_fw:
-	.ascii " - controller firmware level mismatch (need 3D)"
+	.ascii " - controller firmware level mismatch (need 3E)"
 	.db 0x0d, 0x0a, '$'
 msg_fw:		.ascii "fw level $"
 msg_pwr_drv:	.db 13,10

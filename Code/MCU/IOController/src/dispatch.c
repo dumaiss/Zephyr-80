@@ -47,6 +47,10 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
         handler_hid_status(request, reply);
         return true;
 
+    case CMD_HID_INPUT:
+        handler_hid_input(request, reply);
+        return true;
+
     case CMD_SD_FLUSH:
         handler_sd_flush(request, reply);
         return true;

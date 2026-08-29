@@ -137,6 +137,7 @@
 #define CMD_PROFILE          0x0B
 #define CMD_LINK_SYNC        0x0C
 #define CMD_HID_STATUS       0x0D
+#define CMD_HID_INPUT        0x0E
 
 /* Response class bytes (MCU → Z80) */
 #define RSP_PING             0x81
@@ -151,6 +152,18 @@
 #define RSP_PROFILE          0x8B
 #define RSP_LINK_SYNC        0x8C
 #define RSP_HID_STATUS       0x8D
+#define RSP_HID_INPUT        0x8E
+
+/* HID_INPUT is a nonblocking terminal-input dequeue.  The request payload is
+ * one byte: the maximum number of bytes wanted (0 is a status-only query).
+ * Replies carry the number still queued, the saturating count of dropped key
+ * sequences, then up to 24 translated terminal bytes. */
+#define IOC_OFF_HID_INPUT_MAX       IOC_OFF_PAYLOAD
+#define IOC_OFF_HID_INPUT_QUEUED    (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_HID_INPUT_DROPPED   (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_HID_INPUT_DATA      (IOC_OFF_PAYLOAD + 2u)
+#define IOC_HID_INPUT_MAX_DATA      (IOC_COMMAND_MAX_DATA - 2u)
+#define IOC_HID_INPUT_META_LEN      2u
 
 /* HID_STATUS reply payload.  /USB_INT is reported as the raw pin level so a
  * low asserted interrupt remains visible even though this bring-up phase does
@@ -453,8 +466,10 @@
  *  61  XC8 preserves hidh_open()'s HID-object pointer across the nested
  *      endpoint-open call; HID_STATUS now reports the actual retained ep_in
  *      field rather than the descriptor-side capture
+ *  62  boot-keyboard press transitions are translated to terminal bytes and
+ *      queued for the nonblocking HID_INPUT command
  */
-#define IOC_FW_LEVEL  61
+#define IOC_FW_LEVEL  65
 
 /* PING reply: a snapshot of the power handshake pins.
  *

@@ -266,4 +266,12 @@ void hid_host_task(void);
 /* Snapshot of what is currently attached, for CMD_HID_STATUS. */
 void hid_host_usb_state(HidHostUsbState *state);
 
+/* Nonblocking terminal-input queue.  HID boot reports are translated to
+ * ASCII/control bytes and VT100 key sequences before entering this queue.
+ * These routines run only from the foreground command/USB loop and are not
+ * ISR-safe. */
+uint8_t hid_input_get(void);
+uint8_t hid_input_queued(void);
+uint8_t hid_input_dropped(void);
+
 #endif /* IOC_HID_H */

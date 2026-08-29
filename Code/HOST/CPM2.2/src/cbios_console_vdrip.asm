@@ -1060,6 +1060,13 @@ term_esc_not_csi:
 	jr z,term_enter_charset
 	cp #')
 	jr z,term_enter_charset
+	; ESC O x — SS3, the application keypad / function-key introducer.  It is
+	; an input sequence, so nothing here acts on it, but it must still be
+	; consumed as two bytes: without this the 'O' falls through unmatched and
+	; the final byte reaches the parser in NORMAL state and prints as text.
+	; F1 typed a literal 'P'.
+	cp #'O
+	jr z,term_enter_charset
 	; ESC D — IND, index down within the current terminal model.
 	cp #'D
 	jp z,term_lf

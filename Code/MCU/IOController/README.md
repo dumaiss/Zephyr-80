@@ -96,14 +96,13 @@ adapter is isolated in `src/ioc_hid.c`; it shares SPI1 only through the central
 one-hot selector, so selecting the MAX3421E always releases the SD card and
 controller latch first.
 
-The current phase validates the MAX3421E revision, resets the controller and
-waits for its oscillator with a bounded poll.  It deliberately does not
-dispatch `/USB_INT` or run `tuh_task()`, so the attached hub is not enumerated
-yet.  `CMD_HID_STATUS` exposes the bring-up result, revision register and live
-interrupt pin to `HIDSTAT.COM`.  It also performs read-only revision probes and
-a GPOUT write/read-back link test at 125 kHz, 1 MHz and 4 MHz, producing
-scope-visible `/CS` bursts without acknowledging the interrupt or advancing USB
-state.
+The MAX3421E, FE1.1 hub and one boot keyboard now enumerate in the foreground
+TinyUSB task.  `CMD_HID_STATUS` exposes controller, enumeration and live-report
+diagnostics to `HIDSTAT.COM`.  Boot-keyboard press transitions are translated
+inside the HID module to ASCII/control bytes and VT100 key sequences, then held
+in a 128-byte queue.  The nonblocking `CMD_HID_INPUT` dequeues up to 24 bytes;
+`HIDKEY.COM` exercises that path directly without changing BIOS `CONST` or
+`CONIN`.  See the bring-up log for the command layout and current limitations.
 
 **Nothing can be read from the MAX3421E until `PINCTL.FDUPSPI` is set.**  The
 part powers up in half-duplex SPI, where it tri-states MISO and drives read data

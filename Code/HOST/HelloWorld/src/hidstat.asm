@@ -1498,10 +1498,10 @@ msg_c_rptcb:
 	.ascii "  report_cb      : "
 	.db '$'
 msg_c_rptdaddr:
-	.ascii "  itf clears     : "
+	.ascii "  queue put tot  : "
 	.db '$'
 msg_c_rptinst:
-	.ascii "  epin_size      : "
+	.ascii "  queue get tot  : "
 	.db '$'
 msg_c_nosub:
 	.ascii "  NEVER SUBMITTED - the arm does not reach the controller"
@@ -1956,7 +1956,7 @@ msg_bad_reply:
 	.ascii "unexpected reply 0x"
 	.db '$'
 msg_old_fw:
-	.ascii " (flash controller firmware level 61)"
+	.ascii " (flash controller firmware level 62)"
 	.db 0x0d,0x0a,'$'
 msg_ioc_error:
 	.ascii "controller status error 0x"

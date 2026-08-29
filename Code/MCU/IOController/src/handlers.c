@@ -597,6 +597,32 @@ void handler_hid_status(const IocFrame *request, IocFrame *reply)
         reply->bytes[IOC_OFF_HID_LAST_REPORT + i] = usb.last_report[i];
 }
 
+void handler_hid_input(const IocFrame *request, IocFrame *reply)
+{
+    static uint8_t wanted;
+    static uint8_t count;
+    static uint8_t i;
+
+    wanted = request->bytes[IOC_OFF_HID_INPUT_MAX];
+    count = hid_input_queued();
+
+    if (wanted > IOC_HID_INPUT_MAX_DATA)
+        wanted = IOC_HID_INPUT_MAX_DATA;
+    if (count > wanted)
+        count = wanted;
+
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_HID_INPUT;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+
+    for (i = 0u; i < count; i++)
+        reply->bytes[IOC_OFF_HID_INPUT_DATA + i] = hid_input_get();
+    reply->bytes[IOC_OFF_HID_INPUT_QUEUED]  = hid_input_queued();
+    reply->bytes[IOC_OFF_HID_INPUT_DROPPED] = hid_input_dropped();
+    reply->bytes[IOC_OFF_LEN] = (uint8_t)(IOC_HID_INPUT_META_LEN + count);
+}
+
 void handler_unknown(const IocFrame *request, IocFrame *reply)
 {
     memset(reply->bytes, 0, IOC_FRAME_SIZE);

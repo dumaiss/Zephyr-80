@@ -41,6 +41,8 @@ void handler_link_sync(const IocFrame *request, IocFrame *reply);
 void handler_profile(const IocFrame *request, IocFrame *reply);
 /* HID_STATUS: read-only MAX3421E bring-up snapshot.  Does not service USB. */
 void handler_hid_status(const IocFrame *request, IocFrame *reply);
+/* HID_INPUT: nonblocking read of translated terminal input. */
+void handler_hid_input(const IocFrame *request, IocFrame *reply);
 void handler_xfer_status(const IocFrame *request, IocFrame *reply);
 
 /* Unknown command fallback: fills *reply with RSP_UNKNOWN_COMMAND. */

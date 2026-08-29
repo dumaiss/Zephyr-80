@@ -30,6 +30,267 @@ static uint8_t  keyboard_last[8];
 static uint16_t usb_task_calls;      /* proves the main loop reaches us */
 static uint16_t usb_int_dispatches;  /* times /USB_INT was found asserted */
 
+/* Terminal input is deliberately owned by the HID module.  Storage and the
+ * transport only see an opaque byte stream.  Escape sequences are admitted as
+ * a unit so a nearly-full queue can never expose half of a VT100 key. */
+#define HID_INPUT_QUEUE_SIZE 128u
+static uint8_t input_queue[HID_INPUT_QUEUE_SIZE];
+static uint8_t input_head;
+static uint8_t input_tail;
+static uint8_t input_count;
+static uint8_t input_drop_count;
+/* Total bytes pushed into and pulled out of the input queue.  Comparing these
+ * against the moment a key is pressed says whether the delay is before the
+ * queue (decode) or after it (poll/host). */
+static uint8_t input_put_total;
+static uint8_t input_get_total;
+static uint8_t caps_lock;
+static uint8_t num_lock;
+
+/* Keyboard LEDs.  The boot-protocol output report is a single byte, and it is
+ * written with a SET_REPORT control transfer -- so this buffer MUST be static:
+ * the transfer is asynchronous and TinyUSB still references it after
+ * tuh_hid_set_report() returns.  A local here would be a use-after-return that
+ * happens to work whenever the stack is not reused quickly enough. */
+#define HID_LED_NUM_LOCK   0x01u
+#define HID_LED_CAPS_LOCK  0x02u
+static uint8_t led_report;
+static bool    led_dirty;
+
+/* Auto-repeat.  Boot keyboards report on state change only -- nothing at all
+ * arrives while a key is simply held -- so the repeat has to be synthesised
+ * from the task against a millisecond clock. */
+#define REPEAT_DELAY_MS   500u
+#define REPEAT_PERIOD_MS   60u
+static uint8_t  repeat_key;   /* 0 = nothing repeating */
+static uint8_t  repeat_mod;
+static uint32_t repeat_due_ms;
+
+/* hid_host_task() scratch.  Deliberately static: these live across calls into
+ * translate_key() and its nested helpers, which is exactly the shape XC8's
+ * static-auto overlay corrupts.  See docs/max3421-bring-up-debug.md. */
+static uint32_t task_now_ms;
+
+static void led_refresh(void)
+{
+    uint8_t want = 0u;
+
+    if (num_lock != 0u)
+        want |= HID_LED_NUM_LOCK;
+    if (caps_lock != 0u)
+        want |= HID_LED_CAPS_LOCK;
+
+    if (want != led_report) {
+        led_report = want;
+        led_dirty  = true;
+    }
+}
+
+/* TinyUSB's US boot-keyboard table is const, so XC8 places it in program
+ * space.  It covers printable keys plus CR, ESC, BS and TAB; navigation and
+ * function keys are translated explicitly below. */
+static const uint8_t keycode_ascii[128][2] = { HID_KEYCODE_TO_ASCII };
+
+static void input_drop(void)
+{
+    if (input_drop_count != 0xffu)
+        input_drop_count++;
+}
+
+static bool input_reserve(uint8_t len)
+{
+    if ((uint8_t)(HID_INPUT_QUEUE_SIZE - input_count) < len) {
+        input_drop();
+        return false;
+    }
+    return true;
+}
+
+static void input_put_unchecked(uint8_t value)
+{
+    input_queue[input_head] = value;
+    input_head = (uint8_t)((input_head + 1u) & (HID_INPUT_QUEUE_SIZE - 1u));
+    input_count++;
+    if (input_put_total != 0xffu)
+        input_put_total++;
+}
+
+static void input_put_byte(uint8_t value)
+{
+    if (input_reserve(1u))
+        input_put_unchecked(value);
+}
+
+static bool key_was_down(uint8_t keycode)
+{
+    uint8_t i;
+
+    for (i = 2u; i < 8u; i++) {
+        if (keyboard_last[i] == keycode)
+            return true;
+    }
+    return false;
+}
+
+static void input_put_escape(uint8_t introducer, uint8_t final)
+{
+    if (!input_reserve(3u))
+        return;
+    input_put_unchecked(0x1bu);
+    input_put_unchecked(introducer);
+    input_put_unchecked(final);
+}
+
+static void input_put_csi_number(uint8_t tens, uint8_t ones)
+{
+    uint8_t len = (tens != 0u) ? 5u : 4u;
+
+    if (!input_reserve(len))
+        return;
+    input_put_unchecked(0x1bu);
+    input_put_unchecked('[');
+    if (tens != 0u) {
+        input_put_unchecked((uint8_t)('0' + tens));
+    }
+    input_put_unchecked((uint8_t)('0' + ones));
+    input_put_unchecked('~');
+}
+
+static void translate_key(uint8_t keycode, uint8_t modifier)
+{
+    bool shift = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT |
+                              KEYBOARD_MODIFIER_RIGHTSHIFT)) != 0u;
+    bool ctrl = (modifier & (KEYBOARD_MODIFIER_LEFTCTRL |
+                             KEYBOARD_MODIFIER_RIGHTCTRL)) != 0u;
+    uint8_t value;
+
+    if (keycode == HID_KEY_CAPS_LOCK) {
+        caps_lock ^= 1u;
+        led_refresh();
+        return;
+    }
+
+    if (keycode == HID_KEY_NUM_LOCK) {
+        num_lock ^= 1u;
+        led_refresh();
+        return;
+    }
+
+    if (ctrl) {
+        if (keycode >= HID_KEY_A && keycode <= HID_KEY_Z) {
+            input_put_byte((uint8_t)(keycode - HID_KEY_A + 1u));
+            return;
+        }
+        if (keycode == HID_KEY_BRACKET_LEFT)  { input_put_byte(0x1bu); return; }
+        if (keycode == HID_KEY_BACKSLASH)     { input_put_byte(0x1cu); return; }
+        if (keycode == HID_KEY_BRACKET_RIGHT) { input_put_byte(0x1du); return; }
+        if (keycode == HID_KEY_6)             { input_put_byte(0x1eu); return; }
+        if (keycode == HID_KEY_MINUS)         { input_put_byte(0x1fu); return; }
+        if (keycode == HID_KEY_2 || keycode == HID_KEY_SPACE) {
+            input_put_byte(0x00u);
+            return;
+        }
+    }
+
+    /* NumLock off puts the keypad on its navigation layer.  This has to be
+     * decided before the ASCII table below, which has entries for the keypad
+     * digits and would otherwise answer first.  The keypad was unconditionally
+     * numeric until the LED existed; with a light on the key, ignoring the
+     * state would make the light a lie. */
+    if (num_lock == 0u) {
+        switch (keycode) {
+        case HID_KEY_KEYPAD_7: input_put_escape('[', 'H');   return;
+        case HID_KEY_KEYPAD_8: input_put_escape('[', 'A');   return;
+        case HID_KEY_KEYPAD_9: input_put_csi_number(0u, 5u); return;
+        case HID_KEY_KEYPAD_4: input_put_escape('[', 'D');   return;
+        case HID_KEY_KEYPAD_6: input_put_escape('[', 'C');   return;
+        case HID_KEY_KEYPAD_1: input_put_escape('[', 'F');   return;
+        case HID_KEY_KEYPAD_2: input_put_escape('[', 'B');   return;
+        case HID_KEY_KEYPAD_3: input_put_csi_number(0u, 6u); return;
+        case HID_KEY_KEYPAD_0: input_put_csi_number(0u, 2u); return;
+        case HID_KEY_KEYPAD_DECIMAL: input_put_csi_number(0u, 3u); return;
+        default: break;
+        }
+    }
+
+    if (keycode < 128u) {
+        bool upper = shift;
+        if (keycode >= HID_KEY_A && keycode <= HID_KEY_Z)
+            upper = (bool)(shift ^ (caps_lock != 0u));
+        value = keycode_ascii[keycode][upper ? 1u : 0u];
+        if (value != 0u) {
+            input_put_byte(value);
+            return;
+        }
+    }
+
+    switch (keycode) {
+    case HID_KEY_ARROW_UP:    input_put_escape('[', 'A'); return;
+    case HID_KEY_ARROW_DOWN:  input_put_escape('[', 'B'); return;
+    case HID_KEY_ARROW_RIGHT: input_put_escape('[', 'C'); return;
+    case HID_KEY_ARROW_LEFT:  input_put_escape('[', 'D'); return;
+    case HID_KEY_HOME:        input_put_escape('[', 'H'); return;
+    case HID_KEY_END:         input_put_escape('[', 'F'); return;
+    case HID_KEY_INSERT:      input_put_csi_number(0u, 2u); return;
+    case HID_KEY_DELETE:      input_put_csi_number(0u, 3u); return;
+    case HID_KEY_PAGE_UP:     input_put_csi_number(0u, 5u); return;
+    case HID_KEY_PAGE_DOWN:   input_put_csi_number(0u, 6u); return;
+    case HID_KEY_F1: input_put_escape('O', 'P'); return;
+    case HID_KEY_F2: input_put_escape('O', 'Q'); return;
+    case HID_KEY_F3: input_put_escape('O', 'R'); return;
+    case HID_KEY_F4: input_put_escape('O', 'S'); return;
+    case HID_KEY_F5:  input_put_csi_number(1u, 5u); return;
+    case HID_KEY_F6:  input_put_csi_number(1u, 7u); return;
+    case HID_KEY_F7:  input_put_csi_number(1u, 8u); return;
+    case HID_KEY_F8:  input_put_csi_number(1u, 9u); return;
+    case HID_KEY_F9:  input_put_csi_number(2u, 0u); return;
+    case HID_KEY_F10: input_put_csi_number(2u, 1u); return;
+    case HID_KEY_F11: input_put_csi_number(2u, 3u); return;
+    case HID_KEY_F12: input_put_csi_number(2u, 4u); return;
+    case HID_KEY_KEYPAD_DIVIDE:   input_put_byte('/'); return;
+    case HID_KEY_KEYPAD_MULTIPLY: input_put_byte('*'); return;
+    case HID_KEY_KEYPAD_SUBTRACT: input_put_byte('-'); return;
+    case HID_KEY_KEYPAD_ADD:      input_put_byte('+'); return;
+    case HID_KEY_KEYPAD_ENTER:    input_put_byte('\r'); return;
+    case HID_KEY_KEYPAD_1: input_put_byte('1'); return;
+    case HID_KEY_KEYPAD_2: input_put_byte('2'); return;
+    case HID_KEY_KEYPAD_3: input_put_byte('3'); return;
+    case HID_KEY_KEYPAD_4: input_put_byte('4'); return;
+    case HID_KEY_KEYPAD_5: input_put_byte('5'); return;
+    case HID_KEY_KEYPAD_6: input_put_byte('6'); return;
+    case HID_KEY_KEYPAD_7: input_put_byte('7'); return;
+    case HID_KEY_KEYPAD_8: input_put_byte('8'); return;
+    case HID_KEY_KEYPAD_9: input_put_byte('9'); return;
+    case HID_KEY_KEYPAD_0: input_put_byte('0'); return;
+    case HID_KEY_KEYPAD_DECIMAL: input_put_byte('.'); return;
+    default: return;
+    }
+}
+
+uint8_t hid_input_get(void)
+{
+    uint8_t value;
+
+    if (input_count == 0u)
+        return 0u;
+    value = input_queue[input_tail];
+    input_tail = (uint8_t)((input_tail + 1u) & (HID_INPUT_QUEUE_SIZE - 1u));
+    input_count--;
+    if (input_get_total != 0xffu)
+        input_get_total++;
+    return value;
+}
+
+uint8_t hid_input_queued(void)
+{
+    return input_count;
+}
+
+uint8_t hid_input_dropped(void)
+{
+    return input_drop_count;
+}
+
 /* Enumeration milestone counters.
  *
  * "Nothing is mounted" says only that the sequence did not finish, not where it
@@ -329,6 +590,15 @@ static uint8_t gpout_loopback_at(uint8_t baud)
 
 void hid_host_init(void)
 {
+    input_head               = 0u;
+    input_tail               = 0u;
+    input_count              = 0u;
+    input_drop_count         = 0u;
+    caps_lock                = 0u;
+    num_lock                 = 1u;   /* keypad numeric at power-on, as before */
+    led_report               = 0u;
+    led_dirty                = false;
+    repeat_key               = 0u;
     keyboard_speed           = 0xffu;
     controller_status        = HID_HOST_NOT_STARTED;
     controller_revision      = 0u;
@@ -410,6 +680,30 @@ void hid_host_task(void)
     }
 
     tuh_task();
+
+    /* LEDs are written here rather than from translate_key(): SET_REPORT is a
+     * control transfer, and issuing one from inside the report callback would
+     * re-enter the control pipe in the middle of USB processing.  If the pipe
+     * is busy the call fails and the flag simply stays set for the next pass. */
+    if (led_dirty && keyboard_addr != 0u) {
+        if (tuh_hid_set_report(keyboard_addr, keyboard_instance, 0u,
+                               HID_REPORT_TYPE_OUTPUT, &led_report, 1u))
+            led_dirty = false;
+    }
+
+    /* Auto-repeat.  Nothing arrives from the keyboard while a key is held, so
+     * the repeat is generated here against the millisecond clock. */
+    if (repeat_key != 0u && keyboard_addr != 0u) {
+        task_now_ms = tusb_time_millis_api();
+        if ((int32_t)(task_now_ms - repeat_due_ms) >= 0) {
+            /* Never let repeat consume the queue.  A key held down with
+             * nothing draining would otherwise spend the whole buffer and
+             * start counting drops, losing real keystrokes behind it. */
+            if (hid_input_queued() < (uint8_t)(HID_INPUT_QUEUE_SIZE / 2u))
+                translate_key(repeat_key, repeat_mod);
+            repeat_due_ms = task_now_ms + REPEAT_PERIOD_MS;
+        }
+    }
 }
 
 /* Raw controller and stack state, for telling "nothing was ever plugged in"
@@ -492,6 +786,8 @@ extern uint8_t usbh_xc8_hid_clear_calls;
 static uint8_t rpt_cb_calls;   /* unguarded count of tuh_hid_report_received_cb */
 static uint8_t rpt_daddr = 0xffu;
 static uint8_t rpt_inst  = 0xffu;
+static uint8_t rpt_last_len = 0xffu;   /* len of the most recent completion */
+static uint8_t rpt_zero_len;           /* completions that carried no data */
 
 void hid_host_cfg_debug(HidHostCfg *c)
 {
@@ -528,9 +824,9 @@ void hid_host_cfg_debug(HidHostCfg *c)
     c->rpt_cb_calls  = rpt_cb_calls;
     /* Raw wMaxPacketSize bytes as hidh_open() read them, so a bad read is
      * visible rather than inferred.  Expect 08 00 for a boot keyboard. */
-    c->rpt_daddr     = usbh_xc8_hid_clear_calls;  /* hi nibble init, lo close */
+    c->rpt_daddr     = input_put_total;   /* bytes pushed into the queue */
     c->hid_xfercb_ep = usbh_xc8_hid_epin_after;  /* epin_size right after the write */
-    c->rpt_inst      = usbh_xc8_hid_epin_size;   /* epin_size reuses this slot */
+    c->rpt_inst      = input_get_total;   /* bytes pulled out of the queue */
 }
 
 void hid_host_enum_debug(HidHostEnum *e)
@@ -934,12 +1230,16 @@ void tuh_umount_cb(uint8_t dev_addr)
         keyboard_addr    = 0u;
         keyboard_reports = 0u;
         keyboard_speed   = 0xffu;
+        repeat_key       = 0u;
+        led_dirty        = false;
     }
 }
 
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
                       uint8_t const *report_desc, uint16_t desc_len)
 {
+    uint8_t i;
+
     (void)report_desc;
     (void)desc_len;
 
@@ -965,6 +1265,16 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
     keyboard_addr     = dev_addr;
     keyboard_instance = instance;
     keyboard_reports  = 0u;
+    caps_lock         = 0u;
+    num_lock          = 1u;
+    repeat_key        = 0u;
+    /* Push the LEDs unconditionally rather than via led_refresh(): a freshly
+     * enumerated keyboard has all LEDs dark, so the state we want and the
+     * state it is in agree numerically while disagreeing physically. */
+    led_report        = HID_LED_NUM_LOCK;
+    led_dirty         = true;
+    for (i = 0u; i < 8u; i++)
+        keyboard_last[i] = 0u;
 
     /* Record the speed, because on this board it predicts whether the device
      * can work at all.  There is an FE1.1S hub between the MAX3421E and every
@@ -989,6 +1299,8 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
         keyboard_addr    = 0u;
         keyboard_reports = 0u;
         keyboard_speed   = 0xffu;
+        repeat_key       = 0u;
+        led_dirty        = false;
     }
 }
 
@@ -996,6 +1308,7 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
                                 uint8_t const *report, uint16_t len)
 {
     uint8_t i;
+    uint8_t pressed;
     uint8_t copy = (len < 8u) ? (uint8_t)len : 8u;
 
     /* Counted before the guard, so "the callback never ran" and "the callback
@@ -1004,12 +1317,47 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
         rpt_cb_calls++;
     rpt_daddr = dev_addr;
     rpt_inst  = instance;
+    rpt_last_len = (uint8_t)len;
+    if (len == 0u && rpt_zero_len != 0xffu)
+        rpt_zero_len++;
 
     if (dev_addr == keyboard_addr && instance == keyboard_instance) {
+        /* Only newly pressed usages produce terminal input.  USB boot reports
+         * repeat unchanged held keys; host-side repeat policy can be added
+         * later without duplicating bytes at the poll interval today. */
+        pressed = 0u;
+        for (i = 2u; i < copy; i++) {
+            uint8_t keycode = report[i];
+            /* 01h-03h are the boot-protocol rollover/error usages. */
+            if (keycode > 3u && !key_was_down(keycode)) {
+                translate_key(keycode, report[0]);
+                /* The lock keys toggle state; repeating them would flap it. */
+                if (keycode != HID_KEY_CAPS_LOCK &&
+                    keycode != HID_KEY_NUM_LOCK &&
+                    keycode != HID_KEY_SCROLL_LOCK)
+                    pressed = keycode;
+            }
+        }
+
         for (i = 0u; i < copy; i++)
             keyboard_last[i] = report[i];
         for (; i < 8u; i++)
             keyboard_last[i] = 0u;
+
+        /* keyboard_last now holds the CURRENT report, so key_was_down() reads
+         * here as "is still held".  A newly pressed key takes over the repeat
+         * and restarts the initial delay; otherwise the existing one continues
+         * only while it is still down.  Modifiers are re-sampled each report so
+         * shifting mid-repeat changes what repeats. */
+        if (pressed != 0u) {
+            repeat_key    = pressed;
+            repeat_mod    = report[0];
+            repeat_due_ms = tusb_time_millis_api() + REPEAT_DELAY_MS;
+        } else if (repeat_key != 0u && !key_was_down(repeat_key)) {
+            repeat_key = 0u;
+        } else if (repeat_key != 0u) {
+            repeat_mod = report[0];
+        }
 
         keyboard_reports++;
     }
