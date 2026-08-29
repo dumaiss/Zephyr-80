@@ -17,10 +17,10 @@ already claims `RESET()` and `NMI`.
 
 | Pin | Port | Signal | Direction | Active | Macro | Notes |
 |---|---|---|---|---|---|---|
-| 21 | RA0 | `/USB_INT` | Input | Low | `USB_INT_PORT` | USB bridge data-ready. Unused by the current firmware. |
+| 21 | RA0 | `/USB_INT` | Input | Low | `USB_INT_PORT` | MAX3421E interrupt. Configured as an input; dispatch is intentionally deferred until the enumeration phase. |
 | 22 | RA1 | `/CTRL_LAT_CS` | Output | Low | `CTRL_LAT_CS_LAT` | Select for the cascaded controller 74HC595s on the **port C** bus; doubles as their RCLK. The 595 latches on RCLK's rising edge, so releasing the select is what commits the outputs. |
 | 23 | RA2 | `/IO_SD_CS` | Output | Low | `IO_SD_CS_LAT` | SD card select. Held idle by the current firmware. |
-| 24 | RA3 | `/IO_USB_CS` | Output | Low | `IO_USB_CS_LAT` | USB bridge select. Held idle by the current firmware. |
+| 24 | RA3 | `/IO_USB_CS` | Output | Low | `IO_USB_CS_LAT` | MAX3421E select. Used during bounded controller bring-up; otherwise released until enumeration is enabled. |
 | 25 | RA4 | `/SIOB_CS` | Output | Low | `SIOB_CS_LAT` | Puts SIO1/B on the shared bus and enables the TXDB buffer. Held asserted for a whole command transaction. |
 | 26 | RA5 | `/SIOA_CS` | Output | Low | `SIOA_CS_LAT` | Puts SIO1/A on the bus for a bulk transfer. Asserted for the whole bulk phase. |
 | 33 | RA6 | `/SYNCA` | Output | Low | `SYNCA_LAT` | Persistent SIO1/A External Sync: starts high, drops inside byte 0 of the establishing MCU-to-host transfer, then remains low. |
@@ -61,8 +61,9 @@ firmware clocked exclusively while a select was asserted; that correlation was
 written up as a hardware fact and then used to justify removing the CS-high
 power-up burst.  See `include/sd_card.h` for the consequences.
 
-The controller latch and the SD card are both brought up; the USB bridge select
-is held idle.
+The controller latch and MAX3421E are brought up at boot; the SD card remains
+lazy-initialised on its first explicit operation.  MAX3421E enumeration is not
+yet dispatched, so controller bring-up creates no continuing idle SPI traffic.
 
 | Pin | Port | Signal | Notes |
 |---|---|---|---|

@@ -4,6 +4,7 @@ TARGET := io_controller
 BUILD_DIR := build
 SRC_DIR   := src
 INC_DIR   := include
+TINYUSB_DIR := third_party/tinyusb
 
 XC8_DIR ?= /opt/microchip/xc8/v3.10/bin
 XC8     ?= $(XC8_DIR)/xc8-cc
@@ -20,7 +21,14 @@ FIRMWARE_SRCS := \
     $(SRC_DIR)/bulk_channel.c \
     $(SRC_DIR)/timebase.c \
     $(SRC_DIR)/sd_cache.c \
-    $(SRC_DIR)/power.c
+    $(SRC_DIR)/power.c \
+    $(SRC_DIR)/ioc_hid.c \
+    $(TINYUSB_DIR)/src/tusb.c \
+    $(TINYUSB_DIR)/src/common/tusb_fifo.c \
+    $(TINYUSB_DIR)/src/host/usbh.c \
+    $(TINYUSB_DIR)/src/host/hub.c \
+    $(TINYUSB_DIR)/src/class/hid/hid_host.c \
+    $(TINYUSB_DIR)/src/portable/analog/max3421/hcd_max3421.c
 
 FIRMWARE_HEX := $(BUILD_DIR)/$(TARGET).hex
 
@@ -31,7 +39,8 @@ FLAGS_STAMP := $(BUILD_DIR)/.buildflags
 
 # -gdwarf-3 emits DWARF debug info so build/$(TARGET).elf is source-debuggable
 # in VS Code (mplab-core-da / SNAP), matching the MPLAB CMake build flags.
-XC8FLAGS ?= -mcpu=$(DEVICE) -mdfp=$(DFP) -I$(INC_DIR) -gdwarf-3
+XC8FLAGS ?= -mcpu=$(DEVICE) -mdfp=$(DFP) -I$(INC_DIR) \
+    -I$(TINYUSB_DIR)/src -gdwarf-3 -mstack=hybrid:512:0:0
 
 # Extra -D defines, for sweeping tunables without editing headers. e.g.
 #   make DEFS=-DEXTSYNC_TARGET_BYTE_US=16u     # 500 kbit/s

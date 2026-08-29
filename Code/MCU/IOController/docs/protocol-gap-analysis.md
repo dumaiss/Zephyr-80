@@ -24,6 +24,8 @@ behavior.
 
 The remaining work is performance or feature work, not a known framing gap:
 
+- optional SIO Wait-mode `INIR`/`OTIR` Bulk loops, subject to the shared-W/RDY
+  electrical rule and the loss of a software timeout during a stretched cycle;
 - optional hardware CRC after proving it produces the identical wire FCS;
 - bounded bursts if interrupt blackout during 512-byte Bulk streams becomes
   unacceptable; and

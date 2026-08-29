@@ -136,6 +136,7 @@
 #define CMD_SD_FLUSH         0x0A
 #define CMD_PROFILE          0x0B
 #define CMD_LINK_SYNC        0x0C
+#define CMD_HID_STATUS       0x0D
 
 /* Response class bytes (MCU → Z80) */
 #define RSP_PING             0x81
@@ -149,6 +150,208 @@
 #define RSP_SD_FLUSH         0x8A
 #define RSP_PROFILE          0x8B
 #define RSP_LINK_SYNC        0x8C
+#define RSP_HID_STATUS       0x8D
+
+/* HID_STATUS reply payload.  /USB_INT is reported as the raw pin level so a
+ * low asserted interrupt remains visible even though this bring-up phase does
+ * not dispatch it. */
+#define IOC_OFF_HID_STATUS         (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_HID_REVISION       (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_HID_USB_INT        (IOC_OFF_PAYLOAD + 2u)
+#define IOC_OFF_HID_REV_125KHZ     (IOC_OFF_PAYLOAD + 3u)
+#define IOC_OFF_HID_REV_1MHZ       (IOC_OFF_PAYLOAD + 4u)
+#define IOC_OFF_HID_REV_4MHZ       (IOC_OFF_PAYLOAD + 5u)
+/* GPOUT write/read-back link test, one result per rate.  00h passes; FFh means
+ * the PIC's SPI module never completed a byte; otherwise a mask of the GPOUT
+ * bits that read back wrong.  See ioc_hid.h for how to read the pattern. */
+#define IOC_OFF_HID_GPOUT_125KHZ   (IOC_OFF_PAYLOAD + 6u)
+#define IOC_OFF_HID_GPOUT_1MHZ     (IOC_OFF_PAYLOAD + 7u)
+#define IOC_OFF_HID_GPOUT_4MHZ     (IOC_OFF_PAYLOAD + 8u)
+#define IOC_HID_GPOUT_XFER_ERROR   0xFFu
+/* Blind command-path test on the /USB_INT pin, which needs no MISO.  Bit 0 is
+ * the pin with PINCTL.POSINT clear (expect 1), bit 1 with POSINT set (expect
+ * 0).  01h passes; 03h is stuck high, meaning nothing reaches the part. */
+#define IOC_OFF_HID_INT_DRIVE      (IOC_OFF_PAYLOAD + 9u)
+#define IOC_HID_INT_DRIVE_PASS     0x01u
+/* Link quality: how many of the 64 reads in each revision burst produced the
+ * winning revision code.  40h is a clean bus, 00h is nothing legal at all, and
+ * anything between is a marginal connection.  The revision byte alone cannot
+ * distinguish a good bus from a lucky sample. */
+#define IOC_OFF_HID_MATCH_125KHZ   (IOC_OFF_PAYLOAD + 10u)
+#define IOC_OFF_HID_MATCH_1MHZ     (IOC_OFF_PAYLOAD + 11u)
+#define IOC_OFF_HID_MATCH_4MHZ     (IOC_OFF_PAYLOAD + 12u)
+#define IOC_HID_PROBE_READS        64u
+/* Live USB state.  DEV_COUNT is devices currently mounted; KBD_ADDR is 0 when
+ * no keyboard is present.  REPORTS is a 16-bit little-endian count of boot
+ * reports received since mount, and LAST is that report: modifier, reserved,
+ * then six keycodes. */
+#define IOC_OFF_HID_DEV_COUNT      (IOC_OFF_PAYLOAD + 13u)
+#define IOC_OFF_HID_KBD_ADDR       (IOC_OFF_PAYLOAD + 14u)
+#define IOC_OFF_HID_REPORTS_LO     (IOC_OFF_PAYLOAD + 15u)
+#define IOC_OFF_HID_REPORTS_HI     (IOC_OFF_PAYLOAD + 16u)
+#define IOC_OFF_HID_LAST_REPORT    (IOC_OFF_PAYLOAD + 17u)
+#define IOC_HID_LAST_REPORT_LEN    8u
+/* Device speed, which on this board predicts whether the device can work at
+ * all: there is an FE1.1S hub in front of every port and the MAX3421E driver
+ * has no PRE-packet support, so low-speed devices behind it are unreachable.
+ * 00h full, 01h low, FFh unknown. */
+#define IOC_OFF_HID_KBD_SPEED      (IOC_OFF_PAYLOAD + 25u)
+#define IOC_HID_SPEED_FULL         0x00u
+#define IOC_HID_SPEED_LOW          0x01u
+#define IOC_HID_STATUS_PAYLOAD_LEN 26u
+
+/* CMD_HID_STATUS request selects a reply page, like CMD_PROFILE does.  Page 0
+ * is the bring-up snapshot above; page 1 is raw controller/stack state, for
+ * separating "nothing ever connected" from "connected but never enumerated". */
+#define IOC_OFF_HID_REQ_PAGE       IOC_OFF_PAYLOAD
+#define IOC_HID_PAGE_STATUS        0x00u
+#define IOC_HID_PAGE_USB           0x01u
+#define IOC_HID_PAGE_XFER          0x02u
+#define IOC_HID_PAGE_HUB           0x03u
+#define IOC_HID_PAGE_ENUM          0x04u
+#define IOC_HID_PAGE_HIDCFG        0x05u
+
+#define IOC_OFF_HIDDBG_PAGE        (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_HIDDBG_TASK_LO     (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_HIDDBG_TASK_HI     (IOC_OFF_PAYLOAD + 2u)
+#define IOC_OFF_HIDDBG_INTS_LO     (IOC_OFF_PAYLOAD + 3u)
+#define IOC_OFF_HIDDBG_INTS_HI     (IOC_OFF_PAYLOAD + 4u)
+#define IOC_OFF_HIDDBG_DEVICES     (IOC_OFF_PAYLOAD + 5u)
+#define IOC_OFF_HIDDBG_INT_LEVEL   (IOC_OFF_PAYLOAD + 6u)
+#define IOC_OFF_HIDDBG_CONNECTED   (IOC_OFF_PAYLOAD + 7u)
+#define IOC_OFF_HIDDBG_SPEED       (IOC_OFF_PAYLOAD + 8u)
+#define IOC_OFF_HIDDBG_HIRQ        (IOC_OFF_PAYLOAD + 9u)
+#define IOC_OFF_HIDDBG_MODE        (IOC_OFF_PAYLOAD + 10u)
+#define IOC_OFF_HIDDBG_HRSL        (IOC_OFF_PAYLOAD + 11u)
+#define IOC_OFF_HIDDBG_USBIRQ      (IOC_OFF_PAYLOAD + 12u)
+#define IOC_OFF_HIDDBG_MOUNTED     (IOC_OFF_PAYLOAD + 13u)
+#define IOC_OFF_HIDDBG_EV_ATTACH   (IOC_OFF_PAYLOAD + 14u)
+#define IOC_OFF_HIDDBG_EV_REMOVE   (IOC_OFF_PAYLOAD + 15u)
+#define IOC_OFF_HIDDBG_DEV_DESC    (IOC_OFF_PAYLOAD + 16u)
+#define IOC_OFF_HIDDBG_CFG_DESC    (IOC_OFF_PAYLOAD + 17u)
+#define IOC_OFF_HIDDBG_ENUM_STATE  (IOC_OFF_PAYLOAD + 18u)
+#define IOC_OFF_HIDDBG_ENUM_FAILS  (IOC_OFF_PAYLOAD + 19u)
+#define IOC_OFF_HIDDBG_CTRL_REJ    (IOC_OFF_PAYLOAD + 20u)
+#define IOC_OFF_HIDDBG_HXFRDN      (IOC_OFF_PAYLOAD + 21u)
+#define IOC_OFF_HIDDBG_XFERDONE    (IOC_OFF_PAYLOAD + 22u)
+#define IOC_OFF_HIDDBG_EPNULL      (IOC_OFF_PAYLOAD + 23u)
+#define IOC_OFF_HIDDBG_LASTHRSL    (IOC_OFF_PAYLOAD + 24u)
+#define IOC_OFF_HIDDBG_SETUP_XFER  (IOC_OFF_PAYLOAD + 25u)
+/* At the transport's ceiling: IOC_COMMAND_MAX_DATA is 26. */
+#define IOC_HID_USB_PAYLOAD_LEN    26u
+
+/* Page 2: the state handle_xfer_done() branched on.  Page 1 is full -- the
+ * transport caps a reply at IOC_COMMAND_MAX_DATA -- so this is a second page
+ * rather than evidence deleted to make room. */
+#define IOC_OFF_HIDX_PAGE          (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_HIDX_HXFR          (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_HIDX_EPDIR         (IOC_OFF_PAYLOAD + 2u)
+#define IOC_OFF_HIDX_PERADDR       (IOC_OFF_PAYLOAD + 3u)
+#define IOC_OFF_HIDX_EPNUM         (IOC_OFF_PAYLOAD + 4u)
+#define IOC_OFF_HIDX_PKTSIZE       (IOC_OFF_PAYLOAD + 5u)
+#define IOC_OFF_HIDX_TOTAL_LO      (IOC_OFF_PAYLOAD + 6u)
+#define IOC_OFF_HIDX_TOTAL_HI      (IOC_OFF_PAYLOAD + 7u)
+#define IOC_OFF_HIDX_XFERRED_LO    (IOC_OFF_PAYLOAD + 8u)
+#define IOC_OFF_HIDX_XFERRED_HI    (IOC_OFF_PAYLOAD + 9u)
+#define IOC_OFF_HIDX_EPSTATE       (IOC_OFF_PAYLOAD + 10u)
+#define IOC_OFF_HIDX_XACTLEN       (IOC_OFF_PAYLOAD + 11u)
+/* 1 = completed (OUT/SETUP), 2 = took xact_out, 3 = re-issued HXFR (IN),
+ * 4 = completed (IN), 0 = the branch was never reached. */
+#define IOC_OFF_HIDX_BRANCH        (IOC_OFF_PAYLOAD + 12u)
+#define IOC_OFF_HIDX_HUB_OPEN_EP   (IOC_OFF_PAYLOAD + 13u)
+#define IOC_OFF_HIDX_HUB_PRE_EP    (IOC_OFF_PAYLOAD + 14u)
+#define IOC_OFF_HIDX_HUB_AFTER_OPEN (IOC_OFF_PAYLOAD + 15u)
+#define IOC_OFF_HIDX_SUBMIT_ADDR   (IOC_OFF_PAYLOAD + 16u)
+#define IOC_OFF_HIDX_SUBMIT_EP     (IOC_OFF_PAYLOAD + 17u)
+#define IOC_OFF_HIDX_SETUP         (IOC_OFF_PAYLOAD + 18u)
+#define IOC_HID_XFER_PAYLOAD_LEN   26u
+
+/* Page 3: page byte followed by the 25-byte hub lifecycle trace. */
+#define IOC_OFF_HIDH_PAGE          (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_HIDH_TRACE         (IOC_OFF_PAYLOAD + 1u)
+#define IOC_HID_HUB_TRACE_LEN      25u
+#define IOC_HID_HUB_PAYLOAD_LEN    26u
+
+/* Page 4: downstream enumeration entry.  RET is FFh if the behind-hub branch
+ * of enum_new_device() was never reached, FEh if it was reached but hub_port
+ * was zero, 00h if hub_port_get_status() refused, 01h if it accepted. */
+#define IOC_OFF_HIDE_PAGE          (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_HIDE_CALLS         (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_HIDE_HUB_ADDR      (IOC_OFF_PAYLOAD + 2u)
+#define IOC_OFF_HIDE_HUB_PORT      (IOC_OFF_PAYLOAD + 3u)
+#define IOC_OFF_HIDE_RET           (IOC_OFF_PAYLOAD + 4u)
+/* ENUMERATING is the live _usbh_data.enumerating_daddr.  FFh means idle and
+ * ready for a new attach; anything else means the attach path defers and
+ * re-queues, which presents as an unbounded attach count. */
+#define IOC_OFF_HIDE_ENUMERATING   (IOC_OFF_PAYLOAD + 5u)
+#define IOC_OFF_HIDE_DEFERS        (IOC_OFF_PAYLOAD + 6u)
+#define IOC_OFF_HIDE_COMPLETES     (IOC_OFF_PAYLOAD + 7u)
+#define IOC_OFF_HIDE_ATT_ADDR      (IOC_OFF_PAYLOAD + 8u)
+#define IOC_OFF_HIDE_ATT_PORT      (IOC_OFF_PAYLOAD + 9u)
+/* Host-controller stall state.  BUSY is _hcd_data.busy_lock; EPSTATE and
+ * EPPKT are the hub's interrupt-IN endpoint (addr 3, ep 1, IN).  State 03h is
+ * EP_STATE_ATTEMPT_1 -- armed but never started, and the FRAME retry ignores
+ * it because that test is strictly greater than ATTEMPT_1. */
+#define IOC_OFF_HIDE_BUSY          (IOC_OFF_PAYLOAD + 10u)
+#define IOC_OFF_HIDE_EPSTATE       (IOC_OFF_PAYLOAD + 11u)
+#define IOC_OFF_HIDE_EPPKT         (IOC_OFF_PAYLOAD + 12u)
+/* Hub class-driver dispatch.  CBCALLS is hub_xfer_cb() entries -- zero means
+ * the completed status transfer never reached the hub driver at all.  ARMCALLS
+ * is hub_edpt_status_xfer() calls.  CHANGE is the last status-change byte. */
+#define IOC_OFF_HIDE_HUBCB         (IOC_OFF_PAYLOAD + 13u)
+#define IOC_OFF_HIDE_HUBARM        (IOC_OFF_PAYLOAD + 14u)
+#define IOC_OFF_HIDE_HUBCHANGE     (IOC_OFF_PAYLOAD + 15u)
+/* Endpoint table: allocation failures, slots in use, slots total. */
+#define IOC_OFF_HIDE_EPFAIL        (IOC_OFF_PAYLOAD + 16u)
+#define IOC_OFF_HIDE_EPUSED        (IOC_OFF_PAYLOAD + 17u)
+#define IOC_OFF_HIDE_EPTOTAL       (IOC_OFF_PAYLOAD + 18u)
+/* Endpoint-to-driver binding.  EP2DRV is dev(3)->ep2drv[1][IN]: FFh means the
+ * endpoint was never bound to a class driver, so its completions are dropped.
+ * FEh means no such device. */
+#define IOC_OFF_HIDE_EP2DRV        (IOC_OFF_PAYLOAD + 19u)
+#define IOC_OFF_HIDE_BINDCALLS     (IOC_OFF_PAYLOAD + 20u)
+#define IOC_OFF_HIDE_BINDDRVID     (IOC_OFF_PAYLOAD + 21u)
+#define IOC_OFF_HIDE_BINDLEN_LO    (IOC_OFF_PAYLOAD + 22u)
+#define IOC_OFF_HIDE_BINDLEN_HI    (IOC_OFF_PAYLOAD + 23u)
+/* Set when desc_itf did not survive a nested driver->open() call. */
+#define IOC_OFF_HIDE_ITFCLOB       (IOC_OFF_PAYLOAD + 24u)
+/* ep2drv[1][OUT].  If the bind wrote here instead of [IN], tu_edpt_dir()
+ * returned the wrong direction and the map is written to the wrong slot. */
+#define IOC_OFF_HIDE_EP2DRVOUT     (IOC_OFF_PAYLOAD + 25u)
+#define IOC_HID_ENUM_PAYLOAD_LEN   26u
+
+/* Page 5: the HID class driver's set-config chain.  STATE is the last value
+ * process_set_config() was entered with: 0 SET_IDLE, 1 SET_PROTOCOL,
+ * 2 GET_REPORT_DESC, 3 COMPLETE, FFh never entered.  ITFNUM and BREQ are read
+ * through xfer->setup, a pointer to a caller local -- garbage there sends
+ * requests to a nonexistent interface, which a device answers with STALL. */
+#define IOC_OFF_HIDC_PAGE          (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_HIDC_OPEN          (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_HIDC_SETCFG        (IOC_OFF_PAYLOAD + 2u)
+#define IOC_OFF_HIDC_PROC          (IOC_OFF_PAYLOAD + 3u)
+#define IOC_OFF_HIDC_STATE         (IOC_OFF_PAYLOAD + 4u)
+#define IOC_OFF_HIDC_ITFNUM        (IOC_OFF_PAYLOAD + 5u)
+#define IOC_OFF_HIDC_BREQ          (IOC_OFF_PAYLOAD + 6u)
+#define IOC_OFF_HIDC_RESULT        (IOC_OFF_PAYLOAD + 7u)
+#define IOC_OFF_HIDC_MOUNT         (IOC_OFF_PAYLOAD + 8u)
+#define IOC_OFF_HIDC_MOUNTCB       (IOC_OFF_PAYLOAD + 9u)
+#define IOC_OFF_HIDC_MOUNTS        (IOC_OFF_PAYLOAD + 10u)
+#define IOC_OFF_HIDC_DADDR         (IOC_OFF_PAYLOAD + 11u)
+#define IOC_OFF_HIDC_INST          (IOC_OFF_PAYLOAD + 12u)
+#define IOC_OFF_HIDC_PROTO         (IOC_OFF_PAYLOAD + 13u)
+#define IOC_OFF_HIDC_ARM           (IOC_OFF_PAYLOAD + 14u)
+#define IOC_OFF_HIDC_KBDSTATE      (IOC_OFF_PAYLOAD + 15u)
+#define IOC_OFF_HIDC_KBDPKT        (IOC_OFF_PAYLOAD + 16u)
+#define IOC_OFF_HIDC_KBDEP2DRV     (IOC_OFF_PAYLOAD + 17u)
+#define IOC_OFF_HIDC_BUSY          (IOC_OFF_PAYLOAD + 18u)
+#define IOC_OFF_HIDC_EPIN          (IOC_OFF_PAYLOAD + 19u)
+#define IOC_OFF_HIDC_KSUBMIT       (IOC_OFF_PAYLOAD + 20u)
+#define IOC_OFF_HIDC_XFERCB        (IOC_OFF_PAYLOAD + 21u)
+#define IOC_OFF_HIDC_XFERCBEP      (IOC_OFF_PAYLOAD + 22u)
+#define IOC_OFF_HIDC_RPTCB         (IOC_OFF_PAYLOAD + 23u)
+#define IOC_OFF_HIDC_RPTDADDR      (IOC_OFF_PAYLOAD + 24u)
+#define IOC_OFF_HIDC_RPTINST       (IOC_OFF_PAYLOAD + 25u)
+#define IOC_HID_HIDCFG_PAYLOAD_LEN 26u
 
 /* Six 16-bit millisecond totals at bytes 4-15; see timebase.h for the slots. */
 #define IOC_OFF_PROFILE_0        (IOC_OFF_PAYLOAD + 0u)
@@ -201,8 +404,57 @@
  *      IOC_PROFILE_RESET request starts a clean measurement interval
  *  21  PROFILE page 1 reports bulk-TX wait, preparation, data and teardown
  *      totals; the bulk payload loop streams CRC while SPI2 shifts each byte
+ *  22  HID_STATUS reports the MAX3421E bring-up result, revision register and
+ *      live /USB_INT pin level without servicing USB or starting enumeration
+ *  23  HID_STATUS actively performs visible, read-only MAX3421E revision
+ *      bursts at 125 kHz, 1 MHz and 4 MHz and reports all three results
+ *  24  MAX3421E is taken out of its power-on half-duplex SPI mode before any
+ *      register is read, without which nothing can be read back at all on this
+ *      board; HID_STATUS adds a GPOUT write/read-back link test per rate
+ *  25  HID_STATUS adds the /USB_INT drive test, which commands the controller
+ *      blind and watches its own output pin, separating "cannot hear us" from
+ *      "cannot answer us" without relying on MISO
+ *  26  revision bursts report a majority verdict and a match count out of 64
+ *      rather than the last sample, and the GPOUT result carries a failing-
+ *      pattern count, so a marginal link can be graded instead of guessed at
+ *  27  USB enumeration is live: /USB_INT is switched to level mode and polled
+ *      from the main loop's idle branch, tuh_task() runs, and HID_STATUS
+ *      reports mounted devices plus the latest boot keyboard report, and the
+ *      mounted device's speed
+ *  28  HID_STATUS takes a page selector; page 1 reports raw MAX3421E and stack
+ *      state (port connect, MODE/HIRQ/HRSL/USBIRQ, task and dispatch counts)
+ *  29  port supplies tusb_time_delay_ms_api() so enumeration delays cannot
+ *      complete early on a coarse tick; HID_STATUS page 1 adds the enumerated
+ *      address map, which unlike the device count can see the hub
+ *  30  HID_STATUS page 1 adds enumeration milestone counters (attach event,
+ *      device descriptor, configuration descriptor) to locate where the
+ *      enumeration sequence stops
+ *  31  HID_STATUS page 1 reports the last enumeration state, the failed-attempt
+ *      count, and control transfers refused for lacking a completion callback
+ *  32  HID_STATUS page 1 adds host-controller taps: HXFRDN count, xfer-done
+ *      count, find_opened_ep() failures, and the last HRSL seen at completion
+ *  33  HID_STATUS page 1 adds started-vs-reported transfer counts, packed into
+ *      the last payload byte the transport allows
+ *  34  HID_STATUS page 2 reports the endpoint state handle_xfer_done() branched
+ *      on, and which branch it took
+ *  35  XC8 stages TinyUSB events in dedicated storage before queueing, avoiding
+ *      static-auto overlay corruption of completion events
+ *  36  XC8 preserves the hub interrupt endpoint address across tuh_edpt_open(),
+ *      avoiding a second static-auto overlay that changed endpoint 81h to 00h
+ *  37  HID_STATUS page 2 traces the hub endpoint from descriptor parsing to
+ *      HCD submission and reports the last control SETUP packet
+ *  38  XC8 stores the hub interrupt endpoint from the initialized diagnostic
+ *      capture and page 2 snapshots the hub state immediately after that store
+ *  39  HID_STATUS page 3 traces the retained hub object through open, class
+ *      configuration, hub descriptor completion and each port-power callback
+ *  60  HID report arming floors an impossible zero packet length and counts
+ *      every intentional HID-interface clear to distinguish state loss from
+ *      an unobserved close/reinitialization
+ *  61  XC8 preserves hidh_open()'s HID-object pointer across the nested
+ *      endpoint-open call; HID_STATUS now reports the actual retained ep_in
+ *      field rather than the descriptor-side capture
  */
-#define IOC_FW_LEVEL  21
+#define IOC_FW_LEVEL  61
 
 /* PING reply: a snapshot of the power handshake pins.
  *

@@ -43,6 +43,10 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
         handler_profile(request, reply);
         return true;
 
+    case CMD_HID_STATUS:
+        handler_hid_status(request, reply);
+        return true;
+
     case CMD_SD_FLUSH:
         handler_sd_flush(request, reply);
         return true;

@@ -4,3 +4,6 @@
 [submodule "Code/HOST/CPM2.2/cpm-2.2"]
 	path = Code/HOST/CPM2.2/cpm-2.2
 	url = https://github.com/Z80-Retro/cpm-2.2.git
+[submodule "Code/MCU/IOController/third_party/tinyusb"]
+	path = Code/MCU/IOController/third_party/tinyusb
+	url = https://github.com/hathach/tinyusb.git

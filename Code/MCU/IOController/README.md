@@ -89,6 +89,31 @@ which to relax them.
 exercises the full-sector bulk path and `ioc_bulk.asm` tests the bulk lane on
 its own with a ramp.
 
+## USB HID Bring-Up
+
+TinyUSB 0.20.0 supplies the MAX3421E host, hub and HID class code.  The IOC's
+adapter is isolated in `src/ioc_hid.c`; it shares SPI1 only through the central
+one-hot selector, so selecting the MAX3421E always releases the SD card and
+controller latch first.
+
+The current phase validates the MAX3421E revision, resets the controller and
+waits for its oscillator with a bounded poll.  It deliberately does not
+dispatch `/USB_INT` or run `tuh_task()`, so the attached hub is not enumerated
+yet.  `CMD_HID_STATUS` exposes the bring-up result, revision register and live
+interrupt pin to `HIDSTAT.COM`.  It also performs read-only revision probes and
+a GPOUT write/read-back link test at 125 kHz, 1 MHz and 4 MHz, producing
+scope-visible `/CS` bursts without acknowledging the interrupt or advancing USB
+state.
+
+**Nothing can be read from the MAX3421E until `PINCTL.FDUPSPI` is set.**  The
+part powers up in half-duplex SPI, where it tri-states MISO and drives read data
+back out of its own MOSI pin — which this board cannot receive, because MOSI
+reaches it through a one-way CD74HC4050.  The first access must therefore be a
+blind PINCTL *write*; writes work in both modes.  `RES` is strapped high, so
+that setting survives every PIC reset and only a 3V3 power cycle undoes it.
+See [docs/max3421-bring-up-debug.md](docs/max3421-bring-up-debug.md) for the
+full root-cause trail, what has been ruled out, and the bisection guide.
+
 ## Controller Latch Bring-Up
 
 The cascaded 74HC595 pair on the port C bus (SPI1) is driven by

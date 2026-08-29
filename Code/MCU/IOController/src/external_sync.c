@@ -412,6 +412,7 @@ static bool is_command_class(uint8_t value)
            (value == CMD_SD_FLUSH) ||
            (value == CMD_PROFILE) ||
            (value == CMD_LINK_SYNC) ||
+           (value == CMD_HID_STATUS) ||
            (value == CMD_XFER_STATUS);
 }
 

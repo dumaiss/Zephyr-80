@@ -7,6 +7,7 @@
 #include "sd_cache.h"
 #include "external_sync.h"
 #include "timebase.h"
+#include "ioc_hid.h"
 
 /* Every record read the host asks for, whether it hits the cache or not.  This
  * is the number that says whether CP/M is issuing the reads the file size
@@ -327,6 +328,273 @@ void handler_link_sync(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_CLASS]  = RSP_LINK_SYNC;
     reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
     reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+}
+
+/* Read-only Step-2 USB snapshot.  In particular, do not acknowledge or
+ * dispatch /USB_INT here: HIDSTAT must be observational and cannot advance
+ * the later enumeration state machine by being run. */
+static void handler_hid_usb_page(const IocFrame *request, IocFrame *reply)
+{
+    HidHostDebug dbg;
+
+    hid_host_debug(&dbg);
+
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_HID_STATUS;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+    reply->bytes[IOC_OFF_LEN]    = IOC_HID_USB_PAYLOAD_LEN;
+
+    reply->bytes[IOC_OFF_HIDDBG_PAGE]      = IOC_HID_PAGE_USB;
+    reply->bytes[IOC_OFF_HIDDBG_TASK_LO]   = (uint8_t)(dbg.task_calls & 0xffu);
+    reply->bytes[IOC_OFF_HIDDBG_TASK_HI]   = (uint8_t)(dbg.task_calls >> 8);
+    reply->bytes[IOC_OFF_HIDDBG_INTS_LO]   = (uint8_t)(dbg.int_dispatches & 0xffu);
+    reply->bytes[IOC_OFF_HIDDBG_INTS_HI]   = (uint8_t)(dbg.int_dispatches >> 8);
+    reply->bytes[IOC_OFF_HIDDBG_DEVICES]   = dbg.device_count;
+    reply->bytes[IOC_OFF_HIDDBG_INT_LEVEL] = dbg.int_level;
+    reply->bytes[IOC_OFF_HIDDBG_CONNECTED] = dbg.port_connected;
+    reply->bytes[IOC_OFF_HIDDBG_SPEED]     = dbg.port_speed;
+    reply->bytes[IOC_OFF_HIDDBG_HIRQ]      = dbg.hirq;
+    reply->bytes[IOC_OFF_HIDDBG_MODE]      = dbg.mode;
+    reply->bytes[IOC_OFF_HIDDBG_HRSL]      = dbg.hrsl;
+    reply->bytes[IOC_OFF_HIDDBG_USBIRQ]    = dbg.usbirq;
+    reply->bytes[IOC_OFF_HIDDBG_MOUNTED]   = dbg.mounted_map;
+    reply->bytes[IOC_OFF_HIDDBG_EV_ATTACH] = dbg.ev_attach;
+    reply->bytes[IOC_OFF_HIDDBG_EV_REMOVE] = dbg.ev_remove;
+    reply->bytes[IOC_OFF_HIDDBG_DEV_DESC]  = dbg.enum_dev_desc;
+    reply->bytes[IOC_OFF_HIDDBG_CFG_DESC]  = dbg.enum_cfg_desc;
+    reply->bytes[IOC_OFF_HIDDBG_ENUM_STATE] = dbg.enum_state;
+    reply->bytes[IOC_OFF_HIDDBG_ENUM_FAILS] = dbg.enum_fails;
+    reply->bytes[IOC_OFF_HIDDBG_CTRL_REJ]   = dbg.ctrl_rejects;
+    reply->bytes[IOC_OFF_HIDDBG_HXFRDN]     = dbg.hxfrdn;
+    reply->bytes[IOC_OFF_HIDDBG_XFERDONE]   = dbg.xferdone;
+    reply->bytes[IOC_OFF_HIDDBG_EPNULL]     = dbg.epnull;
+    reply->bytes[IOC_OFF_HIDDBG_LASTHRSL]   = dbg.last_hrsl;
+    reply->bytes[IOC_OFF_HIDDBG_SETUP_XFER] = dbg.setups_xfers;
+}
+
+static void handler_hid_xfer_page(const IocFrame *request, IocFrame *reply)
+{
+    /* File-static, not a local.  Every one of these is passed by pointer into a
+     * nested accessor, and XC8 overlays this function's live locals with the
+     * callee's argument area -- the same defect fixed seven times inside
+     * TinyUSB.  It is why report_count read 0000 while last_report held real
+     * data, and why speed read an impossible 02.  Static storage is outside the
+     * overlay, and the IOC services one command at a time, so there is no
+     * reentrancy to protect against. */
+    static HidHostXfer x;
+    uint8_t i;
+
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    hid_host_xfer_debug(&x);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_HID_STATUS;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+    reply->bytes[IOC_OFF_LEN]    = IOC_HID_XFER_PAYLOAD_LEN;
+
+    reply->bytes[IOC_OFF_HIDX_PAGE]       = IOC_HID_PAGE_XFER;
+    reply->bytes[IOC_OFF_HIDX_HXFR]       = x.hxfr;
+    reply->bytes[IOC_OFF_HIDX_EPDIR]      = x.ep_dir;
+    reply->bytes[IOC_OFF_HIDX_PERADDR]    = x.peraddr;
+    reply->bytes[IOC_OFF_HIDX_EPNUM]      = x.ep_num;
+    reply->bytes[IOC_OFF_HIDX_PKTSIZE]    = x.packet_size;
+    reply->bytes[IOC_OFF_HIDX_TOTAL_LO]   = (uint8_t)(x.total_len & 0xffu);
+    reply->bytes[IOC_OFF_HIDX_TOTAL_HI]   = (uint8_t)(x.total_len >> 8);
+    reply->bytes[IOC_OFF_HIDX_XFERRED_LO] = (uint8_t)(x.xferred_len & 0xffu);
+    reply->bytes[IOC_OFF_HIDX_XFERRED_HI] = (uint8_t)(x.xferred_len >> 8);
+    reply->bytes[IOC_OFF_HIDX_EPSTATE]    = x.ep_state;
+    reply->bytes[IOC_OFF_HIDX_XACTLEN]    = x.xact_len;
+    reply->bytes[IOC_OFF_HIDX_BRANCH]     = x.branch;
+    reply->bytes[IOC_OFF_HIDX_HUB_OPEN_EP] = x.hub_open_ep;
+    reply->bytes[IOC_OFF_HIDX_HUB_PRE_EP]  = x.hub_status_ep_before;
+    reply->bytes[IOC_OFF_HIDX_HUB_AFTER_OPEN] = x.hub_state_after_open;
+    reply->bytes[IOC_OFF_HIDX_SUBMIT_ADDR] = x.submit_daddr;
+    reply->bytes[IOC_OFF_HIDX_SUBMIT_EP]   = x.submit_ep;
+    for (i = 0u; i < 8u; ++i) {
+        reply->bytes[IOC_OFF_HIDX_SETUP + i] = x.setup[i];
+    }
+}
+
+static void handler_hid_hub_page(const IocFrame *request, IocFrame *reply)
+{
+    HidHostHubTrace trace;
+    uint8_t i;
+
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    hid_host_hub_debug(&trace);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_HID_STATUS;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+    reply->bytes[IOC_OFF_LEN]    = IOC_HID_HUB_PAYLOAD_LEN;
+    reply->bytes[IOC_OFF_HIDH_PAGE] = IOC_HID_PAGE_HUB;
+    for (i = 0u; i < IOC_HID_HUB_TRACE_LEN; ++i) {
+        reply->bytes[IOC_OFF_HIDH_TRACE + i] = trace.bytes[i];
+    }
+}
+
+static void handler_hid_cfg_page(const IocFrame *request, IocFrame *reply)
+{
+    /* File-static, not a local.  Every one of these is passed by pointer into a
+     * nested accessor, and XC8 overlays this function's live locals with the
+     * callee's argument area -- the same defect fixed seven times inside
+     * TinyUSB.  It is why report_count read 0000 while last_report held real
+     * data, and why speed read an impossible 02.  Static storage is outside the
+     * overlay, and the IOC services one command at a time, so there is no
+     * reentrancy to protect against. */
+    static HidHostCfg c;
+
+    hid_host_cfg_debug(&c);
+
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_HID_STATUS;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+    reply->bytes[IOC_OFF_LEN]    = IOC_HID_HIDCFG_PAYLOAD_LEN;
+
+    reply->bytes[IOC_OFF_HIDC_PAGE]    = IOC_HID_PAGE_HIDCFG;
+    reply->bytes[IOC_OFF_HIDC_OPEN]    = c.open_calls;
+    reply->bytes[IOC_OFF_HIDC_SETCFG]  = c.setcfg_calls;
+    reply->bytes[IOC_OFF_HIDC_PROC]    = c.proc_calls;
+    reply->bytes[IOC_OFF_HIDC_STATE]   = c.state;
+    reply->bytes[IOC_OFF_HIDC_ITFNUM]  = c.itf_num;
+    reply->bytes[IOC_OFF_HIDC_BREQ]    = c.breq;
+    reply->bytes[IOC_OFF_HIDC_RESULT]  = c.result;
+    reply->bytes[IOC_OFF_HIDC_MOUNT]   = c.mount_calls;
+    reply->bytes[IOC_OFF_HIDC_MOUNTCB] = c.mountcb_calls;
+    reply->bytes[IOC_OFF_HIDC_MOUNTS]  = c.hid_mounts;
+    reply->bytes[IOC_OFF_HIDC_DADDR]   = c.hid_daddr;
+    reply->bytes[IOC_OFF_HIDC_INST]    = c.hid_inst;
+    reply->bytes[IOC_OFF_HIDC_PROTO]   = c.hid_proto;
+    reply->bytes[IOC_OFF_HIDC_ARM]     = c.hid_arm;
+    reply->bytes[IOC_OFF_HIDC_KBDSTATE]  = c.kbd_ep_state;
+    reply->bytes[IOC_OFF_HIDC_KBDPKT]    = c.kbd_ep_pkt;
+    reply->bytes[IOC_OFF_HIDC_KBDEP2DRV] = c.kbd_ep2drv;
+    reply->bytes[IOC_OFF_HIDC_BUSY]      = c.busy_lock;
+    reply->bytes[IOC_OFF_HIDC_EPIN]      = c.hid_ep_in;
+    reply->bytes[IOC_OFF_HIDC_KSUBMIT]   = c.kbd_submits;
+    reply->bytes[IOC_OFF_HIDC_XFERCB]    = c.hid_xfercb;
+    reply->bytes[IOC_OFF_HIDC_XFERCBEP]  = c.hid_xfercb_ep;
+    reply->bytes[IOC_OFF_HIDC_RPTCB]     = c.rpt_cb_calls;
+    reply->bytes[IOC_OFF_HIDC_RPTDADDR]  = c.rpt_daddr;
+    reply->bytes[IOC_OFF_HIDC_RPTINST]   = c.rpt_inst;
+}
+
+static void handler_hid_enum_page(const IocFrame *request, IocFrame *reply)
+{
+    /* File-static, not a local.  Every one of these is passed by pointer into a
+     * nested accessor, and XC8 overlays this function's live locals with the
+     * callee's argument area -- the same defect fixed seven times inside
+     * TinyUSB.  It is why report_count read 0000 while last_report held real
+     * data, and why speed read an impossible 02.  Static storage is outside the
+     * overlay, and the IOC services one command at a time, so there is no
+     * reentrancy to protect against. */
+    static HidHostEnum e;
+
+    hid_host_enum_debug(&e);
+
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_HID_STATUS;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+    reply->bytes[IOC_OFF_LEN]    = IOC_HID_ENUM_PAYLOAD_LEN;
+
+    reply->bytes[IOC_OFF_HIDE_PAGE]     = IOC_HID_PAGE_ENUM;
+    reply->bytes[IOC_OFF_HIDE_CALLS]    = e.calls;
+    reply->bytes[IOC_OFF_HIDE_HUB_ADDR] = e.hub_addr;
+    reply->bytes[IOC_OFF_HIDE_HUB_PORT] = e.hub_port;
+    reply->bytes[IOC_OFF_HIDE_RET]         = e.ret;
+    reply->bytes[IOC_OFF_HIDE_ENUMERATING] = e.enumerating;
+    reply->bytes[IOC_OFF_HIDE_DEFERS]      = e.defers;
+    reply->bytes[IOC_OFF_HIDE_COMPLETES]   = e.completes;
+    reply->bytes[IOC_OFF_HIDE_ATT_ADDR]    = e.att_hub_addr;
+    reply->bytes[IOC_OFF_HIDE_ATT_PORT]    = e.att_hub_port;
+    reply->bytes[IOC_OFF_HIDE_BUSY]        = e.busy_lock;
+    reply->bytes[IOC_OFF_HIDE_EPSTATE]     = e.ep_state;
+    reply->bytes[IOC_OFF_HIDE_EPPKT]       = e.ep_pktsize;
+    reply->bytes[IOC_OFF_HIDE_HUBCB]       = e.hub_cb_calls;
+    reply->bytes[IOC_OFF_HIDE_HUBARM]      = e.hub_arm_calls;
+    reply->bytes[IOC_OFF_HIDE_HUBCHANGE]   = e.hub_change;
+    reply->bytes[IOC_OFF_HIDE_EPFAIL]      = e.ep_alloc_fail;
+    reply->bytes[IOC_OFF_HIDE_EPUSED]      = e.ep_used;
+    reply->bytes[IOC_OFF_HIDE_EPTOTAL]     = e.ep_total;
+    reply->bytes[IOC_OFF_HIDE_EP2DRV]      = e.ep2drv;
+    reply->bytes[IOC_OFF_HIDE_BINDCALLS]   = e.bind_calls;
+    reply->bytes[IOC_OFF_HIDE_BINDDRVID]   = e.bind_drvid;
+    reply->bytes[IOC_OFF_HIDE_BINDLEN_LO]  = (uint8_t)(e.bind_drvlen & 0xffu);
+    reply->bytes[IOC_OFF_HIDE_BINDLEN_HI]  = (uint8_t)(e.bind_drvlen >> 8);
+    reply->bytes[IOC_OFF_HIDE_ITFCLOB]     = e.itf_clobbered;
+    reply->bytes[IOC_OFF_HIDE_EP2DRVOUT]   = e.ep2drv_out;
+}
+
+void handler_hid_status(const IocFrame *request, IocFrame *reply)
+{
+    /* File-static, not a local.  Every one of these is passed by pointer into a
+     * nested accessor, and XC8 overlays this function's live locals with the
+     * callee's argument area -- the same defect fixed seven times inside
+     * TinyUSB.  It is why report_count read 0000 while last_report held real
+     * data, and why speed read an impossible 02.  Static storage is outside the
+     * overlay, and the IOC services one command at a time, so there is no
+     * reentrancy to protect against. */
+    static HidHostProbe    probe;
+    static HidHostUsbState usb;
+    uint8_t         i;
+
+    if (request->bytes[IOC_OFF_HID_REQ_PAGE] == IOC_HID_PAGE_USB) {
+        handler_hid_usb_page(request, reply);
+        return;
+    }
+
+    if (request->bytes[IOC_OFF_HID_REQ_PAGE] == IOC_HID_PAGE_HIDCFG) {
+        handler_hid_cfg_page(request, reply);
+        return;
+    }
+
+    if (request->bytes[IOC_OFF_HID_REQ_PAGE] == IOC_HID_PAGE_ENUM) {
+        handler_hid_enum_page(request, reply);
+        return;
+    }
+
+    if (request->bytes[IOC_OFF_HID_REQ_PAGE] == IOC_HID_PAGE_XFER) {
+        handler_hid_xfer_page(request, reply);
+        return;
+    }
+
+    if (request->bytes[IOC_OFF_HID_REQ_PAGE] == IOC_HID_PAGE_HUB) {
+        handler_hid_hub_page(request, reply);
+        return;
+    }
+
+    hid_host_probe(&probe);
+    hid_host_usb_state(&usb);
+
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]        = RSP_HID_STATUS;
+    reply->bytes[IOC_OFF_SEQ]          = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS]       = IOC_STATUS_OK;
+    reply->bytes[IOC_OFF_LEN]          = IOC_HID_STATUS_PAYLOAD_LEN;
+    reply->bytes[IOC_OFF_HID_STATUS]   = (uint8_t)hid_host_status();
+    reply->bytes[IOC_OFF_HID_REVISION] = hid_host_revision();
+    reply->bytes[IOC_OFF_HID_USB_INT]  = hid_host_interrupt_level();
+    reply->bytes[IOC_OFF_HID_REV_125KHZ]   = probe.revision_125khz;
+    reply->bytes[IOC_OFF_HID_REV_1MHZ]     = probe.revision_1mhz;
+    reply->bytes[IOC_OFF_HID_REV_4MHZ]     = probe.revision_4mhz;
+    reply->bytes[IOC_OFF_HID_GPOUT_125KHZ] = probe.gpout_125khz;
+    reply->bytes[IOC_OFF_HID_GPOUT_1MHZ]   = probe.gpout_1mhz;
+    reply->bytes[IOC_OFF_HID_GPOUT_4MHZ]   = probe.gpout_4mhz;
+    reply->bytes[IOC_OFF_HID_INT_DRIVE]    = probe.int_drive;
+    reply->bytes[IOC_OFF_HID_MATCH_125KHZ] = probe.matches_125khz;
+    reply->bytes[IOC_OFF_HID_MATCH_1MHZ]   = probe.matches_1mhz;
+    reply->bytes[IOC_OFF_HID_MATCH_4MHZ]   = probe.matches_4mhz;
+
+    reply->bytes[IOC_OFF_HID_DEV_COUNT]  = usb.device_count;
+    reply->bytes[IOC_OFF_HID_KBD_ADDR]   = usb.keyboard_addr;
+    reply->bytes[IOC_OFF_HID_REPORTS_LO] = (uint8_t)(usb.report_count & 0xffu);
+    reply->bytes[IOC_OFF_HID_REPORTS_HI] = (uint8_t)(usb.report_count >> 8);
+
+    reply->bytes[IOC_OFF_HID_KBD_SPEED]  = usb.speed;
+
+    for (i = 0u; i < IOC_HID_LAST_REPORT_LEN; i++)
+        reply->bytes[IOC_OFF_HID_LAST_REPORT + i] = usb.last_report[i];
 }
 
 void handler_unknown(const IocFrame *request, IocFrame *reply)

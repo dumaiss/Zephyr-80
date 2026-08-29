@@ -4,7 +4,7 @@
 
 This document describes the implemented transport paired by:
 
-- controller firmware level `15h` (`IOC_FW_LEVEL = 21`); and
+- controller firmware level `17h` (`IOC_FW_LEVEL = 23`); and
 - BIOS transport level `07h` (`ZBIOS_XPORT_LEVEL = 7`).
 
 SIO1/B is the Command lane and SIO1/A is the Bulk lane. Both use the same
@@ -270,6 +270,7 @@ SIO1/A or SIO1/B directly.
 | Tool | Path exercised | Persistent-sync safe |
 |---|---|---|
 | `PING.COM` | Command packet, version/edge diagnostics | yes |
+| `HIDSTAT.COM` | Active read-only MAX3421E revision bursts at three SPI rates | yes |
 | `BULK.COM` | READY plus `IOCBULK`, ramp and CRC | yes |
 | `SDREAD.COM` | Command-only SD read | yes |
 | `SDBLK.COM` | 512-byte bulk read | yes |

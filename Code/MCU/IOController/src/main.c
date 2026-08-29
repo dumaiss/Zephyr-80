@@ -13,6 +13,7 @@
 #include "power.h"
 #include "bulk_channel.h"
 #include "sd_card.h"
+#include "ioc_hid.h"
 
 /* ---------------------------------------------------------------------------
  * Platform initialization
@@ -325,6 +326,7 @@ int main(void)
 {
     platform_init();
     boot_reset_pulse();
+    hid_host_init();
 
 #if SD_CMD0_LOOP
     sd_card_cmd0_loop();   /* does not return */
@@ -399,6 +401,15 @@ int main(void)
         } else {
             (void)sd_cache_tick();      /* keeps the interval anchored; no I/O */
         }
+
+        /* USB host service.
+         *
+         * Here and nowhere else.  Enumeration is slow -- descriptor fetches,
+         * hub port resets and mandated settling delays all run inside
+         * tuh_task() -- and the Z80 will not wait that long for a reply.  This
+         * is the same placement rule the SD cache flush follows above: idle
+         * branch only, after any command in flight has fully completed. */
+        hid_host_task();
 
         /* Empty unless CONTROLLER_LATCH_COUNTER_TEST is explicitly enabled. */
         controller_latch_tick();
