@@ -324,9 +324,14 @@ SdStatus sd_card_init(void)
         sd_deselect();
         return SD_ERR_NO_RESPONSE;
     }
+    /* From here the trace doubles as an init-stage snapshot.  A later CMD17
+     * or CMD24 clears and reuses it, but an init failure leaves these bytes
+     * intact for PROFILE/PING to report. */
+    trace[0] = r1;                 /* final CMD0 response */
 
     /* Step 3: CMD8 separates v2.00+ from v1.x. */
     r1 = sd_command(SD_CMD8_SEND_IF_COND, SD_IF_COND_ARG, SD_CRC_CMD8);
+    trace[1] = r1;
     if (r1 == SD_R1_IDLE) {
         uint32_t if_cond = sd_read_r37_trailer();
 
@@ -345,10 +350,17 @@ SdStatus sd_card_init(void)
 
     /* Step 4: poll ACMD41 until the card reports ready. */
     for (tries = 0u; tries < SD_ACMD41_RETRIES; tries++) {
-        (void)sd_command(SD_CMD55_APP_CMD, 0uL, SD_CRC_DUMMY);
+        trace[2] = sd_command(SD_CMD55_APP_CMD, 0uL, SD_CRC_DUMMY);
         r1 = sd_command(SD_ACMD41_SEND_OP_COND,
                         v2_card ? SD_ACMD41_HCS : 0uL,
                         SD_CRC_DUMMY);
+        trace[3] = r1;
+        trace[4] = (uint8_t)tries;
+        trace[5] = (uint8_t)(tries >> 8);
+        trace[6] = SPI1BAUD;
+        trace[7] = (uint8_t)((bus_failed ? 0x01u : 0u) |
+                             ((SD_PRESENT_PORT == SD_PRESENT_ACTIVE) ?
+                              0x02u : 0u));
         if (r1 == SD_R1_READY)
             break;
         if (bus_failed)

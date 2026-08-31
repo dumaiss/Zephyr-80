@@ -16,6 +16,8 @@ BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
 IOCALL		= 0xDA3F
 
+	.include "ioc_levels.inc"
+
 CMD_HID_STATUS	= 0x0d
 RSP_HID_STATUS	= 0x8d
 HID_REPLY_LEN	= 26
@@ -1956,7 +1958,9 @@ msg_bad_reply:
 	.ascii "unexpected reply 0x"
 	.db '$'
 msg_old_fw:
-	.ascii " (flash controller firmware level 62)"
+	.ascii " (flash controller firmware level "
+	.db IOC_FW_LEVEL_DEC_HI,IOC_FW_LEVEL_DEC_LO
+	.ascii ")"
 	.db 0x0d,0x0a,'$'
 msg_ioc_error:
 	.ascii "controller status error 0x"

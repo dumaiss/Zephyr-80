@@ -555,6 +555,24 @@ CBIOS_SPARE_CODE_BASE           = CBIOS_BASE + 0x02b1                  ; DCB1h
 ;   +20h..+23h expected Bulk LEN, TYPE, and SEQ
 CBIOS_IOC_DIAG_BASE             = CBIOS_BASE + 0x02c0                  ; DCC0h
 
+; USB keyboard console input, merged into CONST/CONIN alongside the proxy
+; keyboard's textq.  Placed in the tail of driver slot 3, after the IOC Bulk
+; overflow ends at EF3Ah -- it belongs with the IOC code because it drives
+; IOCALL, and the pre-storage gap at F41Bh is only 21 bytes before
+; CBIOS_STORAGE_SD_CODE_BASE.  This fills slot 3; check_overlap.py enforces the
+; EFFFh ceiling.
+CBIOS_HID_INPUT_CODE_BASE       = 0xef3e
+; HID mailbox/queue state occupies the otherwise-unused gap immediately after
+; the SD backend.  It must not live in MOVE_BUFFER because CONST can fire from
+; BDOS OUTCHAR while a storage request is staged, and it must not live at FD00h:
+; FD00h-FDFFh is SD_STORAGE_ALV_BUFFER, the SD drive's CP/M allocation vector.
+;
+; The request frame is only five bytes (TYPE/SEQ/STATUS/LEN/max-wanted), not a
+; full 32-byte mailbox.  Together with the 32-byte reply, 16-byte queue and five
+; queue-control bytes, the state occupies 58 bytes: F642h-F67Bh.  The VDrip
+; transport begins at F680h, leaving four guard bytes.
+CBIOS_HID_INPUT_STATE_BASE      = 0xf642
+
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_BIOS_EXT_CODE_BASE        = CBIOS_BASE + 0x0550                  ; DF50h

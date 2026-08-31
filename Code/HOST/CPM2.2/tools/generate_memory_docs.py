@@ -130,6 +130,10 @@ IMPLEMENTATION_SYMBOLS = [
     (("IOC_CMD_CODE_END",), "Common-packet Command-lane helper code end."),
     (("IOC_BULK_CODE_START",), "Common-packet Bulk-write helper code start."),
     (("IOC_BULK_CODE_END",), "Common-packet Bulk-write helper code end."),
+    (("HID_INPUT_CODE_START",), "USB keyboard IOC polling helper code start."),
+    (("HID_INPUT_CODE_END",), "USB keyboard IOC polling helper code end."),
+    (("HID_INPUT_STATE_START",), "USB keyboard IOC mailbox and queue state start."),
+    (("HID_INPUT_STATE_END",), "USB keyboard IOC mailbox and queue state end."),
     (("SD_STORAGE_CODE_START",), "SD-card BIOS backend code start."),
     (("SD_STORAGE_CODE_END",), "SD-card BIOS backend code end."),
     (("VDRIP_CONSOLE_CODE_START",), "Virtual Drip console driver code start."),
@@ -207,6 +211,7 @@ DRIVER_SLOT_OWNERS = {
 DRIVER_DECLARATIONS = [
     ("Virtual Drip console driver", "VDRIP_CONSOLE_CODE_START", "VDRIP_CONSOLE_CODE_END", 0, 5),
     ("IOC Bulk transport overflow", "IOC_BULK_CODE_START", "IOC_BULK_CODE_END", 3, 3),
+    ("USB keyboard IOC polling helper", "HID_INPUT_CODE_START", "HID_INPUT_CODE_END", 3, 3),
     ("IOC Command transport", "IOC_CMD_CODE_START", "IOC_CMD_CODE_END", 4, 5),
     ("SD-card BIOS backend", "SD_STORAGE_CODE_START", "SD_STORAGE_CODE_END", 4, 5),
     ("Shared VDrip transport", "VDRIP_TRANSPORT_CODE_START", "VDRIP_TRANSPORT_CODE_END", 5, 5),
@@ -376,11 +381,14 @@ def scratch_buffer_ranges(symbols: dict[str, int]) -> list[tuple[str, int, int, 
     dirbuf_limit = dirbuf_start + require_symbol(symbols, "DEFAULT_DMA_LEN")
     alv_start = require_symbol(symbols, "VDRIP_STORAGE_ALV")
     alv_limit = alv_start + require_symbol(symbols, "VDRIP_STORAGE_ALV_SIZE")
+    sd_alv_start = require_symbol(symbols, "SD_STORAGE_ALV_BUFFER")
+    sd_alv_limit = sd_alv_start + require_symbol(symbols, "VDRIP_STORAGE_ALV_SIZE")
     return [
         ("MOVE_BUFFER", move_start, move_limit, "Cross-bank MOVE and VDrip storage transaction staging buffer."),
         ("VDRIP_STORAGE_DPHDPB", dphdpb_start, dphdpb_limit, "CP/M DPH/DPB constants for the VDrip storage disk."),
         ("VDRIP_STORAGE_DIRBUF", dirbuf_start, dirbuf_limit, "CP/M directory buffer referenced by the VDrip storage DPH."),
         ("VDRIP_STORAGE_ALV", alv_start, alv_limit, "CP/M allocation vector for the fixed 8 MiB VDrip work disk."),
+        ("SD_STORAGE_ALV", sd_alv_start, sd_alv_limit, "CP/M allocation vector for the fixed 8 MiB SD-card disk."),
     ]
 
 
@@ -508,6 +516,21 @@ def validate_layout(symbols: dict[str, int]) -> list[str]:
                         f"{right_label} ({exclusive_span(right_start, right_limit)})"
                     )
                 )
+
+    # HID's mutable state uses the narrow fixed gap between the SD backend and
+    # the VDrip transport.  It is deliberately outside both scratch (whose last
+    # page is the SD ALV) and runtime state (which has no 58-byte hole).
+    hid_state_start = require_symbol(symbols, "HID_INPUT_STATE_START")
+    hid_state_limit = require_symbol(symbols, "HID_INPUT_STATE_END")
+    hid_gap_start = require_symbol(symbols, "SD_STORAGE_CODE_END")
+    hid_gap_limit = require_symbol(symbols, "VDRIP_TRANSPORT_CODE_START")
+    if hid_state_start < hid_gap_start or hid_state_limit > hid_gap_limit:
+        errors.append(
+            validation_error(
+                f"HID input state ({exclusive_span(hid_state_start, hid_state_limit)}) is outside "
+                f"the post-SD/pre-VDrip gap ({exclusive_span(hid_gap_start, hid_gap_limit)})"
+            )
+        )
 
     sio_core_start = require_symbol(symbols, "SIO_CORE_CODE_START")
     sio_core_end = require_symbol(symbols, "SIO_CORE_CODE_END")
@@ -927,6 +950,7 @@ def write_memory_map(
             "The IOC transport uses SIO1/B as its Command lane and SIO1/A as its Bulk lane. Both run the common A5/5A packet with persistent External Sync and Auto Enables off.",
             f"`IOCALL` mailbox code is at `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` in core BIOS; packet helpers occupy `{span(require_symbol(symbols, 'IOC_CMD_CODE_START'), require_symbol(symbols, 'IOC_CMD_CODE_END') - 1)}` and `{span(require_symbol(symbols, 'IOC_BULK_CODE_START'), require_symbol(symbols, 'IOC_BULK_CODE_END') - 1)}`.",
             f"The SD-card BIOS backend follows at `{span(require_symbol(symbols, 'SD_STORAGE_CODE_START'), require_symbol(symbols, 'SD_STORAGE_CODE_END') - 1)}`; the generated overlap check validates these adjacent ranges.",
+            f"USB keyboard mailbox and queue state occupies `{span(require_symbol(symbols, 'HID_INPUT_STATE_START'), require_symbol(symbols, 'HID_INPUT_STATE_END') - 1)}` in the fixed gap after the SD backend.",
             "",
         "## BIOS Jump Table Layout",
         "",

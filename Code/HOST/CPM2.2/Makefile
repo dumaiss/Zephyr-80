@@ -25,7 +25,10 @@ RUNTIME_SRCS ?= \
 	$(SRC_DIR)/cbios_console.asm \
 	$(SRC_DIR)/sio_core.asm \
 	$(SRC_DIR)/vdrip_transport.asm \
+	$(SRC_DIR)/cbios_bios_ext.asm \
 	$(SRC_DIR)/cbios_iocall.asm \
+	$(SRC_DIR)/cbios_ioc_command.asm \
+	$(SRC_DIR)/cbios_hid_input.asm \
 	$(SRC_DIR)/cbios_console_vdrip.asm \
 	$(SRC_DIR)/cbios_storage.asm \
 	$(SRC_DIR)/cbios_storage_vdrip.asm \

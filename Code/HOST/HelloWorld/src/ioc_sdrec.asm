@@ -59,9 +59,7 @@ IOC_BULK_DIAG_EXPECT_SEQ = 0xDCE3
 
 CMD_PING	 = 0x01
 RSP_PING	 = 0x81
-IOC_FW_LEVEL	 = 62		; controller firmware this program expects
-ZBIOS_XPORT_LEVEL     = 7	; BIOS transport level this program expects
-ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A	; one byte below IOCALL, readable from ROM
+	.include "ioc_levels.inc"
 CMD_SD_READ_REC	 = 0x08
 RSP_SD_READ_REC	 = 0x88
 CMD_SD_WRITE_REC = 0x09
@@ -516,6 +514,10 @@ wr_rec:
 	ld a,(rx_frame + 4)
 	ld (ready_id),a
 
+	; IOCBULKW uses reason 40h for an RR1 Tx underrun.  A zero left here means
+	; its other HW_ERROR exit: /CTSA did not release after the transfer.
+	xor a
+	ld (IOC_BULK_DIAG_REASON),a
 	ld hl,#wr_buf
 	ld de,#REC_SIZE
 	call IOCBULKW
@@ -762,6 +764,9 @@ fail:
 	ld a,(fail_code)
 	cp #0x05
 	call z,report_bulk_transport_diag
+	ld a,(fail_code)
+	cp #0x15
+	call z,report_bulk_transport_diag
 	ld a,(diag_valid)
 	or a
 	call nz,report_diag
@@ -786,9 +791,9 @@ report_rdbuf:
 	ld b,#8
 	jp dump_bytes
 
-; BIOS-side reason for an IOCBULK error.  Error 05/info 02 alone says only
-; "bad frame"; this separates a missing/rotated marker from LEN, TYPE, SEQ or
-; STATUS rejection and shows the bytes on which that decision was made.
+; BIOS-side reason for a Bulk error.  On IOCBULK receive failures, reasons 1..7
+; identify the rejected packet stage.  On IOCBULKW failure 15/info 03, reason
+; 40h is SIO Tx underrun; 00h means /CTSA stayed asserted after completion.
 report_bulk_transport_diag:
 	ld de,#msg_bulk_diag_reason
 	ld c,#BDOS_PRINT

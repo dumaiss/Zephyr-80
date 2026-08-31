@@ -104,4 +104,11 @@ const uint8_t *bulk_channel_rx_target(void);
 uint8_t bulk_channel_last_xfer_id(void);
 uint8_t bulk_channel_last_status(void);
 
+/* External-Sync diagnostic snapshots returned by XFER_STATUS.  These are
+ * observational only and do not release /SYNCA or alter persistent-sync state.
+ * Bit definitions are documented beside IOC_OFF_DONE_BULK_SYNC_* in
+ * ioc_frame.h. */
+uint8_t bulk_channel_sync_decision(void);
+uint8_t bulk_channel_sync_live(void);
+
 #endif /* BULK_CHANNEL_H */

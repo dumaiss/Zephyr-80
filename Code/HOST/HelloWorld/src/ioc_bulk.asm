@@ -65,6 +65,8 @@ IOC_BULK_DIAG_EXPECT_SEQ = 0xDCE3
 
 CMD_BULK_TEST	= 0x04
 RSP_BULK_TEST	= 0x84
+CMD_XFER_STATUS	= 0x06
+RSP_XFER_STATUS	= 0x86
 CMD_PROFILE	= 0x0b
 RSP_PROFILE	= 0x8b
 PROFILE_RESET	= 0x01
@@ -271,6 +273,7 @@ bulk_timeout:
 	ld c,#BDOS_PRINT
 	call BDOS
 	call report_bulk_diag
+	call report_pic_bulk_sync
 	call report_completed
 	ret
 
@@ -610,6 +613,45 @@ report_bulk_diag:
 	ld c,#BDOS_PRINT
 	jp BDOS
 
+; Ask the controller how it handled the most recent MCU->Z80 Bulk sync edge.
+; This runs only after IOCBULK has failed and released the lane, so it cannot
+; perturb the timed path.  Firmware before this diagnostic reports a shorter
+; DONE payload; keep that distinguishable from a genuine zero snapshot.
+report_pic_bulk_sync:
+	call zero_frames
+	ld a,#CMD_XFER_STATUS
+	ld (tx_frame + 0),a
+	ld hl,#tx_frame
+	ld de,#rx_frame
+	call IOCALL
+	or a
+	jr nz,report_pic_bulk_unavailable
+	ld a,(rx_frame + 0)
+	cp #RSP_XFER_STATUS
+	jr nz,report_pic_bulk_unavailable
+	ld a,(rx_frame + 3)
+	cp #20
+	jr c,report_pic_bulk_unavailable
+
+	ld de,#msg_pic_sync
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(rx_frame + 22)		; IOC_OFF_DONE_BULK_SYNC_DECISION
+	call print_hex_byte
+	ld de,#msg_pic_sync_live
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(rx_frame + 23)		; IOC_OFF_DONE_BULK_SYNC_LIVE
+	call print_hex_byte
+	ld de,#msg_crlf
+	ld c,#BDOS_PRINT
+	jp BDOS
+
+report_pic_bulk_unavailable:
+	ld de,#msg_pic_sync_unavailable
+	ld c,#BDOS_PRINT
+	jp BDOS
+
 ; B bytes at HL, prefixed with spaces.
 dump_diag_bytes:
 	push bc
@@ -740,6 +782,15 @@ msg_diag_sync:
 msg_diag_expect:
 	.ascii " exp(len/type/seq)="
 	.db '$'
+msg_pic_sync:
+	.ascii "PIC bulk sync decision="
+	.db '$'
+msg_pic_sync_live:
+	.ascii " live="
+	.db '$'
+msg_pic_sync_unavailable:
+	.ascii "PIC bulk sync status unavailable"
+	.db 0x0d, 0x0a, '$'
 msg_crlf:
 	.db 0x0d, 0x0a, '$'
 

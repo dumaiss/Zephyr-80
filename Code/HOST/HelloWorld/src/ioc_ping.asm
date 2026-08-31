@@ -36,9 +36,7 @@ IOCALL		= 0xDA3F	; BIOS extended entry: IOC compatibility transport
 
 CMD_PING	= 0x01
 RSP_PING	= 0x81
-IOC_FW_LEVEL	= 62
-ZBIOS_XPORT_LEVEL = 7
-ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A
+	.include "ioc_levels.inc"
 
 start:
 	ld de,#msg_banner
@@ -473,7 +471,9 @@ msg_stale_bios:
 	.ascii " - BIOS transport level mismatch (need 07)"
 	.db 0x0d, 0x0a, '$'
 msg_stale_fw:
-	.ascii " - controller firmware level mismatch (need 3E)"
+	.ascii " - controller firmware level mismatch (need "
+	.db IOC_FW_LEVEL_HEX_HI,IOC_FW_LEVEL_HEX_LO
+	.ascii ")"
 	.db 0x0d, 0x0a, '$'
 msg_fw:		.ascii "fw level $"
 msg_pwr_drv:	.db 13,10
@@ -500,7 +500,7 @@ msg_p5:		.ascii "  ms total (all phases)   : $"
 msg_calls:	.ascii "  service calls           : $"
 msg_aborts:	.ascii "  .. aborted, no frame    : $"
 msg_sdtr:	.db 13,10
-		.ascii "  SD CMD0 trace         :$"
+		.ascii "  SD SPI trace          :$"
 msg_proferr:	.ascii "  PROFILE failed$"
 msg_diag:	.db 13,10
 		.ascii "  link RR0 (b4=hunting)  : $"

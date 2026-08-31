@@ -14,9 +14,15 @@ HEX_ORIGIN ?= 8000h
 SWAPBITS := $(TOOLS_DIR)/swapbits.py
 LISTING_TO_IHEX := $(TOOLS_DIR)/listing_to_ihex.py
 IHX_TO_COM := $(TOOLS_DIR)/ihx_to_com.py
+INSTALL_DIAGNOSTICS := $(TOOLS_DIR)/install_diagnostics.py
+
+CPM_FORMAT ?= zephyr80-vdrip
+CPM_IMAGE ?= ../CPM2.2/images/zephyr80-vdrip2.cpm
+CPM_STAGE_DIR ?= ../CPM2.2/images/A/0
+CPM_USER ?= 0
 
 ASXXXX_TARGETS := vdrip_checkerboard vdrip_smiley shadow_copy_test shadow_copy_low vdrip_text_mode_test
-COM_TARGETS := video_smiley video_smiley_v9958 mandelbrot_v9958 mandelbrot_v9958_real nowrap wrapon ioc_ping ioc_reset ioc_rts_probe ioc_sd_read ioc_bulk ioc_sdblk ioc_sdwrite ioc_sdsoak ioc_sdrec ioc_sdfmt ioc_sdbench hidstat hidkey
+COM_TARGETS := video_smiley video_smiley_v9958 mandelbrot_v9958 mandelbrot_v9958_real nowrap wrapon ioc_ping ioc_reset ioc_rts_probe ioc_sd_read ioc_bulk ioc_sdblk ioc_sdwrite ioc_sdsoak ioc_sdrec ioc_sdfmt ioc_sdbench hidstat hidkey sndtest
 ASXXXX_SRCS := $(addprefix $(SRC_DIR)/,$(addsuffix .asm,$(ASXXXX_TARGETS)))
 COM_SRCS := $(addprefix $(SRC_DIR)/,$(addsuffix .asm,$(COM_TARGETS)))
 ASXXXX_INCS := $(wildcard $(SRC_DIR)/*.inc)
@@ -40,8 +46,10 @@ ASXXXX_RELS := $(addprefix $(ASXXXX_DIR)/,$(addsuffix .rel,$(ASXXXX_TARGETS)))
 COM_RELS := $(addprefix $(ASXXXX_DIR)/,$(addsuffix .rel,$(COM_TARGETS)))
 COM_IHXS := $(addprefix $(BUILD_DIR)/,$(addsuffix .ihx,$(COM_TARGETS)))
 COM_BINS := $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(COM_TARGETS)))
+DIAGNOSTIC_COM_TARGETS := ioc_ping ioc_reset ioc_rts_probe ioc_sd_read ioc_bulk ioc_sdblk ioc_sdwrite ioc_sdsoak ioc_sdrec ioc_sdfmt ioc_sdbench hidstat hidkey sndtest
+DIAGNOSTIC_COMS := $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(DIAGNOSTIC_COM_TARGETS)))
 
-.PHONY: all clean bins hex com
+.PHONY: all clean bins hex com install-diags
 .SECONDARY: $(HEX_SRCS) $(HEX_LSTS) $(ASXXXX_RELS) $(ASXXXX_IHXS) $(COM_RELS) $(COM_IHXS)
 
 all: bins hex com
@@ -51,6 +59,14 @@ bins: $(BINS)
 hex: $(HEXS)
 
 com: $(COM_BINS)
+
+install-diags: $(DIAGNOSTIC_COMS) $(INSTALL_DIAGNOSTICS)
+	$(PYTHON) $(INSTALL_DIAGNOSTICS) \
+		--build-dir $(BUILD_DIR) \
+		--staging-dir $(CPM_STAGE_DIR) \
+		--image $(CPM_IMAGE) \
+		--format $(CPM_FORMAT) \
+		--user $(CPM_USER)
 
 $(BUILD_DIR) $(RAW_BIN_DIR) $(HEX_SRC_DIR) $(HEX_RAW_DIR) $(HEX_LST_DIR) $(ASXXXX_DIR):
 	mkdir -p $@

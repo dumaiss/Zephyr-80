@@ -19,6 +19,8 @@ BDOS_PRINT	= 0x09
 BDOS_CONSTAT	= 0x0B
 IOCALL		= 0xDA3F
 
+	.include "ioc_levels.inc"
+
 CMD_HID_INPUT	= 0x0e
 RSP_HID_INPUT	= 0x8e
 MAX_READ	= 24
@@ -212,7 +214,9 @@ msg_done:
 msg_transport:
 	.ascii "\r\nHID command transport error\r\n$"
 msg_reply:
-	.ascii "\r\nUnexpected HID_INPUT reply (firmware level 62 required)\r\n$"
+	.ascii "\r\nUnexpected HID_INPUT reply (firmware level "
+	.db IOC_FW_LEVEL_DEC_HI,IOC_FW_LEVEL_DEC_LO
+	.ascii " required)\r\n$"
 
 byte_count:
 	.db 0

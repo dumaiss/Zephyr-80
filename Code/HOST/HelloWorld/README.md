@@ -16,6 +16,8 @@ individual tests can be burned to ROM or loaded through the monitor.
   sprite moving left-to-right over a Graphics I background.
 - `testiorq.asm`: repeatedly writes `55h` to I/O port `80h`.
 - `testlatchport.asm`: repeatedly reads I/O port `00h` with short delay loops.
+- `sndtest.asm`: CP/M program that exercises the Percolator Afternoon Blend
+  sound card at `E0h`: the four SN76489AN PSGs and the AD7801 PCM DAC.
 
 ## Walkthroughs
 
@@ -181,6 +183,78 @@ iterations before falling through. After both delays, it jumps back and reads th
 port again. This gives a slow, repeated input cycle for observing latch or port
 behavior on the bus.
 
+### `sndtest.asm`
+
+This is a CP/M program (`org 0100h`) that exercises the Percolator Series
+**Afternoon Blend** sound card. `IO_DECODER.pld` routes the `E0h-FFh` block to
+`SOUND` on writes and to `CONTROLLERS` on reads, so the program only ever
+writes those ports. The card decodes `A2:A0` locally:
+
+| Port | Device | Stereo placement |
+| --- | --- | --- |
+| `E0h` | PSG0, U6 SN76489AN | centre |
+| `E1h` | PSG1, U7 SN76489AN | centre |
+| `E2h` | PSG2, U11 SN76489AN | left-biased (22k/47k) |
+| `E3h` | PSG3, U12 SN76489AN | right-biased (47k/22k) |
+| `E4h` | PCM, U3 AD7801 | centre |
+
+Only `A2:A0` reach the card, so `E8h`, `F0h` and `F8h` alias back onto `E0h`.
+The program stays within `E0h-E4h`.
+
+Three hardware facts shape the code. All four PSGs share one 3.579545 MHz
+oscillator, so a tone divisor is `N = 111861 / f(Hz)`. The card generates its
+own wait states, holding pBITz `/WAIT` until the selected chip's open-collector
+READY rises, so back-to-back `OUT`s are safe and no software delay separates
+them. The host data bus is reversed in the card wiring (`DB7` to PSG `D0`), so
+software writes conventional SN76489 byte values and must not pre-swap them.
+
+The PSGs have no reset input on this card, so their power-on state is
+undefined. The program mutes all four chips on entry, between tests, on exit
+and on abort.
+
+Run it from CP/M:
+
+```text
+SNDTEST      run tests 1-6
+SNDTEST 1    chip identification, one voice per PSG in turn
+SNDTEST 2    the four voices of PSG0, alone and together
+SNDTEST 3    attenuation staircase
+SNDTEST 4    noise generator modes
+SNDTEST 5    tone divisor sweep
+SNDTEST 6    /WAIT handshake stress plus a four-chip chord
+SNDTEST P    AD7801 PCM DAC sawtooth (not part of the default run)
+```
+
+Any keypress aborts, mutes every chip and returns to CP/M.
+
+What each test is looking for:
+
+1. **Chips.** The same note on each PSG in turn. Confirms all four chip selects
+   reach a device, and that the mixer places PSG2 and PSG3 off centre.
+2. **Voices.** PSG0 channels 0, 1 and 2 alone, then together as a C major
+   triad, then channel 3 as noise. A missing voice here points at the latch
+   byte's channel field rather than at the chip select.
+3. **Volume.** Attenuation 0 to 15 and back. The attenuator is 2 dB per step,
+   so the ramp should sound even rather than collapsing at one end.
+4. **Noise.** Periodic and white noise at each of the three fixed shift rates,
+   then the tone-3 clocked mode with channel 2's divisor swept.
+5. **Sweep.** Walks the 10-bit divisor range, so every write exercises both the
+   latch byte's low nibble and the second byte's upper six bits. A sweep that
+   jumps in octaves or sticks at one pitch means the second byte is not
+   landing.
+6. **Wait stress.** 16384 wait-stretched writes issued back to back across
+   `E0h-E3h` with no software spacing, roughly 150 ms of stretched bus time.
+   Reaching the line after the loop is the result: the card's FF1/FF2 state
+   machine armed, cleared and rearmed every time without leaving `/WAIT`
+   asserted. The chord underneath it must stay steady throughout.
+
+The `P` test drives the AD7801 at `E4h`, which is deliberately outside the PSG
+wait-state generator, so those writes run at full bus speed and the waveform
+timing is entirely software. `LDAC` is grounded, so the output updates on the
+rising edge of `/WR`. The test leaves `80h` loaded on exit so the DAC sits at
+mid-rail instead of holding a DC offset into the mixer.
+
+
 ## Build
 
 ```sh
@@ -201,6 +275,19 @@ Build only one output family if needed:
 make bins
 make hex
 ```
+
+Build the maintained IOC, storage, HID and sound diagnostics, copy them to the
+CP/M staging directory, and replace their copies in the bootable disk image:
+
+```sh
+make install-diags
+```
+
+The installer updates `../CPM2.2/images/A/0` and
+`../CPM2.2/images/zephyr80-vdrip2.cpm`, then extracts every installed file and
+verifies it byte-for-byte. The image is replaced only after all checks pass.
+The image, disk format, staging directory and CP/M user can be overridden with
+the `CPM_IMAGE`, `CPM_FORMAT`, `CPM_STAGE_DIR` and `CPM_USER` make variables.
 
 Override tools from the command line when needed:
 

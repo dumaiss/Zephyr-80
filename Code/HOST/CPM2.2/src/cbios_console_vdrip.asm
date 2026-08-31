@@ -84,6 +84,7 @@
 	.globl vdrip_rts_assert_raw
 	.globl vdrip_reset_display,vdrip_data_write_block
 	.globl vdrip_rx_rts_released
+	.globl hid_input_init,hid_input_status,hid_input_get
 	.globl restore_font_from_rom
 	.globl VDRIP_CONSOLE_CODE_START,VDRIP_CONSOLE_CODE_END
 
@@ -280,6 +281,9 @@ vdrip_console_init_mode:
 
 	; Initialize queue state and the shared transport.
 	call vdrip_rx_init
+	; USB keyboard queue.  Cold boot leaves its RAM undefined and CONST may be
+	; called before anything else, so this must happen here.
+	call hid_input_init
 	ld hl,#textq_put_ascii
 	call vdrip_transport_set_raw_callback
 	xor a				; proxy keyboard path sends raw terminal bytes
@@ -401,7 +405,16 @@ vdrip_console_const_output_done:
 	call sio_rx_kick
 	ld a,(textq_count)
 	or a
+	jr nz,vdrip_console_const_ready
+
+	; USB keyboard.  hid_input_status rate-limits itself, so this is safe on
+	; the BDOS output path -- OUTCHAR calls CONST once per character printed,
+	; and an unconditional IOCALL here would add ~0.6 ms to every one of them.
+	call hid_input_status
+	or a
 	jr z,vdrip_console_const_empty
+
+vdrip_console_const_ready:
 	ld a,#CONST_HAS_CHAR
 	pop hl
 	ret
@@ -466,16 +479,37 @@ vdrip_console_conin:
 	ld a,(textq_count)
 	or a
 	jr nz,vdrip_console_conin_have_char
+
+	; RTS is asserted before consulting the USB queue, not after: returning a
+	; USB byte while RTS is still deasserted from a prior storage transaction
+	; would leave the proxy keyboard blocked indefinitely.
 	call vdrip_rts_assert_raw
 	xor a
 	ld (vdrip_rx_rts_released),a
+
+	call hid_input_status
+	or a
+	jr nz,vdrip_console_conin_usb
 
 vdrip_console_conin_wait:
 	ld a,#SIO_CH_CONSOLE
 	call sio_rx_kick
 	ld a,(textq_count)
 	or a
+	jr nz,vdrip_console_conin_have_char
+	; The blocking spin is where the adaptive backoff earns its keep: it runs
+	; thousands of times a second, so a keystroke lands in well under a
+	; millisecond even at the maximum interval.
+	call hid_input_status
+	or a
 	jr z,vdrip_console_conin_wait
+
+vdrip_console_conin_usb:
+	call hid_input_get
+	pop hl
+	pop de
+	pop bc
+	ret
 
 vdrip_console_conin_have_char:
 	; Dequeue one byte from the console input queue.

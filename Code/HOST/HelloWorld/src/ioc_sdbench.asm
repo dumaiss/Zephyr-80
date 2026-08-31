@@ -34,9 +34,7 @@ IOCALL		= 0xDA3F
 IOCBULK		= 0xDA45
 IOCBULKW	= 0xDA48
 
-ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A
-ZBIOS_XPORT_LEVEL      = 7
-IOC_FW_LEVEL            = 62
+	.include "ioc_levels.inc"
 
 CMD_PING		= 0x01
 RSP_PING		= 0x81

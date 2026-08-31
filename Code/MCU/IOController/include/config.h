@@ -412,3 +412,11 @@
 #pragma config PPS1WAY = OFF
 #pragma config WDTE = OFF
 #pragma config LVP = ON
+/* Stack Overflow/Underflow Reset.  ON is the erased-state default, so this
+ * changes nothing -- it is stated because the firmware relies on it.  XC8
+ * cannot bound the PIC18 hardware call stack through TinyUSB's function-pointer
+ * tables (warning 1393, "estimated stack depth: unknown (due to recursion)"),
+ * so the depth is not proven at build time.  With STVREN on, an overflow resets
+ * the device instead of silently corrupting a return address, which turns an
+ * unprovable property into a visible failure. */
+#pragma config STVREN = ON

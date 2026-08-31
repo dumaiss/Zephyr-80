@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 51933 bytes |
+| Firmware symbol map | `build/firmware.map` | 53135 bytes |
 | Burnable image | `build/zephyr80.bin` | 131072 bytes |
 | Layout manifest | `build/layout.manifest` | 232 bytes |
 
@@ -150,12 +150,16 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `IOC_CMD_CODE_END` | `F41Bh` | Common-packet Command-lane helper code end. |
 | `IOC_BULK_CODE_START` | `ED00h` | Common-packet Bulk-write helper code start. |
 | `IOC_BULK_CODE_END` | `EF3Bh` | Common-packet Bulk-write helper code end. |
+| `HID_INPUT_CODE_START` | `EF3Eh` | USB keyboard IOC polling helper code start. |
+| `HID_INPUT_CODE_END` | `EFFFh` | USB keyboard IOC polling helper code end. |
+| `HID_INPUT_STATE_START` | `F642h` | USB keyboard IOC mailbox and queue state start. |
+| `HID_INPUT_STATE_END` | `F67Ch` | USB keyboard IOC mailbox and queue state end. |
 | `SD_STORAGE_CODE_START` | `F430h` | SD-card BIOS backend code start. |
 | `SD_STORAGE_CODE_END` | `F642h` | SD-card BIOS backend code end. |
 | `VDRIP_CONSOLE_CODE_START` | `E000h` | Virtual Drip console driver code start. |
 | `vdrip_console_driver` | `E000h` | Virtual Drip console driver dispatch table. |
 | `vdrip_console_init` | `E012h` | Virtual Drip console init, proxy handshake, VDP setup. |
-| `VDRIP_CONSOLE_CODE_END` | `ECB9h` | Virtual Drip console driver code end. |
+| `VDRIP_CONSOLE_CODE_END` | `ECD9h` | Virtual Drip console driver code end. |
 | `BANKING_CODE_START` | `DC03h` | Banking extension implementation start. |
 | `SELMEM` | `DC03h` | Select RAM bank. |
 | `SETBNK` | `DC0Dh` | Record future DMA bank. |

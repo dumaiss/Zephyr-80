@@ -309,6 +309,10 @@ void handler_xfer_status(const IocFrame *request, IocFrame *reply)
             uint16_t k = (uint16_t)(off + i);
             reply->bytes[IOC_OFF_DONE_RAW + i] = (k < size) ? raw[k] : 0u;
         }
+        reply->bytes[IOC_OFF_DONE_BULK_SYNC_DECISION] =
+            bulk_channel_sync_decision();
+        reply->bytes[IOC_OFF_DONE_BULK_SYNC_LIVE] =
+            bulk_channel_sync_live();
     }
 }
 

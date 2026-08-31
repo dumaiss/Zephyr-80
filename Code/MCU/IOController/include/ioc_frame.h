@@ -115,7 +115,25 @@
  * should contain A5 5A followed by LEN/TYPE/SEQ/STATUS/DATA at some bit phase. */
 #define IOC_OFF_DONE_RAW         (IOC_OFF_PAYLOAD + 2u + IOC_DONE_PEEK_BYTES)
 #define IOC_DONE_RAW_BYTES       8u
-#define IOC_DONE_PAYLOAD_LEN     (2u + IOC_DONE_PEEK_BYTES + IOC_DONE_RAW_BYTES)
+/* Bulk External-Sync discriminator, valid for either transfer direction.
+ *
+ * DECISION is the state sampled by the most recent MCU->Z80 Bulk send:
+ *   bit 0  bulk_synced was set before the send
+ *   bit 1  /SYNCA LAT was idle-high before the send
+ *   bit 2  the establishing setup/sync-byte path ran
+ *   bit 3  /SYNCA LAT was asserted-low after that path
+ *
+ * LIVE is sampled while building this reply:
+ *   bit 0  bulk_synced is currently set
+ *   bit 1  /SYNCA LAT is currently asserted-low
+ *
+ * Together they distinguish a skipped edge (decision 01h), a normal attempted
+ * edge (0Eh), and a flag/line disagreement without a logic analyser. */
+#define IOC_OFF_DONE_BULK_SYNC_DECISION \
+    (IOC_OFF_DONE_RAW + IOC_DONE_RAW_BYTES)
+#define IOC_OFF_DONE_BULK_SYNC_LIVE     \
+    (IOC_OFF_DONE_BULK_SYNC_DECISION + 1u)
+#define IOC_DONE_PAYLOAD_LEN     (4u + IOC_DONE_PEEK_BYTES + IOC_DONE_RAW_BYTES)
 
 /* SD_READ returns this many bytes of the block in the payload area. */
 #define IOC_SD_READ_BYTES  16
@@ -468,8 +486,15 @@
  *      field rather than the descriptor-side capture
  *  62  boot-keyboard press transitions are translated to terminal bytes and
  *      queued for the nonblocking HID_INPUT command
+ *  66  XFER_STATUS reports the Bulk persistent-sync branch decision and live
+ *      PIC flag and /SYNCA state for marker-loss diagnosis
+ *  67  Z80-to-MCU Bulk releases /CTSA after packet/CRC acceptance; the
+ *      command READY gate, not the transport admission line, covers a slow
+ *      SD commit
+ *  68  SD trace preserves final CMD0/CMD8/CMD55/ACMD41 responses and the
+ *      ACMD41 iteration/baud/state snapshot when card initialisation fails
  */
-#define IOC_FW_LEVEL  65
+#define IOC_FW_LEVEL  68
 
 /* PING reply: a snapshot of the power handshake pins.
  *

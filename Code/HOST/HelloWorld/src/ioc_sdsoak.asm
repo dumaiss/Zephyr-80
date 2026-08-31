@@ -49,9 +49,7 @@ CMD_TAIL	= 0x0080	; CP/M command tail: length byte then text
 IOCALL		= 0xDA3F
 IOCBULK		= 0xDA45
 IOCBULKW	= 0xDA48
-ZBIOS_XPORT_LEVEL_ADDR = 0xDF7A
-ZBIOS_XPORT_LEVEL      = 7
-IOC_FW_LEVEL            = 62
+	.include "ioc_levels.inc"
 
 IOC_BULK_DIAG_REASON	= 0xDCCE
 IOC_BULK_DIAG_COUNT	= 0xDCCF

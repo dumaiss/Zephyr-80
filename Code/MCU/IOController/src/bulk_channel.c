@@ -284,6 +284,7 @@ static void sync_a_release(void)
  *
  * The two lanes must behave identically apart from block size, so everything
  * here mirrors external_sync.c; only BULK_SYNC_DROP_BIT and the baud differ. */
+static uint8_t last_sync_decision;
 static bool bulk_synced;
 void bulk_channel_request_resync(void)
 {
@@ -405,6 +406,22 @@ uint8_t bulk_channel_last_status(void)
     return last_status;
 }
 
+uint8_t bulk_channel_sync_decision(void)
+{
+    return last_sync_decision;
+}
+
+uint8_t bulk_channel_sync_live(void)
+{
+    uint8_t value = 0u;
+
+    if (bulk_synced)
+        value |= 0x01u;
+    if (SYNCA_LAT == SYNCA_ASSERTED)
+        value |= 0x02u;
+    return value;
+}
+
 uint8_t bulk_channel_next_xfer_id(void)
 {
     xfer_id_counter++;
@@ -455,7 +472,17 @@ static bool bulk_run_send(void)
      * asymmetry against the command lane for no cost. */
     SIOA_CS_LAT = SIOA_CS_ASSERTED;
 
+    /* Snapshot the exact branch inputs before touching either one.  This is
+     * reported later through XFER_STATUS, after the host has unwound a failed
+     * receive, so it adds no command traffic or timing to the Bulk phase. */
+    last_sync_decision = 0u;
+    if (bulk_synced)
+        last_sync_decision |= 0x01u;
+    if (SYNCA_LAT == SYNCA_IDLE)
+        last_sync_decision |= 0x02u;
+
     if (!bulk_synced) {
+        last_sync_decision |= 0x04u;
         /* Two setup clocks with /SYNCA still idle, as on the command lane.
          * NOT a multiple of eight, so they would move a synchronised receiver's
          * character boundary -- which is why they run only on the path that is
@@ -473,6 +500,8 @@ static bool bulk_run_send(void)
          * SPI, independent of the channel-specific /SYNCA drop position. */
         sio_link_clock_sync_byte(EXTSYNC_ESTABLISH_BYTE, SIO_LINK_CH_BULK,
                                  BULK_SYNC_DROP_BIT);
+        if (SYNCA_LAT == SYNCA_ASSERTED)
+            last_sync_decision |= 0x08u;
         bulk_synced = true;
     }
 
@@ -721,12 +750,17 @@ static bool bulk_run_receive(void)
         return false;
     }
 
+    /* The transport phase is complete once the packet and CRC are accepted.
+     * Release /CTSA before the potentially slow storage commit: the host's
+     * next IOCALL polls COMMAND_READY (/DCDB), which remains deasserted until
+     * service_command_request() returns after this commit.  Keeping /CTSA low
+     * across an SD write made the transport timeout (~0.45 s) race the card's
+     * permitted busy time (0.48 s, plus cache-miss/read/init overhead). */
+    CTSA_LAT = CTSA_IDLE;
+
     /* Only now is DONE meaningful.  Bytes arriving says nothing about whether
      * they were stored. */
     last_status = (armed_commit != 0) ? armed_commit() : IOC_STATUS_OK;
-
-    /* Transfer is genuinely over: release the busy indication. */
-    CTSA_LAT = CTSA_IDLE;
 
     return (last_status == IOC_STATUS_OK);
 }
