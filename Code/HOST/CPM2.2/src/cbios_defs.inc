@@ -714,7 +714,7 @@ CBIOS_AREA_END                  = 0xffff
 ; ---------------------------------------------------------------------------
 ; Drive assignment
 ;
-; A: is the SD card, B: is the VDrip proxy volume.  Both backends are linked;
+; A: is the VDrip proxy volume, B: is the SD card.  Both backends are linked;
 ; the facade routes on the drive selected by SELDSK.  The VDrip volume stays
 ; mounted so files can be copied across before it is retired.
 ;
@@ -722,8 +722,6 @@ CBIOS_AREA_END                  = 0xffff
 ; -- so they share one DPB and one directory buffer.  Only the DPH and the
 ; allocation vector have to be per drive.
 ; ---------------------------------------------------------------------------
-; SWAPPED BACK FOR DIAGNOSIS: VDrip is A: again and the SD card is B:.
-;
 ; CP/M searches the default drive on every command, so whichever backend is A:
 ; is the one a fault takes the machine down with.  Putting the known-good volume
 ; there means a misbehaving SD path costs a failed DIR on B: instead of an
@@ -752,6 +750,12 @@ VDRIP_STORAGE_PROTO_DRIVE             = 0x00
 ; both ends, so a mistake here fails the build rather than the machine.
 CBIOS_STORAGE_SD_CODE_BASE            = 0xf430
 CBIOS_STORAGE_SD_CODE_LIMIT           = 0xf680
+; The select probe is split across exact, otherwise-unused fixed-layout gaps.
+; The generated memory-layout checks validate every fragment independently.
+CBIOS_SD_PROBE_RECOVERY_BASE          = 0xdfed
+CBIOS_SD_PROBE_REQUEST_BASE           = 0xf41b
+CBIOS_SD_PROBE_SUCCESS_BASE           = 0xf909
+CBIOS_SD_PROBE_RESULT_BASE            = 0xfa74
 
 ; Per-drive state.  The allocation vector is the only large piece; it lands in
 ; the 256 bytes of scratch that were unallocated, which it fills exactly.
@@ -766,6 +770,7 @@ SD_STORAGE_TX_OFF                     = 0x0080     ; 32 bytes
 SD_STORAGE_RX_OFF                     = 0x00a0     ; 32 bytes
 
 ; Record commands on the IO Controller.
+SD_CMD_PROBE                          = 0x03       ; MCU reads SD block 0 in-command
 SD_CMD_READ_REC                       = 0x08
 SD_RSP_READ_REC                       = 0x88
 SD_CMD_WRITE_REC                      = 0x09

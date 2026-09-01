@@ -1,6 +1,6 @@
 ; Zephyr-80 CP/M storage backend: SD card via the IO Controller record cache.
 ;
-; Drive A.  The MCU owns an 8-slot LRU cache of 512-byte blocks and serves
+; Drive B.  The MCU owns an 8-slot LRU cache of 512-byte blocks and serves
 ; 128-byte CP/M records out of it, so this backend never sees a block and does
 ; no deblocking.  That is the whole point of the split: deblocking on the Z80
 ; would cost a 512-byte buffer in a BIOS that does not have one to spare, plus
@@ -22,7 +22,7 @@
 ; 128-byte record and the two 32-byte command frames.  Nothing else is live
 ; during a storage transaction -- CP/M does not re-enter the BIOS.
 
-	.globl sd_storage_home,sd_storage_seldsk,sd_storage_settrk
+	.globl sd_storage_home,sd_storage_settrk
 	.globl sd_storage_setsec,sd_storage_read,sd_storage_write
 	.globl sd_storage_sectran,sd_storage_flush
 	.globl stg_home,stg_seldsk,stg_settrk,stg_setsec
@@ -32,9 +32,31 @@
 	.globl vdrip_storage_read,vdrip_storage_write,vdrip_storage_sectran
 	.globl storage_caller_sp
 	.globl SD_STORAGE_CODE_START,SD_STORAGE_CODE_END
+	.globl SD_PROBE_RECOVERY_CODE_START,SD_PROBE_RECOVERY_CODE_END
+	.globl SD_PROBE_REQUEST_CODE_START,SD_PROBE_REQUEST_CODE_END
+	.globl SD_PROBE_SUCCESS_CODE_START,SD_PROBE_SUCCESS_CODE_END
+	.globl SD_PROBE_RESULT_CODE_START,SD_PROBE_RESULT_CODE_END
 	.globl cbios_dma_addr
 
 	.area CODE (ABS)
+	.org CBIOS_SD_PROBE_REQUEST_BASE
+
+; sd_storage_probe -- verify that drive B's SD medium can perform a real read.
+; Inputs: none.  Output: the protected SELDSK caller receives the B: DPH in HL
+; on success, or HL = 0 on failure.  Clobbers AF/BC/DE/HL.  May block for card
+; initialization and IOCALL; emits IOC Command traffic, no Virtual Drip traffic.
+; Foreground only: uses MOVE_BUFFER and is not ISR-safe.
+SD_PROBE_REQUEST_CODE_START:
+sd_storage_probe:
+	call sd_zero_frames
+	ld a,#SD_CMD_PROBE
+	ld (MOVE_BUFFER + SD_STORAGE_TX_OFF),a
+	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
+	ld de,#(MOVE_BUFFER + SD_STORAGE_RX_OFF)
+	call IOCALL
+	jp sd_probe_result
+SD_PROBE_REQUEST_CODE_END:
+
 	.org CBIOS_STORAGE_SD_CODE_BASE
 
 SD_STORAGE_CODE_START:
@@ -54,10 +76,6 @@ sd_storage_settrk:
 
 sd_storage_setsec:
 	ld (sd_storage_sector),bc
-	ret
-
-sd_storage_seldsk:
-	ld hl,#SD_STORAGE_DPH
 	ret
 
 sd_storage_sectran:
@@ -201,7 +219,7 @@ sd_copy_from_dma:
 	ld bc,#SD_STORAGE_RECORD_BYTES
 	ldir
 	ld a,(sd_storage_saved_bank)
-	jp sd_select_bank
+	jr sd_select_bank
 
 sd_select_bank:
 	and #BANK_MASK
@@ -358,7 +376,11 @@ stg_seldsk:
 stg_sel_sd:
 	ld a,#SD_STORAGE_DRIVE
 	ld (stg_drive),a
-	jp sd_storage_seldsk
+	push bc
+	push de
+	push hl
+	ld hl,#sd_storage_probe
+	jr stg_run
 stg_sel_vdrip:
 	ld a,#VDRIP_STORAGE_DRIVE
 	ld (stg_drive),a
@@ -434,7 +456,7 @@ stg_run_return:
 SD_STORAGE_CODE_END:
 
 ; ---------------------------------------------------------------------------
-; Disk parameter header for A:.
+; Disk parameter header for B:.
 ;
 ; DPB and directory buffer are shared with the VDrip volume: the geometry is
 ; identical, and one directory buffer serving every DPH is ordinary CP/M.  Only
@@ -452,3 +474,52 @@ SD_STORAGE_DPH_DATA:
 	.dw VDRIP_STORAGE_DPB		; shared: identical geometry
 	.dw 0x0000			; CSV: CKS = 0
 	.dw SD_STORAGE_ALV_BUFFER
+
+; ---------------------------------------------------------------------------
+; SD selection-probe continuations.
+;
+; These tiny pieces occupy validated gaps between existing fixed components.
+; stg_run saved the caller's HL at storage_caller_sp.  The success and failure
+; paths select the DPH value that its normal return shim will restore.
+; A failed transport or MCU status returns a zero DPH.  BDOS applies the common
+; disk-error policy and warm-boots to the recovery volume on A:.
+; ---------------------------------------------------------------------------
+	.area CODE (ABS)
+	.org CBIOS_SD_PROBE_RECOVERY_BASE
+
+SD_PROBE_RECOVERY_CODE_START:
+sd_probe_result:
+	or a
+	jr nz,sd_probe_failed
+	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + IOC_OFF_STATUS)
+	or a
+	jp z,sd_probe_success
+sd_probe_failed:
+	xor a
+	ld d,a
+	ld e,a
+	jp sd_probe_store_result
+SD_PROBE_RECOVERY_CODE_END:
+
+	.area CODE (ABS)
+	.org CBIOS_SD_PROBE_SUCCESS_BASE
+
+SD_PROBE_SUCCESS_CODE_START:
+sd_probe_success:
+	ld de,#SD_STORAGE_DPH
+	jp sd_probe_store_result
+SD_PROBE_SUCCESS_CODE_END:
+
+	.area CODE (ABS)
+	.org CBIOS_SD_PROBE_RESULT_BASE
+
+SD_PROBE_RESULT_CODE_START:
+; In: DE = DPH to return, or zero for an unavailable drive.
+; Out: saved SELDSK HL replaced with DE.  Clobbers HL; foreground only.
+sd_probe_store_result:
+	ld hl,(storage_caller_sp)
+	ld (hl),e
+	inc hl
+	ld (hl),d
+	ret
+SD_PROBE_RESULT_CODE_END:

@@ -70,6 +70,7 @@ IMPLEMENTATION_SYMBOLS = [
     (("init_page_zero",), "Installs `JP WBOOT` and `JP FBASE`."),
     (("runtime_set_default_dma",), "Sets default DMA to `0080h`."),
     (("runtime_clear_default_dma",), "Clears command tail/default DMA area."),
+    (("DSKERROR",), "BDOS disk-error recovery; reports the failing drive and warm-boots on A:."),
     (("CONSOLE_CODE_START",), "Console BIOS facade start."),
     (("console_init",), "Installs and initializes the default console driver."),
     (("console_set_driver",), "Installs an alternate console driver table."),
@@ -85,12 +86,15 @@ IMPLEMENTATION_SYMBOLS = [
     (("home",), "Storage HOME facade; routes to VDrip storage backend."),
     (("settrk",), "Storage SETTRK facade; records selected track."),
     (("setsec",), "Storage SETSEC facade; records selected sector."),
-    (("seldsk",), "Storage SELDSK facade; returns drive A DPH or no disk."),
+    (("seldsk",), "Storage SELDSK facade; returns a drive DPH or no disk."),
     (("setdma",), "Records DMA address."),
     (("read",), "Storage READ facade; transfers from VDrip proxy storage."),
     (("write",), "Storage WRITE facade; transfers to VDrip proxy storage."),
     (("sectran",), "Returns untranslated 0-based logical sector for no-skew media."),
     (("STORAGE_STUB_CODE_END",), "Storage BIOS facade end."),
+    (("CCP_QOL_CODE_START",), "CCP clear-screen prompt-redraw helper start."),
+    (("ccp_clear_redraw",), "Clears the console and redraws the CCP prompt."),
+    (("CCP_QOL_CODE_END",), "CCP clear-screen prompt-redraw helper end."),
     (("VDRIP_TRANSPORT_CODE_START",), "Shared Virtual Drip transport start."),
     (("vdrip_send_frame",), "Current no-CRC Virtual Drip frame sender."),
     (("vdrip_rx_sink",), "Single SIO0/B Virtual Drip receive sink."),
@@ -126,8 +130,14 @@ IMPLEMENTATION_SYMBOLS = [
     (("IOCTRL_CODE_START",), "IOCALL transaction code start in core BIOS."),
     (("IOCALL",), "Zephyr extended BIOS IO Controller transaction call."),
     (("IOCTRL_CODE_END",), "IOCALL transaction code end."),
+    (("SD_PROBE_RECOVERY_CODE_START",), "SD select-probe recovery code start in core BIOS."),
+    (("sd_probe_result",), "Handles the SD select-probe result and returns no DPH on failure."),
+    (("SD_PROBE_RECOVERY_CODE_END",), "SD select-probe recovery code end."),
     (("IOC_CMD_CODE_START",), "Common-packet Command-lane helper code start."),
     (("IOC_CMD_CODE_END",), "Common-packet Command-lane helper code end."),
+    (("SD_PROBE_REQUEST_CODE_START",), "SD select-probe request code start."),
+    (("sd_storage_probe",), "Issues the non-destructive SD block-zero availability probe."),
+    (("SD_PROBE_REQUEST_CODE_END",), "SD select-probe request code end."),
     (("IOC_BULK_CODE_START",), "Common-packet Bulk-write helper code start."),
     (("IOC_BULK_CODE_END",), "Common-packet Bulk-write helper code end."),
     (("HID_INPUT_CODE_START",), "USB keyboard IOC polling helper code start."),
@@ -136,9 +146,16 @@ IMPLEMENTATION_SYMBOLS = [
     (("HID_INPUT_STATE_END",), "USB keyboard IOC mailbox and queue state end."),
     (("SD_STORAGE_CODE_START",), "SD-card BIOS backend code start."),
     (("SD_STORAGE_CODE_END",), "SD-card BIOS backend code end."),
+    (("SD_PROBE_SUCCESS_CODE_START",), "SD select-probe success continuation start."),
+    (("sd_probe_success",), "Returns the drive B disk parameter header after a successful probe."),
+    (("SD_PROBE_SUCCESS_CODE_END",), "SD select-probe success continuation end."),
+    (("SD_PROBE_RESULT_CODE_START",), "SD select-probe result-store helper start."),
+    (("sd_probe_store_result",), "Stores the SD select result in the protected caller frame."),
+    (("SD_PROBE_RESULT_CODE_END",), "SD select-probe result-store helper end."),
     (("VDRIP_CONSOLE_CODE_START",), "Virtual Drip console driver code start."),
     (("vdrip_console_driver",), "Virtual Drip console driver dispatch table."),
     (("vdrip_console_init",), "Virtual Drip console init, proxy handshake, VDP setup."),
+    (("ccp_read_up_sequence",), "Consumes the `ESC [ A` suffix for CCP one-line recall."),
     (("VDRIP_CONSOLE_CODE_END",), "Virtual Drip console driver code end."),
     (("BANKING_CODE_START",), "Banking extension implementation start."),
     (("SELMEM",), "Select RAM bank."),
@@ -213,18 +230,23 @@ DRIVER_DECLARATIONS = [
     ("IOC Bulk transport overflow", "IOC_BULK_CODE_START", "IOC_BULK_CODE_END", 3, 3),
     ("USB keyboard IOC polling helper", "HID_INPUT_CODE_START", "HID_INPUT_CODE_END", 3, 3),
     ("IOC Command transport", "IOC_CMD_CODE_START", "IOC_CMD_CODE_END", 4, 5),
+    ("SD select-probe request", "SD_PROBE_REQUEST_CODE_START", "SD_PROBE_REQUEST_CODE_END", 4, 5),
     ("SD-card BIOS backend", "SD_STORAGE_CODE_START", "SD_STORAGE_CODE_END", 4, 5),
     ("Shared VDrip transport", "VDRIP_TRANSPORT_CODE_START", "VDRIP_TRANSPORT_CODE_END", 5, 5),
+    ("SD select-probe success continuation", "SD_PROBE_SUCCESS_CODE_START", "SD_PROBE_SUCCESS_CODE_END", 5, 5),
     ("VDrip storage backend", "VDRIP_STORAGE_CODE_START", "VDRIP_STORAGE_CODE_END", 5, 5),
+    ("SD select-probe result store", "SD_PROBE_RESULT_CODE_START", "SD_PROBE_RESULT_CODE_END", 5, 5),
 ]
 
 CORE_RANGES = [
     ("BIOS jump table and boot glue", "BIOS_CODE_START", "CONSOLE_CODE_START"),
     ("console facade", "CONSOLE_CODE_START", "CONSOLE_CODE_END"),
     ("storage facade", "STORAGE_STUB_CODE_START", "STORAGE_STUB_CODE_END"),
+    ("CCP console helper", "CCP_QOL_CODE_START", "CCP_QOL_CODE_END"),
     ("banking/XMOVE", "BANKING_CODE_START", "BANKING_CODE_END"),
     ("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END"),
     ("BIOS extensions", "BIOS_EXT_CODE_START", "BIOS_EXT_CODE_END"),
+    ("SD select-probe recovery", "SD_PROBE_RECOVERY_CODE_START", "SD_PROBE_RECOVERY_CODE_END"),
 ]
 
 VALIDATION_NOTES = [
@@ -876,10 +898,11 @@ def write_memory_map(
             f"Application-owned common TPA. The marker range is `{span(protected_tpa_start, protected_tpa_end)}`; the effective TPA portion stops before `CBASE`.",
         ),
         range_row(span(require_symbol(symbols, "CBASE"), require_symbol(symbols, "CCPSTACK")), "CP/M CCP", f"`CBASE` is `{h4(require_symbol(symbols, 'CBASE'))}`."),
-        range_row(span(require_symbol(symbols, "FBASE"), cbios_base - 1), "CP/M BDOS and state", f"`FBASE` is `{h4(require_symbol(symbols, 'FBASE'))}` in the current assembled image."),
-        range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, SIO core, VIDEO_SEND extension, and IOCALL transport."),
+        range_row(span(require_symbol(symbols, "FBASE"), cbios_base - 1), "CP/M BDOS and state", f"`FBASE` is `{h4(require_symbol(symbols, 'FBASE'))}`; disk select and sector-I/O errors report the failing drive and warm-boot on A:."),
+        range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, SIO core, VIDEO_SEND extension, IOCALL transport, and SD probe recovery."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END")), "Driver slots 0-4", "Virtual Drip console in slots 0-2, IOC Bulk overflow in slot 3, and IOC Command transport beginning in slot 4."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slot 5", "VDrip storage backend."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END") + 1, require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE") - 1), "Packed driver extension", "IOC Command tail, SD select-probe request, SD-card backend, and USB keyboard state."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slot 5", "VDrip transport/storage plus SD probe continuations."),
         range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch/storage buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `VDRIP_STORAGE_DPHDPB` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DPHDPB_BASE'))}`; `VDRIP_STORAGE_DIRBUF` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DIRBUF'))}`; `VDRIP_STORAGE_ALV` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_ALV'))}`."),
         range_row(span(runtime_start, runtime_end), "BIOS runtime state", "Current bank, DMA address, banking state, storage state, SIO core state, and console driver state."),
         range_row(span(stack_guard, area_end), "Protected firmware stack and work window", f"Stack top is `{h4(stack_top)}`; console backend stack top is `{h4(console_stack_top)}`; stack guard is `{h4(stack_guard)}`."),
@@ -897,10 +920,12 @@ def write_memory_map(
         f"| `{span(require_symbol(symbols, 'boot'), require_symbol(symbols, 'CONSOLE_CODE_START') - 1)}` | Cold boot, warm boot, CCP restore, page-zero, DMA, CTC helpers, and alignment gap. |",
         f"| `{span(require_symbol(symbols, 'CONSOLE_CODE_START'), require_symbol(symbols, 'CONSOLE_CODE_END') - 1)}` | Console BIOS facade. |",
         f"| `{span(require_symbol(symbols, 'STORAGE_STUB_CODE_START'), require_symbol(symbols, 'STORAGE_STUB_CODE_END') - 1)}` | Storage BIOS facade. |",
+        f"| `{span(require_symbol(symbols, 'CCP_QOL_CODE_START'), require_symbol(symbols, 'CCP_QOL_CODE_END') - 1)}` | CCP clear-screen prompt-redraw helper. |",
         f"| `{span(require_symbol(symbols, 'BANKING_CODE_START'), require_symbol(symbols, 'BANKING_CODE_END') - 1)}` | Banking and XMOVE implementation. |",
         f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core and exact IM2 vector entry. |",
         f"| `{span(require_symbol(symbols, 'BIOS_EXT_CODE_START'), require_symbol(symbols, 'BIOS_EXT_CODE_END') - 1)}` | BIOS extension: `VIDEO_SEND`. |",
         f"| `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` | IOCALL IO Controller transport. |",
+        f"| `{span(require_symbol(symbols, 'SD_PROBE_RECOVERY_CODE_START'), require_symbol(symbols, 'SD_PROBE_RECOVERY_CODE_END') - 1)}` | SD select-probe result handling; returns no DPH on failure. |",
         "",
         "## Driver Slot Table",
         "",
@@ -913,14 +938,18 @@ def write_memory_map(
         if slot == 5:
             contents = (
                 f"`{span(require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_START'), require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_END') - 1)}` shared transport; "
-                f"`{span(require_symbol(symbols, 'VDRIP_STORAGE_CODE_START'), require_symbol(symbols, 'VDRIP_STORAGE_CODE_END') - 1)}` storage backend."
+                f"`{span(require_symbol(symbols, 'SD_PROBE_SUCCESS_CODE_START'), require_symbol(symbols, 'SD_PROBE_SUCCESS_CODE_END') - 1)}` SD probe success; "
+                f"`{span(require_symbol(symbols, 'VDRIP_STORAGE_CODE_START'), require_symbol(symbols, 'VDRIP_STORAGE_CODE_END') - 1)}` storage backend; "
+                f"`{span(require_symbol(symbols, 'SD_PROBE_RESULT_CODE_START'), require_symbol(symbols, 'SD_PROBE_RESULT_CODE_END') - 1)}` SD probe result store."
             )
         elif slot == 0:
             contents = f"`{span(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'), require_symbol(symbols, 'VDRIP_CONSOLE_CODE_END') - 1)}` VDrip V9958 code, run/input queues, parser, and sprite-cursor state."
         elif slot == 3:
             contents = f"`{span(require_symbol(symbols, 'IOC_BULK_CODE_START'), require_symbol(symbols, 'IOC_BULK_CODE_END') - 1)}` IOC common-packet Bulk-write and link helpers."
         elif slot == 4:
-            contents = f"IOC common-packet Command and Bulk-receive helpers start here at `{h4(require_symbol(symbols, 'IOC_CMD_CODE_START'))}` and end at `{h4(require_symbol(symbols, 'IOC_CMD_CODE_END') - 1)}` in the pre-storage gap."
+            contents = (
+                f"IOC common-packet Command and Bulk-receive helpers begin at `{h4(require_symbol(symbols, 'IOC_CMD_CODE_START'))}` and continue through `{h4(require_symbol(symbols, 'IOC_CMD_CODE_END') - 1)}` in the packed extension."
+            )
         else:
             contents = "Reserved console slot; current console code ends in slot 2."
         lines.append(
@@ -950,6 +979,7 @@ def write_memory_map(
             "The IOC transport uses SIO1/B as its Command lane and SIO1/A as its Bulk lane. Both run the common A5/5A packet with persistent External Sync and Auto Enables off.",
             f"`IOCALL` mailbox code is at `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` in core BIOS; packet helpers occupy `{span(require_symbol(symbols, 'IOC_CMD_CODE_START'), require_symbol(symbols, 'IOC_CMD_CODE_END') - 1)}` and `{span(require_symbol(symbols, 'IOC_BULK_CODE_START'), require_symbol(symbols, 'IOC_BULK_CODE_END') - 1)}`.",
             f"The SD-card BIOS backend follows at `{span(require_symbol(symbols, 'SD_STORAGE_CODE_START'), require_symbol(symbols, 'SD_STORAGE_CODE_END') - 1)}`; the generated overlap check validates these adjacent ranges.",
+            f"The SD selection probe uses fixed gaps at `{span(require_symbol(symbols, 'SD_PROBE_REQUEST_CODE_START'), require_symbol(symbols, 'SD_PROBE_REQUEST_CODE_END') - 1)}`, `{span(require_symbol(symbols, 'SD_PROBE_RECOVERY_CODE_START'), require_symbol(symbols, 'SD_PROBE_RECOVERY_CODE_END') - 1)}`, `{span(require_symbol(symbols, 'SD_PROBE_SUCCESS_CODE_START'), require_symbol(symbols, 'SD_PROBE_SUCCESS_CODE_END') - 1)}`, and `{span(require_symbol(symbols, 'SD_PROBE_RESULT_CODE_START'), require_symbol(symbols, 'SD_PROBE_RESULT_CODE_END') - 1)}`.",
             f"USB keyboard mailbox and queue state occupies `{span(require_symbol(symbols, 'HID_INPUT_STATE_START'), require_symbol(symbols, 'HID_INPUT_STATE_END') - 1)}` in the fixed gap after the SD backend.",
             "",
         "## BIOS Jump Table Layout",

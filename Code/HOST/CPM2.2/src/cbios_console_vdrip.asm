@@ -918,7 +918,8 @@ vdrip_rts_release_raw:
 ;   printable ASCII 20h..7Eh
 ;   CR  = 0Dh
 ;   LF  = 0Ah
-;   VT/FF = treated as LF
+;   VT  = treated as LF
+;   FF  = clear screen and home cursor (used by CCP control-L)
 ;   BS  = 08h
 ;   TAB = 09h
 ;   NUL/BEL/SO/SI and other controls are consumed, not printed
@@ -1029,7 +1030,7 @@ term_process_byte:
 	cp #0x0b
 	jp z,term_lf
 	cp #0x0c
-	jp z,term_lf
+	jp z,text_clear_screen_runtime
 
 	cp #0x20
 	jp nc,text_put_printable
@@ -2967,6 +2968,50 @@ vdp_addr_valid:
 ; Triple-Esc VDP reset counter.
 esc_press_count:
 	.db 0x00
+
+; ---------------------------------------------------------------------------
+; ccp_read_up_sequence — recognize the remainder of the CCP cursor-up key.
+;
+; The first ESC byte has already been consumed by BDOS RDBUFF. The keyboard
+; transports deliver cursor-up as ESC [ A, so consume the remaining two bytes
+; and return Z only for that exact sequence. This is called only for the CCP;
+; normal BIOS CONIN continues to return raw terminal bytes.
+; Recall is accepted only on an empty line (B=0): there is no prefix match or
+; history cycling.
+;
+; Inputs: none.
+; Outputs: A/B = saved history length and NZ for recall; A=0/Z otherwise.
+;          BC is preserved when recall is rejected; C remains the line limit
+;          when recall succeeds.
+; Clobbers: AF, DE, HL. The caller preserves HL around this routine.
+; May block for the two bytes completing an ESC sequence.
+; VDrip traffic: none. Not ISR-safe.
+; ---------------------------------------------------------------------------
+ccp_read_up_sequence:
+	ld d,c
+	ld e,b
+	call GETCHAR
+	and #0x7f
+	cp #'['
+	jr nz,ccp_up_not_recalled
+	call GETCHAR
+	and #0x7f
+	cp #'A'
+	jr nz,ccp_up_not_recalled
+	ld a,e
+	or a
+	jr nz,ccp_up_not_recalled
+	ld a,(NBYTES)
+	ld b,a
+	ld c,d
+	or a
+	ret
+
+ccp_up_not_recalled:
+	ld b,e
+	ld c,d
+	xor a
+	ret
 
 
 VDRIP_CONSOLE_CODE_END:

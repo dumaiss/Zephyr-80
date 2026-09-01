@@ -1,14 +1,14 @@
 ; Local Zephyr-80 CP/M storage BIOS stubs.
 ;
-; This file owns the CP/M BIOS storage entry points.  A: is the SD card and B:
-; is the VDrip proxy volume; every other drive reports no device.
+; This file owns the CP/M BIOS storage entry points.  A: is the VDrip proxy
+; volume and B: is the SD card; every other drive reports no device.
 ;
 ; Both backends are linked and the dispatcher routes on the drive SELDSK last
 ; selected, which is how CP/M sequences disk I/O: SELDSK always precedes the
 ; SETTRK/SETSEC/READ/WRITE that act on it.
 ;
 ; Storage facade flow:
-;   SELDSK selects a drive and returns its DPH. Only drive A is present.
+;   SELDSK selects a drive and returns its DPH. B: first probes SD block 0.
 ;   SETTRK/SETSEC record the logical CP/M address in backend state.
 ;   SETDMA records the destination/source buffer address in cbios_dma_addr.
 ;   READ/WRITE ask the active backend to transfer one 128-byte CP/M record.
@@ -20,6 +20,7 @@
 
 	.globl home,seldsk,settrk,setsec,setdma,read,write,sectran
 	.globl STORAGE_STUB_CODE_START,STORAGE_STUB_CODE_END
+	.globl CCP_QOL_CODE_START,CCP_QOL_CODE_END,ccp_clear_redraw
 	.globl cbios_dma_addr
 	.globl stg_home,stg_seldsk,stg_settrk,stg_setsec
 	.globl stg_read,stg_write,stg_sectran
@@ -64,3 +65,38 @@ setdma:
 	ret
 
 STORAGE_STUB_CODE_END:
+
+; ---------------------------------------------------------------------------
+; CCP quality-of-life display helper.
+;
+; Physically occupies the otherwise-unused core-BIOS gap before the fixed
+; banking region. It is called only by the CCP-specific BDOS input path.
+;
+; ccp_clear_redraw
+; Purpose: clear the screen and redraw the current drive/user prompt at 0,0.
+; Inputs: ACTIVE and USERNO contain the current CP/M drive and user.
+; Outputs: CURPOS and STARTING are both reset to the three-character prompt.
+; Clobbers: AF, BC. The caller preserves BC around this routine.
+; Blocking: may block in CONOUT while the display clear completes.
+; VDrip traffic: emits one clear-screen operation and three prompt characters.
+; ISR-safe: no.
+; ---------------------------------------------------------------------------
+CCP_QOL_CODE_START:
+ccp_clear_redraw:
+	ld c,#FF
+	call CONOUT
+	ld a,(ACTIVE)
+	add a,#'A'
+	ld c,a
+	call CONOUT
+	ld a,(USERNO)
+	add a,#'0'
+	ld c,a
+	call CONOUT
+	ld c,#'>'
+	call CONOUT
+	ld a,#3
+	ld (CURPOS),a
+	ld (STARTING),a
+	ret
+CCP_QOL_CODE_END:
