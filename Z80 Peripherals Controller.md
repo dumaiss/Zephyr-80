@@ -89,7 +89,7 @@ SIO1 is not configured as asynchronous serial.  It is a two-lane MCU-clocked tra
 
 | Lane | SIO channel | Ports | Normal caller API | Purpose |
 | --- | --- | --- | --- | --- |
-| Command | SIO1/B | `32h` / `33h` | `IOCALL` | 32-byte compatibility mailbox mapped to one command packet |
+| Command | SIO1/B | `32h` / `33h` | `IOCALL` | 32-byte BIOS-facing command mailbox mapped to one command packet |
 | Bulk | SIO1/A | `30h` / `31h` | `IOCBULK` / `IOCBULKW` | DATA-only transfer admitted by a command reply |
 
 Both lanes use **persistent External Sync**:
@@ -115,7 +115,7 @@ A5 5A LEN_LO LEN_HI TYPE SEQ STATUS DATA... CRC_HI CRC_LO
 
 `LEN` is little-endian and counts `TYPE + SEQ + STATUS + DATA`.  The CRC is CRC-16-CCITT with polynomial `1021h`, initial value `0000h`, MSB-first processing, and no final XOR.  It covers `LEN_LO` through the final DATA byte; it does not cover the `A5 5A` marker.  The CRC bytes are transmitted high byte first.
 
-The Command lane carries up to 26 DATA bytes because it maps to the existing 32-byte compatibility mailbox.  The Bulk lane carries up to 512 DATA bytes so one SD sector can be represented as one bulk packet.
+The Command lane carries up to 26 DATA bytes because it maps to the existing 32-byte BIOS-facing command mailbox.  The Bulk lane carries up to 512 DATA bytes so one SD sector can be represented as one bulk packet.
 
 There is no 32-byte scheduling quantum on the wire.  The 32-byte object is the BIOS-facing command mailbox only.
 
@@ -136,7 +136,7 @@ Current request admission is level-based, not edge-based.  The PIC firmware glob
 
 ### Bulk lifecycle
 
-Large operations use the compatibility lifecycle:
+Large operations use the READY/BULK/DONE lifecycle:
 
 ```text
 command request
@@ -180,11 +180,11 @@ Out:
   A  = BIOS transport result
 ```
 
-The caller owns both mailboxes.  The BIOS does not reserve a persistent application-visible IOCALL request block, payload buffer, or command-specific state for callers.  The BIOS does maintain internal transport scratch state, sequence state, and packet assembly state.
+The caller owns both command mailboxes.  The BIOS does not reserve a persistent application-visible IOCALL request block, payload buffer, or command-specific state for callers.  The BIOS does maintain internal transport scratch state, sequence state, and packet assembly state.
 
-`IOCALL` stamps the outgoing sequence byte, maps the 32-byte mailbox to the common wire packet, supplies the wire CRC, receives a validated reply packet, checks the reply sequence, and maps the reply back into the caller's RX mailbox.  It does not interpret whether a command means PING, RESET, SD, HID, or anything else.
+`IOCALL` stamps the outgoing sequence byte, maps the 32-byte TX mailbox to the common wire packet, supplies the wire CRC, receives a validated reply packet, checks the reply sequence, and maps the reply back into the caller's RX mailbox.  It does not interpret whether a command means PING, RESET, SD, HID, or anything else.
 
-Compatibility mailbox layout:
+Command mailbox layout:
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
