@@ -27,3 +27,34 @@ _build/
 cmake/**/.generated/*
 cmake/**/CMake*
 out/
+
+# ---------------------------------------------------------------------------
+# MPLAB X / XC8 artifacts
+#
+# The rules above already cover the bulk of a MPLAB build: nbproject/, dist/,
+# build/, .generated_files/, Makefile*, Package-*, private/, and the object and
+# listing extensions.  These are the leftovers that escaped those patterns.
+# ---------------------------------------------------------------------------
+*.mptags
+*.mum
+*.cof
+*.lpp
+*.stackdump
+funclist
+disassembly/
+.dep/
+
+# MPLAB X writes its IDE log into the project and rotates it, so the plain
+# *.xml rule in the repository root does not catch MPLABXLog.xml.1 and friends.
+MPLABXLog.xml*
+
+# MPLAB extension for VS Code.
+#
+# IOController.mplab-local.json records the serial number of whichever debugger
+# is physically plugged into this machine, so it must never be committed even
+# though IOController.mplab.json beside it is shareable project configuration.
+# The repository root currently ignores all of .vscode, which hides both; this
+# rule keeps the local one out on its own merits if that ever changes or if the
+# extension writes it somewhere else.
+.mplab/
+*.mplab-local.json
