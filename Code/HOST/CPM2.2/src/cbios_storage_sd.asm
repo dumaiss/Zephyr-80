@@ -27,9 +27,9 @@
 	.globl sd_storage_sectran,sd_storage_flush
 	.globl stg_home,stg_seldsk,stg_settrk,stg_setsec
 	.globl stg_read,stg_write,stg_sectran
-	.globl vdrip_storage_home,vdrip_storage_seldsk,vdrip_storage_seldsk_unsupported
-	.globl vdrip_storage_settrk,vdrip_storage_setsec
-	.globl vdrip_storage_read,vdrip_storage_write,vdrip_storage_sectran
+	.globl stg_a_home,stg_a_seldsk,stg_a_seldsk_unsupported
+	.globl stg_a_settrk,stg_a_setsec
+	.globl stg_a_read,stg_a_write,stg_a_sectran
 	.globl storage_caller_sp
 	.globl SD_STORAGE_CODE_START,SD_STORAGE_CODE_END
 	.globl SD_PROBE_RECOVERY_CODE_START,SD_PROBE_RECOVERY_CODE_END
@@ -368,11 +368,11 @@ stg_seldsk:
 	ld a,c
 	cp #SD_STORAGE_DRIVE
 	jr z,stg_sel_sd
-	cp #VDRIP_STORAGE_DRIVE
-	jr z,stg_sel_vdrip
+	cp #STORAGE_A_DRIVE
+	jr z,stg_sel_a
 	ld a,#0xff
 	ld (stg_drive),a
-	jp vdrip_storage_seldsk_unsupported
+	jp stg_a_seldsk_unsupported
 stg_sel_sd:
 	ld a,#SD_STORAGE_DRIVE
 	ld (stg_drive),a
@@ -381,10 +381,10 @@ stg_sel_sd:
 	push hl
 	ld hl,#sd_storage_probe
 	jr stg_run
-stg_sel_vdrip:
-	ld a,#VDRIP_STORAGE_DRIVE
+stg_sel_a:
+	ld a,#STORAGE_A_DRIVE
 	ld (stg_drive),a
-	jp vdrip_storage_seldsk
+	jp stg_a_seldsk
 
 ; Z set when the SD backend is the live one.
 stg_is_sd:
@@ -396,24 +396,24 @@ stg_home:
 	call stg_is_sd
 	jp z,sd_storage_home
 	push hl
-	call vdrip_storage_home
+	call stg_a_home
 	pop hl
 	ret
 
 stg_settrk:
 	call stg_is_sd
 	jp z,sd_storage_settrk
-	jp vdrip_storage_settrk
+	jp stg_a_settrk
 
 stg_setsec:
 	call stg_is_sd
 	jp z,sd_storage_setsec
-	jp vdrip_storage_setsec
+	jp stg_a_setsec
 
 stg_sectran:
 	call stg_is_sd
 	jp z,sd_storage_sectran
-	jp vdrip_storage_sectran
+	jp stg_a_sectran
 
 ; READ and WRITE run on the BIOS stack.
 ;
@@ -427,7 +427,7 @@ stg_read:
 	call stg_is_sd
 	ld hl,#sd_storage_read
 	jr z,stg_run
-	ld hl,#vdrip_storage_read
+	ld hl,#stg_a_read
 	jr stg_run
 
 stg_write:
@@ -437,7 +437,7 @@ stg_write:
 	call stg_is_sd
 	ld hl,#sd_storage_write
 	jr z,stg_run
-	ld hl,#vdrip_storage_write
+	ld hl,#stg_a_write
 
 stg_run:
 	ld (storage_caller_sp),sp
@@ -456,12 +456,16 @@ stg_run_return:
 SD_STORAGE_CODE_END:
 
 ; ---------------------------------------------------------------------------
-; Disk parameter header for B:.
+; Disk parameter header and block for B:.
 ;
-; DPB and directory buffer are shared with the VDrip volume: the geometry is
-; identical, and one directory buffer serving every DPH is ordinary CP/M.  Only
-; the DPH and the allocation vector are per drive.  CSV is empty because CKS is
-; zero -- a fixed disk that CP/M never re-verifies.
+; The directory buffer is shared with A:, which is ordinary CP/M -- one DIRBUF
+; serves every DPH.  The DPB is NOT shared.  It used to point at the A: backend's
+; DPB, which was correct only while A: was the VDrip proxy volume, because that
+; volume and this card have the same 8 MiB geometry.  A: is now a 144 KiB ROM
+; disk by default, so B: carries its own DPB or it would be described by the
+; wrong geometry entirely.
+;
+; CSV is empty because CKS is zero -- a fixed disk that CP/M never re-verifies.
 ; ---------------------------------------------------------------------------
 	.area CODE (ABS)
 	.org SD_STORAGE_DPH
@@ -470,10 +474,27 @@ SD_STORAGE_DPH_DATA:
 	.dw 0x0000
 	.dw 0x0000
 	.dw 0x0000
-	.dw VDRIP_STORAGE_DIRBUF	; shared
-	.dw VDRIP_STORAGE_DPB		; shared: identical geometry
+	.dw CBIOS_STORAGE_DIRBUF	; shared with A:
+	.dw SD_STORAGE_DPB		; private: 8 MiB card geometry
 	.dw 0x0000			; CSV: CKS = 0
 	.dw SD_STORAGE_ALV_BUFFER
+
+; CP/M Drive Parameter Block for the SD volume:
+;   SPT=4, BSH=5, BLM=31, EXM=1, DSM=2047, DRM=511, AL0=F0h, AL1=00h,
+;   CKS=0, OFF=0.  Occupies the last 16 bytes of the DPH/DPB window.
+	.area CODE (ABS)
+	.org SD_STORAGE_DPB
+SD_STORAGE_DPB_DATA:
+	.dw SD_STORAGE_SECTORS_PER_TRACK
+	.db SD_STORAGE_BLOCK_SHIFT
+	.db SD_STORAGE_BLOCK_MASK
+	.db SD_STORAGE_EXTENT_MASK
+	.dw SD_STORAGE_MAX_BLOCK
+	.dw SD_STORAGE_DIR_ENTRIES
+	.db SD_STORAGE_ALLOC0
+	.db SD_STORAGE_ALLOC1
+	.dw SD_STORAGE_CHECK_SIZE
+	.dw SD_STORAGE_OFFSET_TRACKS
 
 ; ---------------------------------------------------------------------------
 ; SD selection-probe continuations.

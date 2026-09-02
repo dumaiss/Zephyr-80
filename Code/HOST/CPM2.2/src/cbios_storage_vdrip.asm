@@ -30,6 +30,12 @@
 ; is preserved separately in cbios_storage_ramdisk.asm and is not linked by the
 ; active VDrip build.
 
+	.globl STORAGE_A_DPH,STORAGE_A_DPB,STORAGE_A_ALV
+	.globl stg_a_selected_drive,stg_a_track,stg_a_sector
+	.globl stg_a_home,stg_a_seldsk,stg_a_seldsk_unsupported
+	.globl stg_a_settrk,stg_a_setsec,stg_a_read,stg_a_write
+	.globl stg_a_sectran
+	.globl STORAGE_A_CODE_START,STORAGE_A_CODE_END
 	.globl vdrip_storage_home,vdrip_storage_seldsk,vdrip_storage_seldsk_unsupported
 	.globl vdrip_storage_settrk,vdrip_storage_setsec,vdrip_storage_read,vdrip_storage_write
 	.globl vdrip_storage_sectran
@@ -52,9 +58,16 @@ STORAGE_WRITE_REPLY_LEN	= 0x02
 STORAGE_WRITE_DATA_OFF	= 0x06
 STORAGE_READ_DATA_OFF	= 0x02
 
+
+; Neutral drive-A: entry aliases.  The storage dispatcher in cbios_storage_sd.asm
+; calls stg_a_* so it never names a particular backend; exactly one A: backend
+; links per build (STORAGE_A in the Makefile).  These labels are addresses, not
+; code, so they cost nothing.
+
 	.area CODE (ABS)
 	.org CBIOS_STORAGE_VDRIP_CODE_BASE
 
+STORAGE_A_CODE_START:
 VDRIP_STORAGE_CODE_START:
 
 ; HOME
@@ -62,6 +75,7 @@ VDRIP_STORAGE_CODE_START:
 ; Inputs: none.
 ; Outputs: vdrip_storage_track = 0000h.
 ; Clobbers: HL.
+stg_a_home:
 vdrip_storage_home:
 	ld hl,#0x0000
 	ld (vdrip_storage_track),hl
@@ -70,6 +84,7 @@ vdrip_storage_home:
 ; SETTRK backend.
 ; Input: BC = CP/M track.
 ; Output: vdrip_storage_track updated.
+stg_a_settrk:
 vdrip_storage_settrk:
 	ld (vdrip_storage_track),bc
 	ret
@@ -77,12 +92,14 @@ vdrip_storage_settrk:
 ; SETSEC backend.
 ; Input: BC = zero-based CP/M sector within track.
 ; Output: vdrip_storage_sector updated.
+stg_a_setsec:
 vdrip_storage_setsec:
 	ld (vdrip_storage_sector),bc
 	ret
 
 ; Select drive A.
 ; Output: HL = VDRIP_STORAGE_DPH, vdrip_storage_selected_drive = 0.
+stg_a_seldsk:
 vdrip_storage_seldsk:
 	xor a
 	ld (vdrip_storage_selected_drive),a
@@ -91,6 +108,7 @@ vdrip_storage_seldsk:
 
 ; Select unsupported drive.
 ; Output: HL = 0000h, vdrip_storage_selected_drive = FFh.
+stg_a_seldsk_unsupported:
 vdrip_storage_seldsk_unsupported:
 	ld a,#0xff
 	ld (vdrip_storage_selected_drive),a
@@ -100,6 +118,7 @@ vdrip_storage_seldsk_unsupported:
 ; SECTRAN backend.
 ; Input: BC = logical sector.
 ; Output: HL = same logical sector; VDrip storage uses no skew table.
+stg_a_sectran:
 vdrip_storage_sectran:
 	ld h,b
 	ld l,c
@@ -118,6 +137,7 @@ vdrip_storage_sectran:
 ;   AF, BC, DE, HL.
 ; Blocking behavior:
 ;   Bounded by STORAGE_TIMEOUT while waiting for the framed storage reply.
+stg_a_read:
 vdrip_storage_read:
 	call vdrip_storage_compute_lba
 	or a
@@ -162,6 +182,7 @@ vdrip_storage_read_send_error:
 ;   proxy storage image.
 ; Inputs/Outputs/Clobbers:
 ;   Same contract as vdrip_storage_read.
+stg_a_write:
 vdrip_storage_write:
 	call vdrip_storage_compute_lba
 	or a
@@ -345,6 +366,7 @@ vdrip_storage_select_bank_a:
 	ret
 
 VDRIP_STORAGE_CODE_END:
+STORAGE_A_CODE_END:
 
 ; CP/M Drive Parameter Header and Block for drive A.
 ;
@@ -363,6 +385,7 @@ VDRIP_STORAGE_CODE_END:
 ; CKS is zero for fixed-disk behavior, so VDRIP_STORAGE_CSV is a zero-length label.
 	.area WORK (ABS)
 	.org VDRIP_STORAGE_DPHDPB_BASE
+STORAGE_A_DPH:
 VDRIP_STORAGE_DPH:
 	.dw 0x0000
 	.dw 0x0000
@@ -376,6 +399,7 @@ VDRIP_STORAGE_DPH:
 ; CP/M Drive Parameter Block for Zephyr VDrip CP/M 8M:
 ;   SPT=4, BSH=5, BLM=31, EXM=1, DSM=2047, DRM=511,
 ;   AL0=F0h, AL1=00h, CKS=0, OFF=0.
+STORAGE_A_DPB:
 VDRIP_STORAGE_DPB:
 	.dw VDRIP_STORAGE_SECTORS_PER_TRACK
 	.db VDRIP_STORAGE_BLOCK_SHIFT
@@ -390,6 +414,7 @@ VDRIP_STORAGE_DPB:
 
 	.area WORK (ABS)
 	.org VDRIP_STORAGE_ALV_BUFFER
+STORAGE_A_ALV:
 VDRIP_STORAGE_ALV:
 	.blkb VDRIP_STORAGE_ALV_SIZE
 
@@ -399,10 +424,13 @@ STORAGE_STATE_START:
 ; Persistent storage backend state. These bytes live in the BIOS runtime-state
 ; window, not in MOVE_BUFFER, so incomplete or failed storage transactions do
 ; not corrupt CP/M-visible DPH/DPB/ALV pointers.
+stg_a_selected_drive:
 vdrip_storage_selected_drive:
 	.db 0xff
+stg_a_track:
 vdrip_storage_track:
 	.dw 0x0000
+stg_a_sector:
 vdrip_storage_sector:
 	.dw 0x0000
 VDRIP_STORAGE_SAVED_BANK:

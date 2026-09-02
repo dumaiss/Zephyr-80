@@ -527,6 +527,12 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ; constant.  Shifting it up 16 hands those to the transport and still leaves the
 ; storage backend clear of FA80h; check_overlap.py enforces both ends.
 CBIOS_STORAGE_VDRIP_CODE_BASE         = 0xf910                                ; follows common VDrip transport
+
+; Neutral name for the drive A: backend code slot.  Exactly one A: backend links
+; per build (see STORAGE_A in the Makefile); they are mutually exclusive because
+; the common window has no room for two.  cbios_storage_rom.asm, the retained
+; cbios_storage_vdrip.asm, and the older cbios_storage_ramdisk.asm all .org here.
+CBIOS_STORAGE_A_CODE_BASE             = CBIOS_STORAGE_VDRIP_CODE_BASE
 CBIOS_VDRIP_TRANSPORT_CODE_BASE       = CBIOS_DRIVER_SLOT5_BASE              ; F680h
 ; Reclaimed gap between the banking module (ends DCB0h) and the SIO core, which
 ; is pinned at DD10h.  95 bytes that belonged to nothing.
@@ -643,6 +649,9 @@ VDRIP_STORAGE_DPHDPB_BASE             = MOVE_BUFFER + MOVE_BUFFER_SIZE       ; F
 VDRIP_STORAGE_DPHDPB_SIZE             = 0x0040                               ; 64 bytes (DPH+DPB = 31)
 
 VDRIP_STORAGE_DIRBUF                  = CBIOS_SCRATCH_BASE + 0x0100          ; FB80h
+; One directory buffer serves every DPH, which is ordinary CP/M.  Neutral name
+; so drives do not have to reference the VDrip backend to find it.
+CBIOS_STORAGE_DIRBUF                  = VDRIP_STORAGE_DIRBUF
 VDRIP_STORAGE_DIRBUF_SIZE             = 0x0080
 
 VDRIP_STORAGE_ALV_BUFFER              = CBIOS_SCRATCH_BASE + 0x0180          ; FC00h
@@ -733,6 +742,10 @@ CBIOS_AREA_END                  = 0xffff
 SD_STORAGE_DRIVE                      = 0x01       ; B:
 VDRIP_STORAGE_DRIVE                   = 0x00       ; A:
 
+; Neutral name for whichever backend is linked as A:.  The dispatcher routes on
+; this so it does not have to name a particular backend.
+STORAGE_A_DRIVE                       = VDRIP_STORAGE_DRIVE
+
 ; The drive id the VDrip PROTOCOL carries, which is not the CP/M drive letter.
 ; It names the volume on the proxy side and has always been 0; moving the CP/M
 ; letter to B: must not change what goes on the wire.
@@ -761,6 +774,27 @@ CBIOS_SD_PROBE_RESULT_BASE            = 0xfa74
 ; the 256 bytes of scratch that were unallocated, which it fills exactly.
 SD_STORAGE_ALV_BUFFER                 = CBIOS_SCRATCH_BASE + 0x0280   ; FD00h
 SD_STORAGE_DPH                        = VDRIP_STORAGE_DPHDPB_BASE + 0x20  ; FB60h
+
+; B: gets its own DPB in the last 16 bytes of the DPH/DPB window.  It used to
+; borrow the A: backend's DPB, which was correct only while A: was the VDrip
+; proxy volume: that volume and the SD card share the 8 MiB geometry.  The ROM
+; disk does not, so the two must be independent or B: would be described by a
+; 144 KiB DPB.  The window is FB40h-FB7Fh: A: DPH+DPB, then B: DPH, then this.
+SD_STORAGE_DPB                        = VDRIP_STORAGE_DPHDPB_BASE + 0x30  ; FB70h
+
+; B: geometry.  Same 8 MiB volume the VDrip proxy serves, so these deliberately
+; carry the same values; they are named separately so B: no longer depends on
+; which backend is linked as A:.
+SD_STORAGE_SECTORS_PER_TRACK          = 0x0004
+SD_STORAGE_OFFSET_TRACKS              = 0x0000
+SD_STORAGE_BLOCK_SHIFT                = 0x05
+SD_STORAGE_BLOCK_MASK                 = 0x1f
+SD_STORAGE_EXTENT_MASK                = 0x01
+SD_STORAGE_MAX_BLOCK                  = 0x07ff
+SD_STORAGE_DIR_ENTRIES                = 0x01ff
+SD_STORAGE_ALLOC0                     = 0xf0
+SD_STORAGE_ALLOC1                     = 0x00
+SD_STORAGE_CHECK_SIZE                 = 0x0000
 
 ; Scratch layout inside MOVE_BUFFER for one SD transaction.  192 bytes divides
 ; exactly into one 128-byte record and the two 32-byte command frames, which is
@@ -804,6 +838,43 @@ VDRIP_STORAGE_ALLOC0                  = 0xf0
 VDRIP_STORAGE_ALLOC1                  = 0x00
 VDRIP_STORAGE_CHECK_SIZE              = 0x0000
 VDRIP_STORAGE_ALV_SIZE                = 0x0100
+
+; ------------------------------------------------------------------------------
+; ROM disk backend geometry (drive A:, read-only)
+; ------------------------------------------------------------------------------
+; Flash pages 1-3 hold one CP/M volume.  MEM_DECODER.pld only exposes ROM at
+; 0000h-BFFFh while shadow/copy mode is on -- C000h-FFFFh is forced to SRAM
+; bank 0 -- so each page contributes 48 KiB and the top 16 KiB of every page is
+; unreachable and unused.
+;
+;   3 pages * 0C000h bytes  = 147456 bytes
+;   0180h records/page      = 0480h records total
+;   24 tracks * 48 sectors/track * 128 bytes = full capacity
+;
+; BLS is 1024, not 2048: the volume carries ~19 diagnostic utilities and most are
+; under 2 KiB, so the smaller block roughly halves the slack.  CKS is zero -- ROM
+; is a permanent medium CP/M never needs to re-verify -- so there is no CSV.
+;
+; Directory: AL0=F0h reserves four 1024-byte blocks = 4096 bytes = 128 entries.
+ROMDISK_DRIVE                         = VDRIP_STORAGE_DRIVE   ; A:
+ROMDISK_FIRST_PAGE                    = 0x01
+ROMDISK_PAGE_COUNT                    = 0x03
+ROMDISK_PAGE_BYTES                    = 0xc000
+ROMDISK_RECORD_BYTES                  = 0x0080
+ROMDISK_RECORDS_PER_PAGE              = 0x0180
+ROMDISK_TOTAL_RECORDS                 = 0x0480
+ROMDISK_SECTORS_PER_TRACK             = 0x0030
+ROMDISK_TRACKS                        = 0x0018
+ROMDISK_OFFSET_TRACKS                 = 0x0000
+ROMDISK_BLOCK_SHIFT                   = 0x03       ; BSH, BLS = 1024
+ROMDISK_BLOCK_MASK                    = 0x07       ; BLM
+ROMDISK_EXTENT_MASK                   = 0x00       ; EXM
+ROMDISK_MAX_BLOCK                     = 0x008f     ; DSM = 143
+ROMDISK_DIR_ENTRIES                   = 0x007f     ; DRM = 127
+ROMDISK_ALLOC0                        = 0xf0
+ROMDISK_ALLOC1                        = 0x00
+ROMDISK_CHECK_SIZE                    = 0x0000     ; CKS = 0, permanent medium
+ROMDISK_ALV_SIZE                      = 0x0012     ; (DSM/8)+1 = 18 bytes
 
 ; ------------------------------------------------------------------------------
 ; Build-Time Validation Boundaries

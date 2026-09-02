@@ -1,11 +1,20 @@
 ; Local Zephyr-80 CP/M storage BIOS stubs.
 ;
-; This file owns the CP/M BIOS storage entry points.  A: is the VDrip proxy
-; volume and B: is the SD card; every other drive reports no device.
+; This file owns the CP/M BIOS storage entry points.  B: is the SD card and A: is
+; whichever backend the build selected; every other drive reports no device.
 ;
-; Both backends are linked and the dispatcher routes on the drive SELDSK last
-; selected, which is how CP/M sequences disk I/O: SELDSK always precedes the
-; SETTRK/SETSEC/READ/WRITE that act on it.
+; A: is a build-time choice (STORAGE_A in the Makefile) because the BIOS common
+; window has no room for two backends at once.  All of them .org at
+; CBIOS_STORAGE_A_CODE_BASE and export the same stg_a_* entry points, so the
+; dispatcher never names one:
+;
+;   rom      read-only CP/M volume in flash pages 1-3 (default)
+;   vdrip    proxy storage over the host serial link
+;   ramdisk  banked RAM disk, retained but not maintained
+;
+; Two backends are linked -- A: and the SD card -- and the dispatcher routes on
+; the drive SELDSK last selected, which is how CP/M sequences disk I/O: SELDSK
+; always precedes the SETTRK/SETSEC/READ/WRITE that act on it.
 ;
 ; Storage facade flow:
 ;   SELDSK selects a drive and returns its DPH. B: first probes SD block 0.
@@ -16,7 +25,8 @@
 ;
 ; Current state variables are split between common runtime state
 ; (cbios_dma_addr and DMA_BANK) and storage state in CBIOS_STORAGE_WORK_AREA.
-; The VDrip backend uses MOVE_BUFFER only as transaction scratch.
+; The VDrip and SD backends use MOVE_BUFFER as transaction scratch; the ROM
+; backend needs none, because its LDIR reads flash and writes SRAM in one pass.
 
 	.globl home,seldsk,settrk,setsec,setdma,read,write,sectran
 	.globl STORAGE_STUB_CODE_START,STORAGE_STUB_CODE_END

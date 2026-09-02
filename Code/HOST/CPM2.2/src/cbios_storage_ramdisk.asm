@@ -14,6 +14,13 @@
 ; directory buffer referenced by the DPH. Both live in the scratch/staging area
 ; and must never overlap resident code or persistent runtime state.
 
+	.globl STORAGE_A_DPH,STORAGE_A_DPB,STORAGE_A_ALV
+	.globl storage_caller_sp
+	.globl stg_a_selected_drive,stg_a_track,stg_a_sector
+	.globl stg_a_home,stg_a_seldsk,stg_a_seldsk_unsupported
+	.globl stg_a_settrk,stg_a_setsec,stg_a_read,stg_a_write
+	.globl stg_a_sectran
+	.globl STORAGE_A_CODE_START,STORAGE_A_CODE_END
 	.globl ramdisk_home,ramdisk_seldsk,ramdisk_seldsk_unsupported
 	.globl ramdisk_settrk,ramdisk_setsec,ramdisk_read,ramdisk_write
 	.globl ramdisk_sectran
@@ -52,9 +59,16 @@ RAMDISK_CHECK_SIZE		= 0x0010
 RAMDISK_ALV_SIZE		= 0x0012
 RAMDISK_DIRBUF			= VDRIP_STORAGE_DIRBUF
 
+
+; Neutral drive-A: entry aliases.  The storage dispatcher in cbios_storage_sd.asm
+; calls stg_a_* so it never names a particular backend; exactly one A: backend
+; links per build (STORAGE_A in the Makefile).  These labels are addresses, not
+; code, so they cost nothing.
+
 	.area CODE (ABS)
 	.org CBIOS_RAMDISK_CODE_BASE
 
+STORAGE_A_CODE_START:
 RAMDISK_CODE_START:
 
 ; HOME
@@ -62,6 +76,7 @@ RAMDISK_CODE_START:
 ; Inputs: none.
 ; Outputs: ramdisk_track = 0000h.
 ; Clobbers: HL.
+stg_a_home:
 ramdisk_home:
 	ld hl,#0x0000
 	ld (ramdisk_track),hl
@@ -70,6 +85,7 @@ ramdisk_home:
 ; SETTRK backend.
 ; Input: BC = CP/M track.
 ; Output: ramdisk_track updated.
+stg_a_settrk:
 ramdisk_settrk:
 	ld (ramdisk_track),bc
 	ret
@@ -77,12 +93,14 @@ ramdisk_settrk:
 ; SETSEC backend.
 ; Input: BC = CP/M sector within track.
 ; Output: ramdisk_sector updated.
+stg_a_setsec:
 ramdisk_setsec:
 	ld (ramdisk_sector),bc
 	ret
 
 ; Select drive A.
 ; Output: HL = RAMDISK_DPH, ramdisk_selected_drive = 0.
+stg_a_seldsk:
 ramdisk_seldsk:
 	xor a
 	ld (ramdisk_selected_drive),a
@@ -91,6 +109,7 @@ ramdisk_seldsk:
 
 ; Select unsupported drive.
 ; Output: HL = 0000h, ramdisk_selected_drive = FFh.
+stg_a_seldsk_unsupported:
 ramdisk_seldsk_unsupported:
 	ld a,#0xff
 	ld (ramdisk_selected_drive),a
@@ -100,6 +119,7 @@ ramdisk_seldsk_unsupported:
 ; SECTRAN backend.
 ; Input: BC = logical sector.
 ; Output: HL = same logical sector; the RAM disk uses no skew table.
+stg_a_sectran:
 ramdisk_sectran:
 	ld h,b
 	ld l,c
@@ -118,6 +138,7 @@ ramdisk_sectran:
 ; Important invariants:
 ;   The active bank is restored from RAMDISK_SAVED_BANK before returning.
 ;   Cross-bank transfer always stages through MOVE_BUFFER in common scratch.
+stg_a_read:
 ramdisk_read:
 	call ramdisk_map_current
 	or a
@@ -149,6 +170,7 @@ ramdisk_read:
 ;   storage.
 ; Inputs/Outputs/Clobbers:
 ;   Same contract as ramdisk_read.
+stg_a_write:
 ramdisk_write:
 	call ramdisk_map_current
 	or a
@@ -265,6 +287,7 @@ ramdisk_select_bank_a:
 
 ; CP/M Drive Parameter Header for drive A. The allocation/check vectors are
 ; persistent runtime state; RAMDISK_DIRBUF is a scratch directory buffer.
+STORAGE_A_DPH:
 RAMDISK_DPH:
 	.dw 0x0000
 	.dw 0x0000
@@ -276,6 +299,7 @@ RAMDISK_DPH:
 	.dw RAMDISK_ALV
 
 ; CP/M Drive Parameter Block for the in-memory drive geometry above.
+STORAGE_A_DPB:
 RAMDISK_DPB:
 	.dw RAMDISK_SECTORS_PER_TRACK
 	.db RAMDISK_BLOCK_SHIFT
@@ -289,14 +313,18 @@ RAMDISK_DPB:
 	.dw RAMDISK_OFFSET_TRACKS
 
 RAMDISK_CODE_END:
+STORAGE_A_CODE_END:
 
 	.area WORK (ABS)
 	.org CBIOS_STORAGE_WORK_AREA
 STORAGE_STATE_START:
+stg_a_selected_drive:
 ramdisk_selected_drive:
 	.db 0xff
+stg_a_track:
 ramdisk_track:
 	.dw 0x0000
+stg_a_sector:
 ramdisk_sector:
 	.dw 0x0000
 RAMDISK_SAVED_BANK:
@@ -305,10 +333,23 @@ RAMDISK_IO_BANK:
 	.db 0x00
 RAMDISK_IO_ADDR:
 	.dw 0x0000
-RAMDISK_CSV:
-	.blkb RAMDISK_CHECK_SIZE
+
+	.org CBIOS_STORAGE_CALLER_SP
+storage_caller_sp:
+	.dw 0x0000
+
+; The check and allocation vectors live in the shared scratch ALV buffer, not in
+; the storage work area.  That area stops at CBIOS_VDRIP_TRANSPORT_WORK_AREA and
+; these 34 bytes used to run straight through it and through storage_caller_sp.
+; This backend was not linked when that layout was introduced, so nothing caught
+; it; STORAGE_A=ramdisk would not even have linked.
+	.area WORK (ABS)
+	.org VDRIP_STORAGE_ALV_BUFFER
+STORAGE_A_ALV:
 RAMDISK_ALV:
 	.blkb RAMDISK_ALV_SIZE
+RAMDISK_CSV:
+	.blkb RAMDISK_CHECK_SIZE
 STORAGE_STATE_END:
 
 	.area CODE (ABS)

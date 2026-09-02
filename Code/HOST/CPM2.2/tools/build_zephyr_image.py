@@ -436,14 +436,22 @@ def write_report(
             ]
         )
     else:
-        lines.extend(
-            [
-                "",
-                "## Storage",
-                "",
-                "- Drive A is backed by VDrip proxy storage; no RAM disk image is embedded in ROM banks.",
-            ]
-        )
+        rom_disk = [payload for payload in payloads
+                    if payload.key.startswith("romdisk_page")]
+        if rom_disk:
+            banks = ", ".join(str(payload.bank) for payload in rom_disk)
+            total = sum(payload.size for payload in rom_disk)
+            storage = (
+                f"- Drive A is a read-only CP/M volume in ROM pages {banks} "
+                f"({total} bytes); each page contributes 48 KiB because shadow/copy "
+                "mode only exposes ROM at 0000h-BFFFh."
+            )
+        else:
+            storage = (
+                "- No ROM disk payload is embedded; drive A comes from whichever "
+                "backend was linked (see STORAGE_A in the Makefile)."
+            )
+        lines.extend(["", "## Storage", "", storage])
     lines.extend(
         [
             "",
@@ -460,7 +468,7 @@ def write_report(
             "",
             "## Notes",
             "",
-            "- Drive A is backed by VDrip proxy storage; banks 2-7 are not populated with a RAM disk seed image.",
+            "- No RAM disk seed image is embedded; the banked RAM disk backend is retained but not linked by default.",
             "- `../CPM` is context only and is not a build dependency.",
             "",
         ]

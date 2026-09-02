@@ -99,13 +99,13 @@ IMPLEMENTATION_SYMBOLS = [
     (("vdrip_send_frame",), "Current no-CRC Virtual Drip frame sender."),
     (("vdrip_rx_sink",), "Single SIO0/B Virtual Drip receive sink."),
     (("VDRIP_TRANSPORT_CODE_END",), "Shared Virtual Drip transport end."),
-    (("VDRIP_STORAGE_CODE_START",), "VDrip storage backend code start."),
-    (("vdrip_storage_seldsk",), "Selects CP/M drive A and returns its DPH."),
-    (("vdrip_storage_read",), "Reads one 128-byte record from VDrip proxy storage."),
-    (("vdrip_storage_write",), "Writes one 128-byte record to VDrip proxy storage."),
-    (("VDRIP_STORAGE_DPH",), "Drive A disk parameter header."),
-    (("VDRIP_STORAGE_DPB",), "Drive A disk parameter block."),
-    (("VDRIP_STORAGE_CODE_END",), "VDrip storage backend code end."),
+    (("STORAGE_A_CODE_START",), "Drive A: storage backend code start."),
+    (("stg_a_seldsk",), "Selects CP/M drive A and returns its DPH."),
+    (("stg_a_read",), "Reads one 128-byte record from the drive A: backend."),
+    (("stg_a_write",), "Writes one 128-byte record to the drive A: backend."),
+    (("STORAGE_A_DPH",), "Drive A disk parameter header."),
+    (("STORAGE_A_DPB",), "Drive A disk parameter block."),
+    (("STORAGE_A_CODE_END",), "Drive A: storage backend code end."),
     (("SIO_CORE_CODE_START",), "BIOS-owned SIO core code start in core BIOS."),
     (("CONSOLE_IM2_VECTOR_ENTRY",), "SIO core exact IM2 vector table entry address."),
     (("CONSOLE_IM2_VECTOR_TABLE_START",), "SIO core exact IM2 vector table start."),
@@ -185,9 +185,9 @@ RUNTIME_STATE = [
     ("MOVE_DST_PTR", 2),
     ("MOVE_REMAIN", 2),
     ("MOVE_CHUNK_LEN", 2),
-    ("vdrip_storage_selected_drive", 1),
-    ("vdrip_storage_track", 2),
-    ("vdrip_storage_sector", 2),
+    ("stg_a_selected_drive", 1),
+    ("stg_a_track", 2),
+    ("stg_a_sector", 2),
     ("VDRIP_STORAGE_SAVED_BANK", 1),
     ("vdrip_storage_seq", 1),
     ("vdrip_storage_active_seq", 1),
@@ -234,7 +234,7 @@ DRIVER_DECLARATIONS = [
     ("SD-card BIOS backend", "SD_STORAGE_CODE_START", "SD_STORAGE_CODE_END", 4, 5),
     ("Shared VDrip transport", "VDRIP_TRANSPORT_CODE_START", "VDRIP_TRANSPORT_CODE_END", 5, 5),
     ("SD select-probe success continuation", "SD_PROBE_SUCCESS_CODE_START", "SD_PROBE_SUCCESS_CODE_END", 5, 5),
-    ("VDrip storage backend", "VDRIP_STORAGE_CODE_START", "VDRIP_STORAGE_CODE_END", 5, 5),
+    ("Drive A: storage backend", "STORAGE_A_CODE_START", "STORAGE_A_CODE_END", 5, 5),
     ("SD select-probe result store", "SD_PROBE_RESULT_CODE_START", "SD_PROBE_RESULT_CODE_END", 5, 5),
 ]
 
@@ -368,6 +368,20 @@ def symbol_row(symbols: dict[str, int], names: tuple[str, ...], notes: str) -> s
     return f"| {label} | `{h4(address)}` | {notes} |"
 
 
+def optional_symbol_row(symbols: dict[str, int], names: tuple[str, ...],
+                        notes: str) -> str | None:
+    """Row for a symbol only some builds link.
+
+    Storage and console backends are chosen at build time (STORAGE_A in the
+    Makefile), so their private state exists in one build and not another.  A
+    missing symbol here means "that backend is not linked", not "the layout is
+    broken", so the row is dropped instead of failing the documentation step.
+    """
+    if names[0] not in symbols:
+        return None
+    return symbol_row(symbols, names, notes)
+
+
 def value_row(symbols: dict[str, int], name: str, notes: str) -> str:
     return f"| `{name}` | `{h2(require_symbol(symbols, name))}` | {notes} |"
 
@@ -401,7 +415,7 @@ def scratch_buffer_ranges(symbols: dict[str, int]) -> list[tuple[str, int, int, 
     dphdpb_limit = dphdpb_start + require_symbol(symbols, "VDRIP_STORAGE_DPHDPB_SIZE")
     dirbuf_start = require_symbol(symbols, "VDRIP_STORAGE_DIRBUF")
     dirbuf_limit = dirbuf_start + require_symbol(symbols, "DEFAULT_DMA_LEN")
-    alv_start = require_symbol(symbols, "VDRIP_STORAGE_ALV")
+    alv_start = require_symbol(symbols, "STORAGE_A_ALV")
     alv_limit = alv_start + require_symbol(symbols, "VDRIP_STORAGE_ALV_SIZE")
     sd_alv_start = require_symbol(symbols, "SD_STORAGE_ALV_BUFFER")
     sd_alv_limit = sd_alv_start + require_symbol(symbols, "VDRIP_STORAGE_ALV_SIZE")
@@ -409,7 +423,7 @@ def scratch_buffer_ranges(symbols: dict[str, int]) -> list[tuple[str, int, int, 
         ("MOVE_BUFFER", move_start, move_limit, "Cross-bank MOVE and VDrip storage transaction staging buffer."),
         ("VDRIP_STORAGE_DPHDPB", dphdpb_start, dphdpb_limit, "CP/M DPH/DPB constants for the VDrip storage disk."),
         ("VDRIP_STORAGE_DIRBUF", dirbuf_start, dirbuf_limit, "CP/M directory buffer referenced by the VDrip storage DPH."),
-        ("VDRIP_STORAGE_ALV", alv_start, alv_limit, "CP/M allocation vector for the fixed 8 MiB VDrip work disk."),
+        ("STORAGE_A_ALV", alv_start, alv_limit, "CP/M allocation vector for the drive A: volume."),
         ("SD_STORAGE_ALV", sd_alv_start, sd_alv_limit, "CP/M allocation vector for the fixed 8 MiB SD-card disk."),
     ]
 
@@ -792,7 +806,8 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
         lines.append(symbol_row(symbols, names, notes))
 
     lines.extend(
-        [
+        row
+        for row in [
             "",
             "## Runtime State Symbols",
             "",
@@ -818,13 +833,13 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             symbol_row(symbols, ("MOVE_CHUNK_LEN",), "Current cross-bank chunk length."),
             symbol_row(symbols, ("BANKING_STATE_END",), "Banking state end."),
             symbol_row(symbols, ("STORAGE_STATE_START",), "Storage state start."),
-            symbol_row(symbols, ("vdrip_storage_selected_drive",), "Selected storage drive, or `FFh` for unsupported."),
-            symbol_row(symbols, ("vdrip_storage_track",), "Selected CP/M track."),
-            symbol_row(symbols, ("vdrip_storage_sector",), "Selected 0-based CP/M sector."),
-            symbol_row(symbols, ("VDRIP_STORAGE_SAVED_BANK",), "Saved active bank for DMA copies."),
-            symbol_row(symbols, ("vdrip_storage_seq",), "VDrip storage sequence byte."),
-            symbol_row(symbols, ("vdrip_storage_active_seq",), "Sequence byte for the active storage transaction."),
-            symbol_row(symbols, ("vdrip_storage_lba",), "Computed little-endian 16-bit LBA for the active request."),
+            symbol_row(symbols, ("stg_a_selected_drive",), "Selected storage drive, or `FFh` for unsupported."),
+            symbol_row(symbols, ("stg_a_track",), "Selected CP/M track."),
+            symbol_row(symbols, ("stg_a_sector",), "Selected 0-based CP/M sector."),
+            optional_symbol_row(symbols, ("VDRIP_STORAGE_SAVED_BANK",), "Saved active bank for DMA copies."),
+            optional_symbol_row(symbols, ("vdrip_storage_seq",), "VDrip storage sequence byte."),
+            optional_symbol_row(symbols, ("vdrip_storage_active_seq",), "Sequence byte for the active storage transaction."),
+            optional_symbol_row(symbols, ("vdrip_storage_lba",), "Computed little-endian 16-bit LBA for the active request."),
             symbol_row(symbols, ("VDRIP_TRANSPORT_STATE_START",), "Shared Virtual Drip transport state start."),
             symbol_row(symbols, ("vdrip_rx_mode",), "Current raw/readiness/storage/PTY receive mode."),
             symbol_row(symbols, ("vdrip_idle_mode",), "Console backend idle receive mode."),
@@ -843,8 +858,7 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             symbol_row(symbols, ("vdrip_reply_status",), "Decoded storage or protocol status."),
             symbol_row(symbols, ("VDRIP_TRANSPORT_STATE_END",), "Shared Virtual Drip transport state end."),
             symbol_row(symbols, ("storage_caller_sp",), "Saved caller stack pointer while storage backends run on the BIOS stack."),
-            symbol_row(symbols, ("VDRIP_STORAGE_CSV",), "Zero-length fixed-disk check vector label."),
-            symbol_row(symbols, ("VDRIP_STORAGE_ALV",), "VDrip storage allocation vector."),
+            symbol_row(symbols, ("STORAGE_A_ALV",), "Drive A: allocation vector."),
             symbol_row(symbols, ("STORAGE_STATE_END",), "Storage state end."),
             symbol_row(symbols, ("SIO_CORE_STATE_START",), "BIOS-owned SIO core state start."),
             symbol_row(symbols, ("SIO0B_RX_SINK",), "Registered RX byte sink for SIO_CH_CONSOLE / SIO0/B."),
@@ -856,6 +870,7 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             symbol_row(symbols, ("SIO_CORE_STATE_END",), "BIOS-owned SIO core state end."),
             "",
         ]
+        if row is not None
     )
     args.symbol_map.write_text("\n".join(lines))
 
@@ -903,7 +918,7 @@ def write_memory_map(
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END")), "Driver slots 0-4", "Virtual Drip console in slots 0-2, IOC Bulk overflow in slot 3, and IOC Command transport beginning in slot 4."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END") + 1, require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE") - 1), "Packed driver extension", "IOC Command tail, SD select-probe request, SD-card backend, and USB keyboard state."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slot 5", "VDrip transport/storage plus SD probe continuations."),
-        range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch/storage buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `VDRIP_STORAGE_DPHDPB` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DPHDPB_BASE'))}`; `VDRIP_STORAGE_DIRBUF` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DIRBUF'))}`; `VDRIP_STORAGE_ALV` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_ALV'))}`."),
+        range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch/storage buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `VDRIP_STORAGE_DPHDPB` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DPHDPB_BASE'))}`; `VDRIP_STORAGE_DIRBUF` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DIRBUF'))}`; `STORAGE_A_ALV` is at `{h4(require_symbol(symbols, 'STORAGE_A_ALV'))}`."),
         range_row(span(runtime_start, runtime_end), "BIOS runtime state", "Current bank, DMA address, banking state, storage state, SIO core state, and console driver state."),
         range_row(span(stack_guard, area_end), "Protected firmware stack and work window", f"Stack top is `{h4(stack_top)}`; console backend stack top is `{h4(console_stack_top)}`; stack guard is `{h4(stack_guard)}`."),
         "",
@@ -939,7 +954,7 @@ def write_memory_map(
             contents = (
                 f"`{span(require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_START'), require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_END') - 1)}` shared transport; "
                 f"`{span(require_symbol(symbols, 'SD_PROBE_SUCCESS_CODE_START'), require_symbol(symbols, 'SD_PROBE_SUCCESS_CODE_END') - 1)}` SD probe success; "
-                f"`{span(require_symbol(symbols, 'VDRIP_STORAGE_CODE_START'), require_symbol(symbols, 'VDRIP_STORAGE_CODE_END') - 1)}` storage backend; "
+                f"`{span(require_symbol(symbols, 'STORAGE_A_CODE_START'), require_symbol(symbols, 'STORAGE_A_CODE_END') - 1)}` storage backend; "
                 f"`{span(require_symbol(symbols, 'SD_PROBE_RESULT_CODE_START'), require_symbol(symbols, 'SD_PROBE_RESULT_CODE_END') - 1)}` SD probe result store."
             )
         elif slot == 0:
@@ -1005,7 +1020,11 @@ def write_memory_map(
         ]
     )
     for name, size in RUNTIME_STATE:
-        start = require_symbol(symbols, name)
+        # Storage and console backends are build-time choices, so their private
+        # state symbols come and go.  Report what this build actually linked.
+        if name not in symbols:
+            continue
+        start = symbols[name]
         lines.append(f"| `{span(start, start + size - 1)}` | `{name}` |")
 
     lines.extend(
@@ -1089,7 +1108,7 @@ def write_memory_map(
             f"- WBOOT restores the CCP range `{span(require_symbol(symbols, 'CBASE'), require_symbol(symbols, 'FBASE') - 1)}` from ROM page 0 using `ROM_VISIBLE_BANK0` (`{h2(require_symbol(symbols, 'ROM_VISIBLE_BANK0'))}`) before returning to `CCP_CLEARBUF_ENTRY`.",
             f"- `CBIOS_BASE` is `{h4(cbios_base)}`; CBIOS layout constants are derived from this base.",
             f"- `CBIOS_CODE_LIMIT` is `{h4(code_limit)}`; no resident code may cross into scratch/staging.",
-            f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the Virtual Drip console driver starts at `{h4(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'))}`, the shared transport starts at `{h4(require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_START'))}`, and the VDrip storage backend starts at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_CODE_START'))}`.",
+            f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the Virtual Drip console driver starts at `{h4(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'))}`, the shared transport starts at `{h4(require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_START'))}`, and the drive A: storage backend starts at `{h4(require_symbol(symbols, 'STORAGE_A_CODE_START'))}`.",
             f"- `IOCALL` code is at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` in core BIOS; SIO1/B Command and SIO1/A Bulk use the same persistent-External-Sync common packet.",
             f"- `VIDEO_SEND` code is at `{h4(require_symbol(symbols, 'BIOS_EXT_CODE_START'))}` in core BIOS; raw VDP/display writes may desynchronize the V9958 logical-cell state.",
             f"- `WBOOT` resident code starts at `{h4(require_symbol(symbols, 'WBOOT_RESIDENT_START'))}`, inside protected high BIOS memory.",
