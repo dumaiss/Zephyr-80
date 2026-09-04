@@ -96,9 +96,11 @@
 	.globl SIO_CORE_CODE_START,SIO_CORE_CODE_END
 	.globl SIO_CORE_STATE_START,SIO_CORE_STATE_END
 	.globl SIO0B_RX_SINK,SIO1_RX_SINK
+	.if VDRIP_TRANSPORT_LINKED
 	.globl SIO0B_LAST_RR1,SIO0B_LAST_RX_ERROR
-	.globl SIO_CORE_IRQ_ENABLED,SIO_CORE_IRQ_COUNT
-	.globl CONSOLE_IRQ_ENABLED,CONSOLE_IRQ_COUNT
+	.endif
+	.globl SIO_CORE_IRQ_ENABLED
+	.globl CONSOLE_IRQ_ENABLED
 	.globl CONSOLE_IM2_VECTOR_ENTRY
 	.globl CONSOLE_IM2_VECTOR_TABLE_START,CONSOLE_IM2_VECTOR_TABLE_END
 
@@ -172,8 +174,10 @@ sio_core_init:
 	ld (SIO0B_RX_SINK + 1),a
 	ld (SIO1_RX_SINK),a
 	ld (SIO1_RX_SINK + 1),a
+	.if VDRIP_TRANSPORT_LINKED
 	ld (SIO0B_LAST_RR1),a
 	ld (SIO0B_LAST_RX_ERROR),a
+	.endif
 
 	; WR0: channel reset.
 	ld a,#0x18
@@ -296,7 +300,7 @@ sio_console_disable_interrupts:
 ; vector." Stable vector behavior matters because CONSOLE_IM2_VECTOR_ENTRY is an
 ; exact two-byte table entry, not a table of status-modified vectors.
 ; Outputs:
-;   SIO_CORE_IRQ_ENABLED = 1, SIO_CORE_IRQ_COUNT = 0, A = BIOS_OK.
+;   SIO_CORE_IRQ_ENABLED = 1, A = BIOS_OK.
 ; Clobbers: AF.
 sio_core_enable_interrupts:
 	di
@@ -328,9 +332,6 @@ sio_core_enable_interrupts:
 	out (SIO_MASTER_CTRL_PORT),a
 	ld a,#SIO_WR9_MIE
 	out (SIO_MASTER_CTRL_PORT),a
-	xor a
-	ld (SIO_CORE_IRQ_COUNT),a
-	ld (SIO_CORE_IRQ_COUNT + 1),a
 	ld a,#0x01
 	ld (SIO_CORE_IRQ_ENABLED),a
 	ei
@@ -626,7 +627,7 @@ sio_core_rx_unlock:
 ;   Handle BIOS-owned SIO interrupt work and dispatch received bytes to the
 ;   registered channel sink. Today only SIO_CH_CONSOLE / SIO0/B is active.
 ; Outputs:
-;   SIO_CORE_IRQ_COUNT increments; RX bytes are dispatched if a sink exists.
+;   RX bytes are dispatched if a sink exists.
 ; Important invariants:
 ;   The ISR is bounded: it handles at most one RX byte at entry and at most one
 ;   more byte after RESET_HIGHEST_IUS. It never calls BDOS, does not block, does
@@ -636,10 +637,6 @@ sio_core_isr:
 	push bc
 	push de
 	push hl
-
-	ld hl,(SIO_CORE_IRQ_COUNT)
-	inc hl
-	ld (SIO_CORE_IRQ_COUNT),hl
 
 	call sio_core_isr_rx_once
 
@@ -712,21 +709,38 @@ SIO0B_DISCARD_RX_LOOP:
 SIO0B_DISCARD_RX_DONE:
 	ld a,#SIO_WR0_RESET_ERROR
 	out (SIO0B_CTRL_PORT),a
+	.if VDRIP_TRANSPORT_LINKED
 	xor a
 	ld (SIO0B_LAST_RR1),a
 	ld (SIO0B_LAST_RX_ERROR),a
+	.endif
 	ret
 
-; Record minimal SIO0/B RR1 diagnostics after a received byte is read.
+; Clear any SIO0/B receive error latch, and record it while something reads it.
+;
+; The error reset is FUNCTIONAL and stays in every build: a latched special
+; receive condition is cleared only by Error Reset, and SIO0/B interrupts are
+; enabled by cbios_boot.asm whatever console is linked.  Leaving a latch
+; standing would be a way to wedge SIO0/B RX, not a lost diagnostic.
+;
+; The two stored bytes ARE the diagnostic.  Their only reader is the VDrip
+; transport, which aborts a failed receive on SIO0B_LAST_RX_ERROR, so they are
+; assembled out of a build that does not link it.
+;
 ; In: C = received byte to preserve for the RX sink.
-; Out: C preserved, A clobbered.
+; Out: A = 0 (matching SIO_CH_CONSOLE for the dispatch that follows),
+;      C preserved.
 sio0b_record_rx_diag:
 	ld a,#0x01
 	out (SIO0B_CTRL_PORT),a
 	in a,(SIO0B_CTRL_PORT)
+	.if VDRIP_TRANSPORT_LINKED
 	ld (SIO0B_LAST_RR1),a
+	.endif
 	and #SIO_RR1_RX_ERROR_MASK
+	.if VDRIP_TRANSPORT_LINKED
 	ld (SIO0B_LAST_RX_ERROR),a
+	.endif
 	jr z,SIO0B_RX_DIAG_DONE
 	ld a,#SIO_WR0_RESET_ERROR
 	out (SIO0B_CTRL_PORT),a
@@ -785,13 +799,12 @@ SIO1_RX_SINK:
 SIO_CORE_IRQ_ENABLED:
 CONSOLE_IRQ_ENABLED:
 	.db 0x00
-SIO_CORE_IRQ_COUNT:
-CONSOLE_IRQ_COUNT:
-	.dw 0x0000
+	.if VDRIP_TRANSPORT_LINKED
 SIO0B_LAST_RR1:
 	.db 0x00
 SIO0B_LAST_RX_ERROR:
 	.db 0x00
+	.endif
 SIO_CORE_STATE_END:
 
 	.area CODE (ABS)

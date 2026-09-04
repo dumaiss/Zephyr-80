@@ -215,7 +215,6 @@ RUNTIME_STATE = [
     ("SIO0B_RX_SINK", 2),
     ("SIO1_RX_SINK", 2),
     ("SIO_CORE_IRQ_ENABLED", 1),
-    ("SIO_CORE_IRQ_COUNT", 2),
     ("SIO0B_LAST_RR1", 1),
     ("SIO0B_LAST_RX_ERROR", 1),
 ]
@@ -926,9 +925,8 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             symbol_row(symbols, ("SIO0B_RX_SINK",), "Registered RX byte sink for SIO_CH_CONSOLE / SIO0/B."),
             symbol_row(symbols, ("SIO1_RX_SINK",), "Registered RX byte sink slot for SIO_CH_IOCTRL / SIO1/A."),
             symbol_row(symbols, ("SIO_CORE_IRQ_ENABLED", "CONSOLE_IRQ_ENABLED"), "BIOS-owned SIO IRQ mode flag; legacy alias retained."),
-            symbol_row(symbols, ("SIO_CORE_IRQ_COUNT", "CONSOLE_IRQ_COUNT"), "BIOS-owned SIO ISR entry counter; legacy alias retained."),
-            symbol_row(symbols, ("SIO0B_LAST_RR1",), "Last SIO0/B RR1 value sampled after RX data read."),
-            symbol_row(symbols, ("SIO0B_LAST_RX_ERROR",), "Last masked SIO0/B RR1 receive-error bits."),
+            optional_symbol_row(symbols, ("SIO0B_LAST_RR1",), "Last SIO0/B RR1 value sampled after RX data read; linked only with the VDrip transport, its sole reader."),
+            optional_symbol_row(symbols, ("SIO0B_LAST_RX_ERROR",), "Last masked SIO0/B RR1 receive-error bits; linked only with the VDrip transport, its sole reader."),
             symbol_row(symbols, ("SIO_CORE_STATE_END",), "BIOS-owned SIO core state end."),
             "",
         ]

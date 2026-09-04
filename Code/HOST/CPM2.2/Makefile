@@ -40,9 +40,11 @@ CONSOLE_SRC := $(SRC_DIR)/cbios_console_$(CONSOLE).asm
 ifeq ($(CONSOLE),vdrip)
 VDRIP_TRANSPORT_SRC := $(SRC_DIR)/vdrip_transport.asm
 VDRIP_TRANSPORT_INCLUDE := .include "vdrip_transport.asm"
+VDRIP_TRANSPORT_LINKED := 1
 else
 VDRIP_TRANSPORT_SRC :=
 VDRIP_TRANSPORT_INCLUDE :=
+VDRIP_TRANSPORT_LINKED := 0
 endif
 
 ASFLAGS ?= -o -l -s
@@ -84,6 +86,11 @@ LAYOUT_MANIFEST ?= $(BUILD_DIR)/layout.manifest
 LAYOUT_REPORT ?= $(BUILD_DIR)/layout-report.md
 SYMBOL_MAP_DOC ?= $(DOCS_DIR)/symbol-map.md
 MEMORY_MAP_DOC ?= $(DOCS_DIR)/memory-map.md
+
+# The CP/M tools read the IOC failure record at fixed addresses through this
+# mirror of the layout in cbios_defs.inc.  Two hand-maintained copies have
+# already drifted once; check_diag_record.py is what notices.
+DIAG_RECORD_MIRROR ?= ../HelloWorld/src/ioc_diag_record.inc
 
 IMAGE_TOOL := $(TOOLS_DIR)/build_zephyr_image.py
 ROM_DISK_TOOL := $(TOOLS_DIR)/build_rom_disk.py
@@ -158,6 +165,7 @@ $(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm $(CPM22_ASXXXX_SRC) Makefile FORCE | $(BU
 	sed \
 		-e 's|\.include "../cpm-2.2/src/cpm22.asm"|.include "cpm22_asxxxx.asm"|' \
 		-e 's|\.include "vdrip_transport.asm"|$(VDRIP_TRANSPORT_INCLUDE)|' \
+		-e 's|^VDRIP_TRANSPORT_LINKED = 1$$|VDRIP_TRANSPORT_LINKED = $(VDRIP_TRANSPORT_LINKED)|' \
 		-e 's|\.include "cbios_console_vdrip.asm"|.include "cbios_console_$(CONSOLE).asm"|' \
 		-e 's|\.include "cbios_storage_vdrip.asm"|.include "cbios_storage_$(STORAGE_A).asm"|' \
 		"$<" > "$@"
@@ -168,6 +176,8 @@ $(FIRMWARE_REL): $(FIRMWARE_SRC) $(RUNTIME_SRCS) $(CPM22_ASXXXX_SRC) $(CPM22_SRC
 $(FIRMWARE_IHX): $(FIRMWARE_REL)
 	$(SDLDZ80) $(LDFLAGS) $@ $<
 	$(PYTHON) $(TOOLS_DIR)/check_overlap.py "$@" --symbols "$(FIRMWARE_SYM)"
+	$(PYTHON) $(TOOLS_DIR)/check_diag_record.py \
+		--defs "$(SRC_DIR)/cbios_defs.inc" --mirror "$(DIAG_RECORD_MIRROR)"
 
 $(FIRMWARE_BIN): $(FIRMWARE_IHX)
 	$(MAKEBIN) $(MAKEBIN_FLAGS) $< $@

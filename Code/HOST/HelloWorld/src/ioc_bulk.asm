@@ -52,16 +52,7 @@ BDOS_PRINT	= 0x09
 IOCALL		= 0xDA3F	; BIOS extended entry: IOC compatibility transport
 IOCBULK		= 0xDA45	; BIOS extended entry: common-packet bulk receive
 
-IOC_BULK_DIAG_REASON	= 0xDCCE
-IOC_BULK_DIAG_COUNT	= 0xDCCF
-IOC_BULK_DIAG_SCAN	= 0xDCD0
-IOC_BULK_DIAG_HEADER	= 0xDCD8
-IOC_BULK_DIAG_RR0	= 0xDCDD
-IOC_BULK_DIAG_RR1	= 0xDCDE
-IOC_BULK_DIAG_SYNCED	= 0xDCDF
-IOC_BULK_DIAG_EXPECT_LEN = 0xDCE0
-IOC_BULK_DIAG_EXPECT_TYPE = 0xDCE2
-IOC_BULK_DIAG_EXPECT_SEQ = 0xDCE3
+	.include "ioc_diag_record.inc"
 
 CMD_BULK_TEST	= 0x04
 RSP_BULK_TEST	= 0x84
@@ -558,56 +549,37 @@ report_bulk_diag:
 	ld de,#msg_diag_reason
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_REASON)
+	ld a,(IOC_DIAG_BULK_REASON)
 	call print_hex_byte
-	ld de,#msg_diag_count
-	ld c,#BDOS_PRINT
-	call BDOS
-	ld a,(IOC_BULK_DIAG_COUNT)
-	call print_hex_byte
-	ld de,#msg_diag_scan
-	ld c,#BDOS_PRINT
-	call BDOS
-	ld hl,#IOC_BULK_DIAG_SCAN
-	ld b,#1
-	call dump_diag_bytes
-	ld de,#msg_diag_header
-	ld c,#BDOS_PRINT
-	call BDOS
-	ld hl,#IOC_BULK_DIAG_HEADER
-	ld b,#5
-	call dump_diag_bytes
 	ld de,#msg_diag_rr
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_RR0)
+	ld a,(IOC_DIAG_RR0)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_RR1)
+	ld a,(IOC_DIAG_RR1)
 	call print_hex_byte
 	ld de,#msg_diag_sync
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_SYNCED)
+	ld a,(IOC_DIAG_BULK_SYNCED)
 	call print_hex_byte
-	ld de,#msg_diag_expect
+	ld de,#msg_diag_xfer
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_EXPECT_LEN + 1)
-	call print_hex_byte
-	ld a,(IOC_BULK_DIAG_EXPECT_LEN)
+	ld a,(IOC_DIAG_BULK_TYPE)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_EXPECT_TYPE)
+	ld a,(IOC_DIAG_BULK_SEQ)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_EXPECT_SEQ)
+	ld a,(IOC_DIAG_BULK_STATUS)
 	call print_hex_byte
 	ld de,#msg_crlf
 	ld c,#BDOS_PRINT
@@ -764,23 +736,14 @@ msg_profile_err:
 msg_diag_reason:
 	.ascii "bulk diag reason="
 	.db '$'
-msg_diag_count:
-	.ascii " count="
-	.db '$'
-msg_diag_scan:
-	.ascii " last"
-	.db '$'
-msg_diag_header:
-	.ascii " hdr"
-	.db '$'
 msg_diag_rr:
 	.ascii " rr="
 	.db '$'
 msg_diag_sync:
-	.ascii " sync="
+	.ascii " bsync="
 	.db '$'
-msg_diag_expect:
-	.ascii " exp(len/type/seq)="
+msg_diag_xfer:
+	.ascii " xfer(type/seq/status)="
 	.db '$'
 msg_pic_sync:
 	.ascii "PIC bulk sync decision="

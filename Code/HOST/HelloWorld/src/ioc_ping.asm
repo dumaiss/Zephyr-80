@@ -28,15 +28,13 @@ BDOS		= 0x0005
 BDOS_CONOUT	= 0x02		; output char in E; no useful return
 BDOS_PRINT	= 0x09
 CMD_PROFILE	= 0x0B
-; Fixed-address link diagnostic block written by the BIOS when a reply never
-; arrives.  Read directly, because a broken link cannot answer a query.
-IOC_DIAG_BASE	= 0xDCC0
 RSP_PROFILE	= 0x8B		; print '$'-terminated string at DE
 IOCALL		= 0xDA3F	; BIOS extended entry: IOC compatibility transport
 
 CMD_PING	= 0x01
 RSP_PING	= 0x81
 	.include "ioc_levels.inc"
+	.include "ioc_diag_record.inc"
 
 start:
 	ld de,#msg_banner
@@ -250,47 +248,63 @@ prof_bad:
 	call BDOS
 	ret
 
-; The fixed-address block the BIOS fills in when a reply never arrives.  Always
-; printed: it costs four lines and it is the only evidence available when the
-; link is too broken to answer anything.
+; The fixed-address record the BIOS fills in on a transport failure.  Read
+; directly, because a link too broken to answer a PING can still be described.
+;
+; STATUS = 00h means nothing has failed since the record was last written.  In
+; that state every other field is stale, so none of them are printed.  The
+; previous version of this report printed all fields unconditionally --
+; including eight bytes labelled "first 8 non-FF bytes" that no BIOS code ever
+; wrote.  They read as zeros, which said "the line was silent" no matter what
+; had actually happened on the wire.
 say_link_diag:
-	ld de,#msg_diag
-	ld a,(IOC_DIAG_BASE + 0)
+	ld a,(IOC_DIAG_STATUS)
+	or a
+	jr nz,sld_have
+	ld de,#msg_diag_none
+	ld c,#BDOS_PRINT
+	jp BDOS
+sld_have:
+	ld de,#msg_diag_status
 	call say_byte
-	ld de,#msg_diag1
-	ld a,(IOC_DIAG_BASE + 1)
+	ld a,(IOC_DIAG_LANE)
+	ld de,#msg_diag_lane
 	call say_byte
-	ld de,#msg_diag2
-	ld a,(IOC_DIAG_BASE + 2)
+	ld a,(IOC_DIAG_RR0)
+	ld de,#msg_diag_rr0
 	call say_byte
-	ld de,#msg_diag3
-	ld a,(IOC_DIAG_BASE + 3)
+	ld a,(IOC_DIAG_RR1)
+	ld de,#msg_diag_rr1
 	call say_byte
-	ld de,#msg_diag4
-	ld a,(IOC_DIAG_BASE + 4)
+	ld a,(IOC_DIAG_READY)
+	ld de,#msg_diag_ready
+	call say_byte
+	ld a,(IOC_DIAG_SYNCED)
+	ld de,#msg_diag_synced
+	call say_byte
+	ld a,(IOC_DIAG_BULK_SYNCED)
+	ld de,#msg_diag_bsync
+	call say_byte
+	ld a,(IOC_DIAG_SEQ)
+	ld de,#msg_diag_seq
 	call say_byte
 
-	ld de,#msg_diag5
-	ld c,#BDOS_PRINT
-	call BDOS
-	ld hl,#(IOC_DIAG_BASE + 5)
-	ld b,#8
-sld_loop:
-	push bc
-	push hl
-	ld e,#0x20
-	ld c,#BDOS_CONOUT
-	call BDOS
-	pop hl
-	ld a,(hl)
-	push hl
-	call print_hex_byte
-	pop hl
-	inc hl
-	pop bc
-	djnz sld_loop
-	ld de,#msg_diag6
-	ld a,(IOC_DIAG_BASE + 13)
+	; The Bulk fields describe a Bulk packet rejection.  A reason of zero says
+	; this failure was not one, so printing the rest would attribute an older
+	; transfer's identity to it.
+	ld a,(IOC_DIAG_BULK_REASON)
+	or a
+	ret z
+	ld de,#msg_diag_breason
+	call say_byte
+	ld a,(IOC_DIAG_BULK_TYPE)
+	ld de,#msg_diag_btype
+	call say_byte
+	ld a,(IOC_DIAG_BULK_SEQ)
+	ld de,#msg_diag_bseq
+	call say_byte
+	ld a,(IOC_DIAG_BULK_STATUS)
+	ld de,#msg_diag_bstatus
 	call say_byte
 	ret
 
@@ -468,7 +482,9 @@ msg_bad_reply:
 	.ascii " - unexpected reply 0x"
 	.db '$'
 msg_stale_bios:
-	.ascii " - BIOS transport level mismatch (need 07)"
+	.ascii " - BIOS transport level mismatch (need "
+	.db ZBIOS_XPORT_LEVEL_HEX_HI,ZBIOS_XPORT_LEVEL_HEX_LO
+	.ascii ")"
 	.db 0x0d, 0x0a, '$'
 msg_stale_fw:
 	.ascii " - controller firmware level mismatch (need "
@@ -502,14 +518,33 @@ msg_aborts:	.ascii "  .. aborted, no frame    : $"
 msg_sdtr:	.db 13,10
 		.ascii "  SD SPI trace          :$"
 msg_proferr:	.ascii "  PROFILE failed$"
-msg_diag:	.db 13,10
-		.ascii "  link RR0 (b4=hunting)  : $"
-msg_diag1:	.ascii "  link RR1 (rx errors)  : $"
-msg_diag2:	.ascii "  ioc_rx_synced         : $"
-msg_diag3:	.ascii "  ioc_link_ready        : $"
-msg_diag4:	.ascii "  scan budget left (A0) : $"
-msg_diag5:	.ascii "  first 8 non-FF bytes  :$"
-msg_diag6:	.ascii "  .. count captured     : $"
+msg_diag_none:	.db 13,10
+		.ascii "  last link failure     : none recorded"
+		.db 13,10,'$'
+msg_diag_status: .db 13,10
+		.ascii "  last failure status   : $"
+msg_diag_lane:	.db 13,10
+		.ascii "  .. lane (00=cmd 01=blk): $"
+msg_diag_rr0:	.db 13,10
+		.ascii "  .. RR0 (b4=hunting)   : $"
+msg_diag_rr1:	.db 13,10
+		.ascii "  .. RR1 (rx errors)    : $"
+msg_diag_ready:	.db 13,10
+		.ascii "  .. ioc_link_ready     : $"
+msg_diag_synced: .db 13,10
+		.ascii "  .. ioc_rx_synced      : $"
+msg_diag_bsync:	.db 13,10
+		.ascii "  .. bulk ever synced   : $"
+msg_diag_seq:	.db 13,10
+		.ascii "  .. transaction seq    : $"
+msg_diag_breason: .db 13,10
+		.ascii "  .. bulk reject stage  : $"
+msg_diag_btype:	.db 13,10
+		.ascii "  .. bulk xfer type     : $"
+msg_diag_bseq:	.db 13,10
+		.ascii "  .. bulk xfer seq      : $"
+msg_diag_bstatus: .db 13,10
+		.ascii "  .. bulk hdr status    : $"
 msg_crlf:
 	.db 0x0d, 0x0a, '$'
 msg_rx_dump:

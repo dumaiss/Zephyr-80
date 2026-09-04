@@ -50,17 +50,8 @@ IOCALL		= 0xDA3F
 IOCBULK		= 0xDA45
 IOCBULKW	= 0xDA48
 	.include "ioc_levels.inc"
+	.include "ioc_diag_record.inc"
 
-IOC_BULK_DIAG_REASON	= 0xDCCE
-IOC_BULK_DIAG_COUNT	= 0xDCCF
-IOC_BULK_DIAG_SCAN	= 0xDCD0
-IOC_BULK_DIAG_HEADER	= 0xDCD8
-IOC_BULK_DIAG_RR0	= 0xDCDD
-IOC_BULK_DIAG_RR1	= 0xDCDE
-IOC_BULK_DIAG_SYNCED	= 0xDCDF
-IOC_BULK_DIAG_EXPECT_LEN = 0xDCE0
-IOC_BULK_DIAG_EXPECT_TYPE = 0xDCE2
-IOC_BULK_DIAG_EXPECT_SEQ = 0xDCE3
 
 CMD_PING		  = 0x01
 RSP_PING		  = 0x81
@@ -846,53 +837,41 @@ rp_done:
 ; Fixed-RAM trace captured by IOCBULK before it returns a transport error.
 report_bulk_transport_diag:
 	ld de,#msg_bulk_diag_reason
-	call puts
-	ld a,(IOC_BULK_DIAG_REASON)
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(IOC_DIAG_BULK_REASON)
 	call print_hex_byte
-	ld de,#msg_bulk_diag_count
-	call puts
-	ld a,(IOC_BULK_DIAG_COUNT)
-	call print_hex_byte
-	ld de,#msg_bulk_diag_scan
-	call puts
-	ld hl,#IOC_BULK_DIAG_SCAN
-	ld b,#1
-	call dump_bytes
-	ld de,#msg_bulk_diag_header
-	call puts
-	ld hl,#IOC_BULK_DIAG_HEADER
-	ld b,#5
-	call dump_bytes
 	ld de,#msg_bulk_diag_rr
-	call puts
-	ld a,(IOC_BULK_DIAG_RR0)
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(IOC_DIAG_RR0)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_RR1)
+	ld a,(IOC_DIAG_RR1)
 	call print_hex_byte
 	ld de,#msg_bulk_diag_sync
-	call puts
-	ld a,(IOC_BULK_DIAG_SYNCED)
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(IOC_DIAG_BULK_SYNCED)
 	call print_hex_byte
-	ld de,#msg_bulk_diag_expect
-	call puts
-	ld a,(IOC_BULK_DIAG_EXPECT_LEN + 1)
-	call print_hex_byte
-	ld a,(IOC_BULK_DIAG_EXPECT_LEN)
+	ld de,#msg_bulk_diag_xfer
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,(IOC_DIAG_BULK_TYPE)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_EXPECT_TYPE)
+	ld a,(IOC_DIAG_BULK_SEQ)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_EXPECT_SEQ)
+	ld a,(IOC_DIAG_BULK_STATUS)
 	call print_hex_byte
-	jp crlf
+	ret
 
 ; B bytes at HL, prefixed with spaces.
 dump_bytes:
@@ -1042,23 +1021,14 @@ msg_info:
 msg_bulk_diag_reason:
 	.ascii "  bulk reason="
 	.db '$'
-msg_bulk_diag_count:
-	.ascii " count="
-	.db '$'
-msg_bulk_diag_scan:
-	.ascii " last"
-	.db '$'
-msg_bulk_diag_header:
-	.ascii " hdr"
-	.db '$'
 msg_bulk_diag_rr:
 	.ascii " rr="
 	.db '$'
 msg_bulk_diag_sync:
-	.ascii " sync="
+	.ascii " bsync="
 	.db '$'
-msg_bulk_diag_expect:
-	.ascii " exp(len/type/seq)="
+msg_bulk_diag_xfer:
+	.ascii " xfer(type/seq/status)="
 	.db '$'
 msg_lba:
 	.ascii " lba="

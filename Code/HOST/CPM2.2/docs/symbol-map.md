@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 51903 bytes |
+| Firmware symbol map | `build/firmware.map` | 52198 bytes |
 | Burnable image | `build/zephyr80.bin` | 262144 bytes |
 | Layout manifest | `build/layout.manifest` | 903 bytes |
 
@@ -127,22 +127,22 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |
 | `CONSOLE_IM2_VECTOR_TABLE_END` | `DD12h` | SIO core exact IM2 vector table end. |
 | `sio_core_init` | `DD15h` | Initializes BIOS-owned SIO services, SIO0/B async mode, and SIO1/A sync mode. |
-| `sio1_ioc_init` | `DD4Ah` | Initializes SIO1/A synchronous external-clock/external-sync IO Controller mode. |
-| `sio_core_enable_interrupts` | `DD8Eh` | Enables BIOS-owned SIO/IM2 interrupts. |
-| `sio_core_disable_interrupts` | `DDC7h` | Disables BIOS-owned SIO interrupts. |
-| `sio_register_rx_sink` | `DDE8h` | Registers one RX byte sink for a BIOS-owned SIO channel. |
-| `sio_send_byte` | `DDFDh` | Blocking send-byte API for BIOS-owned SIO channels. |
-| `sio_recv_byte` | `DE36h` | Polling receive-byte API for BIOS-owned SIO channels. |
-| `sio0b_rts_assert` | `DEDCh` | Asserts SIO0/B RTS for software-managed console RX flow control. |
-| `sio0b_rts_release` | `DEE6h` | Releases SIO0/B RTS for software-managed console RX flow control. |
-| `sio1_ioc_rts_assert` | `DE53h` | Asserts SIO1/A RTS as an IO Controller service request. |
-| `sio1_ioc_rts_release` | `DE5Dh` | Releases SIO1/A RTS after an IO Controller transaction. |
-| `sio1_ioc_put_byte` | `DE67h` | SIO1/A IO Controller byte transmit helper. |
-| `sio1_ioc_get_byte` | `DE6Ch` | SIO1/A IO Controller byte receive helper. |
-| `sio_rx_kick` | `DE71h` | Foreground RX poll/dispatch helper. |
-| `sio_core_isr` | `DEACh` | BIOS-owned SIO interrupt service routine. |
-| `sio_console_isr` | `DF4Ah` | Compatibility label that jumps to `sio_core_isr`. |
-| `SIO_CORE_CODE_END` | `DF4Dh` | BIOS-owned SIO core code end. |
+| `sio1_ioc_init` | `DD44h` | Initializes SIO1/A synchronous external-clock/external-sync IO Controller mode. |
+| `sio_core_enable_interrupts` | `DD88h` | Enables BIOS-owned SIO/IM2 interrupts. |
+| `sio_core_disable_interrupts` | `DDBAh` | Disables BIOS-owned SIO interrupts. |
+| `sio_register_rx_sink` | `DDDBh` | Registers one RX byte sink for a BIOS-owned SIO channel. |
+| `sio_send_byte` | `DDF0h` | Blocking send-byte API for BIOS-owned SIO channels. |
+| `sio_recv_byte` | `DE29h` | Polling receive-byte API for BIOS-owned SIO channels. |
+| `sio0b_rts_assert` | `DEC8h` | Asserts SIO0/B RTS for software-managed console RX flow control. |
+| `sio0b_rts_release` | `DED2h` | Releases SIO0/B RTS for software-managed console RX flow control. |
+| `sio1_ioc_rts_assert` | `DE46h` | Asserts SIO1/A RTS as an IO Controller service request. |
+| `sio1_ioc_rts_release` | `DE50h` | Releases SIO1/A RTS after an IO Controller transaction. |
+| `sio1_ioc_put_byte` | `DE5Ah` | SIO1/A IO Controller byte transmit helper. |
+| `sio1_ioc_get_byte` | `DE5Fh` | SIO1/A IO Controller byte receive helper. |
+| `sio_rx_kick` | `DE64h` | Foreground RX poll/dispatch helper. |
+| `sio_core_isr` | `DE9Fh` | BIOS-owned SIO interrupt service routine. |
+| `sio_console_isr` | `DF29h` | Compatibility label that jumps to `sio_core_isr`. |
+| `SIO_CORE_CODE_END` | `DF2Ch` | BIOS-owned SIO core code end. |
 | `IOCTRL_CODE_START` | `DF7Bh` | IOCALL transaction code start in core BIOS. |
 | `IOCALL` | `DF7Bh` | Zephyr extended BIOS IO Controller transaction call. |
 | `IOCTRL_CODE_END` | `DFEDh` | IOCALL transaction code end. |
@@ -150,12 +150,12 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `sd_probe_result` | `DFEDh` | Handles the SD select-probe result and returns no DPH on failure. |
 | `SD_PROBE_RECOVERY_CODE_END` | `DFFDh` | SD select-probe recovery code end. |
 | `IOC_CMD_CODE_START` | `F000h` | Common-packet Command-lane helper code start. |
-| `IOC_CMD_CODE_END` | `F41Bh` | Common-packet Command-lane helper code end. |
+| `IOC_CMD_CODE_END` | `F415h` | Common-packet Command-lane helper code end. |
 | `SD_PROBE_REQUEST_CODE_START` | `F41Bh` | SD select-probe request code start. |
 | `sd_storage_probe` | `F41Bh` | Issues the non-destructive SD block-zero availability probe. |
 | `SD_PROBE_REQUEST_CODE_END` | `F42Fh` | SD select-probe request code end. |
 | `IOC_BULK_CODE_START` | `ED00h` | Common-packet Bulk-write helper code start. |
-| `IOC_BULK_CODE_END` | `EF3Bh` | Common-packet Bulk-write helper code end. |
+| `IOC_BULK_CODE_END` | `EF3Dh` | Common-packet Bulk-write helper code end. |
 | `HID_INPUT_CODE_START` | `EF3Eh` | USB keyboard IOC polling helper code start. |
 | `HID_INPUT_CODE_END` | `EFFFh` | USB keyboard IOC polling helper code end. |
 | `HID_INPUT_STATE_START` | `F642h` | USB keyboard IOC mailbox and queue state start. |
@@ -220,7 +220,4 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `SIO0B_RX_SINK` | `FE70h` | Registered RX byte sink for SIO_CH_CONSOLE / SIO0/B. |
 | `SIO1_RX_SINK` | `FE72h` | Registered RX byte sink slot for SIO_CH_IOCTRL / SIO1/A. |
 | `SIO_CORE_IRQ_ENABLED` / `CONSOLE_IRQ_ENABLED` | `FE74h` | BIOS-owned SIO IRQ mode flag; legacy alias retained. |
-| `SIO_CORE_IRQ_COUNT` / `CONSOLE_IRQ_COUNT` | `FE75h` | BIOS-owned SIO ISR entry counter; legacy alias retained. |
-| `SIO0B_LAST_RR1` | `FE77h` | Last SIO0/B RR1 value sampled after RX data read. |
-| `SIO0B_LAST_RX_ERROR` | `FE78h` | Last masked SIO0/B RR1 receive-error bits. |
-| `SIO_CORE_STATE_END` | `FE79h` | BIOS-owned SIO core state end. |
+| `SIO_CORE_STATE_END` | `FE75h` | BIOS-owned SIO core state end. |

@@ -32,17 +32,11 @@
 	.globl ioc_command_send_frame,ioc_command_recv_frame
 	.globl ioc_link_init_once,ioc_rx_synced,ioc_link_ready
 	.globl ioc_bulk_synced
-	.globl ioc_diag_capture
 	.globl ioc_link_bringup
-	.globl IOC_DIAG_RR0,IOC_DIAG_RR1,IOC_DIAG_SYNCED,IOC_DIAG_READY
-	.globl IOC_DIAG_SCANLEFT
-	.globl IOC_DIAG_B0,IOC_DIAG_B1,IOC_DIAG_B2,IOC_DIAG_B3
-	.globl IOC_DIAG_B4,IOC_DIAG_B5,IOC_DIAG_B6,IOC_DIAG_B7,IOC_DIAG_BIDX
-	.globl IOC_DIAG_BULK_REASON,IOC_DIAG_BULK_COUNT
-	.globl IOC_DIAG_BULK_B0,IOC_DIAG_BULK_HEADER
-	.globl IOC_DIAG_BULK_RR0,IOC_DIAG_BULK_RR1,IOC_DIAG_BULK_SYNCED
-	.globl IOC_DIAG_BULK_EXPECT_LEN,IOC_DIAG_BULK_EXPECT_TYPE
-	.globl IOC_DIAG_BULK_EXPECT_SEQ
+	.globl IOC_DIAG_STATUS,IOC_DIAG_LANE,IOC_DIAG_RR0,IOC_DIAG_RR1
+	.globl IOC_DIAG_SYNCED,IOC_DIAG_READY,IOC_DIAG_BULK_SYNCED,IOC_DIAG_SEQ
+	.globl IOC_DIAG_BULK_REASON,IOC_DIAG_BULK_TYPE,IOC_DIAG_BULK_SEQ
+	.globl IOC_DIAG_BULK_STATUS
 	.globl IOCALL,MOVE_BUFFER
 	.globl IOCBULK,IOCBULKW
 	.globl ioc_crc_block,ioc_frame_stamp,ioc_packet_crc_mailbox
@@ -688,8 +682,11 @@ IOC_CMD_RECV_SYNC1:
 	jr z,IOC_CMD_RECV_SYNC1
 	djnz IOC_CMD_RECV_SYNC0
 IOC_CMD_RECV_BAD_FRAME_READY:
-	ld a,#IOC_XPORT_BAD_FRAME	; preamble not found in window
-	ret
+	; Same status and same record as a masked header rejection.  What separates
+	; "the preamble never arrived" from "the header arrived and was bad" is RR0
+	; bit 4 in the record: the receiver is still hunting only in the first case.
+	; That is why this no longer needs a scan-budget field to be diagnosable.
+	jp IOC_CMD_RECV_BAD_FRAME_MASKED
 
 ; The marker scan above runs with interrupts ENABLED: it is the WAIT for the
 ; MCU's reply, and that wait spans any card I/O the command triggered -- up to a
@@ -798,27 +795,40 @@ IOC_CMD_RECV_VERIFY:
 	xor a
 	ret
 
+; Every command-lane failure exit funnels through one tail so the record is
+; written on all of them, not just on marker timeout.  A STATUS field that is
+; only filled in on one of four paths is worse than none: it reads as current
+; whichever failure actually happened.
+;
+; The exits carry only their status code and fall into the shared tail, which
+; costs exactly what the four separate ei/ld/ret exits cost before.  Slot 4 ends
+; at F41Ah and sd_storage_probe starts at F41Bh, so this section cannot grow by
+; even one byte.
+;
+; ei is in the shared tail rather than at each exit.  The marker-scan path
+; reaches here with interrupts already enabled -- it is the WAIT -- and a
+; redundant ei is a no-op, so one instruction serves both entry conditions.
 IOC_CMD_RECV_BAD_CRC:
-	ei
 	ld a,#IOC_XPORT_BAD_CRC
-	ret
+	jr IOC_CMD_RECV_FAIL
 
 IOC_CMD_RECV_BAD_FRAME_MASKED:
-	ei
 	ld a,#IOC_XPORT_BAD_FRAME
-	ret
+	jr IOC_CMD_RECV_FAIL
 
 IOC_CMD_RECV_SYNC_TIMEOUT:
-	; Capture lives in the spare region: slot 4 is full and this is diagnostic
-	; code, which is exactly what belongs somewhere with room.
-	call ioc_diag_capture		; B = unused scan budget
 	ld a,#IOC_XPORT_TIMEOUT_REPLY_MARKER
-	ret
+	jr IOC_CMD_RECV_FAIL
 
 IOC_CMD_RECV_BODY_TIMEOUT:
-	ei
 	ld a,#IOC_XPORT_TIMEOUT_REPLY_BODY
-	ret
+
+; ioc_diag_capture returns with A still holding the status, so the tail is a
+; jump rather than a call and return.  Capture lives with the Bulk transport in
+; slot 3, which is where deleting the old traces made room for it.
+IOC_CMD_RECV_FAIL:
+	ei
+	jp ioc_diag_capture
 
 ; ---------------------------------------------------------------------------
 ; IOCBULK
@@ -889,7 +899,6 @@ IOCBULK_LEN_OK:
 	; Auto Enables is deliberately off: /DCDA is software admission, never a
 	; hardware action that disables the receiver and destroys character sync.
 IOCBULK_ARM:
-	call IOC_BULK_DIAG_RESET
 
 	; Interrupts OFF for the whole transfer.
 	;
@@ -1101,7 +1110,6 @@ IOCBULK_CTS_WAIT:
 	ret
 IOCBULK_OK:
 	ei
-	call IOC_BULK_DIAG_HEADER
 
 	; Bind the packet to the READY reply that authorized this phase.  This is
 	; deliberately after reception: the MCU does not stop after the header, so
@@ -1173,9 +1181,9 @@ IOCBULK_TIMEOUT:
 
 IOCBULK_BAD_PACKET:
 	call IOCBULK_RTS_OFF
-	call IOC_BULK_DIAG_FINISH
-	ei
 	ld a,#IOC_XPORT_BAD_FRAME
+	call ioc_bulk_diag_capture	; reads both SIO pointers; still masked
+	ei
 	ret
 
 	; Rejected before RTS was asserted, so there is no handshake to unwind.
@@ -1621,99 +1629,137 @@ ioc_lb_clear:
 	ld a,#IOC_XPORT_TIMEOUT
 	ret
 
+; Adjacent and in this order because ioc_diag_capture_common copies the pair
+; into the failure record with one ld hl,(nn).  Asserted below.
 ioc_link_ready:	.db 0
 ioc_rx_synced:	.db 0
+	.if (ioc_rx_synced - ioc_link_ready) - 1
+	.error 3			; capture copies these two as one 16-bit load
+	.endif
 
 ; ---------------------------------------------------------------------------
-; Bounded Bulk receive diagnostics.
+; ---------------------------------------------------------------------------
+; Link failure capture.
 ;
-; These helpers live in the overflow region so observing a rejection does not
-; consume the last bytes in the F000h command-transport slot.  They never run
-; in the timed byte stream: only before admission, after the stream has been
-; drained, or on the error exit.
+; Two entry points, one body.  Both fill the frozen 16-byte failure record at
+; CBIOS_IOC_DIAG_BASE; docs/ioc-diagnostic-record.md holds the contract.
+;
+; These live here, with the Bulk transport in slot 3, rather than in the core
+; BIOS spare region where the old capture routine sat.  Deleting the bring-up
+; traces they replace is what made room here, and keeping them out of core BIOS
+; is what leaves DCD0h-DD0Fh free for the core repack.
+;
+; Neither entry changes the interrupt state.  The register pointer is set and
+; read back as an out/in pair, and an ISR touching the same SIO between those
+; two instructions would silently redirect the read -- so masking stays the
+; caller's decision, exactly as it was before.
 ; ---------------------------------------------------------------------------
 
-; Start a fresh trace and retain the metadata supplied by the READY reply.
-; Clobbers: AF, BC, DE, HL.  Called before the transfer critical section.
-IOC_BULK_DIAG_RESET:
-	xor a
-	ld hl,#IOC_DIAG_BULK_REASON
-	ld b,#15			; reason, count, scan[8], header[5]
-IOC_BULK_DIAG_CLEAR:
-	ld (hl),a
-	inc hl
-	djnz IOC_BULK_DIAG_CLEAR
-	ld hl,(ioc_bulk_len)
-	ld de,#IOC_PACKET_FIXED_LEN
-	add hl,de			; expected common-packet LEN
-	ld (IOC_DIAG_BULK_EXPECT_LEN),hl
+; Command lane (SIO1/B).  In: A = IOC_XPORT_* status.  Out: A preserved.
+; Clobbers: C, E, flags -- all within ioc_command_recv_frame's declared set.
+ioc_diag_capture:
+	; LANE = command AND BULK_REASON = none, in one store.  The second half
+	; matters: this failure was not a Bulk packet rejection, so an older Bulk
+	; stage must not be left standing beside it as though it belonged here.
+	; The record's field order exists to make this a single instruction pair.
+	ld hl,#0x0000
+	ld (IOC_DIAG_LANE),hl
+	ld c,#SIO_COMMAND_CTRL_PORT
+	jr ioc_diag_capture_common
+
+; Bulk lane (SIO1/A).  In: A = IOC_XPORT_* status.  Out: A preserved.
+; The caller has already stored IOC_DIAG_BULK_REASON.
+;
+; BULK_TYPE/BULK_SEQ are the identity the data phase was bound to; BULK_STATUS
+; comes straight out of ioc_packet_header, which still holds the rejected
+; header -- so nothing has to be copied aside on the success path to have it
+; available here.  That is the whole of what the old header copy existed to do.
+ioc_bulk_diag_capture:
+	push af
+	ld a,#IOC_DIAG_LANE_BULK
+	ld (IOC_DIAG_LANE),a		; BULK_REASON is the caller's, already stored
 	ld a,(ioc_bulk_rx_type)
-	ld (IOC_DIAG_BULK_EXPECT_TYPE),a
+	ld (IOC_DIAG_BULK_TYPE),a
 	ld a,(ioc_bulk_rx_seq)
-	ld (IOC_DIAG_BULK_EXPECT_SEQ),a
-	ret
+	ld (IOC_DIAG_BULK_SEQ),a
+	ld a,(ioc_packet_header + 4)
+	ld (IOC_DIAG_BULK_STATUS),a
+	pop af
+	ld c,#SIO_BULK_CTRL_PORT
 
-; Copy the fully received LEN/TYPE/SEQ/STATUS header to fixed diagnostic RAM.
-; Clobbers: BC, DE, HL.
-IOC_BULK_DIAG_HEADER:
-	ld hl,#ioc_packet_header
-	ld de,#IOC_DIAG_BULK_HEADER
-	ld bc,#5
-	ldir
-	ret
+; In: A = status, C = failing lane's control port, LANE already stored.
+ioc_diag_capture_common:
+	ld (IOC_DIAG_STATUS),a
+	push af
 
-; Snapshot the SIO state on a rejected packet.  WR0 and WR1 are read only;
-; the receiver is neither disabled nor returned to Hunt.
-; Clobbers: AF.
-IOC_BULK_DIAG_FINISH:
+	; RR0 bit 4 is Sync/Hunt: 1 = the receiver is STILL HUNTING, i.e. the MCU's
+	; falling /SYNC edge never landed.  That bit separates a marker that never
+	; arrived from one that arrived and was rejected, which is why dropping the
+	; scan-budget byte loses nothing.
 	xor a
-	out (SIO_BULK_CTRL_PORT),a
-	in a,(SIO_BULK_CTRL_PORT)
-	ld (IOC_DIAG_BULK_RR0),a
+	out (c),a			; point at RR0
+	in a,(c)
+	ld (IOC_DIAG_RR0),a
 	ld a,#0x01
-	out (SIO_BULK_CTRL_PORT),a
-	in a,(SIO_BULK_CTRL_PORT)
-	ld (IOC_DIAG_BULK_RR1),a
+	out (c),a			; point at RR1
+	in a,(c)
+	ld (IOC_DIAG_RR1),a
+
+	; ioc_link_ready and ioc_rx_synced are adjacent, in that order, and the
+	; record's READY/SYNCED pair mirrors them -- so both copy in one load and
+	; one store.  Moving either pair apart silently costs six bytes that slot 3
+	; does not have.
+	ld hl,(ioc_link_ready)
+	ld (IOC_DIAG_READY),hl
+
+	; Sticky state, not an event: whether the Bulk lane has EVER completed a
+	; CRC-verified transfer is the only evidence its character boundary was
+	; established, and that is worth having on a command failure too.
 	ld a,(ioc_bulk_synced)
 	ld (IOC_DIAG_BULK_SYNCED),a
+
+	; Correlates this failure with the controller's view of the same exchange.
+	ld a,(ioc_seq)
+	ld (IOC_DIAG_SEQ),a
+
+	pop af
 	ret
 
-; Error-02 rejection stages:
-;   1 invalid caller length, 2 marker absent, 3 LEN, 4 TYPE, 5 SEQ, 6 STATUS.
+; Rejection stages.  The scan count and last-scanned byte are gone: the lane's
+; character alignment is established, so WHICH STAGE rejected is the answer,
+; not which byte the scan stopped on.
 IOC_BULK_REJECT_MARKER:
-	ld (IOC_DIAG_BULK_B0),a		; last byte considered before exhaustion
-	ld a,#IOC_BULK_PACKET_SCAN_LIMIT
-	ld (IOC_DIAG_BULK_COUNT),a
-	ld a,#2
+	ld a,#IOC_BULK_REASON_MARKER
 	jr IOC_BULK_REJECT_PACKET
 IOC_BULK_REJECT_LENGTH:
-	ld a,#3
+	ld a,#IOC_BULK_REASON_LEN
 	jr IOC_BULK_REJECT_PACKET
 IOC_BULK_REJECT_TYPE:
-	ld a,#4
+	ld a,#IOC_BULK_REASON_TYPE
 	jr IOC_BULK_REJECT_PACKET
 IOC_BULK_REJECT_SEQ:
-	ld a,#5
+	ld a,#IOC_BULK_REASON_SEQ
 	jr IOC_BULK_REJECT_PACKET
 IOC_BULK_REJECT_STATUS:
-	ld a,#6
+	ld a,#IOC_BULK_REASON_STATUS
 IOC_BULK_REJECT_PACKET:
 	ld (IOC_DIAG_BULK_REASON),a
 	jp IOCBULK_BAD_PACKET
 
+; Rejected before RTS was asserted: nothing reached the wire, so the SIO state
+; the record captures is the idle lane.  That is the honest reading of it.
 IOC_BULK_REJECT_INPUT:
-	ld a,#1
+	ld a,#IOC_BULK_REASON_INPUT
 	ld (IOC_DIAG_BULK_REASON),a
 	ld a,#IOC_XPORT_BAD_FRAME
-	ret
+	jp ioc_bulk_diag_capture
 
 ; The lane is already released and interrupts restored before CRC comparison.
 IOC_BULK_REJECT_CRC:
-	ld a,#7
+	ld a,#IOC_BULK_REASON_CRC
 	ld (IOC_DIAG_BULK_REASON),a
-	call IOC_BULK_DIAG_FINISH
 	ld a,#IOC_XPORT_BAD_CRC
-	ret
+	jp ioc_bulk_diag_capture
 
 ; Receive the five-byte common header without falling behind the MCU's Bulk
 ; byte rate.  A single whole-header timeout budget replaces five call/return

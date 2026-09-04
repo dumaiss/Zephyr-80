@@ -8,6 +8,12 @@
 	.include "platform_zephyr80.inc"
 	.include "cbios_defs.inc"
 
+; Whether the shared VDrip transport is linked into this build.  The Makefile
+; rewrites this line alongside the .include it tracks, and it must be defined
+; before sio_core.asm so the SIO0/B diagnostics can be assembled out of a build
+; that has no reader for them.  This source stays the VDrip template, so 1.
+VDRIP_TRANSPORT_LINKED = 1
+
 	.globl cpm_rom_entry_high
 	.globl boot,wboot
 	.globl IOCBULK

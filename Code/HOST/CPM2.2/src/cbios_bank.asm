@@ -17,18 +17,13 @@
 	.globl CURRENT_BANK,cbios_dma_addr
 	.globl WBOOT,FBASE
 	
-	.globl ctc_disable_interrupts,ioc_diag_capture
+	.globl ctc_disable_interrupts
 	.globl ioc_bulk_synced
 	.globl ioc_rx_synced,ioc_link_ready
-	.globl IOC_DIAG_RR0,IOC_DIAG_RR1,IOC_DIAG_SYNCED,IOC_DIAG_READY
-	.globl IOC_DIAG_SCANLEFT
-	.globl IOC_DIAG_B0,IOC_DIAG_B1,IOC_DIAG_B2,IOC_DIAG_B3
-	.globl IOC_DIAG_B4,IOC_DIAG_B5,IOC_DIAG_B6,IOC_DIAG_B7,IOC_DIAG_BIDX
-	.globl IOC_DIAG_BULK_REASON,IOC_DIAG_BULK_COUNT
-	.globl IOC_DIAG_BULK_B0,IOC_DIAG_BULK_HEADER
-	.globl IOC_DIAG_BULK_RR0,IOC_DIAG_BULK_RR1,IOC_DIAG_BULK_SYNCED
-	.globl IOC_DIAG_BULK_EXPECT_LEN,IOC_DIAG_BULK_EXPECT_TYPE
-	.globl IOC_DIAG_BULK_EXPECT_SEQ
+	.globl IOC_DIAG_STATUS,IOC_DIAG_LANE,IOC_DIAG_RR0,IOC_DIAG_RR1
+	.globl IOC_DIAG_SYNCED,IOC_DIAG_READY,IOC_DIAG_BULK_SYNCED,IOC_DIAG_SEQ
+	.globl IOC_DIAG_BULK_REASON,IOC_DIAG_BULK_TYPE,IOC_DIAG_BULK_SEQ
+	.globl IOC_DIAG_BULK_STATUS
 
 	.area CODE (ABS)
 	.org CBIOS_BANKING_CODE_BASE
@@ -226,64 +221,51 @@ ctc_disable_interrupts:
 
 	.area CODE (ABS)
 	.org CBIOS_IOC_DIAG_BASE
+; IOC link failure record.  Layout, reading rules and rationale are frozen in
+; cbios_defs.inc and docs/ioc-diagnostic-record.md; this is only the storage.
+;
+; Written by ioc_diag_capture / ioc_bulk_diag_capture, which live with the Bulk
+; transport in slot 3 rather than here.  They were moved there because that is
+; where deleting the old bring-up traces freed the room, and keeping them out of
+; core BIOS is what turns this cleanup into usable headroom at DCD0h.
+;
+; STATUS = 00h means no failure has been recorded.  Every other field is stale
+; in that state and a reader must not present it as current.
+IOC_DIAG_STATUS:	.db 0
+; LANE and BULK_REASON are adjacent so the command lane clears both with one
+; 16-bit store.  Do not separate them.
+IOC_DIAG_LANE:		.db 0
+IOC_DIAG_BULK_REASON:	.db 0
 IOC_DIAG_RR0:		.db 0
 IOC_DIAG_RR1:		.db 0
-IOC_DIAG_SYNCED:	.db 0
+; READY then SYNCED, matching the order of ioc_link_ready / ioc_rx_synced in
+; memory so one ld hl,(nn) / ld (nn),hl copies the pair.  Do not reorder.
 IOC_DIAG_READY:		.db 0
-; Scan budget REMAINING when the reply timed out.  SIO_COMMAND_REPLY_SCAN_LIMIT
-; minus this is how many bytes actually arrived before the link went quiet, and
-; that separates "the reply never came" from "the reply came and the marker was
-; missed" -- which need opposite fixes.
-IOC_DIAG_SCANLEFT:	.db 0
-; First eight bytes the reply scan actually saw, and the index used to fill
-; them.  If the character boundary is wrong A5h/5Ah and the following header
-; appear bit-rotated.  Nothing else distinguishes "wrong alignment" from
-; "wrong bytes" when the marker is never accepted.
-IOC_DIAG_B0:		.db 0
-IOC_DIAG_B1:		.db 0
-IOC_DIAG_B2:		.db 0
-IOC_DIAG_B3:		.db 0
-IOC_DIAG_B4:		.db 0
-IOC_DIAG_B5:		.db 0
-IOC_DIAG_B6:		.db 0
-IOC_DIAG_B7:		.db 0
-IOC_DIAG_BIDX:		.db 0
-
-; Bounded SIO1/A receive rejection trace.  Error 02 otherwise merges "marker
-; absent" with every header-field mismatch, which makes a scope the only way
-; to distinguish character alignment from bad metadata.  On marker exhaustion
-; COUNT is the scan limit and B0 is the last byte considered; B1..B7 are
-; reserved.  HEADER is populated after the complete wire stream is drained.
-IOC_DIAG_BULK_REASON:	.db 0
-IOC_DIAG_BULK_COUNT:	.db 0
-IOC_DIAG_BULK_B0:	.db 0
-			.ds 7
-IOC_DIAG_BULK_HEADER:	.ds 5
-IOC_DIAG_BULK_RR0:	.db 0
-IOC_DIAG_BULK_RR1:	.db 0
+IOC_DIAG_SYNCED:	.db 0
 IOC_DIAG_BULK_SYNCED:	.db 0
-IOC_DIAG_BULK_EXPECT_LEN:	.dw 0
-IOC_DIAG_BULK_EXPECT_TYPE:	.db 0
-IOC_DIAG_BULK_EXPECT_SEQ:	.db 0
+IOC_DIAG_SEQ:		.db 0
+IOC_DIAG_BULK_TYPE:	.db 0
+IOC_DIAG_BULK_SEQ:	.db 0
+IOC_DIAG_BULK_STATUS:	.db 0
+			; Explicit zeros, not .ds: the contract publishes these as
+			; reading zero, and .ds leaves them at the FFh ROM fill.
+			; The size assertion below catches a length change.
+			.db 0,0,0,0
+IOC_DIAG_RECORD_END:
 
-; Record why a reply never arrived.  In: B = unused scan budget.
-; Clobbers AF only, so the caller's error code is still its own to set.
-ioc_diag_capture:
-	ld a,b
-	ld (IOC_DIAG_SCANLEFT),a
-	xor a
-	out (SIO_COMMAND_CTRL_PORT),a	; point at RR0
-	in a,(SIO_COMMAND_CTRL_PORT)
-	ld (IOC_DIAG_RR0),a
-	ld a,#0x01
-	out (SIO_COMMAND_CTRL_PORT),a	; point at RR1
-	in a,(SIO_COMMAND_CTRL_PORT)
-	ld (IOC_DIAG_RR1),a
-	ld a,(ioc_rx_synced)
-	ld (IOC_DIAG_SYNCED),a
-	ld a,(ioc_link_ready)
-	ld (IOC_DIAG_READY),a
-	ret
+; The capture code writes LANE+BULK_REASON and READY+SYNCED as 16-bit pairs,
+; and the record has to be exactly the size the frozen contract publishes.
+; None of that is checked by the assembler unless it is asserted, and a silent
+; break would corrupt the one report read when the link is dead.
+	.if (IOC_DIAG_BULK_REASON - IOC_DIAG_LANE) - 1
+	.error 3			; LANE and BULK_REASON must stay adjacent
+	.endif
+	.if (IOC_DIAG_SYNCED - IOC_DIAG_READY) - 1
+	.error 3			; READY and SYNCED must stay adjacent, in order
+	.endif
+	.if (IOC_DIAG_RECORD_END - IOC_DIAG_STATUS) - CBIOS_IOC_DIAG_SIZE
+	.error 3			; record must be exactly CBIOS_IOC_DIAG_SIZE
+	.endif
 
 ; Set once the bulk lane has completed a CRC-verified transfer, which is the
 ; only evidence its character boundary was established.  Cleared by LINK_SYNC.

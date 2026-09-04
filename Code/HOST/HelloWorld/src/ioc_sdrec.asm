@@ -46,20 +46,11 @@ IOCALL		= 0xDA3F	; ZBIOS_EXT_BASE + 0Ch
 IOCBULK		= 0xDA45	; ZBIOS_EXT_BASE + 12h: bulk receive
 IOCBULKW	= 0xDA48	; ZBIOS_EXT_BASE + 15h: bulk transmit
 
-IOC_BULK_DIAG_REASON	= 0xDCCE
-IOC_BULK_DIAG_COUNT	= 0xDCCF
-IOC_BULK_DIAG_SCAN	= 0xDCD0
-IOC_BULK_DIAG_HEADER	= 0xDCD8
-IOC_BULK_DIAG_RR0	= 0xDCDD
-IOC_BULK_DIAG_RR1	= 0xDCDE
-IOC_BULK_DIAG_SYNCED	= 0xDCDF
-IOC_BULK_DIAG_EXPECT_LEN = 0xDCE0
-IOC_BULK_DIAG_EXPECT_TYPE = 0xDCE2
-IOC_BULK_DIAG_EXPECT_SEQ = 0xDCE3
 
 CMD_PING	 = 0x01
 RSP_PING	 = 0x81
 	.include "ioc_levels.inc"
+	.include "ioc_diag_record.inc"
 CMD_SD_READ_REC	 = 0x08
 RSP_SD_READ_REC	 = 0x88
 CMD_SD_WRITE_REC = 0x09
@@ -517,7 +508,7 @@ wr_rec:
 	; IOCBULKW uses reason 40h for an RR1 Tx underrun.  A zero left here means
 	; its other HW_ERROR exit: /CTSA did not release after the transfer.
 	xor a
-	ld (IOC_BULK_DIAG_REASON),a
+	ld (IOC_DIAG_BULK_REASON),a
 	ld hl,#wr_buf
 	ld de,#REC_SIZE
 	call IOCBULKW
@@ -798,56 +789,37 @@ report_bulk_transport_diag:
 	ld de,#msg_bulk_diag_reason
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_REASON)
+	ld a,(IOC_DIAG_BULK_REASON)
 	call print_hex_byte
-	ld de,#msg_bulk_diag_count
-	ld c,#BDOS_PRINT
-	call BDOS
-	ld a,(IOC_BULK_DIAG_COUNT)
-	call print_hex_byte
-	ld de,#msg_bulk_diag_scan
-	ld c,#BDOS_PRINT
-	call BDOS
-	ld hl,#IOC_BULK_DIAG_SCAN
-	ld b,#1
-	call dump_bytes
-	ld de,#msg_bulk_diag_header
-	ld c,#BDOS_PRINT
-	call BDOS
-	ld hl,#IOC_BULK_DIAG_HEADER
-	ld b,#5
-	call dump_bytes
 	ld de,#msg_bulk_diag_rr
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_RR0)
+	ld a,(IOC_DIAG_RR0)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_RR1)
+	ld a,(IOC_DIAG_RR1)
 	call print_hex_byte
 	ld de,#msg_bulk_diag_sync
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_SYNCED)
+	ld a,(IOC_DIAG_BULK_SYNCED)
 	call print_hex_byte
-	ld de,#msg_bulk_diag_expect
+	ld de,#msg_bulk_diag_xfer
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_EXPECT_LEN + 1)
-	call print_hex_byte
-	ld a,(IOC_BULK_DIAG_EXPECT_LEN)
+	ld a,(IOC_DIAG_BULK_TYPE)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_EXPECT_TYPE)
+	ld a,(IOC_DIAG_BULK_SEQ)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_BULK_DIAG_EXPECT_SEQ)
+	ld a,(IOC_DIAG_BULK_STATUS)
 	call print_hex_byte
 	ret
 
@@ -1060,12 +1032,9 @@ msg_rdbuf:	.db 13,10
 		.ascii "  rd_buf:$"
 msg_bulk_diag_reason:	.db 13,10
 		.ascii "  bulk reason=$"
-msg_bulk_diag_count:	.ascii " count=$"
-msg_bulk_diag_scan:	.ascii " last$"
-msg_bulk_diag_header:	.ascii " hdr$"
 msg_bulk_diag_rr:	.ascii " rr=$"
-msg_bulk_diag_sync:	.ascii " sync=$"
-msg_bulk_diag_expect:	.ascii " exp(len/type/seq)=$"
+msg_bulk_diag_sync:	.ascii " bsync=$"
+msg_bulk_diag_xfer:	.ascii " xfer(type/seq/status)=$"
 msg_crlf:	.db 13,10,'$'
 
 base_rec:	.ds 2

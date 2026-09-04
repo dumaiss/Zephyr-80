@@ -546,19 +546,138 @@ CBIOS_SPARE_CODE_BASE           = CBIOS_BASE + 0x02b1                  ; DCB1h
 ; the link itself is too broken to answer a PING.  The command portion is
 ; written on reply-marker timeout; the Bulk portion is refreshed by IOCBULK.
 ;
-;   +0  RR0 at the moment of failure.  Bit 4 is Sync/Hunt: 1 = the receiver is
-;       STILL HUNTING, i.e. the MCU's falling /SYNC edge never landed.
-;   +1  RR1 (receive error latches)
-;   +2  ioc_rx_synced
-;   +3  ioc_link_ready
-;   +4..+13  command marker-scan state
-;   +0Eh      Bulk rejection stage
-;   +0Fh      Bulk marker-scan count (on marker exhaustion)
-;   +10h      last Bulk marker-scan byte; +11h..+17h reserved
-;   +18h..+1Ch decoded Bulk LEN/TYPE/SEQ/STATUS header
-;   +1Dh..+1Fh Bulk RR0, RR1, and verified-sync flag
-;   +20h..+23h expected Bulk LEN, TYPE, and SEQ
+; The 36-byte block that used to live here is recorded in
+; docs/ioc-diagnostic-record.md under "Superseded layout", along with the
+; reason each field was dropped.  The short version: nine of its bytes -- the
+; command marker history and its index -- had no writer anywhere in the BIOS,
+; so PING printed eight zeros and labelled them as the bytes the reply scan
+; saw.  Fabricated evidence in the one report consulted when the link is dead
+; is why this is now a last-failure record with an explicit "nothing recorded"
+; state rather than a set of always-printed slots.
 CBIOS_IOC_DIAG_BASE             = CBIOS_BASE + 0x02c0                  ; DCC0h
+
+; ---------------------------------------------------------------------------
+; FROZEN: IOC link failure record
+; ---------------------------------------------------------------------------
+;
+; This is the normative layout of the compact last-failure record that replaces
+; the block above.  It is defined here, ahead of the code that fills it, because
+; .COM programs read the record at a fixed address and their offsets have to be
+; agreed before any field moves.  The mirror for the CP/M tools is
+; ../HelloWorld/src/ioc_diag_record.inc; this file is the authority.
+;
+; Scope.  The record describes THE LAST TRANSPORT FAILURE, on either lane,
+; whichever happened most recently.  It is not a running history and not a
+; counter set.  A field is meaningful only in the context of the STATUS and
+; LANE that accompany it.
+;
+; Placement.  It stays at CBIOS_IOC_DIAG_BASE.  Reading it must never require a
+; working link: that is the entire reason it exists at a fixed address rather
+; than behind a PING reply.  Sixteen bytes keeps it to one row of a hex dump
+; and leaves DCD0h-DD0Fh contiguous for the core-BIOS repack.
+;
+; Versioning.  The record carries no version byte.  ZBIOS_XPORT_LEVEL at
+; ZBIOS_XPORT_LEVEL_ADDR governs it, and a tool must check that level before
+; decoding these offsets.  Implementing this record is an incompatible layout
+; change and must bump ZBIOS_XPORT_LEVEL to 8 in the same commit.
+;
+;   +00h  STATUS       last IOC_XPORT_* status.  00h = no failure recorded
+;                      since the last clear.  Distinguishes "no controller"
+;                      from "bad link" without any other field.
+;   +01h  LANE         IOC_DIAG_LANE_COMMAND or IOC_DIAG_LANE_BULK.  Names
+;                      which lane RR0/RR1 were read from.  IOC_XPORT_BAD_CRC
+;                      is reachable from both lanes, so the status code alone
+;                      cannot answer this.
+;   +02h  BULK_REASON  IOC_BULK_REASON_* rejection stage; 00h when the failure
+;                      was not a bulk packet rejection.
+;   +03h  RR0          failing lane's RR0.  Bit 4 is Sync/Hunt: 1 = the
+;                      receiver is STILL HUNTING, i.e. the MCU's falling
+;                      /SYNC edge never landed.
+;   +04h  RR1          failing lane's RR1 (receive error latches).
+;   +05h  READY        ioc_link_ready at failure.
+;   +06h  SYNCED       ioc_rx_synced at failure (command lane character sync).
+;   +07h  BULK_SYNCED  ioc_bulk_synced: the bulk lane has completed at least
+;                      one CRC-verified transfer, the only evidence its
+;                      character boundary was ever established.  Sticky state,
+;                      so it is meaningful on a command failure too.
+;   +08h  SEQ          ioc_seq at failure -- the rolling transaction sequence,
+;                      which is what correlates this failure with the
+;                      controller's own view of the same exchange.
+;   +09h  BULK_TYPE    ioc_bulk_rx_type -- the transfer identity the data
+;                      phase was bound to.  With BULK_SEQ this is what
+;                      prevents a delayed data phase being accepted by a
+;                      newer command, so it is the pair worth recording.
+;   +0Ah  BULK_SEQ     ioc_bulk_rx_seq.
+;   +0Bh  BULK_STATUS  STATUS byte of the rejected bulk header, 00h if the
+;                      header was never read.  For a write this is the only
+;                      evidence the card committed: receiving bytes is not.
+;   +0Ch..+0Fh reserved.  Must read as zero.  A tool must not assign meaning
+;                      to these; they exist so the next field to earn its
+;                      place does not move every other offset.
+;
+; There is deliberately NO command-class field.  The obvious source,
+; ioc_packet_header + 2, holds the TYPE of the last reply header actually
+; received, so on the marker-timeout path -- the one failure where the record
+; matters most -- it would report the PREVIOUS transaction's class as though it
+; were this one's.  A field that is right except when it matters is the defect
+; this record was rewritten to remove.  Recording the class honestly needs a
+; store in the send path, and the F000h command section has zero free bytes.
+;
+; Dropped from the current block, with the reason each stops paying for itself:
+;
+;   command marker history +5..+0Ch  no writer; see above.
+;   marker history index   +0Dh      no writer; indexes nothing.
+;   scan budget remaining  (SCANLEFT) redundant.  It separated "the reply never
+;                      came" from "the reply came and the marker was missed",
+;                      and IOC_XPORT_TIMEOUT_REPLY_MARKER vs
+;                      IOC_XPORT_TIMEOUT_REPLY_BODY already carry exactly that
+;                      distinction in the status byte.
+;   bulk marker-scan count and last scanned byte   answered their question:
+;                      the lane's character alignment is established and
+;                      BULK_REASON names the stage that rejected.
+;   decoded bulk LEN/TYPE/SEQ header  the mismatching field is what
+;                      BULK_REASON already names; only STATUS is retained.
+;   expected bulk LEN/TYPE/SEQ tuple  the expectation is recoverable from
+;                      BULK_TYPE/BULK_SEQ and the request the caller issued.
+;
+CBIOS_IOC_DIAG_SIZE             = 0x10
+
+; Field order is chosen so the capture code can use two 16-bit stores.
+; LANE and BULK_REASON are adjacent because the command lane sets both to zero
+; with one ld (nn),hl.  READY and SYNCED are adjacent AND in the same order as
+; ioc_link_ready / ioc_rx_synced in memory, so both copy with one ld hl,(nn)
+; followed by one ld (nn),hl.  Slot 3 has no spare bytes; this is what let the
+; record keep its Bulk-sync and sequence fields instead of dropping them.
+IOC_DIAG_OFF_STATUS             = 0x00
+IOC_DIAG_OFF_LANE               = 0x01
+IOC_DIAG_OFF_BULK_REASON        = 0x02
+IOC_DIAG_OFF_RR0                = 0x03
+IOC_DIAG_OFF_RR1                = 0x04
+IOC_DIAG_OFF_READY              = 0x05
+IOC_DIAG_OFF_SYNCED             = 0x06
+IOC_DIAG_OFF_BULK_SYNCED        = 0x07
+IOC_DIAG_OFF_SEQ                = 0x08
+IOC_DIAG_OFF_BULK_TYPE          = 0x09
+IOC_DIAG_OFF_BULK_SEQ           = 0x0a
+IOC_DIAG_OFF_BULK_STATUS        = 0x0b
+IOC_DIAG_OFF_RESERVED           = 0x0c
+IOC_DIAG_RESERVED_LEN           = 0x04
+
+; Which lane RR0/RR1 at +02h/+03h were read from.
+IOC_DIAG_LANE_COMMAND           = 0x00       ; SIO1/B
+IOC_DIAG_LANE_BULK              = 0x01       ; SIO1/A
+
+; Bulk rejection stages.  These values are already emitted by the IOCBULK
+; reject paths; naming them here freezes them as protocol rather than leaving
+; them as literals in a comment above IOC_BULK_REJECT_MARKER.
+IOC_BULK_REASON_NONE            = 0x00
+IOC_BULK_REASON_INPUT           = 0x01       ; invalid caller length
+IOC_BULK_REASON_MARKER          = 0x02       ; A5 5A never found within the scan
+IOC_BULK_REASON_LEN             = 0x03
+IOC_BULK_REASON_TYPE            = 0x04
+IOC_BULK_REASON_SEQ             = 0x05
+IOC_BULK_REASON_STATUS          = 0x06       ; header carried a nonzero status
+IOC_BULK_REASON_CRC             = 0x07
 
 ; USB keyboard console input, merged into CONST/CONIN alongside the proxy
 ; keyboard's textq.  Placed in the tail of driver slot 3, after the IOC Bulk
@@ -601,7 +720,11 @@ CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x057B                  ; DF7Bh â
 ;      External Sync; command mailboxes remain a compatibility API only
 ;   7  the hand-clocked sync-establishing byte is disposable; the complete
 ;      A5 5A packet marker always follows as aligned SPI bytes on both lanes
-ZBIOS_XPORT_LEVEL               = 0x07
+;   8  the fixed-address link diagnostic block is the 16-byte last-failure
+;      record described above, replacing the 36-byte bring-up block.  The wire
+;      protocol is unchanged at this level; only what a .COM may read out of
+;      CBIOS_IOC_DIAG_BASE is.  Tools gate their decode on this value.
+ZBIOS_XPORT_LEVEL               = 0x08
 ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_IOCTRL_CODE_BASE - 1           ; DF7Ah
 
 ; VDrip CP850 font placement in bank 0 TPA.

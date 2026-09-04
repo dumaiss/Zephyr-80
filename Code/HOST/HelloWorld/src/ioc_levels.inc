@@ -14,7 +14,7 @@
 ; mismatch rather than misbehaving -- which is why the check exists at all.
 
 IOC_FW_LEVEL		= 68		; 44h — controller firmware expected
-ZBIOS_XPORT_LEVEL	= 0x07		; BIOS transport level expected
+ZBIOS_XPORT_LEVEL	= 0x08		; BIOS transport level expected
 ZBIOS_XPORT_LEVEL_ADDR	= 0xDF7A	; one byte below IOCALL, readable from ROM
 
 ; Printable forms.  The assembler cannot format a number into .ascii, so the
@@ -23,5 +23,7 @@ ZBIOS_XPORT_LEVEL_ADDR	= 0xDF7A	; one byte below IOCALL, readable from ROM
 ; programs -- which is exactly how "level 3E" outlived level 62.
 IOC_FW_LEVEL_HEX_HI	= '4
 IOC_FW_LEVEL_HEX_LO	= '4
+ZBIOS_XPORT_LEVEL_HEX_HI = '0
+ZBIOS_XPORT_LEVEL_HEX_LO = '8
 IOC_FW_LEVEL_DEC_HI	= '6
 IOC_FW_LEVEL_DEC_LO	= '8
