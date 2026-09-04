@@ -52,6 +52,7 @@ MANIFEST = (
     ("hello", "ioc_sdbench.com", "SDBENCH.COM"),
     ("hello", "ioc_rts_probe.com", "RTSPROBE.COM"),
     ("hello", "hidkey.com", "HIDKEY.COM"),
+    ("hello", "v9958tst.com", "V9958TST.COM"),
     # The monitor is the only tool that still works with no usable disk at all:
     # L loads Intel HEX over the console, DB dumps a bank, I/O reach ports.
     # Built from source rather than copied, so it always matches the tree.

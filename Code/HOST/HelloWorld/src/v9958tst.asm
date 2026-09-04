@@ -19,13 +19,15 @@
 ;   slow pass + fast fail  -> datapath is good; access timing is the fault
 ;   slow fail              -> speed-independent VRAM wiring/datapath fault
 ;   R14-BANK fail          -> R#14 or upper VRAM address selection is faulty
+;   VRAM-128K fail         -> full-range address/data failure at reported address
 ;   slow MARCH pass + OTIR-STRESS fail
 ;                           -> OTIR overruns VDP write recovery
 ;
-; Tests 1-3 use the selected delay. OTIR-STRESS always writes its 256-byte
+; Tests 1-5 use the selected delay. OTIR-STRESS always writes its 256-byte
 ; block at full OTIR cadence, matching mandelbrot_v9958_real.asm. Its readback
 ; is deliberately padded so a write-timing failure is not confused with a
 ; read-timing failure. Each test stops at its first mismatch.
+; VRAM-128K is destructive: it writes every byte of the VDP's 128 KiB VRAM.
 
 	.module v9958tst
 	.area CODE (ABS)
@@ -36,7 +38,6 @@
 ; ---------------------------------------------------------------------------
 
 BDOS			= 0x0005
-BDOS_EXIT		= 0x00
 BDOS_CONOUT		= 0x02
 BDOS_PRINT		= 0x09
 
@@ -74,6 +75,7 @@ MARCH_END_HIGH		= 0x10		; exclusive end: 0x1000
 AUTOINC_ADDRESS		= 0x0200
 OTIR_ADDRESS		= 0x0400
 R14_BANK_OFFSET		= 0x0123
+R14_BANK_COUNT		= 8
 
 ; ---------------------------------------------------------------------------
 ; Entry point and command-tail parsing
@@ -154,6 +156,7 @@ run_tests:
 	call test_march
 	call test_autoinc
 	call test_r14_banks
+	call test_vram_128k
 	call test_otir_stress
 
 	ld de,#msg_done
@@ -165,8 +168,7 @@ show_usage:
 	call print_string
 
 exit_program:
-	ld c,#BDOS_EXIT
-	jp BDOS
+	ret				; return normally so the results remain visible
 
 ; ---------------------------------------------------------------------------
 ; Test 1: data bus patterns at VRAM address 0000h
@@ -214,6 +216,8 @@ databus_loop:
 	jp print_string
 
 databus_fail:
+	xor a
+	ld (fail_r14),a
 	ld hl,#0x0000
 	ld (fail_address),hl
 	jp report_failure
@@ -264,6 +268,8 @@ march_fail:
 	ld (fail_expected),a
 	ld a,e
 	ld (fail_actual),a
+	xor a
+	ld (fail_r14),a
 	jp report_failure
 
 ; ---------------------------------------------------------------------------
@@ -310,65 +316,125 @@ autoinc_fail:
 	ld (fail_expected),a
 	ld a,d
 	ld (fail_actual),a
+	xor a
+	ld (fail_r14),a
 	jp report_failure
 
 ; ---------------------------------------------------------------------------
-; Test 4: R#14 selection of the four 16 KiB regions used by Mandelbrot
+; Test 4: R#14 selection of all eight 16 KiB regions in 128 KiB VRAM
 ; ---------------------------------------------------------------------------
 
 test_r14_banks:
 	ld de,#msg_r14_banks
 	call print_string
 
+	ld c,#0
 	ld hl,#R14_BANK_OFFSET
-	call vdp_set_vram_write_addr_delayed
+	call vdp_set_vram_write_addr_r14_delayed
 	ld a,#0x12
 	call vdp_data_write_delayed
 
-	ld hl,#(0x4000 + R14_BANK_OFFSET)
-	call vdp_set_vram_write_addr_delayed
+	ld c,#1
+	ld hl,#R14_BANK_OFFSET
+	call vdp_set_vram_write_addr_r14_delayed
 	ld a,#0x34
 	call vdp_data_write_delayed
 
-	ld hl,#(0x8000 + R14_BANK_OFFSET)
-	call vdp_set_vram_write_addr_delayed
+	ld c,#2
+	ld hl,#R14_BANK_OFFSET
+	call vdp_set_vram_write_addr_r14_delayed
 	ld a,#0x56
 	call vdp_data_write_delayed
 
-	ld hl,#(0xc000 + R14_BANK_OFFSET)
-	call vdp_set_vram_write_addr_delayed
+	ld c,#3
+	ld hl,#R14_BANK_OFFSET
+	call vdp_set_vram_write_addr_r14_delayed
 	ld a,#0x78
 	call vdp_data_write_delayed
 
+	ld c,#4
+	ld hl,#R14_BANK_OFFSET
+	call vdp_set_vram_write_addr_r14_delayed
+	ld a,#0x9a
+	call vdp_data_write_delayed
+
+	ld c,#5
+	ld hl,#R14_BANK_OFFSET
+	call vdp_set_vram_write_addr_r14_delayed
+	ld a,#0xbc
+	call vdp_data_write_delayed
+
+	ld c,#6
+	ld hl,#R14_BANK_OFFSET
+	call vdp_set_vram_write_addr_r14_delayed
+	ld a,#0xde
+	call vdp_data_write_delayed
+
+	ld c,#7
+	ld hl,#R14_BANK_OFFSET
+	call vdp_set_vram_write_addr_r14_delayed
+	ld a,#0xf0
+	call vdp_data_write_delayed
+
+	ld c,#0
 	ld hl,#R14_BANK_OFFSET
 	ld a,#0x12
 	call check_r14_bank_byte
 	jp nz,report_failure
 
-	ld hl,#(0x4000 + R14_BANK_OFFSET)
+	ld c,#1
+	ld hl,#R14_BANK_OFFSET
 	ld a,#0x34
 	call check_r14_bank_byte
 	jp nz,report_failure
 
-	ld hl,#(0x8000 + R14_BANK_OFFSET)
+	ld c,#2
+	ld hl,#R14_BANK_OFFSET
 	ld a,#0x56
 	call check_r14_bank_byte
 	jp nz,report_failure
 
-	ld hl,#(0xc000 + R14_BANK_OFFSET)
+	ld c,#3
+	ld hl,#R14_BANK_OFFSET
 	ld a,#0x78
+	call check_r14_bank_byte
+	jp nz,report_failure
+
+	ld c,#4
+	ld hl,#R14_BANK_OFFSET
+	ld a,#0x9a
+	call check_r14_bank_byte
+	jp nz,report_failure
+
+	ld c,#5
+	ld hl,#R14_BANK_OFFSET
+	ld a,#0xbc
+	call check_r14_bank_byte
+	jp nz,report_failure
+
+	ld c,#6
+	ld hl,#R14_BANK_OFFSET
+	ld a,#0xde
+	call check_r14_bank_byte
+	jp nz,report_failure
+
+	ld c,#7
+	ld hl,#R14_BANK_OFFSET
+	ld a,#0xf0
 	call check_r14_bank_byte
 	jp nz,report_failure
 
 	ld de,#msg_ok
 	jp print_string
 
-; Input: HL=absolute VRAM address, A=expected byte.
+; Input: C=R#14 bank 0..7, HL=offset 0000h..3FFFh, A=expected byte.
 ; Output: Z if the byte matches, NZ otherwise. Records failure details.
 check_r14_bank_byte:
-	ld (fail_address),hl
 	ld (fail_expected),a
-	call vdp_set_vram_read_addr_delayed
+	ld a,c
+	ld (fail_r14),a
+	ld (fail_address),hl
+	call vdp_set_vram_read_addr_r14_delayed
 	call vdp_data_read_delayed
 	ld (fail_actual),a
 	ld e,a
@@ -377,7 +443,88 @@ check_r14_bank_byte:
 	ret
 
 ; ---------------------------------------------------------------------------
-; Test 5: full-cadence OTIR write, padded scalar readback
+; Test 5: destructive address/data pass over all 128 KiB of VRAM
+; ---------------------------------------------------------------------------
+
+test_vram_128k:
+	ld de,#msg_vram_128k
+	call print_string
+
+	xor a
+	ld (full_ram_bank),a
+
+full_ram_write_bank:
+	ld c,a
+	ld hl,#0x0000
+	call vdp_set_vram_write_addr_r14_delayed
+	ld hl,#0x0000
+
+full_ram_write_loop:
+	call full_ram_expected_byte
+	call vdp_data_write_delayed
+	inc hl
+	ld a,h
+	cp #0x40
+	jr nz,full_ram_write_loop
+
+	ld a,(full_ram_bank)
+	inc a
+	ld (full_ram_bank),a
+	cp #R14_BANK_COUNT
+	jr nz,full_ram_write_bank
+
+	xor a
+	ld (full_ram_bank),a
+
+full_ram_read_bank:
+	ld c,a
+	ld hl,#0x0000
+	call vdp_set_vram_read_addr_r14_delayed
+	ld hl,#0x0000
+
+full_ram_read_loop:
+	call vdp_data_read_delayed
+	ld d,a
+	call full_ram_expected_byte
+	cp d
+	jr nz,full_ram_fail
+	inc hl
+	ld a,h
+	cp #0x40
+	jr nz,full_ram_read_loop
+
+	ld a,(full_ram_bank)
+	inc a
+	ld (full_ram_bank),a
+	cp #R14_BANK_COUNT
+	jr nz,full_ram_read_bank
+
+	ld de,#msg_ok
+	jp print_string
+
+; Return an address-dependent test byte for the current R#14 bank and HL.
+; The upper nibble distinguishes all eight banks; H XOR L exercises offsets.
+full_ram_expected_byte:
+	ld a,(full_ram_bank)
+	add a,a
+	add a,a
+	add a,a
+	add a,a
+	xor h
+	xor l
+	ret
+
+full_ram_fail:
+	ld (fail_expected),a
+	ld a,d
+	ld (fail_actual),a
+	ld a,(full_ram_bank)
+	ld (fail_r14),a
+	ld (fail_address),hl
+	jp report_failure
+
+; ---------------------------------------------------------------------------
+; Test 6: full-cadence OTIR write, padded scalar readback
 ; ---------------------------------------------------------------------------
 
 test_otir_stress:
@@ -433,10 +580,12 @@ otir_fail:
 	ld (fail_expected),a
 	ld a,d
 	ld (fail_actual),a
+	xor a
+	ld (fail_r14),a
 	jp report_failure
 
 ; ---------------------------------------------------------------------------
-; V9958 delayed access helpers for tests 1-3 and OTIR verification
+; V9958 delayed access helpers for tests 1-5 and OTIR verification
 ; ---------------------------------------------------------------------------
 
 ; Add DELAY_COUNT DJNZ iterations after a VDP port access.
@@ -512,6 +661,47 @@ vdp_set_vram_read_addr_delayed:
 	call vdp_access_delay
 	ret
 
+; Set a 17-bit VRAM write address.
+; Input: C=R#14 value 0..7, HL=offset 0000h..3FFFh.
+; Preserves: BC, DE, HL. Clobbers: AF. May block briefly in slow mode.
+vdp_set_vram_write_addr_r14_delayed:
+	ld a,c
+	and #0x07
+	push bc
+	ld b,#14
+	call vdp_write_register_delayed
+	pop bc
+
+	ld a,l
+	out (VDP_CMD),a
+	call vdp_access_delay
+	ld a,h
+	and #0x3f
+	or #0x40
+	out (VDP_CMD),a
+	call vdp_access_delay
+	ret
+
+; Set a 17-bit VRAM read address.
+; Input: C=R#14 value 0..7, HL=offset 0000h..3FFFh.
+; Preserves: BC, DE, HL. Clobbers: AF. May block briefly in slow mode.
+vdp_set_vram_read_addr_r14_delayed:
+	ld a,c
+	and #0x07
+	push bc
+	ld b,#14
+	call vdp_write_register_delayed
+	pop bc
+
+	ld a,l
+	out (VDP_CMD),a
+	call vdp_access_delay
+	ld a,h
+	and #0x3f
+	out (VDP_CMD),a
+	call vdp_access_delay
+	ret
+
 ; Write/read one VRAM byte with the selected post-access delay.
 ; Input/output: A=data. Clobbers: flags only. May block briefly in slow mode.
 vdp_data_write_delayed:
@@ -578,10 +768,33 @@ report_failure:
 	call print_hex_byte
 	ld de,#msg_address
 	call print_string
-	ld hl,(fail_address)
-	call print_hex_word
+	call print_vram_address
 	ld de,#msg_crlf
 	jp print_string
+
+; Print fail_r14:fail_address as one five-digit 17-bit VRAM address.
+; Clobbers: AF, BC, DE, HL.
+print_vram_address:
+	ld a,(fail_r14)
+	and #0x04
+	rrca
+	rrca
+	call print_hex_nibble
+
+	ld a,(fail_r14)
+	and #0x03
+	rrca
+	rrca
+	ld e,a
+	ld hl,(fail_address)
+	ld a,h
+	and #0x3f
+	or e
+	push hl
+	call print_hex_byte
+	pop hl
+	ld a,l
+	jp print_hex_byte
 
 ; Input: DE points to a '$'-terminated string. Clobbers: AF, BC, DE.
 print_string:
@@ -656,6 +869,8 @@ msg_autoinc:
 	.ascii "AUTOINC: $"
 msg_r14_banks:
 	.ascii "R14-BANK: $"
+msg_vram_128k:
+	.ascii "VRAM-128K: $"
 msg_otir:
 	.ascii "OTIR-STRESS: $"
 msg_ok:
@@ -683,9 +898,13 @@ pattern_pointer:
 	.dw 0x0000
 fail_address:
 	.dw 0x0000
+fail_r14:
+	.db 0x00
 fail_expected:
 	.db 0x00
 fail_actual:
+	.db 0x00
+full_ram_bank:
 	.db 0x00
 
 otir_buffer:

@@ -350,22 +350,21 @@ SIO_COMMAND_REPLY_SCAN_LIMIT    = 0xa0
 ; The MCU only clocks during active transactions; timeout prevents indefinite hang
 ; if the MCU is absent or not clocking.
 ;
-; DEBUG BRING-UP: the byte-poll wait is a 24-bit countdown = SIO_COMMAND_TIMEOUT
-; (16-bit inner) repeated SIO_COMMAND_TIMEOUT_OUTER times.  This is deliberately
-; huge (order of minutes at a few MHz) so the PIC side can be single-stepped in
-; the debugger without the Z80 giving up; it still returns IOC_XPORT_TIMEOUT
-; instead of hanging forever.  For production, drop OUTER back to 1.
+; The byte-poll wait is a 24-bit countdown = SIO_COMMAND_TIMEOUT (16-bit inner)
+; repeated SIO_COMMAND_TIMEOUT_OUTER times.  It remains bounded so a missing or
+; stalled MCU returns IOC_XPORT_TIMEOUT instead of hanging forever.
 SIO_COMMAND_TIMEOUT             = 0xffff
-; 0x04, not 0x20.  At ~5.6 us per inner iteration this is ~1.5 s instead of
-; ~11 s, and it must only exceed the MCU's longest legitimate silence: the card
-; read inside a SD_READ_BULK transaction, worst case ~1 s during initialisation.
+; 0x08, not 0x20.  At ~5.6 us per inner iteration this is ~2.9 s instead of
+; ~11 s.  The 1200 immediate-response CMD55/ACMD41 pairs in the observed SD
+; initialisation failure take at least ~1.23 s at 125 kHz before call and loop
+; overhead, so the former ~1.5 s timeout could expire before the MCU replied.
 ; COMMAND_READY on /DCDB now gates "MCU busy" separately, so this timeout only
 ; has to cover a reply that is genuinely coming.
 ;
 ; This is a bring-up throughput decision, not a correctness one: every failure
 ; costs its full timeout, so at 0x20 a handful of errors made a soak run take
 ; minutes and the interrupt counter measured waiting rather than work.
-SIO_COMMAND_TIMEOUT_OUTER       = 0x04
+SIO_COMMAND_TIMEOUT_OUTER       = 0x08
 
 ; Code placement for IOC Command-channel transport helpers.
 ; The generated map is authoritative for VDRIP_CONSOLE_CODE_END.
