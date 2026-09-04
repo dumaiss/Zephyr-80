@@ -1,9 +1,9 @@
 # Zephyr-80 CP/M 2.2
 
 Zephyr-80 is a Z80-based CP/M 2.2 machine and firmware target. This repository
-builds a CP/M 2.2 firmware image with a local Zephyr-80 CBIOS, banked RAM
-support, a VDrip-backed CP/M drive, and a driver-facing layout for console
-and storage backends.
+builds a CP/M 2.2 firmware image with a local Zephyr-80 CBIOS, banked RAM,
+ROM/SD storage, and build-selectable physical-V9958 or Virtual Drip console
+backends.
 
 The project is part of the broader pBITz / coffee-machine retro-computing
 family. It is hobby and experimental firmware, but the code tries to keep the
@@ -18,13 +18,12 @@ Implemented now:
 - CP/M 2.2 boots on the Zephyr-80 firmware target.
 - The CBIOS uses a cleaned-up fixed memory map with a core BIOS area and six
   fixed 1 KiB driver slots.
-- Drive A is backed by a VDrip proxy flat image using the standard CP/M BIOS
-  disk call model.
+- Drive A is a read-only ROM volume by default; drive B is backed by SD card.
 - A BIOS-owned SIO core exists in core BIOS for SIO0/B and SIO1/A plumbing.
-- The Virtual Drip console backend is a client of the SIO core.
-- SIO0/B receive uses maskable interrupts and a console RX sink/buffer.
-- SIO0/B transmit checks CTS, and SIO0/B RTS is exposed for software-managed
-  RX backpressure by the console client.
+- The default console drives the LunchCrema V9958 directly and reads terminal
+  bytes only from the IOC HID queue.
+- The Virtual Drip console remains available as a build-time compatibility
+  backend and retains its SIO0/B flow control and proxy keyboard behavior.
 - SIO1/A is initialized as a BIOS-owned synchronous IO Controller link.
 - `IOCALL` is exposed as a Zephyr extended BIOS call for simple IO Controller
   command/reply transactions.
@@ -93,6 +92,8 @@ Hand-written walkthroughs:
 - `docs/zephyr80_bios_walkthrough.md`
 - `docs/vdrip_protocol.md`
 - `docs/zephyr80_vdrip_disk.md`
+- `docs/lunchcrema-v9958-console-bringup.md`
+- `docs/v9958-console-implementation-plan.md`
 
 ## Driver Model
 
@@ -103,12 +104,15 @@ The BIOS presents stable CP/M entry points and dispatches through facades:
 - `src/sio_core.asm` owns BIOS SIO hardware plumbing.
 - Driver backends provide tables or entry points behind those facades.
 
-Current transitional allocation:
+The generated map reports exact ownership for the selected build. In the
+default direct-V9958 build:
 
 | Slot | Range | Current owner |
 |---:|---:|---|
-| 0-4 | `E000h-F3FFh` | Virtual Drip console driver |
-| 5 | `F680h-FA7Fh` | Virtual Drip console tail and VDrip storage backend |
+| 0-2 | `E000h-EBFFh` | Direct V9958 console driver |
+| 3 | `EC00h-EFFFh` | Direct console tail, IOC Bulk transport, and HID helper |
+| 4 | `F000h-F3FFh` | IOC Command/SD helpers |
+| 5 | `F680h-FA7Fh` | Drive-A backend and SD probe continuations |
 
 At a high level, adding a driver means:
 
@@ -126,8 +130,10 @@ instead of letting later drivers slide upward unpredictably.
 
 ## Interrupt Model
 
-The SIO core uses SIO0/B with Z80 maskable interrupts for the current console
-transport:
+The direct V9958 console does not register an SIO0/B receive sink. Its input
+path is `IOC HID queue -> CONST/CONIN`, while CONOUT parses ANSI/VT100-light
+output and renders through the V9958 command engine. The retained VDrip console
+uses SIO0/B with Z80 maskable interrupts:
 
 - Boot and warm boot initialize BIOS-owned SIO services, install runtime state,
   register the console RX sink, and then enable the SIO interrupt path.
@@ -170,12 +176,23 @@ caller's RX pointer.
 
 ## Build
 
-The default build target creates the firmware image and regenerates the memory
-documentation:
+The default build uses the physical V9958 console, ROM drive A, and SD drive B,
+then regenerates the memory documentation:
 
 ```sh
 make
 ```
+
+Select the retained Virtual Drip console at build time with:
+
+```sh
+make CONSOLE=vdrip
+```
+
+Supported console values are `v9958` (default) and `vdrip`. The direct build
+does not link `vdrip_transport.asm`; `STORAGE_A=vdrip` is therefore restricted
+to `CONSOLE=vdrip`. Existing `STORAGE_A=rom` and `STORAGE_A=ramdisk` choices are
+unchanged.
 
 Primary generated artifacts:
 

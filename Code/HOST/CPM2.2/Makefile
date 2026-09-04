@@ -2,6 +2,7 @@ PYTHON ?= python3
 SDASZ80 ?= sdasz80
 SDLDZ80 ?= sdldz80
 MAKEBIN ?= makebin
+.DEFAULT_GOAL := all
 
 BUILD_DIR ?= build
 TOOLS_DIR ?= tools
@@ -21,6 +22,29 @@ CPMTOOLS_DISKDEF ?= images/diskdef
 STORAGE_A ?= rom
 STORAGE_A_SRC ?= $(SRC_DIR)/cbios_storage_$(STORAGE_A).asm
 
+# Console backend linked into the fixed BIOS console slots:
+#   v9958    physical LunchCrema V9958 plus IOC HID input (default)
+#   vdrip    retained Virtual Drip compatibility console
+CONSOLE ?= v9958
+VALID_CONSOLES := v9958 vdrip
+ifeq ($(filter $(CONSOLE),$(VALID_CONSOLES)),)
+$(error Unsupported CONSOLE='$(CONSOLE)'; choose one of: $(VALID_CONSOLES))
+endif
+ifeq ($(STORAGE_A),vdrip)
+ifneq ($(CONSOLE),vdrip)
+$(error STORAGE_A=vdrip requires CONSOLE=vdrip because both use the shared VDrip transport)
+endif
+endif
+
+CONSOLE_SRC := $(SRC_DIR)/cbios_console_$(CONSOLE).asm
+ifeq ($(CONSOLE),vdrip)
+VDRIP_TRANSPORT_SRC := $(SRC_DIR)/vdrip_transport.asm
+VDRIP_TRANSPORT_INCLUDE := .include "vdrip_transport.asm"
+else
+VDRIP_TRANSPORT_SRC :=
+VDRIP_TRANSPORT_INCLUDE :=
+endif
+
 ASFLAGS ?= -o -l -s
 LDFLAGS ?= -i
 ROM_SIZE ?= 65536
@@ -34,12 +58,12 @@ RUNTIME_SRCS ?= \
 	$(SRC_DIR)/cbios_boot.asm \
 	$(SRC_DIR)/cbios_console.asm \
 	$(SRC_DIR)/sio_core.asm \
-	$(SRC_DIR)/vdrip_transport.asm \
+	$(VDRIP_TRANSPORT_SRC) \
 	$(SRC_DIR)/cbios_bios_ext.asm \
 	$(SRC_DIR)/cbios_iocall.asm \
 	$(SRC_DIR)/cbios_ioc_command.asm \
 	$(SRC_DIR)/cbios_hid_input.asm \
-	$(SRC_DIR)/cbios_console_vdrip.asm \
+	$(CONSOLE_SRC) \
 	$(SRC_DIR)/cbios_storage.asm \
 	$(STORAGE_A_SRC) \
 	$(SRC_DIR)/cbios_storage_sd.asm \
@@ -91,7 +115,9 @@ endif
 CPM22_CONVERT_TOOL := $(TOOLS_DIR)/convert_cpm22_asxxxx.py
 MEMORY_DOC_TOOL := $(TOOLS_DIR)/generate_memory_docs.py
 
-.PHONY: all image docs clean check-inputs runtime-sources-check rom-disk
+.PHONY: all image docs clean check-inputs runtime-sources-check rom-disk FORCE
+
+FORCE:
 
 all: image
 
@@ -128,9 +154,11 @@ runtime-sources-check:
 $(CPM22_ASXXXX_SRC): $(CPM22_SRC) $(CPM22_CONVERT_TOOL) | $(BUILD_DIR)
 	$(PYTHON) $(CPM22_CONVERT_TOOL) "$<" "$@"
 
-$(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm $(CPM22_ASXXXX_SRC) Makefile | $(BUILD_DIR)
+$(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm $(CPM22_ASXXXX_SRC) Makefile FORCE | $(BUILD_DIR)
 	sed \
 		-e 's|\.include "../cpm-2.2/src/cpm22.asm"|.include "cpm22_asxxxx.asm"|' \
+		-e 's|\.include "vdrip_transport.asm"|$(VDRIP_TRANSPORT_INCLUDE)|' \
+		-e 's|\.include "cbios_console_vdrip.asm"|.include "cbios_console_$(CONSOLE).asm"|' \
 		-e 's|\.include "cbios_storage_vdrip.asm"|.include "cbios_storage_$(STORAGE_A).asm"|' \
 		"$<" > "$@"
 
@@ -173,6 +201,8 @@ $(FINAL_IMAGE): check-inputs $(IMAGE_PREREQS) $(IMAGE_TOOL) $(SRC_DIR)/cbios_def
 		--manifest "$(LAYOUT_MANIFEST)" \
 		--report "$(LAYOUT_REPORT)" \
 		--symbols "$(SYMBOLS_FILE)" \
+		--console "$(CONSOLE)" \
+		--storage-a "$(STORAGE_A)" \
 		$(PAYLOAD_ARGS)
 
 clean:

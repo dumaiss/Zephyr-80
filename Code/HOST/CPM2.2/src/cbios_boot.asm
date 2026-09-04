@@ -8,11 +8,11 @@
 	.globl init_page_zero
 	.globl prepare_runnable_bank
 	.globl restore_ccp_from_rom
-	.globl restore_font_from_rom
+	.globl console_backend_restore_font_from_rom
 	.globl runtime_set_default_dma
 	.globl runtime_clear_default_dma
 	.globl console_init
-	.globl vdrip_console_cold_init
+	.globl console_backend_cold_init
 	.globl sio_core_init,sio1_ioc_init,ioc_link_bringup,ctc_disable_interrupts,sio_core_enable_interrupts
 	.globl WBOOT_RESIDENT_START,WBOOT_RESIDENT_END
 	.globl RUNTIME_WORK_AREA_START,RUNTIME_WORK_AREA_END
@@ -32,8 +32,8 @@
 ; Important invariants:
 ;   Page zero gets JP WBOOT at 0000h and JP FBASE at 0005h before applications
 ;   run. DEFAULT_DMA at 0080h is recorded and cleared. The cold console init
-;   sends proxy RESET and waits for the resulting PROXY_READY. Interrupts are
-;   enabled only after console state, banking state, and page zero are coherent.
+;   establishes the build-selected display/input backend. Interrupts are enabled
+;   only after console state, banking state, and page zero are coherent.
 boot:
 	di
 	ld sp,#CBIOS_STACK_TOP
@@ -57,7 +57,7 @@ boot:
 	; storage on B: and leaves the machine fully usable.
 	call ioc_link_bringup
 
-	call vdrip_console_cold_init
+	call console_backend_cold_init
 	call boot_print_banner
 	call prepare_runnable_bank
 	xor a
@@ -117,13 +117,12 @@ wboot_resident:
 	; Rebuild the console only.  SIO1/A deliberately retains its receiver state
 	; and persistent External-Sync character boundary across CP/M warm boots.
 	call sio_core_init
-	call restore_font_from_rom
+	call console_backend_restore_font_from_rom
 	call restore_ccp_from_rom
 	call prepare_runnable_bank
-	; Console initialization temporarily enables SIO RX interrupts for the
-	; READY handshake and finishes by asserting RTS. Keep it after all
-	; bank-sensitive CCP/page-zero restoration so queued terminal input cannot
-	; interrupt the WBOOT critical section.
+	; Keep console initialization after all bank-sensitive CCP/page-zero
+	; restoration. The VDrip backend may temporarily enable SIO RX for its READY
+	; handshake; the direct V9958 backend performs only physical VDP/HID setup.
 	call console_init
 	call sio_core_enable_interrupts
 	ld a,(TDRIVE)

@@ -83,13 +83,13 @@ IMPLEMENTATION_SYMBOLS = [
     (("listst",), "Ready list-status implementation."),
     (("CONSOLE_CODE_END",), "Console BIOS facade end."),
     (("STORAGE_STUB_CODE_START",), "Storage BIOS facade start."),
-    (("home",), "Storage HOME facade; routes to VDrip storage backend."),
+    (("home",), "Storage HOME facade; routes to the selected drive-A backend."),
     (("settrk",), "Storage SETTRK facade; records selected track."),
     (("setsec",), "Storage SETSEC facade; records selected sector."),
     (("seldsk",), "Storage SELDSK facade; returns a drive DPH or no disk."),
     (("setdma",), "Records DMA address."),
-    (("read",), "Storage READ facade; transfers from VDrip proxy storage."),
-    (("write",), "Storage WRITE facade; transfers to VDrip proxy storage."),
+    (("read",), "Storage READ facade; transfers from the selected drive-A backend."),
+    (("write",), "Storage WRITE facade; transfers to the selected drive-A backend."),
     (("sectran",), "Returns untranslated 0-based logical sector for no-skew media."),
     (("STORAGE_STUB_CODE_END",), "Storage BIOS facade end."),
     (("CCP_QOL_CODE_START",), "CCP clear-screen prompt-redraw helper start."),
@@ -157,13 +157,17 @@ IMPLEMENTATION_SYMBOLS = [
     (("vdrip_console_init",), "Virtual Drip console init, proxy handshake, VDP setup."),
     (("ccp_read_up_sequence",), "Consumes the `ESC [ A` suffix for CCP one-line recall."),
     (("VDRIP_CONSOLE_CODE_END",), "Virtual Drip console driver code end."),
+    (("V9958_CONSOLE_CODE_START",), "Direct LunchCrema V9958 console driver code start."),
+    (("v9958_console_driver",), "Direct V9958 console driver dispatch table."),
+    (("v9958_console_init",), "Direct V9958 warm initialization and HID setup."),
+    (("V9958_CONSOLE_CODE_END",), "Direct LunchCrema V9958 console driver code end."),
     (("BANKING_CODE_START",), "Banking extension implementation start."),
     (("SELMEM",), "Select RAM bank."),
     (("SETBNK",), "Record future DMA bank."),
     (("XMOVE",), "Set source/destination banks for next `MOVE`."),
     (("MOVE",), "Same-bank or cross-bank memory move."),
     (("BANKING_CODE_END",), "Banking extension implementation end."),
-    (("VIDEO_SEND",), "Extended BIOS call: raw VDrip display/VDP packet send."),
+    (("VIDEO_SEND",), "Extended BIOS call: selected-backend raw video request."),
     (("IOCBULK",), "Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake."),
     (("IOCBULKW",), "Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake."),
     (("BIOS_EXT_CODE_START",), "BIOS extension code start."),
@@ -216,27 +220,31 @@ RUNTIME_STATE = [
     ("SIO0B_LAST_RX_ERROR", 1),
 ]
 
-DRIVER_SLOT_OWNERS = {
-    0: "Virtual Drip console driver",
-    1: "Virtual Drip console driver",
-    2: "Virtual Drip console driver",
-    3: "IOC Bulk transport overflow",
-    4: "IOC Command transport",
-    5: "VDrip transport and storage",
-}
-
-DRIVER_DECLARATIONS = [
-    ("Virtual Drip console driver", "VDRIP_CONSOLE_CODE_START", "VDRIP_CONSOLE_CODE_END", 0, 5),
+COMMON_DRIVER_DECLARATIONS = [
     ("IOC Bulk transport overflow", "IOC_BULK_CODE_START", "IOC_BULK_CODE_END", 3, 3),
     ("USB keyboard IOC polling helper", "HID_INPUT_CODE_START", "HID_INPUT_CODE_END", 3, 3),
     ("IOC Command transport", "IOC_CMD_CODE_START", "IOC_CMD_CODE_END", 4, 5),
     ("SD select-probe request", "SD_PROBE_REQUEST_CODE_START", "SD_PROBE_REQUEST_CODE_END", 4, 5),
     ("SD-card BIOS backend", "SD_STORAGE_CODE_START", "SD_STORAGE_CODE_END", 4, 5),
-    ("Shared VDrip transport", "VDRIP_TRANSPORT_CODE_START", "VDRIP_TRANSPORT_CODE_END", 5, 5),
     ("SD select-probe success continuation", "SD_PROBE_SUCCESS_CODE_START", "SD_PROBE_SUCCESS_CODE_END", 5, 5),
     ("Drive A: storage backend", "STORAGE_A_CODE_START", "STORAGE_A_CODE_END", 5, 5),
     ("SD select-probe result store", "SD_PROBE_RESULT_CODE_START", "SD_PROBE_RESULT_CODE_END", 5, 5),
 ]
+
+OPTIONAL_IMPLEMENTATION_SYMBOLS = {
+    "VDRIP_TRANSPORT_CODE_START",
+    "vdrip_send_frame",
+    "vdrip_rx_sink",
+    "VDRIP_TRANSPORT_CODE_END",
+    "VDRIP_CONSOLE_CODE_START",
+    "vdrip_console_driver",
+    "vdrip_console_init",
+    "VDRIP_CONSOLE_CODE_END",
+    "V9958_CONSOLE_CODE_START",
+    "v9958_console_driver",
+    "v9958_console_init",
+    "V9958_CONSOLE_CODE_END",
+}
 
 CORE_RANGES = [
     ("BIOS jump table and boot glue", "BIOS_CODE_START", "CONSOLE_CODE_START"),
@@ -253,15 +261,51 @@ VALIDATION_NOTES = [
     "BIOS core must stay inside CBIOS_CORE_BASE-CBIOS_CORE_END.",
     "Core BIOS component ranges must not overlap.",
     "Each declared driver must stay inside its declared fixed slot range.",
-    "Virtual Drip console driver must stay inside slots 0-5.",
-    "Shared VDrip transport must stay inside slot 5.",
-    "VDrip storage backend must stay inside slot 5.",
+    "Selected console driver must stay inside its declared driver-slot range.",
+    "Shared VDrip transport, when selected, must stay inside slot 5.",
+    "Drive-A storage backend must stay inside slot 5.",
     "SIO core and its exact IM2 vector entry must stay inside core BIOS.",
     "Scratch buffers and the storage allocation vector must not overlap resident code.",
     "Runtime state must not overlap scratch, stack, or the SIO-owned IM2 table.",
     "Stack guard must remain above runtime state.",
     "Protected/common TPA C000h-C3FFh is application-owned and must not be used by BIOS.",
 ]
+
+
+def selected_console(symbols: dict[str, int], manifest: dict[str, str]) -> tuple[str, str, str, str]:
+    """Return backend, display label, start symbol, and exclusive-end symbol."""
+    backend = manifest.get("console.backend")
+    if backend not in ("v9958", "vdrip"):
+        raise SystemExit(f"Unknown or missing console backend in layout manifest: {backend}")
+    if backend == "v9958":
+        start_sym = "V9958_CONSOLE_CODE_START"
+        end_sym = "V9958_CONSOLE_CODE_END"
+        label = "Direct LunchCrema V9958 console"
+    else:
+        start_sym = "VDRIP_CONSOLE_CODE_START"
+        end_sym = "VDRIP_CONSOLE_CODE_END"
+        label = "Virtual Drip console"
+    require_symbol(symbols, start_sym)
+    require_symbol(symbols, end_sym)
+    other = "VDRIP_CONSOLE_CODE_START" if backend == "v9958" else "V9958_CONSOLE_CODE_START"
+    if other in symbols:
+        raise SystemExit(f"Unselected console symbol was linked: {other}")
+    return backend, label, start_sym, end_sym
+
+
+def driver_declarations(
+    symbols: dict[str, int], manifest: dict[str, str]
+) -> list[tuple[str, str, str, int, int]]:
+    backend, label, start_sym, end_sym = selected_console(symbols, manifest)
+    declarations = [(label, start_sym, end_sym, 0, 3)]
+    declarations.extend(COMMON_DRIVER_DECLARATIONS)
+    if backend == "vdrip":
+        declarations.append(
+            ("Shared VDrip transport", "VDRIP_TRANSPORT_CODE_START", "VDRIP_TRANSPORT_CODE_END", 5, 5)
+        )
+    elif "VDRIP_TRANSPORT_CODE_START" in symbols:
+        raise SystemExit("Direct V9958 build unexpectedly linked the shared VDrip transport")
+    return declarations
 
 
 def parse_args() -> argparse.Namespace:
@@ -478,7 +522,7 @@ def validate_within(
     return start, limit
 
 
-def validate_layout(symbols: dict[str, int]) -> list[str]:
+def validate_layout(symbols: dict[str, int], manifest: dict[str, str]) -> list[str]:
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -522,7 +566,7 @@ def validate_layout(symbols: dict[str, int]) -> list[str]:
 
     # Validate declared driver ranges and check pairwise overlap.
     declared_ranges: list[tuple[str, int, int]] = []
-    for label, start_sym, limit_sym, first_slot, last_slot in DRIVER_DECLARATIONS:
+    for label, start_sym, limit_sym, first_slot, last_slot in driver_declarations(symbols, manifest):
         allowed_start, _ = slot_range(symbols, first_slot)
         _, allowed_limit = slot_range(symbols, last_slot)
         start, limit = validate_within(
@@ -554,17 +598,17 @@ def validate_layout(symbols: dict[str, int]) -> list[str]:
                 )
 
     # HID's mutable state uses the narrow fixed gap between the SD backend and
-    # the VDrip transport.  It is deliberately outside both scratch (whose last
-    # page is the SD ALV) and runtime state (which has no 58-byte hole).
+    # slot 5. In a compatibility build, the VDrip transport begins at that
+    # boundary; direct builds deliberately leave it absent.
     hid_state_start = require_symbol(symbols, "HID_INPUT_STATE_START")
     hid_state_limit = require_symbol(symbols, "HID_INPUT_STATE_END")
     hid_gap_start = require_symbol(symbols, "SD_STORAGE_CODE_END")
-    hid_gap_limit = require_symbol(symbols, "VDRIP_TRANSPORT_CODE_START")
+    hid_gap_limit = require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE")
     if hid_state_start < hid_gap_start or hid_state_limit > hid_gap_limit:
         errors.append(
             validation_error(
                 f"HID input state ({exclusive_span(hid_state_start, hid_state_limit)}) is outside "
-                f"the post-SD/pre-VDrip gap ({exclusive_span(hid_gap_start, hid_gap_limit)})"
+                f"the post-SD/pre-slot-5 gap ({exclusive_span(hid_gap_start, hid_gap_limit)})"
             )
         )
 
@@ -731,12 +775,25 @@ def storage_rows(values: dict[str, str]) -> list[str]:
                 f"{values['ramdisk.total_bytes']} | {int(values['ramdisk.total_bytes']) // 128} | 128 |"
             )
         ]
-    backend = values.get("storage.backend", "vdrip_proxy")
-    if backend != "vdrip_proxy":
-        raise SystemExit(f"Unknown storage backend in layout manifest: {backend}")
-    return [
-        "| Drive A | VDrip proxy flat image | `Zephyr VDrip CP/M 8M` | 8,388,608 | 65,536 | 128 |"
-    ]
+    backend = values.get("storage.backend")
+    if backend == "rom":
+        total = sum(
+            int(value)
+            for key, value in values.items()
+            if key.startswith("payload.romdisk_page") and key.endswith(".size")
+        )
+        return [
+            f"| Drive A | ROM CP/M volume | `ROM pages 1-3` | {total:,} | {total // 128:,} | 128 |"
+        ]
+    if backend == "vdrip":
+        return [
+            "| Drive A | VDrip proxy flat image | `Zephyr VDrip CP/M 8M` | 8,388,608 | 65,536 | 128 |"
+        ]
+    if backend == "ramdisk":
+        return [
+            "| Drive A | banked RAM disk | `banks 2-7, 0000h-BFFFh` | 294,912 | 2,304 | 128 |"
+        ]
+    raise SystemExit(f"Unknown or missing storage backend in layout manifest: {backend}")
 
 
 def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest: dict[str, str]) -> None:
@@ -803,7 +860,12 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
         ]
     )
     for names, notes in IMPLEMENTATION_SYMBOLS:
-        lines.append(symbol_row(symbols, names, notes))
+        if names[0] in OPTIONAL_IMPLEMENTATION_SYMBOLS:
+            row = optional_symbol_row(symbols, names, notes)
+            if row is not None:
+                lines.append(row)
+        else:
+            lines.append(symbol_row(symbols, names, notes))
 
     lines.extend(
         row
@@ -840,23 +902,23 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
             optional_symbol_row(symbols, ("vdrip_storage_seq",), "VDrip storage sequence byte."),
             optional_symbol_row(symbols, ("vdrip_storage_active_seq",), "Sequence byte for the active storage transaction."),
             optional_symbol_row(symbols, ("vdrip_storage_lba",), "Computed little-endian 16-bit LBA for the active request."),
-            symbol_row(symbols, ("VDRIP_TRANSPORT_STATE_START",), "Shared Virtual Drip transport state start."),
-            symbol_row(symbols, ("vdrip_rx_mode",), "Current raw/readiness/storage/PTY receive mode."),
-            symbol_row(symbols, ("vdrip_idle_mode",), "Console backend idle receive mode."),
-            symbol_row(symbols, ("vdrip_proxy_online",), "Packetized PROXY_READY online flag."),
-            symbol_row(symbols, ("vdrip_raw_callback",), "Selected console raw-byte callback."),
-            symbol_row(symbols, ("vdrip_rx_state",), "Shared frame parser state."),
-            symbol_row(symbols, ("vdrip_declared_len",), "Current 16-bit declared frame length."),
-            symbol_row(symbols, ("vdrip_payload_len",), "Current decoded payload length."),
-            symbol_row(symbols, ("vdrip_rx_type",), "Current received packet type."),
-            symbol_row(symbols, ("vdrip_payload_remaining",), "Payload bytes remaining."),
-            symbol_row(symbols, ("vdrip_payload_index",), "Payload staging index."),
-            symbol_row(symbols, ("vdrip_pending_type",), "Expected storage reply type."),
-            symbol_row(symbols, ("vdrip_pending_seq",), "Expected storage reply sequence."),
-            symbol_row(symbols, ("vdrip_reply_ready",), "Matching storage reply completion flag."),
-            symbol_row(symbols, ("vdrip_reply_error",), "Storage reply/protocol error flag."),
-            symbol_row(symbols, ("vdrip_reply_status",), "Decoded storage or protocol status."),
-            symbol_row(symbols, ("VDRIP_TRANSPORT_STATE_END",), "Shared Virtual Drip transport state end."),
+            optional_symbol_row(symbols, ("VDRIP_TRANSPORT_STATE_START",), "Shared Virtual Drip transport state start."),
+            optional_symbol_row(symbols, ("vdrip_rx_mode",), "Current raw/readiness/storage/PTY receive mode."),
+            optional_symbol_row(symbols, ("vdrip_idle_mode",), "Console backend idle receive mode."),
+            optional_symbol_row(symbols, ("vdrip_proxy_online",), "Packetized PROXY_READY online flag."),
+            optional_symbol_row(symbols, ("vdrip_raw_callback",), "Selected console raw-byte callback."),
+            optional_symbol_row(symbols, ("vdrip_rx_state",), "Shared frame parser state."),
+            optional_symbol_row(symbols, ("vdrip_declared_len",), "Current 16-bit declared frame length."),
+            optional_symbol_row(symbols, ("vdrip_payload_len",), "Current decoded payload length."),
+            optional_symbol_row(symbols, ("vdrip_rx_type",), "Current received packet type."),
+            optional_symbol_row(symbols, ("vdrip_payload_remaining",), "Payload bytes remaining."),
+            optional_symbol_row(symbols, ("vdrip_payload_index",), "Payload staging index."),
+            optional_symbol_row(symbols, ("vdrip_pending_type",), "Expected storage reply type."),
+            optional_symbol_row(symbols, ("vdrip_pending_seq",), "Expected storage reply sequence."),
+            optional_symbol_row(symbols, ("vdrip_reply_ready",), "Matching storage reply completion flag."),
+            optional_symbol_row(symbols, ("vdrip_reply_error",), "Storage reply/protocol error flag."),
+            optional_symbol_row(symbols, ("vdrip_reply_status",), "Decoded storage or protocol status."),
+            optional_symbol_row(symbols, ("VDRIP_TRANSPORT_STATE_END",), "Shared Virtual Drip transport state end."),
             symbol_row(symbols, ("storage_caller_sp",), "Saved caller stack pointer while storage backends run on the BIOS stack."),
             symbol_row(symbols, ("STORAGE_A_ALV",), "Drive A: allocation vector."),
             symbol_row(symbols, ("STORAGE_STATE_END",), "Storage state end."),
@@ -881,6 +943,9 @@ def write_memory_map(
     manifest: dict[str, str],
     validation_warnings: list[str],
 ) -> None:
+    console_backend, console_label, console_start_sym, console_end_sym = selected_console(symbols, manifest)
+    console_start = require_symbol(symbols, console_start_sym)
+    console_end = require_symbol(symbols, console_end_sym)
     cbios_base = require_symbol(symbols, "CBIOS_BASE")
     bios_code_end = require_symbol(symbols, "BIOS_CODE_END")
     code_limit = require_symbol(symbols, "CBIOS_CODE_LIMIT")
@@ -915,9 +980,9 @@ def write_memory_map(
         range_row(span(require_symbol(symbols, "CBASE"), require_symbol(symbols, "CCPSTACK")), "CP/M CCP", f"`CBASE` is `{h4(require_symbol(symbols, 'CBASE'))}`."),
         range_row(span(require_symbol(symbols, "FBASE"), cbios_base - 1), "CP/M BDOS and state", f"`FBASE` is `{h4(require_symbol(symbols, 'FBASE'))}`; disk select and sector-I/O errors report the failing drive and warm-boot on A:."),
         range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, SIO core, VIDEO_SEND extension, IOCALL transport, and SD probe recovery."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END")), "Driver slots 0-4", "Virtual Drip console in slots 0-2, IOC Bulk overflow in slot 3, and IOC Command transport beginning in slot 4."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END")), "Driver slots 0-4", f"{console_label}, IOC Bulk/HID helpers, and IOC Command transport."),
         range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END") + 1, require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE") - 1), "Packed driver extension", "IOC Command tail, SD select-probe request, SD-card backend, and USB keyboard state."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slot 5", "VDrip transport/storage plus SD probe continuations."),
+        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slot 5", ("VDrip transport plus storage and SD probe continuations." if console_backend == "vdrip" else "Storage backend and SD probe continuations; no VDrip transport is linked.")),
         range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch/storage buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `VDRIP_STORAGE_DPHDPB` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DPHDPB_BASE'))}`; `VDRIP_STORAGE_DIRBUF` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DIRBUF'))}`; `STORAGE_A_ALV` is at `{h4(require_symbol(symbols, 'STORAGE_A_ALV'))}`."),
         range_row(span(runtime_start, runtime_end), "BIOS runtime state", "Current bank, DMA address, banking state, storage state, SIO core state, and console driver state."),
         range_row(span(stack_guard, area_end), "Protected firmware stack and work window", f"Stack top is `{h4(stack_top)}`; console backend stack top is `{h4(console_stack_top)}`; stack guard is `{h4(stack_guard)}`."),
@@ -947,26 +1012,33 @@ def write_memory_map(
         "| Slot | Start | End | Size | Owner | Current contents |",
         "|---:|---:|---:|---:|---|---|",
     ]
+    slot_components = [
+        (console_label, console_start, console_end),
+        ("IOC Bulk transport", require_symbol(symbols, "IOC_BULK_CODE_START"), require_symbol(symbols, "IOC_BULK_CODE_END")),
+        ("USB HID polling", require_symbol(symbols, "HID_INPUT_CODE_START"), require_symbol(symbols, "HID_INPUT_CODE_END")),
+        ("IOC Command transport", require_symbol(symbols, "IOC_CMD_CODE_START"), require_symbol(symbols, "IOC_CMD_CODE_END")),
+        ("SD probe request", require_symbol(symbols, "SD_PROBE_REQUEST_CODE_START"), require_symbol(symbols, "SD_PROBE_REQUEST_CODE_END")),
+        ("SD-card backend", require_symbol(symbols, "SD_STORAGE_CODE_START"), require_symbol(symbols, "SD_STORAGE_CODE_END")),
+        ("SD probe success", require_symbol(symbols, "SD_PROBE_SUCCESS_CODE_START"), require_symbol(symbols, "SD_PROBE_SUCCESS_CODE_END")),
+        ("drive-A backend", require_symbol(symbols, "STORAGE_A_CODE_START"), require_symbol(symbols, "STORAGE_A_CODE_END")),
+        ("SD probe result", require_symbol(symbols, "SD_PROBE_RESULT_CODE_START"), require_symbol(symbols, "SD_PROBE_RESULT_CODE_END")),
+    ]
+    if console_backend == "vdrip":
+        slot_components.append(
+            ("shared VDrip transport", require_symbol(symbols, "VDRIP_TRANSPORT_CODE_START"), require_symbol(symbols, "VDRIP_TRANSPORT_CODE_END"))
+        )
+
     for slot in range(6):
         slot_start, slot_limit = slot_range(symbols, slot)
-        owner = DRIVER_SLOT_OWNERS[slot]
-        if slot == 5:
-            contents = (
-                f"`{span(require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_START'), require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_END') - 1)}` shared transport; "
-                f"`{span(require_symbol(symbols, 'SD_PROBE_SUCCESS_CODE_START'), require_symbol(symbols, 'SD_PROBE_SUCCESS_CODE_END') - 1)}` SD probe success; "
-                f"`{span(require_symbol(symbols, 'STORAGE_A_CODE_START'), require_symbol(symbols, 'STORAGE_A_CODE_END') - 1)}` storage backend; "
-                f"`{span(require_symbol(symbols, 'SD_PROBE_RESULT_CODE_START'), require_symbol(symbols, 'SD_PROBE_RESULT_CODE_END') - 1)}` SD probe result store."
-            )
-        elif slot == 0:
-            contents = f"`{span(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'), require_symbol(symbols, 'VDRIP_CONSOLE_CODE_END') - 1)}` VDrip V9958 code, run/input queues, parser, and sprite-cursor state."
-        elif slot == 3:
-            contents = f"`{span(require_symbol(symbols, 'IOC_BULK_CODE_START'), require_symbol(symbols, 'IOC_BULK_CODE_END') - 1)}` IOC common-packet Bulk-write and link helpers."
-        elif slot == 4:
-            contents = (
-                f"IOC common-packet Command and Bulk-receive helpers begin at `{h4(require_symbol(symbols, 'IOC_CMD_CODE_START'))}` and continue through `{h4(require_symbol(symbols, 'IOC_CMD_CODE_END') - 1)}` in the packed extension."
-            )
-        else:
-            contents = "Reserved console slot; current console code ends in slot 2."
+        present = [
+            (name, max(start, slot_start), min(limit, slot_limit))
+            for name, start, limit in slot_components
+            if ranges_overlap(start, limit, slot_start, slot_limit)
+        ]
+        owner = " + ".join(name for name, _, _ in present) if present else "unallocated"
+        contents = "; ".join(
+            f"`{exclusive_span(start, limit)}` {name}" for name, start, limit in present
+        ) or "No emitted driver bytes."
         lines.append(
             f"| {slot} | `{h4(slot_start)}` | `{h4(slot_limit - 1)}` | "
             f"{slot_limit - slot_start} bytes | {owner} | {contents} |"
@@ -979,17 +1051,17 @@ def write_memory_map(
             "",
             "| Range | Owner | Notes |",
             "|---|---|---|",
-            f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core | BIOS-owned SIO0/B async console setup plus cold initialization and compatibility helpers for the SIO1 IOC channels. |",
+            f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core | BIOS-owned serial and IOC interrupt services. |",
             f"| `{span(require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_START'), require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_END') - 1)}` | SIO core | Exact two-byte IM2 vector table entry. |",
             "",
-            "SIO_CH_CONSOLE is the BIOS-owned SIO0/B async console link used by the Virtual Drip console driver. RTS/CTS are connected, /DCD is tied active-low, and WR3 Auto Enables are enabled. The VDrip console driver also manages RTS through high/low watermarks for host-to-Zephyr backpressure and display-traffic gating.",
+            ("SIO0/B remains available to the retained Virtual Drip console, including its RTS/CTS backpressure discipline." if console_backend == "vdrip" else "The direct V9958 console does not register or poll the SIO0/B Virtual Drip input path; console input comes only from the IOC HID queue."),
             "",
-            "## VDrip Console Layout",
+            "## Selected Console Layout",
             "",
             "| Range | Owner | Notes |",
             "|---|---|---|",
-            f"| `{span(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'), require_symbol(symbols, 'VDRIP_CONSOLE_CODE_END') - 1)}` | Virtual Drip V9958 console driver | CP/M console semantics, G6 command streams, CP850 atlas upload, input queue, printable-run buffer, and sprite-cursor state. |",
-            f"| `{span(require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_START'), require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_END') - 1)}` | Shared Virtual Drip transport | Current no-CRC frame sender, packetized readiness, single RX sink, parser, PTY dispatch, and storage reply dispatch. |",
+            f"| `{span(console_start, console_end - 1)}` | {console_label} | CP/M console semantics, ANSI/VT100-light parser, CP850 atlas, printable-run buffer, and sprite-cursor state. |",
+            *([f"| `{span(require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_START'), require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_END') - 1)}` | Shared Virtual Drip transport | Packet sender, readiness/parser state, input dispatch, and legacy storage replies. |"] if console_backend == "vdrip" else []),
             "",
             "The IOC transport uses SIO1/B as its Command lane and SIO1/A as its Bulk lane. Both run the common A5/5A packet with persistent External Sync and Auto Enables off.",
             f"`IOCALL` mailbox code is at `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` in core BIOS; packet helpers occupy `{span(require_symbol(symbols, 'IOC_CMD_CODE_START'), require_symbol(symbols, 'IOC_CMD_CODE_END') - 1)}` and `{span(require_symbol(symbols, 'IOC_BULK_CODE_START'), require_symbol(symbols, 'IOC_BULK_CODE_END') - 1)}`.",
@@ -1071,7 +1143,7 @@ def write_memory_map(
             "|---|---:|---:|---:|---:|---|",
             *payload_rows(manifest),
             "",
-            "## VDrip Storage Layout",
+            "## Drive A Storage Layout",
             "",
             "| Drive | Backend | Format | Bytes | Records | Record Bytes |",
             "|---|---|---|---:|---:|---:|",
@@ -1102,13 +1174,13 @@ def write_memory_map(
             "",
             "Additional notes:",
             "",
-            "- CP/M drive A is backed by VDrip proxy storage using a flat 8 MiB image; no RAM disk seed is embedded in ROM banks.",
-            "- Storage READ/WRITE use framed Virtual Drip transactions and preserve the standard CP/M BIOS disk call model.",
+            f"- CP/M drive A uses the `{manifest['storage.backend']}` build-time backend; drive B remains the SD-card backend.",
+            ("- The direct console links no Virtual Drip transport, readiness, proxy-keyboard, or packet-output code." if console_backend == "v9958" else "- The retained Virtual Drip console links its shared transport and preserves proxy/HID input compatibility."),
             f"- The protected TPA marker is `{span(protected_tpa_start, protected_tpa_end)}`; for this build, the application-usable protected TPA subrange is `{span(protected_tpa_effective_start, protected_tpa_effective_end)}` because `CBASE` starts at `{h4(require_symbol(symbols, 'CBASE'))}`.",
             f"- WBOOT restores the CCP range `{span(require_symbol(symbols, 'CBASE'), require_symbol(symbols, 'FBASE') - 1)}` from ROM page 0 using `ROM_VISIBLE_BANK0` (`{h2(require_symbol(symbols, 'ROM_VISIBLE_BANK0'))}`) before returning to `CCP_CLEARBUF_ENTRY`.",
             f"- `CBIOS_BASE` is `{h4(cbios_base)}`; CBIOS layout constants are derived from this base.",
             f"- `CBIOS_CODE_LIMIT` is `{h4(code_limit)}`; no resident code may cross into scratch/staging.",
-            f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the Virtual Drip console driver starts at `{h4(require_symbol(symbols, 'VDRIP_CONSOLE_CODE_START'))}`, the shared transport starts at `{h4(require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_START'))}`, and the drive A: storage backend starts at `{h4(require_symbol(symbols, 'STORAGE_A_CODE_START'))}`.",
+            f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the selected console driver starts at `{h4(console_start)}`, and the drive A: storage backend starts at `{h4(require_symbol(symbols, 'STORAGE_A_CODE_START'))}`.",
             f"- `IOCALL` code is at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` in core BIOS; SIO1/B Command and SIO1/A Bulk use the same persistent-External-Sync common packet.",
             f"- `VIDEO_SEND` code is at `{h4(require_symbol(symbols, 'BIOS_EXT_CODE_START'))}` in core BIOS; raw VDP/display writes may desynchronize the V9958 logical-cell state.",
             f"- `WBOOT` resident code starts at `{h4(require_symbol(symbols, 'WBOOT_RESIDENT_START'))}`, inside protected high BIOS memory.",
@@ -1125,7 +1197,7 @@ def main() -> int:
     require_file(args.map)
     symbols = parse_listing(args.listing)
     manifest = parse_manifest(args.manifest)
-    validation_warnings = validate_layout(symbols)
+    validation_warnings = validate_layout(symbols, manifest)
 
     args.symbol_map.parent.mkdir(parents=True, exist_ok=True)
     args.memory_map.parent.mkdir(parents=True, exist_ok=True)

@@ -17,6 +17,19 @@ SIO1A_CTRL                  = 0x31
 SIO1B_DATA                  = 0x32
 SIO1B_CTRL                  = 0x33
 
+; LunchCrema V9958 direct-hardware interface. MODE0/MODE1 are driven by
+; CPU A0/A1; A2 selects the card configuration latch.
+V9958_DATA_PORT             = 0xa0
+V9958_COMMAND_PORT          = 0xa1
+V9958_PALETTE_PORT          = 0xa2
+V9958_INDIRECT_PORT         = 0xa3
+V9958_CONFIG_PORT           = 0xa4
+
+; The configuration latch captures both bits together. D0 selects the VDP
+; interrupt route and must be preserved; D1 is physical /WS_EN.
+V9958_CONFIG_INT_ROUTE      = 0x01
+V9958_CONFIG_PORCH_OFF      = 0x02
+
 CTC0_CTRL                   = 0x40
 CTC1_CTRL                   = 0x41
 CTC2_CTRL                   = 0x42

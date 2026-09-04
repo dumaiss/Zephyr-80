@@ -41,7 +41,7 @@ cpm:
 ;   XMOVE                 set source/destination banks for the next MOVE
 ;   SELMEM/SETBNK         select execution bank / record disk DMA bank
 ;   IOCALL                perform a BIOS-owned SIO1 IO Controller transaction
-;   VIDEO_SEND            send a raw VDrip display/VDP packet
+;   VIDEO_SEND            send a selected-backend raw video request
 ;
 ; Banking and XMOVE live in the core BIOS range because they define how CP/M
 ; itself crosses banks. They are not replaceable card drivers.
@@ -99,6 +99,9 @@ ZBIOS_EXT_BASE:
 	.include "cbios_boot.asm"
 	.include "cbios_console.asm"
 	.include "sio_core.asm"
+; The Makefile rewrites the next transport/console/storage includes according
+; to CONSOLE and STORAGE_A. This source remains the VDrip compatibility
+; template so it can still be assembled directly for that legacy target.
 	.include "vdrip_transport.asm"
 	.include "cbios_bios_ext.asm"
 	.include "cbios_iocall.asm"

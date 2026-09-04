@@ -1,7 +1,7 @@
 ; Local Zephyr-80 CP/M console BIOS facade.
 ;
 ; CP/M entry labels stay stable while the active console backend is selected
-; through a small driver table. The default backend is Virtual Drip on SIO0/B.
+; through a small driver table. The Makefile selects the linked backend.
 ;
 ; Driver table contract, seven 16-bit little-endian entries:
 ;   +00 const   -> A = FFh if input is available, A = 00h otherwise
@@ -26,7 +26,7 @@
 
 	.globl const,conin,conout,list,punch,reader,listst
 	.globl console_init,console_set_driver
-	.globl vdrip_console_driver,vdrip_console_init
+	.globl console_backend_driver,console_backend_init
 	.globl CONSOLE_CODE_START,CONSOLE_CODE_END
 	.globl CONSOLE_STATE_START,CONSOLE_STATE_END
 	.globl CONSOLE_DRIVER
@@ -38,14 +38,14 @@ CONSOLE_CODE_START:
 
 ; Initialize the default console backend.
 ; Purpose:
-;   Install the Virtual Drip console table and clear its backend state.
+;   Install the build-selected console table and clear its backend state.
 ; Inputs: none.
-; Outputs: CONSOLE_DRIVER points at vdrip_console_driver.
+; Outputs: CONSOLE_DRIVER points at console_backend_driver.
 ; Clobbers: AF, HL.
 console_init:
-	ld hl,#vdrip_console_driver
+	ld hl,#console_backend_driver
 	ld (CONSOLE_DRIVER),hl
-	jp vdrip_console_init
+	jp console_backend_init
 
 ; Install a different console driver table.
 ; Purpose:
@@ -120,7 +120,7 @@ CONSOLE_CODE_END:
 	.org CBIOS_CONSOLE_WORK_AREA
 CONSOLE_STATE_START:
 CONSOLE_DRIVER:
-	.dw vdrip_console_driver
+	.dw console_backend_driver
 CONSOLE_CALLER_SP:
 	.dw 0x0000
 

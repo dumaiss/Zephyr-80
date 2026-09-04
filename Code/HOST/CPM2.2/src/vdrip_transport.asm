@@ -1,7 +1,7 @@
 ; Shared Zephyr-80 Virtual Drip transport.
 ;
-; This module is the single framed-protocol owner used by both console
-; backends and the VDrip storage backend. SIO core remains the only hardware
+; This module is the single framed-protocol owner used by the retained VDrip
+; console and VDrip storage backend. SIO core remains the only hardware
 ; reader; its registered SIO0/B sink enters here.
 ;
 ; Wire:
@@ -21,6 +21,7 @@
 	.globl VDRIP_TRANSPORT_CODE_START,VDRIP_TRANSPORT_CODE_END
 	.globl VDRIP_TRANSPORT_STATE_START,VDRIP_TRANSPORT_STATE_END
 	.globl vdrip_send_frame,vdrip_send_packet,vdrip_send_packet0,vdrip_send_packet1
+	.globl console_backend_send_frame
 	.globl vdrip_transport_register_sink
 	.globl vdrip_transport_set_raw_callback
 	.globl vdrip_transport_set_idle_mode
@@ -201,6 +202,7 @@ vdrip_send_packet1:
 ; Send one current-format frame.
 ; Input: A=type, BC=payload length (0..1024), HL=payload pointer.
 ; Output: A=BIOS_OK or transport error. Preserves BC, DE, HL.
+console_backend_send_frame:
 vdrip_send_frame:
 	ld (vdrip_tx_type),a
 	ld (vdrip_tx_len),bc

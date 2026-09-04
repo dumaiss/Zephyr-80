@@ -1,14 +1,17 @@
 ; Zephyr-80 extended BIOS entry points.
 ;
-; VIDEO_SEND: raw VDrip display/VDP packet transport for CP/M programs.
+; VIDEO_SEND: selected-console raw video compatibility entry point.
 ; Code base: CBIOS_BIOS_EXT_CODE_BASE (DF50h).
 
 	.globl VIDEO_SEND
 	.globl BIOS_EXT_CODE_START,BIOS_EXT_CODE_END,BIOS_CODE_END
 
-	.globl vdrip_send_frame
-	.globl vdrip_data_write_block
-	.globl vdrip_reset_display
+	.globl console_backend_send_frame
+	.globl console_backend_data_write_block
+	.globl console_backend_reset_display
+
+VIDEO_TYPE_VDP_DATA_BLOCK = 0x0b
+VIDEO_SINGLE_PAYLOAD_MAX  = 0x10
 
 	.area CODE (ABS)
 	.org CBIOS_BIOS_EXT_CODE_BASE
@@ -16,7 +19,7 @@
 BIOS_EXT_CODE_START:
 
 ; VIDEO_SEND
-; Extended BIOS call: send a raw VDrip display/VDP packet.
+; Extended BIOS call: send a raw video request through the selected backend.
 ;
 ; Inputs:
 ;   A  = VDrip packet type
@@ -24,67 +27,48 @@ BIOS_EXT_CODE_START:
 ;   BC = payload length
 ;
 ; Special:
-;   A = 00h or FFh: reset/reinitialize VDrip display backend.
+;   A = 00h or FFh: reset/reinitialize the selected display backend.
 ;   HL and BC are ignored for the reset case.
 ;
 ; Returns:
 ;   A = 00h   success
 ;   A != 00h  error
 ;
-; Clobbers: AF, BC, DE, HL.
-; Preserves: IX, IY.
-;
-; Warning:
-;   Raw VDP/display writes may desynchronize the BIOS console shadow buffer.
-;   This call is intended for programs that take over the display while active.
-;   WBOOT reinitializes the normal console display before returning to CP/M.
-;
-; Policy (first-pass):
-;   PACKET_VDP_DATA_BLOCK payloads are chunked via vdrip_data_write_block;
-;   BC may exceed VDRIP_PACKET_PAYLOAD_MAX for this type only.
-;   All other types require BC <= VDRIP_PACKET_PAYLOAD_MAX (10h); larger
-;   payloads return BIOS_ERR.
-;   Storage packet types (0Dh-10h) are not filtered; this call is trusted
-;   and intended for local CP/M programs only.
-;   Do not call from interrupt context.
+; Clobbers: AF, BC, DE, HL. Preserves IX, IY. Do not call from an ISR.
+; WBOOT reinitializes the selected console after a transient program takes over
+; the display. Non-block requests retain the historical 16-byte limit.
 VIDEO_SEND:
 	or a
-	jr z, vs_reset
-	inc a				; FFh wraps to 00h, sets Z
-	jr z, vs_reset
-	dec a				; restore packet type
+	jr z,video_send_reset
+	inc a
+	jr z,video_send_reset
+	dec a
 
-	push af				; save type; comparisons clobber A
-
-	cp #PACKET_VDP_DATA_BLOCK
-	jr nz, vs_single
-
-	; VDP data block: chunk any size through the existing helper.
-	; vdrip_data_write_block input: HL = payload pointer, BC = length.
-	pop af				; discard saved type
-	call vdrip_data_write_block
+	push af
+	cp #VIDEO_TYPE_VDP_DATA_BLOCK
+	jr nz,video_send_single
+	pop af
+	call console_backend_data_write_block
 	xor a
 	ret
 
-vs_single:
-	; Single framed packet. BC must fit in one payload (max 10h bytes).
-	ld a, b
+video_send_single:
+	ld a,b
 	or a
-	jr nz, vs_err_len		; B != 0 means BC > 255 > max
-	ld a, c
-	cp #VDRIP_PACKET_PAYLOAD_MAX + 1
-	jr nc, vs_err_len
+	jr nz,video_send_length_error
+	ld a,c
+	cp #(VIDEO_SINGLE_PAYLOAD_MAX + 1)
+	jr nc,video_send_length_error
+	pop af
+	jp console_backend_send_frame
 
-	pop af				; restore packet type to A
-	jp vdrip_send_frame		; A = type, BC = len, HL = payload ptr
-
-vs_err_len:
-	pop af				; balance stack
-	ld a, #BIOS_ERR
+video_send_length_error:
+	pop af
+	ld a,#BIOS_ERR
 	ret
 
-vs_reset:
-	call vdrip_reset_display
+video_send_reset:
+	call console_backend_reset_display
 	xor a
 	ret
 

@@ -90,6 +90,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--report", required=True, type=Path)
     parser.add_argument("--symbols", type=Path)
     parser.add_argument("--defs", default=DEFAULT_DEFS_PATH, type=Path)
+    parser.add_argument("--console", choices=("v9958", "vdrip"), default="v9958")
+    parser.add_argument("--storage-a", choices=("rom", "vdrip", "ramdisk"), default="rom")
     return parser.parse_args()
 
 
@@ -352,12 +354,16 @@ def write_manifest(
     payloads: list[Payload],
     ramdisk: RamDiskImage | None,
     symbol_status: dict[str, str],
+    console: str,
+    storage_a: str,
 ) -> None:
     lines = [
         f"image.name={output.name}",
         "image.status=valid",
         f"firmware.path={firmware}",
         f"common.base={COMMON_BASE:04X}h",
+        f"console.backend={console}",
+        f"storage.backend={storage_a}",
     ]
     for payload in payloads:
         lines.extend(
@@ -386,8 +392,6 @@ def write_manifest(
                 f"ramdisk.pad_size={ramdisk.pad_size}",
             ]
         )
-    else:
-        lines.append("storage.backend=vdrip_proxy")
     for symbol, status in symbol_status.items():
         lines.append(f"symbol.{symbol}={status}")
     lines.extend(["validation.payloads=pass"])
@@ -401,6 +405,8 @@ def write_report(
     payloads: list[Payload],
     ramdisk: RamDiskImage | None,
     symbol_status: dict[str, str],
+    console: str,
+    storage_a: str,
 ) -> None:
     lines = [
         "# Zephyr-80 Image Layout Report",
@@ -408,6 +414,8 @@ def write_report(
         f"- Image: `{output}`",
         f"- Firmware input: `{firmware}`",
         f"- Common memory base: `{COMMON_BASE:04X}h`",
+        f"- Console backend: `{console}`",
+        f"- Drive A backend: `{storage_a}`",
         "",
         "## Payloads",
         "",
@@ -510,8 +518,26 @@ def main() -> int:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(image)
-    write_manifest(args.manifest, args.output, args.firmware, payloads, ramdisk, symbol_status)
-    write_report(args.report, args.output, args.firmware, payloads, ramdisk, symbol_status)
+    write_manifest(
+        args.manifest,
+        args.output,
+        args.firmware,
+        payloads,
+        ramdisk,
+        symbol_status,
+        args.console,
+        args.storage_a,
+    )
+    write_report(
+        args.report,
+        args.output,
+        args.firmware,
+        payloads,
+        ramdisk,
+        symbol_status,
+        args.console,
+        args.storage_a,
+    )
     return 0
 
 

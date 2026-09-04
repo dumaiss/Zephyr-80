@@ -580,6 +580,7 @@ CBIOS_HID_INPUT_STATE_BASE      = 0xf642
 
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
+CBIOS_V9958_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_BIOS_EXT_CODE_BASE        = CBIOS_BASE + 0x0550                  ; DF50h
 CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x057B                  ; DF7Bh — immediately after VIDEO_SEND
 
@@ -610,7 +611,8 @@ ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_IOCTRL_CODE_BASE - 1           ; DF7Ah
 ; re-copy from ROM to SRAM bank 0 at warm boot (same technique as CCP restore).
 ; Programs may overwrite this TPA address after boot; the warm-boot restore
 ; refreshes it from ROM before text_load_font is called.
-VDRIP_FONT_ROM_BASE             = 0x8000                ; font start in bank 0 TPA
+CONSOLE_FONT_ROM_BASE           = 0x8000                ; font start in bank 0 TPA
+VDRIP_FONT_ROM_BASE             = CONSOLE_FONT_ROM_BASE ; compatibility alias
 
 ; Resident code region ends before scratch.
 ; LIMIT is one byte past the end.
