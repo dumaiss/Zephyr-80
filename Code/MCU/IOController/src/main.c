@@ -14,6 +14,7 @@
 #include "bulk_channel.h"
 #include "sd_card.h"
 #include "ioc_hid.h"
+#include "handlers.h"
 
 /* ---------------------------------------------------------------------------
  * Platform initialization
@@ -410,6 +411,28 @@ int main(void)
          * is the same placement rule the SD cache flush follows above: idle
          * branch only, after any command in flight has fully completed. */
         hid_host_task();
+
+        /* CTRL-ALT-ESC on the USB keyboard: reset the machine.
+         *
+         * The IOC drives the host reset lines, so it is the only thing that can
+         * restart a wedged Z80 short of the power switch.  Acted on here, in
+         * the idle branch after hid_host_task() has returned, for the same
+         * reason the shutdown request and the cache flush are: any command in
+         * flight has completed, so nothing is reset mid-transaction.
+         *
+         * The cache is flushed first.  This is a deliberate reset of a machine
+         * the user is probably rescuing, and dropping dirty blocks on the floor
+         * would turn a wedged session into a corrupt volume.  A failed flush
+         * still resets -- the user asked for it, and refusing leaves them with
+         * the power switch and the same dirty cache.
+         *
+         * handler_reset() asserts the host reset pair and then resets the PIC;
+         * it does not return. */
+        if (hid_reset_requested()) {
+            command_ready_set(false);
+            (void)sd_cache_flush();
+            handler_reset();            /* does not return */
+        }
 
         /* Empty unless CONTROLLER_LATCH_COUNTER_TEST is explicitly enabled. */
         controller_latch_tick();

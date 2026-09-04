@@ -1304,6 +1304,46 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
     }
 }
 
+/* CTRL-ALT-ESC: reset the machine.
+ *
+ * The IOC drives the host reset lines, so it is the only part of the system
+ * that can restart a wedged Z80 without reaching for the power switch.  This
+ * gives that a keyboard shortcut.
+ *
+ * Either Ctrl and either Alt, matching how translate_key() already treats the
+ * left/right pairs as equivalent.  Other modifiers are ignored rather than
+ * forbidden: a stray Shift should not be the reason a deliberate reset does
+ * nothing.  Escape is looked for anywhere in the keycode array because the
+ * boot report lists concurrent keys in press order, not a fixed slot.
+ *
+ * The combination is checked against the raw report before translate_key()
+ * runs, so the Escape never reaches the input queue.
+ */
+static volatile bool reset_combo_seen;
+
+bool hid_reset_requested(void)
+{
+    return reset_combo_seen;
+}
+
+static bool keyboard_reset_combo(uint8_t const *report, uint8_t copy)
+{
+    uint8_t i;
+
+    if ((report[0] & (KEYBOARD_MODIFIER_LEFTCTRL |
+                      KEYBOARD_MODIFIER_RIGHTCTRL)) == 0u)
+        return false;
+    if ((report[0] & (KEYBOARD_MODIFIER_LEFTALT |
+                      KEYBOARD_MODIFIER_RIGHTALT)) == 0u)
+        return false;
+
+    for (i = 2u; i < copy; i++) {
+        if (report[i] == HID_KEY_ESCAPE)
+            return true;
+    }
+    return false;
+}
+
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
                                 uint8_t const *report, uint16_t len)
 {
@@ -1322,6 +1362,25 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
         rpt_zero_len++;
 
     if (dev_addr == keyboard_addr && instance == keyboard_instance) {
+        /* Latched here, acted on by the main loop.
+         *
+         * Deliberately NOT a direct call to handler_reset() from inside a USB
+         * host callback.  That would make handlers.c and ioc_hid.c call each
+         * other -- handler_hid_input() already calls into this file -- and a
+         * cycle changes how XC8 overlays statics across BOTH modules.  On this
+         * project that class of change has silently corrupted unrelated code
+         * before, and the compiler already reports the call graph as recursive
+         * with the data stack at 100%.  A flag keeps the graph acyclic and
+         * costs nothing.
+         *
+         * Latching also means the reset happens between commands rather than
+         * mid-enumeration, which is where every other terminal action in this
+         * firmware is taken. */
+        if (keyboard_reset_combo(report, copy)) {
+            reset_combo_seen = true;
+            return;                     /* no Escape into the input queue */
+        }
+
         /* Only newly pressed usages produce terminal input.  USB boot reports
          * repeat unchanged held keys; host-side repeat policy can be added
          * later without duplicating bytes at the poll interval today. */

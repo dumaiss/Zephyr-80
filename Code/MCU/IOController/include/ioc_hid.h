@@ -270,6 +270,10 @@ void hid_host_usb_state(HidHostUsbState *state);
  * ASCII/control bytes and VT100 key sequences before entering this queue.
  * These routines run only from the foreground command/USB loop and are not
  * ISR-safe. */
+/* True once CTRL-ALT-ESC has been seen on the USB keyboard.  Latched in the
+ * report callback and acted on by the main loop, which resets the machine. */
+bool hid_reset_requested(void);
+
 uint8_t hid_input_get(void);
 uint8_t hid_input_queued(void);
 uint8_t hid_input_dropped(void);
