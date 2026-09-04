@@ -70,30 +70,32 @@
  * Iteration bounds
  *
  * These must be sized against the HOST's patience, not just the card's.  The
- * Z80 BIOS waits about 10.7 s for a reply byte (0xFFFF x 0x20 poll iterations
- * at 51 T-states, 10 MHz).  If the PIC is still talking to the card when that
+ * Z80 BIOS waits about 2.9 s for a reply byte (0xFFFF x 0x08 poll iterations
+ * at about 5.6 us each).  If the PIC is still talking to the card when that
  * expires, IOCALL reports a transport timeout and the host sees only its A5h
  * fill -- indistinguishable from the link being broken.
  *
- * So the whole SD operation has to finish comfortably inside ~10 s, and it is
+ * So the whole SD operation has to finish comfortably inside ~2.9 s, and it is
  * far better to give up early with a status code than to run long.
  *
- * Byte times: 400 kHz init clock -> 20 us/byte; 4 MHz data clock -> 2 us/byte.
+ * Byte times: 125 kHz init clock -> 64 us/byte; 4 MHz data clock -> 2 us/byte.
  * One sd_command() is at most 17 bytes (1 idle + 6 command + 10 R1 polls).
  *
- *   sd_command at init speed   ~ 340 us
- *   ACMD41 iteration (x2 cmds) ~ 680 us
- *   1200 iterations            ~ 0.8 s   <- SD spec allows 1 s for ACMD41
- *   token poll, 75000 bytes    ~ 0.15 s  <- SD spec read access max is 100 ms
+ *   sd_command at init speed, maximum R1 polling       ~ 1.09 ms
+ *   ACMD41 iteration, immediate R1 from both commands  ~ 1.02 ms
+ *   1200 immediate-response iterations                 ~ 1.23 s
+ *   1200 maximum-R1-poll iterations                    ~ 2.61 s
+ *   token poll, 75000 bytes at data speed              ~ 0.15 s
  *
- * Worst case total is therefore about 1 s, an order of magnitude inside the
- * host timeout.
+ * Ordinary idle responses retain the full retry allowance.  Repeated illegal
+ * responses take the bounded recovery path below and return far sooner.
  * --------------------------------------------------------------------------- */
 #define SD_R1_POLL_BYTES         10u
 #define SD_IDLE_RETRIES          20u
 #define SD_INIT_CLOCK_BYTES      12u   /* 96 clocks; spec minimum is 74 */
 #define SD_POWER_SETTLE_MS       10u   /* spec minimum is 1 ms after Vdd stable */
 #define SD_CMD0_RETRY_GAP_MS     2u
+#define SD_RECOVERY_SETTLE_MS    10u
 
 /* Clock rate for the initialisation phase.  The SD spec allows 100-400 kHz;
  * 400 kHz is the top of that window and the least forgiving of a long or
@@ -115,6 +117,8 @@
  * same way every time. */
 #define SD_READ_ATTEMPTS         3u
 #define SD_ACMD41_RETRIES        1200u
+#define SD_ACMD41_ILLEGAL_LIMIT  8u
+#define SD_INIT_ATTEMPTS         2u    /* initial attempt plus one recovery */
 #define SD_TOKEN_TIMEOUT_US      150000uL
 #define SD_TOKEN_POLL_BYTES      (SD_TOKEN_TIMEOUT_US / SD_DATA_BYTE_US)
 
@@ -234,6 +238,8 @@ SdStatus sd_card_init(void)
     uint8_t  r1;
     uint16_t tries;
     uint8_t  i;
+    uint8_t  init_attempt;
+    uint8_t  illegal_replies;
     bool     v2_card;
     uint32_t ocr;
 
@@ -293,110 +299,160 @@ SdStatus sd_card_init(void)
             return SD_ERR_BUS;
     }
 
-    /* Step 2: CMD0.  Retried because a card that was mid-transaction before a
-     * warm reset can swallow the first attempt.
-     *
-     * Silence here is reported as NO_RESPONSE, never as NO_CARD.  An earlier
-     * version inferred "socket empty" from every byte reading FFh, which is
-     * wrong: a seated card that has not entered SPI mode is equally silent, so
-     * the code claimed the card was absent exactly when it was present and
-     * misbehaving.  Only the presence pin can say a card is missing.  Use the
-     * trace bytes to tell silence apart from garbage. */
-    sd_select();
-    r1 = 0xFFu;
-
-    /* Capture the first attempt's response bytes for diagnostics. */
-    for (i = 0u; i < SD_TRACE_BYTES; i++)
-        trace[i] = 0u;
-    trace_armed = true;
-    for (i = 0u; i < SD_IDLE_RETRIES; i++) {
-        r1 = sd_command(SD_CMD0_GO_IDLE, 0uL, SD_CRC_CMD0);
-        trace_armed = false;   /* first attempt only */
-        if (r1 == SD_R1_IDLE)
-            break;
-        /* Deselect between attempts and give the card a moment: a card still
-         * finishing its internal power-up will ignore CMD0 entirely. */
-        sd_deselect();
-        __delay_ms(SD_CMD0_RETRY_GAP_MS);
-        sd_select();
-    }
-    if (r1 != SD_R1_IDLE) {
-        sd_deselect();
-        return SD_ERR_NO_RESPONSE;
-    }
-    /* From here the trace doubles as an init-stage snapshot.  A later CMD17
-     * or CMD24 clears and reuses it, but an init failure leaves these bytes
-     * intact for PROFILE/PING to report. */
-    trace[0] = r1;                 /* final CMD0 response */
-
-    /* Step 3: CMD8 separates v2.00+ from v1.x. */
-    r1 = sd_command(SD_CMD8_SEND_IF_COND, SD_IF_COND_ARG, SD_CRC_CMD8);
-    trace[1] = r1;
-    if (r1 == SD_R1_IDLE) {
-        uint32_t if_cond = sd_read_r37_trailer();
-
-        /* The card must echo the voltage range and check pattern back. */
-        if ((if_cond & 0x00000FFFuL) != (SD_IF_COND_ARG & 0x00000FFFuL)) {
+    for (init_attempt = 0u; init_attempt < SD_INIT_ATTEMPTS; init_attempt++) {
+        /* A repeated illegal ACMD41 response triggers one protocol restart.
+         * CS and MOSI remain high for more than the required 80 clocks, then
+         * the card gets a short settling interval before CMD0 starts over. */
+        if (init_attempt != 0u) {
             sd_deselect();
-            return SD_ERR_UNUSABLE;
+            for (i = 0u; i < SD_INIT_CLOCK_BYTES; i++) {
+                if (!spi1_bus_write(0xFFu))
+                    return SD_ERR_BUS;
+            }
+            __delay_ms(SD_RECOVERY_SETTLE_MS);
         }
-        v2_card = true;
-    } else if ((r1 & SD_R1_ILLEGAL_COMMAND) != 0u) {
-        v2_card = false;
-    } else {
-        sd_deselect();
-        return SD_ERR_UNUSABLE;
-    }
 
-    /* Step 4: poll ACMD41 until the card reports ready. */
-    for (tries = 0u; tries < SD_ACMD41_RETRIES; tries++) {
-        trace[2] = sd_command(SD_CMD55_APP_CMD, 0uL, SD_CRC_DUMMY);
-        r1 = sd_command(SD_ACMD41_SEND_OP_COND,
-                        v2_card ? SD_ACMD41_HCS : 0uL,
-                        SD_CRC_DUMMY);
-        trace[3] = r1;
-        trace[4] = (uint8_t)tries;
-        trace[5] = (uint8_t)(tries >> 8);
-        trace[6] = SPI1BAUD;
-        trace[7] = (uint8_t)((bus_failed ? 0x01u : 0u) |
-                             ((SD_PRESENT_PORT == SD_PRESENT_ACTIVE) ?
-                              0x02u : 0u));
+        /* Step 2: CMD0.  Retried because a card that was mid-transaction before
+         * a warm reset can swallow the first attempt.
+         *
+         * Silence here is reported as NO_RESPONSE, never as NO_CARD.  An earlier
+         * version inferred "socket empty" from every byte reading FFh, which is
+         * wrong: a seated card that has not entered SPI mode is equally silent,
+         * so the code claimed the card was absent exactly when it was present
+         * and misbehaving.  Only the presence pin can say a card is missing.
+         * Use the trace bytes to tell silence apart from garbage. */
+        r1 = 0xFFu;
+
+        /* Capture the first CMD0 transaction in this initialization attempt. */
+        for (i = 0u; i < SD_TRACE_BYTES; i++)
+            trace[i] = 0u;
+        trace_armed = true;
+        for (i = 0u; i < SD_IDLE_RETRIES; i++) {
+            sd_select();
+            r1 = sd_command(SD_CMD0_GO_IDLE, 0uL, SD_CRC_CMD0);
+            trace_armed = false;
+            sd_deselect();
+            if (r1 == SD_R1_IDLE)
+                break;
+            /* Give a card still finishing its internal power-up a moment before
+             * the next complete CMD0 transaction. */
+            __delay_ms(SD_CMD0_RETRY_GAP_MS);
+        }
+        if (r1 != SD_R1_IDLE)
+            return SD_ERR_NO_RESPONSE;
+
+        /* From here the trace doubles as an init-stage snapshot.  A later CMD17
+         * or CMD24 clears and reuses it, but an init failure leaves these bytes
+         * intact for PROFILE/PING to report. */
+        trace[0] = r1;                 /* final CMD0 response */
+
+        /* Step 3: CMD8 separates v2.00+ from v1.x.  Its R7 trailer is part of
+         * the same transaction and must be consumed before deselecting. */
+        sd_select();
+        r1 = sd_command(SD_CMD8_SEND_IF_COND, SD_IF_COND_ARG, SD_CRC_CMD8);
+        trace[1] = r1;
+        if (r1 == SD_R1_IDLE) {
+            uint32_t if_cond = sd_read_r37_trailer();
+
+            sd_deselect();
+            /* The card must echo the voltage range and check pattern back. */
+            if ((if_cond & 0x00000FFFuL) !=
+                (SD_IF_COND_ARG & 0x00000FFFuL))
+                return SD_ERR_UNUSABLE;
+            v2_card = true;
+        } else {
+            sd_deselect();
+            if ((r1 & SD_R1_ILLEGAL_COMMAND) != 0u)
+                v2_card = false;
+            else
+                return SD_ERR_UNUSABLE;
+        }
+
+        /* Step 4: CMD55 and ACMD41 are adjacent but separate transactions.
+         * A valid CMD55 prefix may report ready or idle; any error response is
+         * not followed by an application command. */
+        illegal_replies = 0u;
+        for (tries = 0u; tries < SD_ACMD41_RETRIES; tries++) {
+            sd_select();
+            trace[2] = sd_command(SD_CMD55_APP_CMD, 0uL, SD_CRC_DUMMY);
+            sd_deselect();
+
+            trace[4] = (uint8_t)tries;
+            trace[5] = (uint8_t)(tries >> 8);
+            trace[6] = SPI1BAUD;
+            /* Bit 2 distinguishes the recovery pass from the initial pass.
+             * Without it, both attempts can end with the same final snapshot. */
+            trace[7] = (uint8_t)((bus_failed ? 0x01u : 0u) |
+                                 ((SD_PRESENT_PORT == SD_PRESENT_ACTIVE) ?
+                                  0x02u : 0u) |
+                                 ((init_attempt != 0u) ? 0x04u : 0u));
+            if (bus_failed)
+                return SD_ERR_BUS;
+            if ((trace[2] != SD_R1_IDLE) &&
+                (trace[2] != SD_R1_READY))
+                return SD_ERR_UNUSABLE;
+
+            sd_select();
+            r1 = sd_command(SD_ACMD41_SEND_OP_COND,
+                            v2_card ? SD_ACMD41_HCS : 0uL,
+                            SD_CRC_DUMMY);
+            sd_deselect();
+
+            trace[3] = r1;
+            trace[7] = (uint8_t)((bus_failed ? 0x01u : 0u) |
+                                 ((SD_PRESENT_PORT == SD_PRESENT_ACTIVE) ?
+                                  0x02u : 0u) |
+                                 ((init_attempt != 0u) ? 0x04u : 0u));
+            if ((r1 == SD_R1_READY) || bus_failed)
+                break;
+
+            if (r1 == (SD_R1_IDLE | SD_R1_ILLEGAL_COMMAND)) {
+                illegal_replies++;
+                /* The recovery attempt gets one chance to prove that its full
+                 * clocks/CMD0/CMD8 restart cleared the illegal-command state. */
+                if ((init_attempt != 0u) ||
+                    (illegal_replies >= SD_ACMD41_ILLEGAL_LIMIT))
+                    break;
+            }
+        }
+
+        if (bus_failed)
+            return SD_ERR_BUS;
         if (r1 == SD_R1_READY)
             break;
-        if (bus_failed)
-            break;
-    }
-    if (bus_failed) {
-        sd_deselect();
-        return SD_ERR_BUS;
-    }
-    if (r1 != SD_R1_READY) {
-        sd_deselect();
+        if ((r1 == (SD_R1_IDLE | SD_R1_ILLEGAL_COMMAND)) &&
+            (init_attempt == 0u) &&
+            (illegal_replies >= SD_ACMD41_ILLEGAL_LIMIT))
+            continue;
+
         return SD_ERR_NOT_READY;
     }
+
+    if (r1 != SD_R1_READY)
+        return SD_ERR_NOT_READY;
 
     /* Step 5: CCS in the OCR decides block versus byte addressing.  Only v2
      * cards can be high capacity, so v1 skips straight to CMD16. */
     if (v2_card) {
+        sd_select();
         r1 = sd_command(SD_CMD58_READ_OCR, 0uL, SD_CRC_DUMMY);
-        if (r1 != SD_R1_READY) {
-            sd_deselect();
+        if (r1 == SD_R1_READY)
+            ocr = sd_read_r37_trailer();
+        sd_deselect();
+        if (r1 != SD_R1_READY)
             return SD_ERR_UNUSABLE;
-        }
-        ocr = sd_read_r37_trailer();
         block_addressed = ((ocr & SD_OCR_CCS) != 0uL);
     }
 
     /* Step 6: byte-addressed cards need the block length pinned at 512. */
     if (!block_addressed) {
+        sd_select();
         r1 = sd_command(SD_CMD16_SET_BLOCKLEN, SD_BLOCK_SIZE, SD_CRC_DUMMY);
-        if (r1 != SD_R1_READY) {
-            sd_deselect();
+        sd_deselect();
+        if (r1 != SD_R1_READY)
             return SD_ERR_UNUSABLE;
-        }
     }
 
-    sd_deselect();
     card_ready = true;
     return SD_OK;
 }

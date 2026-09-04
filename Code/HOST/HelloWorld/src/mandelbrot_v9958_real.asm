@@ -201,6 +201,10 @@ init_g6_loop:
 	inc b
 	dec c
 	jr nz,init_g6_loop
+
+	ld a,#0x04			; R25 WTE=1: enable V9958 wait states
+	ld b,#25
+	call vdp_write_register
 	ret
 
 init_palette:
@@ -505,7 +509,7 @@ g6_registers:
 	.db 0x00			; R5: sprites unused
 	.db 0x00			; R6
 	.db 0x00			; R7: black border
-	.db 0x00			; R8
+	.db 0x08			; R8: VR=1 for the installed 64Kx4 DRAMs
 	.db 0x88			; R9: 212 lines + interlace
 	.db 0x00			; R10
 	.db 0x00			; R11
