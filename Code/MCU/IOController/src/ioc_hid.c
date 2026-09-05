@@ -492,6 +492,13 @@ static uint8_t read_revision_at(uint8_t baud)
  * part.  HID_GPOUT_XFER_ERROR if the PIC's own SPI module gave up. */
 #define HID_INT_TEST_USB_ACTIVE 0xFEu
 
+#if IOC_DIAGNOSTIC_BUILD
+/* Active MAX3421E probes and the HIDSTATUS detail-page accessors.
+ *
+ * The probes write controller registers and change SPI speed, so they can
+ * never be part of a passive status: reading the health of the link must not
+ * be able to change it.  The accessors exist only to format detail pages 1-5,
+ * which are themselves diagnostic-build only. */
 static uint8_t int_drive_test(uint8_t baud)
 {
     uint8_t result = 0u;
@@ -587,6 +594,7 @@ static uint8_t gpout_loopback_at(uint8_t baud)
 
     return fail;
 }
+#endif /* IOC_DIAGNOSTIC_BUILD */
 
 void hid_host_init(void)
 {
@@ -712,6 +720,10 @@ void hid_host_task(void)
  * device_count alone cannot separate those: it only advances on tuh_mount_cb,
  * which fires at the END of enumeration.  A hub that is seen but never
  * enumerated and a hub that is simply not powered both report zero. */
+#if IOC_DIAGNOSTIC_BUILD
+/* TinyUSB bring-up traces.  Declared here only so the HIDSTATUS detail pages
+ * can format them; both are diagnostic-build only, so leaving these visible in
+ * a normal build would be dead ABI pointing at storage nothing reads. */
 /* Debug taps inside the vendored TinyUSB, see host/usbh.c. */
 extern uint8_t usbh_xc8_ctrl_rejects;
 extern uint8_t usbh_xc8_enum_state;
@@ -731,7 +743,7 @@ extern uint16_t usbh_xc8_d_xferred;
 extern uint8_t  usbh_xc8_d_epstate;
 extern uint8_t  usbh_xc8_d_branch;
 extern uint8_t  usbh_xc8_d_xactlen;
-extern uint8_t usbh_xc8_hub_open_ep;
+extern uint8_t xc8_saved_hub_ep;
 extern uint8_t usbh_xc8_hub_status_ep_before;
 extern uint8_t usbh_xc8_hub_state_after_open;
 extern uint8_t usbh_xc8_submit_daddr;
@@ -772,7 +784,7 @@ extern uint8_t usbh_xc8_hid_breq;
 extern uint8_t usbh_xc8_hid_result;
 extern uint8_t usbh_xc8_hid_mount_calls;
 extern uint8_t usbh_xc8_mountcb_calls;
-extern uint8_t usbh_xc8_hid_ep_addr;
+extern uint8_t xc8_saved_hid_ep_addr;
 extern uint8_t usbh_xc8_hid_xfercb;
 extern uint8_t usbh_xc8_hid_xfercb_ep;
 extern uint8_t usbh_xc8_hid_xfercb_idx;
@@ -783,12 +795,20 @@ extern uint8_t usbh_xc8_hid_ep_mps_hi;
 extern uint8_t usbh_xc8_hid_epin_after;
 extern uint8_t usbh_xc8_hid_ep_in_after;
 extern uint8_t usbh_xc8_hid_clear_calls;
+#endif /* IOC_DIAGNOSTIC_BUILD */
 static uint8_t rpt_cb_calls;   /* unguarded count of tuh_hid_report_received_cb */
 static uint8_t rpt_daddr = 0xffu;
 static uint8_t rpt_inst  = 0xffu;
 static uint8_t rpt_last_len = 0xffu;   /* len of the most recent completion */
 static uint8_t rpt_zero_len;           /* completions that carried no data */
 
+#if IOC_DIAGNOSTIC_BUILD
+/* Active MAX3421E probes and the HIDSTATUS detail-page accessors.
+ *
+ * The probes write controller registers and change SPI speed, so they can
+ * never be part of a passive status: reading the health of the link must not
+ * be able to change it.  The accessors exist only to format detail pages 1-5,
+ * which are themselves diagnostic-build only. */
 void hid_host_cfg_debug(HidHostCfg *c)
 {
     c->open_calls    = usbh_xc8_hid_open_calls;
@@ -875,7 +895,7 @@ void hid_host_xfer_debug(HidHostXfer *x)
     x->ep_state    = usbh_xc8_d_epstate;
     x->xact_len    = usbh_xc8_d_xactlen;
     x->branch      = usbh_xc8_d_branch;
-    x->hub_open_ep = usbh_xc8_hub_open_ep;
+    x->hub_open_ep = xc8_saved_hub_ep;
     x->hub_status_ep_before = usbh_xc8_hub_status_ep_before;
     x->hub_state_after_open = usbh_xc8_hub_state_after_open;
     x->submit_daddr = usbh_xc8_submit_daddr;
@@ -969,6 +989,7 @@ void hid_host_debug(HidHostDebug *dbg)
 
     spi_failed = saved_spi_failed;
 }
+#endif /* IOC_DIAGNOSTIC_BUILD */
 
 void hid_host_usb_state(HidHostUsbState *state)
 {
@@ -998,6 +1019,13 @@ uint8_t hid_host_interrupt_level(void)
     return USB_INT_PORT ? 1u : 0u;
 }
 
+#if IOC_DIAGNOSTIC_BUILD
+/* Active MAX3421E probes and the HIDSTATUS detail-page accessors.
+ *
+ * The probes write controller registers and change SPI speed, so they can
+ * never be part of a passive status: reading the health of the link must not
+ * be able to change it.  The accessors exist only to format detail pages 1-5,
+ * which are themselves diagnostic-build only. */
 /* Read REVISION HID_PROBE_READS times and report a majority verdict.
  *
  * Reporting the last of 64 reads, as this used to, throws away exactly the
@@ -1083,6 +1111,7 @@ void hid_host_probe(HidHostProbe *probe)
 
     spi_failed = saved_spi_failed;
 }
+#endif /* IOC_DIAGNOSTIC_BUILD */
 
 void tuh_event_hook_cb(uint8_t rhport, uint32_t eventid, bool in_isr)
 {

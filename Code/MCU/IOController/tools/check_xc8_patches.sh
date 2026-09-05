@@ -6,9 +6,11 @@
 # build -- it breaks enumeration, intermittently, on hardware.  Converting that
 # into a build error is the whole point of this script.
 #
-# It deliberately checks the CORRECTNESS storage only.  Seven of those live
+# It deliberately checks the CORRECTNESS storage only.  Those seven used to live
 # under the same usbh_xc8_* prefix as 68 trace variables, so a cleanup aimed at
-# "the usbh_xc8_ family" can take them out silently.  See docs/XC8-PATCHES.md.
+# "the usbh_xc8_ family" would have taken them out silently.  They are now named
+# xc8_saved_*, which is the real fix; this script is the belt to that braces.
+# See docs/XC8-PATCHES.md.
 set -eu
 
 TUSB=${1:-third_party/tinyusb}
@@ -31,13 +33,13 @@ check() {
 # Correctness storage: each written before a nested call XC8's static-auto
 # overlay would clobber, and read straight back into live state after it.
 check src/host/usbh.c          _xc8_queue_event        "event copied before the nested FIFO call"
-check src/host/usbh.c          usbh_xc8_itf_save       "desc_itf preserved across driver->open()"
-check src/host/hub.c           usbh_xc8_hub_open_ep    "hub endpoint address preserved across tuh_edpt_open()"
-check src/host/hub.c           usbh_xc8_hub_open_daddr "hub device address preserved across tuh_edpt_open()"
-check src/class/hid/hid_host.c usbh_xc8_hid_open_itf   "HID object pointer preserved across endpoint open"
-check src/class/hid/hid_host.c usbh_xc8_hid_ep_addr    "HID endpoint address preserved across endpoint open"
-check src/class/hid/hid_host.c usbh_xc8_hid_ep_mps     "HID packet size and boot-report fallback"
-check src/class/hid/hid_host.c usbh_xc8_hid_next_desc  "next descriptor pointer preserved across endpoint open"
+check src/host/usbh.c          xc8_saved_itf       "desc_itf preserved across driver->open()"
+check src/host/hub.c           xc8_saved_hub_ep    "hub endpoint address preserved across tuh_edpt_open()"
+check src/host/hub.c           xc8_saved_hub_daddr "hub device address preserved across tuh_edpt_open()"
+check src/class/hid/hid_host.c xc8_saved_hid_itf   "HID object pointer preserved across endpoint open"
+check src/class/hid/hid_host.c xc8_saved_hid_ep_addr    "HID endpoint address preserved across endpoint open"
+check src/class/hid/hid_host.c xc8_saved_hid_ep_mps     "HID packet size and boot-report fallback"
+check src/class/hid/hid_host.c xc8_saved_hid_next_desc  "next descriptor pointer preserved across endpoint open"
 
 # Structural workarounds that are not variables.
 check src/common/tusb_fifo.h   "defined(__XC8)"        "FIFO bit-fields replaced: XC8 rejects >8-bit bit-field bases"

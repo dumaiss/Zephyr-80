@@ -493,8 +493,16 @@
  *      SD commit
  *  68  SD trace preserves final CMD0/CMD8/CMD55/ACMD41 responses and the
  *      ACMD41 iteration/baud/state snapshot when card initialisation fails
+ *  69  normal and diagnostic build profiles.  A NORMAL build no longer serves
+ *      CMD_PROFILE, CMD_BULK_TEST, CMD_SD_READ_BULK or CMD_SD_WRITE_BULK --
+ *      they are rejected as unknown classes -- and no longer runs the active
+ *      MAX3421E probe or the HIDSTATUS detail pages 1-5.  Every reply LAYOUT is
+ *      unchanged: the retired fields keep their offsets and read zero, so a
+ *      tool decodes the same frame either way.  Level 69 says which of those
+ *      fields carry real measurements.  Build with IOC_PROFILE=diagnostic to
+ *      get level 69 firmware with the full surface.
  */
-#define IOC_FW_LEVEL  68
+#define IOC_FW_LEVEL  69
 
 /* PING reply: a snapshot of the power handshake pins.
  *

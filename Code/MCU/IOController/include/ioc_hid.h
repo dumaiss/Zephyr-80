@@ -25,6 +25,16 @@ uint8_t       hid_host_revision(void);
 /* Raw /USB_INT pin level: zero means the active-low interrupt is asserted. */
 uint8_t       hid_host_interrupt_level(void);
 
+#if IOC_DIAGNOSTIC_BUILD
+/* ------------------------------------------------------------------------
+ * Diagnostic-build only: the active MAX3421E probe and the HIDSTATUS
+ * detail-page accessors, with the structures they fill.
+ *
+ * hid_host_probe() is ACTIVE -- it writes controller registers and changes
+ * SPI speed at three rates -- so it can never back a passive status.  The
+ * *_debug() accessors exist only to format pages 1-5.  Declaring either in a
+ * normal build would be ABI pointing at code that is not there.
+ * ------------------------------------------------------------------------ */
 /* Result of one pass of hid_host_probe(), reported per SPI clock rate.
  *
  * revision_*  the REVISION register as last read at that rate.  0x01, 0x12 or
@@ -73,7 +83,12 @@ typedef struct {
 /* Reads per revision burst, and therefore the denominator of matches_*. */
 #define HID_PROBE_READ_COUNT 64u
 
+#endif /* IOC_DIAGNOSTIC_BUILD */
+
 /* Live USB state, as opposed to the bring-up probes above.
+ *
+ * NOT diagnostic: this is what backs the passive HIDSTATUS page in every build.
+ * Reading it acknowledges nothing, runs no task and touches no register.
  *
  * keyboard_addr is 0 when no keyboard is mounted; USB device address 0 is the
  * enumeration default address and never belongs to a configured device, so it
@@ -86,6 +101,10 @@ typedef struct {
     uint8_t  speed;             /* tusb_speed_t: 0 full, 1 low, 0xff unknown */
     uint8_t  last_report[8];
 } HidHostUsbState;
+
+void hid_host_usb_state(HidHostUsbState *state);
+
+#if IOC_DIAGNOSTIC_BUILD
 
 /* Perform visible bring-up probes at each supported test rate.
  *
@@ -253,6 +272,8 @@ typedef struct {
 } HidHostHubTrace;
 
 void hid_host_hub_debug(HidHostHubTrace *trace);
+
+#endif /* IOC_DIAGNOSTIC_BUILD */
 
 /* One pass of USB host service: dispatch /USB_INT if asserted, then run
  * tuh_task().  Returns promptly when there is nothing to do.

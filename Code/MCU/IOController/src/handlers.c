@@ -357,6 +357,7 @@ void handler_link_sync(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
 }
 
+#if IOC_DIAGNOSTIC_BUILD
 /* Read-only Step-2 USB snapshot.  In particular, do not acknowledge or
  * dispatch /USB_INT here: HIDSTAT must be observational and cannot advance
  * the later enumeration state machine by being run. */
@@ -553,6 +554,8 @@ static void handler_hid_enum_page(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_HIDE_EP2DRVOUT]   = e.ep2drv_out;
 }
 
+
+#endif /* IOC_DIAGNOSTIC_BUILD */
 void handler_hid_status(const IocFrame *request, IocFrame *reply)
 {
     /* File-static, not a local.  Every one of these is passed by pointer into a
@@ -562,10 +565,17 @@ void handler_hid_status(const IocFrame *request, IocFrame *reply)
      * data, and why speed read an impossible 02.  Static storage is outside the
      * overlay, and the IOC services one command at a time, so there is no
      * reentrancy to protect against. */
+#if IOC_DIAGNOSTIC_BUILD
     static HidHostProbe    probe;
+#endif
     static HidHostUsbState usb;
     uint8_t         i;
 
+#if IOC_DIAGNOSTIC_BUILD
+    /* Detail pages 1-5: TinyUSB and MAX3421E internals, for bring-up.  A normal
+     * build answers every page number with the passive page below rather than
+     * rejecting the request, so an older tool asking for page 3 gets real
+     * status instead of an error it would have to be taught about. */
     if (request->bytes[IOC_OFF_HID_REQ_PAGE] == IOC_HID_PAGE_USB) {
         handler_hid_usb_page(request, reply);
         return;
@@ -591,7 +601,13 @@ void handler_hid_status(const IocFrame *request, IocFrame *reply)
         return;
     }
 
+    /* ACTIVE: revision bursts at three SPI rates, GPOUT loopback writes and an
+     * interrupt drive test.  It writes MAX3421E registers and changes SPI
+     * speed, so it cannot be part of a passive status -- reading the health of
+     * the link must not be able to change it.  Diagnostic build only; the probe
+     * fields read zero elsewhere. */
     hid_host_probe(&probe);
+#endif
     hid_host_usb_state(&usb);
 
     memset(reply->bytes, 0, IOC_FRAME_SIZE);
@@ -602,6 +618,10 @@ void handler_hid_status(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_HID_STATUS]   = (uint8_t)hid_host_status();
     reply->bytes[IOC_OFF_HID_REVISION] = hid_host_revision();
     reply->bytes[IOC_OFF_HID_USB_INT]  = hid_host_interrupt_level();
+#if IOC_DIAGNOSTIC_BUILD
+    /* Results of the active probe.  Their offsets stay reserved in a normal
+     * build and read zero -- the reply is zeroed above -- so the frame layout is
+     * identical in both profiles and no tool has to be taught a second one. */
     reply->bytes[IOC_OFF_HID_REV_125KHZ]   = probe.revision_125khz;
     reply->bytes[IOC_OFF_HID_REV_1MHZ]     = probe.revision_1mhz;
     reply->bytes[IOC_OFF_HID_REV_4MHZ]     = probe.revision_4mhz;
@@ -612,6 +632,7 @@ void handler_hid_status(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_HID_MATCH_125KHZ] = probe.matches_125khz;
     reply->bytes[IOC_OFF_HID_MATCH_1MHZ]   = probe.matches_1mhz;
     reply->bytes[IOC_OFF_HID_MATCH_4MHZ]   = probe.matches_4mhz;
+#endif
 
     reply->bytes[IOC_OFF_HID_DEV_COUNT]  = usb.device_count;
     reply->bytes[IOC_OFF_HID_KBD_ADDR]   = usb.keyboard_addr;

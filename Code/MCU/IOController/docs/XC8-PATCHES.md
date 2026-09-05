@@ -1,6 +1,7 @@
 # TinyUSB XC8 patch set
 
-Status: extracted and documented. No patch has been removed or renamed yet.
+Status: extracted, documented, and the seven correctness stores renamed off
+the `usbh_xc8_*` prefix. No patch has been removed.
 
 This is the audit the debug/test review asked for before any `usbh_xc8_*`
 variable is deleted: a record of which changes to the vendored TinyUSB tree are
@@ -34,25 +35,29 @@ git -C third_party/tinyusb diff 3af1bec1a 55b0d86f9
 687 insertions across 8 files, 63 hunks. A refresh is a rebase of one commit
 onto a newer tag, not a re-derivation.
 
-## The naming trap
+## The naming trap — found, and fixed by renaming
 
-**Seven `usbh_xc8_*` symbols are not telemetry. They are live state.**
+**Seven symbols were named `usbh_xc8_*` but are live state, not telemetry.**
 
 Each is written immediately before a nested call that XC8's static-auto overlay
 would clobber, and read straight back into a real structure field afterwards.
-They carry the same prefix as 68 trace variables, so anything that removes
-"the `usbh_xc8_*` family" deletes them too — and the failure is silent
-enumeration breakage, not a build error.
+They carried the same prefix as the 68 trace variables, so anything that removed
+"the `usbh_xc8_*` family" would have deleted them too — and the failure is
+silent enumeration breakage, not a build error.
+
+They are now named **`xc8_saved_*`**. That is the actual fix: the prefix no
+longer collides with the trace family, so the mistake is no longer available to
+make. Everything still called `usbh_xc8_*` is telemetry.
 
 | Symbol | File | Preserved across | Restored into |
 |---|---|---|---|
-| `usbh_xc8_itf_save` | `host/usbh.c` | `driver->open()` | `desc_itf` (compared, then repaired) |
-| `usbh_xc8_hub_open_ep` | `host/hub.c` | `tuh_edpt_open()` | `p_hub->ep_in` |
-| `usbh_xc8_hub_open_daddr` | `host/hub.c` | `tuh_edpt_open()` | `dev_addr` |
-| `usbh_xc8_hid_open_itf` | `class/hid/hid_host.c` | nested endpoint open | `p_hid` |
-| `usbh_xc8_hid_ep_addr` | `class/hid/hid_host.c` | nested endpoint open | `p_hid->ep_in` |
-| `usbh_xc8_hid_ep_mps` | `class/hid/hid_host.c` | nested endpoint open | `p_hid->epin_size` / `epout_size`, incl. the boot-protocol fallback |
-| `usbh_xc8_hid_next_desc` | `class/hid/hid_host.c` | nested endpoint open | `p_desc` |
+| `xc8_saved_itf` | `host/usbh.c` | `driver->open()` | `desc_itf` (compared, then repaired) |
+| `xc8_saved_hub_ep` | `host/hub.c` | `tuh_edpt_open()` | `p_hub->ep_in` |
+| `xc8_saved_hub_daddr` | `host/hub.c` | `tuh_edpt_open()` | `dev_addr` |
+| `xc8_saved_hid_itf` | `class/hid/hid_host.c` | nested endpoint open | `p_hid` |
+| `xc8_saved_hid_ep_addr` | `class/hid/hid_host.c` | nested endpoint open | `p_hid->ep_in` |
+| `xc8_saved_hid_ep_mps` | `class/hid/hid_host.c` | nested endpoint open | `p_hid->epin_size` / `epout_size`, incl. the boot-protocol fallback |
+| `xc8_saved_hid_next_desc` | `class/hid/hid_host.c` | nested endpoint open | `p_desc` |
 
 A useful discriminator, and the one used to build this table: **correctness
 storage is read back inside TinyUSB; telemetry is only written there** and read
@@ -63,10 +68,14 @@ the submodule is a trace.
 and is already named correctly — it copies an event into dedicated storage
 before the nested FIFO call so the overlay cannot corrupt the live one.
 
-**Recommended rename**, so a future reader cannot make this mistake: give the
-seven a prefix that does not collide with the trace family, e.g.
-`xc8_saved_hub_ep`, `xc8_saved_hid_itf`. Not yet done — it touches the vendored
-tree and belongs in the same change as the trace removal.
+The rename was applied across the submodule and `src/ioc_hid.c` with word
+boundaries — necessary, because `usbh_xc8_hid_ep_mps` is correctness storage
+while `usbh_xc8_hid_ep_mps_lo` and `_hi` beside it are traces. Both profiles
+build byte-identical afterwards, as a pure rename should.
+
+Note `xc8_saved_hub_ep` serves double duty: it is correctness storage *and* is
+reported as a HIDSTATUS breadcrumb. That overlap is precisely what made the
+family so easy to misread.
 
 ## Correctness changes by file
 
@@ -142,8 +151,9 @@ contains XC8 or currently shares storage with a trace variable."
 
 ## Safe to remove in the trace-removal step
 
-Everything in the `usbh_xc8_*` family **except the seven named above**, together
-with their write sites, the `HUB_TRACE_*` enum and `usbh_xc8_hub_trace[]`, the
+Everything still in the `usbh_xc8_*` family — the seven correctness stores have
+been renamed out of it, so the prefix now means "trace" without exception —
+together with their write sites, the `HUB_TRACE_*` enum and `usbh_xc8_hub_trace[]`, the
 `usbh_xc8_d_*` decision snapshot, the enumeration/bind/setup/endpoint-map
 breadcrumbs, and the HID class breadcrumbs — provided the matching `HIDSTATUS`
 pages, structs, protocol offsets and extern declarations go in the same change,
