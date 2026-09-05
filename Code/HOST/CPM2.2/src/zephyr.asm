@@ -5,14 +5,19 @@
 
 	.module zephyr80_cpm22_runtime
 
+; Whether the shared VDrip transport is linked into this build.  The Makefile
+; rewrites this line alongside the .include it tracks.
+;
+; Defined BEFORE cbios_defs.inc, not after: slot 5's layout depends on it.  With
+; the transport linked, the drive A: backend and the SD probe must clear it at
+; F680h; without it, they start at the top of the slot and the 649 bytes the
+; transport used to reserve become theirs.  sio_core.asm needs it too, for the
+; SIO0/B diagnostics that only the transport reads.  This source stays the VDrip
+; template, so 1.
+VDRIP_TRANSPORT_LINKED = 1
+
 	.include "platform_zephyr80.inc"
 	.include "cbios_defs.inc"
-
-; Whether the shared VDrip transport is linked into this build.  The Makefile
-; rewrites this line alongside the .include it tracks, and it must be defined
-; before sio_core.asm so the SIO0/B diagnostics can be assembled out of a build
-; that has no reader for them.  This source stays the VDrip template, so 1.
-VDRIP_TRANSPORT_LINKED = 1
 
 	.globl cpm_rom_entry_high
 	.globl boot,wboot

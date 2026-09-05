@@ -28,8 +28,14 @@ foreach(_ioc_target
     endif()
 endforeach()
 
-# Keep diagnostic driver sources in the persistent user hook because MPLAB
+# Keep project source additions in the persistent user hook because MPLAB
 # regenerates the source list under .generated/.
+#
+# controller_latch.c is a REAL output driver, not a diagnostic: it owns the
+# 74HC595 pair and parks it at a known state on boot.  Only the optional
+# incrementing-counter pattern inside it is diagnostic, and that is compiled out
+# unless CONTROLLER_LATCH_COUNTER_TEST is set.  The old wording said "diagnostic
+# driver sources", which invited deleting a driver the hardware depends on.
 if(TARGET IOController_default_default_XC8_compile)
     get_target_property(_ioc_sources
         IOController_default_default_XC8_compile SOURCES)

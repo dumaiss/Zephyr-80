@@ -18,7 +18,25 @@ CPMTOOLS_DISKDEF ?= images/diskdef
 #
 #   rom      read-only CP/M volume in flash pages 1-3 (default)
 #   vdrip    proxy storage over the host serial link (the previous default)
+#            *** CURRENTLY DOES NOT BUILD -- see below ***
 #   ramdisk  banked RAM disk, retained but not maintained
+#
+# STORAGE_A=vdrip overflows driver slot 5 by 29 bytes and fails layout
+# validation with a precise message naming STORAGE_A_CODE_END.  This is
+# arithmetic, not a regression to hunt: that configuration needs the VDrip
+# transport (649 bytes) plus the consolidated SD probe (41) plus the VDrip
+# storage backend (356) = 1046 bytes in a 1024-byte slot.
+#
+# It only ever fit because 36 of the probe's 49 bytes lived OUTSIDE slot 5 --
+# 16 in the core BIOS tail at DFEDh and 20 in the packed extension at F41Bh --
+# wedged into whatever holes existed when each piece was written.  Pulling them
+# into one block is the point of the slot 5 realignment, and no 41-byte
+# contiguous hole exists anywhere else in that build (the packed extension has
+# 31 bytes across two pieces; the core BIOS has at most 19).
+#
+# Left failing deliberately, pending a decision on whether to retire this
+# backend or give it a two-way split probe.  CONSOLE=vdrip STORAGE_A=rom and
+# the default CONSOLE=v9958 STORAGE_A=rom both build normally.
 STORAGE_A ?= rom
 STORAGE_A_SRC ?= $(SRC_DIR)/cbios_storage_$(STORAGE_A).asm
 
@@ -97,6 +115,18 @@ ROM_DISK_TOOL := $(TOOLS_DIR)/build_rom_disk.py
 
 # ROM disk inputs and outputs.  Only used when STORAGE_A=rom; a vdrip or ramdisk
 # build embeds no payloads and produces the same 128 KiB image it always did.
+# Which utility set lands on the ROM rescue disk.
+#
+#   normal      rescue and provisioning tools only (default)
+#   diagnostic  normal plus bring-up, benchmark and DESTRUCTIVE tools
+#
+# The destructive ones -- SDWRITE, SDREC, SDSOAK, SDBENCH -- act on whatever
+# card is inserted, with no drive letter to get wrong.  They have no business on
+# a disk you reach for when the machine is already in trouble.  Nothing is
+# deleted by this: every tool still builds, and the diagnostic profile carries
+# them all.
+ROM_DISK_PROFILE ?= normal
+
 PAYLOAD_CONFIG ?= images/banks.ini
 ROM_DISK_PAGES ?= 3
 ROM_DISK_IMAGE ?= $(BUILD_DIR)/romdisk.img
@@ -192,6 +222,7 @@ rom-disk: $(ROM_DISK_IMAGE)
 
 $(ROM_DISK_IMAGE): $(ROM_DISK_TOOL) $(CPMTOOLS_DISKDEF) $(ROM_DISK_INPUTS) | $(BUILD_DIR)
 	$(PYTHON) $(ROM_DISK_TOOL) \
+		--profile "$(ROM_DISK_PROFILE)" \
 		--diskdef "$(CPMTOOLS_DISKDEF)" \
 		--staging-dir "$(ROM_DISK_STAGE)" \
 		--hello-dir "$(HELLOWORLD_BUILD)" \

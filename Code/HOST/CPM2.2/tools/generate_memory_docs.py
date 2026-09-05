@@ -130,14 +130,12 @@ IMPLEMENTATION_SYMBOLS = [
     (("IOCTRL_CODE_START",), "IOCALL transaction code start in core BIOS."),
     (("IOCALL",), "Zephyr extended BIOS IO Controller transaction call."),
     (("IOCTRL_CODE_END",), "IOCALL transaction code end."),
-    (("SD_PROBE_RECOVERY_CODE_START",), "SD select-probe recovery code start in core BIOS."),
+    (("SD_PROBE_CODE_START",), "SD selection probe code start."),
     (("sd_probe_result",), "Handles the SD select-probe result and returns no DPH on failure."),
-    (("SD_PROBE_RECOVERY_CODE_END",), "SD select-probe recovery code end."),
+    (("SD_PROBE_CODE_END",), "SD selection probe code end."),
     (("IOC_CMD_CODE_START",), "Common-packet Command-lane helper code start."),
     (("IOC_CMD_CODE_END",), "Common-packet Command-lane helper code end."),
-    (("SD_PROBE_REQUEST_CODE_START",), "SD select-probe request code start."),
     (("sd_storage_probe",), "Issues the non-destructive SD block-zero availability probe."),
-    (("SD_PROBE_REQUEST_CODE_END",), "SD select-probe request code end."),
     (("IOC_BULK_CODE_START",), "Common-packet Bulk-write helper code start."),
     (("IOC_BULK_CODE_END",), "Common-packet Bulk-write helper code end."),
     (("HID_INPUT_CODE_START",), "USB keyboard IOC polling helper code start."),
@@ -146,12 +144,7 @@ IMPLEMENTATION_SYMBOLS = [
     (("HID_INPUT_STATE_END",), "USB keyboard IOC mailbox and queue state end."),
     (("SD_STORAGE_CODE_START",), "SD-card BIOS backend code start."),
     (("SD_STORAGE_CODE_END",), "SD-card BIOS backend code end."),
-    (("SD_PROBE_SUCCESS_CODE_START",), "SD select-probe success continuation start."),
-    (("sd_probe_success",), "Returns the drive B disk parameter header after a successful probe."),
-    (("SD_PROBE_SUCCESS_CODE_END",), "SD select-probe success continuation end."),
-    (("SD_PROBE_RESULT_CODE_START",), "SD select-probe result-store helper start."),
     (("sd_probe_store_result",), "Stores the SD select result in the protected caller frame."),
-    (("SD_PROBE_RESULT_CODE_END",), "SD select-probe result-store helper end."),
     (("VDRIP_CONSOLE_CODE_START",), "Virtual Drip console driver code start."),
     (("vdrip_console_driver",), "Virtual Drip console driver dispatch table."),
     (("vdrip_console_init",), "Virtual Drip console init, proxy handshake, VDP setup."),
@@ -223,11 +216,9 @@ COMMON_DRIVER_DECLARATIONS = [
     ("IOC Bulk transport overflow", "IOC_BULK_CODE_START", "IOC_BULK_CODE_END", 3, 3),
     ("USB keyboard IOC polling helper", "HID_INPUT_CODE_START", "HID_INPUT_CODE_END", 3, 3),
     ("IOC Command transport", "IOC_CMD_CODE_START", "IOC_CMD_CODE_END", 4, 5),
-    ("SD select-probe request", "SD_PROBE_REQUEST_CODE_START", "SD_PROBE_REQUEST_CODE_END", 4, 5),
     ("SD-card BIOS backend", "SD_STORAGE_CODE_START", "SD_STORAGE_CODE_END", 4, 5),
-    ("SD select-probe success continuation", "SD_PROBE_SUCCESS_CODE_START", "SD_PROBE_SUCCESS_CODE_END", 5, 5),
+    ("SD selection probe", "SD_PROBE_CODE_START", "SD_PROBE_CODE_END", 5, 5),
     ("Drive A: storage backend", "STORAGE_A_CODE_START", "STORAGE_A_CODE_END", 5, 5),
-    ("SD select-probe result store", "SD_PROBE_RESULT_CODE_START", "SD_PROBE_RESULT_CODE_END", 5, 5),
 ]
 
 OPTIONAL_IMPLEMENTATION_SYMBOLS = {
@@ -253,7 +244,6 @@ CORE_RANGES = [
     ("banking/XMOVE", "BANKING_CODE_START", "BANKING_CODE_END"),
     ("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END"),
     ("BIOS extensions", "BIOS_EXT_CODE_START", "BIOS_EXT_CODE_END"),
-    ("SD select-probe recovery", "SD_PROBE_RECOVERY_CODE_START", "SD_PROBE_RECOVERY_CODE_END"),
 ]
 
 VALIDATION_NOTES = [
@@ -935,6 +925,97 @@ def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest
     args.symbol_map.write_text("\n".join(lines))
 
 
+
+# Regions of the resident window, for attributing free space to an owner.
+HEADROOM_REGIONS = [
+    ("Core BIOS", 0xDA00, 0xE000),
+    ("Driver slots 0-4", 0xE000, 0xF400),
+    ("Packed driver extension", 0xF400, 0xF680),
+    ("Driver slot 5", 0xF680, 0xFA80),
+]
+
+# Gaps smaller than this are alignment slack, not usable headroom.
+HEADROOM_MIN_BYTES = 4
+
+
+def find_headroom(listing_path: Path) -> list[tuple[int, int]]:
+    """Free fragments in the resident window: addresses that were neither
+    emitted nor reserved.
+
+    Emitted bytes are listing lines carrying hex after the address.  Reserved
+    storage is a `.ds`, which occupies space without emitting anything -- it
+    shows as a listing line at the START of the run and nothing after, so a gap
+    whose first address is a `.ds` line is storage, not free space.  Without
+    that distinction every uninitialised buffer would be reported as headroom,
+    which is precisely the wrong answer to give someone looking for room.
+    """
+    emitted: set[int] = set()
+    reserved_starts: set[int] = set()
+    emit_re = re.compile(r"^\s+0000([0-9A-Fa-f]{4}) ((?:[0-9A-Fa-f]{2} )+)")
+    addr_re = re.compile(r"^\s+0000([0-9A-Fa-f]{4})\s")
+    for line in listing_path.read_text(errors="replace").splitlines():
+        match = emit_re.match(line)
+        if match:
+            base = int(match.group(1), 16)
+            for index in range(len(match.group(2).split())):
+                emitted.add(base + index)
+            continue
+        match = addr_re.match(line)
+        if match and ".ds" in line:
+            reserved_starts.add(int(match.group(1), 16))
+
+    gaps: list[tuple[int, int]] = []
+    for _, start, limit in HEADROOM_REGIONS:
+        run: int | None = None
+        for address in range(start, limit + 1):
+            free = address < limit and address not in emitted
+            if free and run is None:
+                run = address
+            elif not free and run is not None:
+                gaps.append((run, address - 1))
+                run = None
+    return [
+        (start, end) for start, end in gaps
+        if end - start + 1 >= HEADROOM_MIN_BYTES and start not in reserved_starts
+    ]
+
+
+def headroom_lines(listing_path: Path) -> list[str]:
+    gaps = find_headroom(listing_path)
+    lines = [
+        "",
+        "## Headroom",
+        "",
+        "Free space in the resident window: neither emitted nor reserved by a",
+        "`.ds`.  Fragments below "
+        f"{HEADROOM_MIN_BYTES} bytes are alignment slack and are not listed.",
+        "",
+        "This table exists so the next component lands in a region that has room",
+        "for it, rather than in whichever incidental hole happens to fit -- which",
+        "is how the SD selection probe ended up in four pieces across three",
+        "regions.",
+        "",
+        "| Range | Bytes | Region |",
+        "|---|---:|---|",
+    ]
+    totals: dict[str, int] = {}
+    for start, end in gaps:
+        owner = next(
+            (name for name, lo, hi in HEADROOM_REGIONS if lo <= start < hi),
+            "unattributed",
+        )
+        size = end - start + 1
+        totals[owner] = totals.get(owner, 0) + size
+        lines.append(f"| `{span(start, end)}` | {size} | {owner} |")
+    lines.extend(["", "| Region | Free bytes | Largest fragment |", "|---|---:|---:|"])
+    for name, lo, hi in HEADROOM_REGIONS:
+        sizes = [end - start + 1 for start, end in gaps if lo <= start < hi]
+        lines.append(
+            f"| {name} | {sum(sizes)} | {max(sizes) if sizes else 0} |"
+        )
+    return lines
+
+
 def write_memory_map(
     args: argparse.Namespace,
     symbols: dict[str, int],
@@ -1003,7 +1084,6 @@ def write_memory_map(
         f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core and exact IM2 vector entry. |",
         f"| `{span(require_symbol(symbols, 'BIOS_EXT_CODE_START'), require_symbol(symbols, 'BIOS_EXT_CODE_END') - 1)}` | BIOS extension: `VIDEO_SEND`. |",
         f"| `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` | IOCALL IO Controller transport. |",
-        f"| `{span(require_symbol(symbols, 'SD_PROBE_RECOVERY_CODE_START'), require_symbol(symbols, 'SD_PROBE_RECOVERY_CODE_END') - 1)}` | SD select-probe result handling; returns no DPH on failure. |",
         "",
         "## Driver Slot Table",
         "",
@@ -1015,11 +1095,8 @@ def write_memory_map(
         ("IOC Bulk transport", require_symbol(symbols, "IOC_BULK_CODE_START"), require_symbol(symbols, "IOC_BULK_CODE_END")),
         ("USB HID polling", require_symbol(symbols, "HID_INPUT_CODE_START"), require_symbol(symbols, "HID_INPUT_CODE_END")),
         ("IOC Command transport", require_symbol(symbols, "IOC_CMD_CODE_START"), require_symbol(symbols, "IOC_CMD_CODE_END")),
-        ("SD probe request", require_symbol(symbols, "SD_PROBE_REQUEST_CODE_START"), require_symbol(symbols, "SD_PROBE_REQUEST_CODE_END")),
         ("SD-card backend", require_symbol(symbols, "SD_STORAGE_CODE_START"), require_symbol(symbols, "SD_STORAGE_CODE_END")),
-        ("SD probe success", require_symbol(symbols, "SD_PROBE_SUCCESS_CODE_START"), require_symbol(symbols, "SD_PROBE_SUCCESS_CODE_END")),
         ("drive-A backend", require_symbol(symbols, "STORAGE_A_CODE_START"), require_symbol(symbols, "STORAGE_A_CODE_END")),
-        ("SD probe result", require_symbol(symbols, "SD_PROBE_RESULT_CODE_START"), require_symbol(symbols, "SD_PROBE_RESULT_CODE_END")),
     ]
     if console_backend == "vdrip":
         slot_components.append(
@@ -1064,7 +1141,7 @@ def write_memory_map(
             "The IOC transport uses SIO1/B as its Command lane and SIO1/A as its Bulk lane. Both run the common A5/5A packet with persistent External Sync and Auto Enables off.",
             f"`IOCALL` mailbox code is at `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` in core BIOS; packet helpers occupy `{span(require_symbol(symbols, 'IOC_CMD_CODE_START'), require_symbol(symbols, 'IOC_CMD_CODE_END') - 1)}` and `{span(require_symbol(symbols, 'IOC_BULK_CODE_START'), require_symbol(symbols, 'IOC_BULK_CODE_END') - 1)}`.",
             f"The SD-card BIOS backend follows at `{span(require_symbol(symbols, 'SD_STORAGE_CODE_START'), require_symbol(symbols, 'SD_STORAGE_CODE_END') - 1)}`; the generated overlap check validates these adjacent ranges.",
-            f"The SD selection probe uses fixed gaps at `{span(require_symbol(symbols, 'SD_PROBE_REQUEST_CODE_START'), require_symbol(symbols, 'SD_PROBE_REQUEST_CODE_END') - 1)}`, `{span(require_symbol(symbols, 'SD_PROBE_RECOVERY_CODE_START'), require_symbol(symbols, 'SD_PROBE_RECOVERY_CODE_END') - 1)}`, `{span(require_symbol(symbols, 'SD_PROBE_SUCCESS_CODE_START'), require_symbol(symbols, 'SD_PROBE_SUCCESS_CODE_END') - 1)}`, and `{span(require_symbol(symbols, 'SD_PROBE_RESULT_CODE_START'), require_symbol(symbols, 'SD_PROBE_RESULT_CODE_END') - 1)}`.",
+            f"The SD selection probe is one contiguous block at `{span(require_symbol(symbols, 'SD_PROBE_CODE_START'), require_symbol(symbols, 'SD_PROBE_CODE_END') - 1)}`; it was previously four fragments wedged into unrelated gaps.",
             f"USB keyboard mailbox and queue state occupies `{span(require_symbol(symbols, 'HID_INPUT_STATE_START'), require_symbol(symbols, 'HID_INPUT_STATE_END') - 1)}` in the fixed gap after the SD backend.",
             "",
         "## BIOS Jump Table Layout",
@@ -1153,6 +1230,11 @@ def write_memory_map(
             "|---|---:|---|",
             f"| `{args.firmware_bin}` | {artifact_size(args.firmware_bin)} bytes | Firmware image before payload attachment. |",
             f"| `{args.final_image}` | {artifact_size(args.final_image)} bytes | Burnable image after payload attachment. |",
+        ]
+    )
+    lines.extend(headroom_lines(args.listing))
+    lines.extend(
+        [
             "",
             "## Validation Report",
             "",

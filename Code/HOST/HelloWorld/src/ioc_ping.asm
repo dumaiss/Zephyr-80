@@ -515,8 +515,13 @@ msg_p4:		.ascii "  ms in bulk phase        : $"
 msg_p5:		.ascii "  ms total (all phases)   : $"
 msg_calls:	.ascii "  service calls           : $"
 msg_aborts:	.ascii "  .. aborted, no frame    : $"
+; Labelled for what it actually is.  The controller re-arms this trace and
+; zeroes it on EVERY CMD17, so on a healthy machine it permanently shows the
+; last successful read's R1 poll -- typically FF FF 00, meaning "polled twice,
+; card said ready".  Calling that an "SD SPI trace" invites reading normal
+; residue as a fault, which is exactly what happened.
 msg_sdtr:	.db 13,10
-		.ascii "  SD SPI trace          :$"
+		.ascii "  last SD cmd poll      :$"
 msg_proferr:	.ascii "  PROFILE failed$"
 msg_diag_none:	.db 13,10
 		.ascii "  last link failure     : none recorded"

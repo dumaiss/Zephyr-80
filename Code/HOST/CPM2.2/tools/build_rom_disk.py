@@ -38,33 +38,82 @@ from pathlib import Path
 # (cpm22.asm "always use drive A for submit"), so it cannot work on a read-only
 # A:.  ZSID is carried instead of DDT because DDT's assembler and disassembler
 # are 8080-only, which is a real handicap on a Z80.
+# Profiles.
+#
+# "normal" is the rescue disk: what you want present when the machine is in
+# trouble and A: is the only volume you can trust.  "diagnostic" is normal plus
+# the bring-up, benchmark and destructive tools.
+#
+# The split exists because four of these tools DESTROY DATA and three of those
+# do it to whatever card is inserted, with no drive letter involved:
+#   SDWRITE  overwrites block 0 and with it the partition table
+#   SDREC    overwrites records 0-7, which is the head of the CP/M directory
+#   SDSOAK   writes across multiple LBAs as an addressing stress test
+#   SDBENCH  writes a fixed high LBA repeatedly and does not restore it
+# A rescue disk that ships those is a rescue disk that can finish the job.
+#
+# RTSPROBE is not destructive to data but writes SIO registers behind the BIOS
+# and invalidates persistent sync, so it takes the machine down with it.
+#
+# Removing a tool from the normal profile does NOT delete it: every one of them
+# still builds, and the diagnostic profile still carries it.
+PROFILE_NORMAL = "normal"
+PROFILE_DIAGNOSTIC = "diagnostic"
+PROFILES = (PROFILE_NORMAL, PROFILE_DIAGNOSTIC)
+
+# (root, source name, CP/M name, lowest profile that carries it)
 MANIFEST = (
-    # IO Controller and SD-card diagnostics, built from HelloWorld.
-    ("hello", "ioc_ping.com", "PING.COM"),
-    ("hello", "ioc_reset.com", "RESET.COM"),
-    ("hello", "ioc_bulk.com", "BULK.COM"),
-    ("hello", "ioc_sd_read.com", "SDREAD.COM"),
-    ("hello", "ioc_sdblk.com", "SDBLK.COM"),
-    ("hello", "ioc_sdrec.com", "SDREC.COM"),
-    ("hello", "ioc_sdsoak.com", "SDSOAK.COM"),
-    ("hello", "ioc_sdfmt.com", "SDFMT.COM"),
-    ("hello", "ioc_sdwrite.com", "SDWRITE.COM"),
-    ("hello", "ioc_sdbench.com", "SDBENCH.COM"),
-    ("hello", "ioc_rts_probe.com", "RTSPROBE.COM"),
-    ("hello", "ioc_diagchk.com", "DIAGCHK.COM"),
-    ("hello", "hidkey.com", "HIDKEY.COM"),
-    ("hello", "v9958tst.com", "V9958TST.COM"),
-    # The monitor is the only tool that still works with no usable disk at all:
+    # --- Rescue and provisioning: present on every profile ---------------
+    # Non-destructive version, transport, power and controller-health check.
+    ("hello", "ioc_ping.com", "PING.COM", PROFILE_NORMAL),
+    # Deliberate recovery: resets host and controller together.
+    ("hello", "ioc_reset.com", "RESET.COM", PROFILE_NORMAL),
+    # Non-destructive command-lane read; separates controller/SD failure from
+    # CP/M filesystem failure.  The BIOS media probe uses the same command.
+    ("hello", "ioc_sd_read.com", "SDREAD.COM", PROFILE_NORMAL),
+    # Provisioning, not a soak test: a fresh SD volume needs its directory
+    # initialised.  Destructive, and kept only because without it a new card
+    # cannot be made usable at all.  See the warning note below.
+    ("hello", "ioc_sdfmt.com", "SDFMT.COM", PROFILE_NORMAL),
+    # Separates IOC HID translation and queueing from BIOS CONST/CONIN.
+    ("hello", "hidkey.com", "HIDKEY.COM", PROFILE_NORMAL),
+    # The only recovery environment that still works with no usable disk:
     # L loads Intel HEX over the console, DB dumps a bank, I/O reach ports.
     # Built from source rather than copied, so it always matches the tree.
-    ("monitor", "zephyr80_monitor.bin", "MONITOR.COM"),
-    # Stock CP/M utilities.  No source in tree; carried from the VDrip volume.
-    ("stock0", "pip.com", "PIP.COM"),
-    ("stock0", "STAT.COM", "STAT.COM"),
-    ("stock0", "NOWRAP.com", "NOWRAP.COM"),
-    ("stock0", "WRAPON.COM", "WRAPON.COM"),
-    ("stock1", "ZSID.COM", "ZSID.COM"),
-    ("stock1", "DUMP.COM", "DUMP.COM"),
+    ("monitor", "zephyr80_monitor.bin", "MONITOR.COM", PROFILE_NORMAL),
+    # Required to provision and inspect the SD volume from the ROM disk.
+    ("stock0", "pip.com", "PIP.COM", PROFILE_NORMAL),
+    ("stock0", "STAT.COM", "STAT.COM", PROFILE_NORMAL),
+    # User-facing console configuration, not hardware bring-up.
+    ("stock0", "NOWRAP.com", "NOWRAP.COM", PROFILE_NORMAL),
+    ("stock0", "WRAPON.COM", "WRAPON.COM", PROFILE_NORMAL),
+    # General Z80 diagnosis that adds no BIOS instrumentation.  ZSID rather
+    # than DDT: DDT's assembler and disassembler are 8080-only.
+    ("stock1", "ZSID.COM", "ZSID.COM", PROFILE_NORMAL),
+    ("stock1", "DUMP.COM", "DUMP.COM", PROFILE_NORMAL),
+
+    # --- Diagnostic profile only -----------------------------------------
+    # Synthetic ramp throughput/integrity test for the Bulk lane.
+    ("hello", "ioc_bulk.com", "BULK.COM", PROFILE_DIAGNOSTIC),
+    # Raw 512-byte Bulk path isolation; redundant with the record path in
+    # normal use.
+    ("hello", "ioc_sdblk.com", "SDBLK.COM", PROFILE_DIAGNOSTIC),
+    # DESTRUCTIVE: overwrites records 0-7, the head of the CP/M directory.
+    ("hello", "ioc_sdrec.com", "SDREC.COM", PROFILE_DIAGNOSTIC),
+    # DESTRUCTIVE: addressing/interrupt stress across multiple LBAs.
+    ("hello", "ioc_sdsoak.com", "SDSOAK.COM", PROFILE_DIAGNOSTIC),
+    # DESTRUCTIVE: overwrites block 0 and destroys the partition table.
+    ("hello", "ioc_sdwrite.com", "SDWRITE.COM", PROFILE_DIAGNOSTIC),
+    # DESTRUCTIVE: writes a fixed high LBA repeatedly, never restores it.
+    ("hello", "ioc_sdbench.com", "SDBENCH.COM", PROFILE_DIAGNOSTIC),
+    # Writes SIO registers behind the BIOS and invalidates persistent sync.
+    ("hello", "ioc_rts_probe.com", "RTSPROBE.COM", PROFILE_DIAGNOSTIC),
+    # Verifies the BIOS failure record by provoking a rejection that never
+    # reaches the wire.  Harmless, but it is a test tool, not a rescue tool.
+    ("hello", "ioc_diagchk.com", "DIAGCHK.COM", PROFILE_DIAGNOSTIC),
+    # V9958 console bring-up test.  The console it tests is now the production
+    # console, so this is a display bring-up aid rather than a rescue tool.
+    ("hello", "v9958tst.com", "V9958TST.COM", PROFILE_DIAGNOSTIC),
 )
 
 # Unallocated space is filled with E5h, the conventional "formatted but empty"
@@ -93,6 +142,8 @@ def run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProc
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", choices=PROFILES, default=PROFILE_NORMAL,
+                        help="which utility set to place on the volume")
     parser.add_argument("--hello-dir", type=Path, default=Path("../HelloWorld/build"))
     parser.add_argument("--monitor-dir", type=Path, default=Path("../Monitor/build"))
     parser.add_argument("--stock-dir0", type=Path, default=Path("images/A/0"))
@@ -125,7 +176,9 @@ def collect_sources(args: argparse.Namespace) -> list[tuple[Path, str]]:
     }
     resolved: list[tuple[Path, str]] = []
     missing: list[str] = []
-    for root_key, name, cpm_name in MANIFEST:
+    for root_key, name, cpm_name, profile in MANIFEST:
+        if profile == PROFILE_DIAGNOSTIC and args.profile != PROFILE_DIAGNOSTIC:
+            continue
         source = roots[root_key] / name
         if source.is_file():
             resolved.append((source, cpm_name))

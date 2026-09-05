@@ -666,21 +666,33 @@ psg_select:
 
 ; psg_out -- write A to the selected chip.
 ;
-; The card holds /WAIT until the chip's READY rises, so no delay is needed
-; before the next write.  B is cleared because OUT (C),A puts B on A15-A8; the
-; decoder ignores those lines but a clean bus image is easier to read on a
-; logic analyser.
-psg_out:
-	push bc
-	ld b,a
-	ld a,(psg_port)
-	ld c,a
-	ld a,b
-	ld b,#0
-	out (c),a
-	pop bc
-	ret
+; Bring-up version:
+; Ignore READY//WAIT and deliberately wait ~21 us after every PSG byte.
+;
+; 10 MHz Z80:
+;     LD B,16           7 T
+;     15 x DJNZ taken 195 T
+;     final DJNZ         8 T
+;                     -----
+;                      210 T = 21.0 us
 
+psg_out:
+    push bc
+
+    ld b,a
+    ld a,(psg_port)
+    ld c,a
+    ld a,b
+    ld b,#0
+    out (c),a
+
+    ; Let the SN76489 finish this transfer before issuing another.
+    ld b,#38
+psg_write_delay:
+    djnz psg_write_delay
+
+    pop bc
+    ret
 ; psg_tone -- program a 10-bit tone divisor.
 ;   In:  E = channel 0-2, HL = divisor 1-1023
 ;   Clobbers: AF, D

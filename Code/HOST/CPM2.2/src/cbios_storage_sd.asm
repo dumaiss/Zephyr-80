@@ -32,31 +32,10 @@
 	.globl stg_a_read,stg_a_write,stg_a_sectran
 	.globl storage_caller_sp
 	.globl SD_STORAGE_CODE_START,SD_STORAGE_CODE_END
-	.globl SD_PROBE_RECOVERY_CODE_START,SD_PROBE_RECOVERY_CODE_END
-	.globl SD_PROBE_REQUEST_CODE_START,SD_PROBE_REQUEST_CODE_END
-	.globl SD_PROBE_SUCCESS_CODE_START,SD_PROBE_SUCCESS_CODE_END
-	.globl SD_PROBE_RESULT_CODE_START,SD_PROBE_RESULT_CODE_END
+	.globl SD_PROBE_CODE_START,SD_PROBE_CODE_END
 	.globl cbios_dma_addr
 
 	.area CODE (ABS)
-	.org CBIOS_SD_PROBE_REQUEST_BASE
-
-; sd_storage_probe -- verify that drive B's SD medium can perform a real read.
-; Inputs: none.  Output: the protected SELDSK caller receives the B: DPH in HL
-; on success, or HL = 0 on failure.  Clobbers AF/BC/DE/HL.  May block for card
-; initialization and IOCALL; emits IOC Command traffic, no Virtual Drip traffic.
-; Foreground only: uses MOVE_BUFFER and is not ISR-safe.
-SD_PROBE_REQUEST_CODE_START:
-sd_storage_probe:
-	call sd_zero_frames
-	ld a,#SD_CMD_PROBE
-	ld (MOVE_BUFFER + SD_STORAGE_TX_OFF),a
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
-	ld de,#(MOVE_BUFFER + SD_STORAGE_RX_OFF)
-	call IOCALL
-	jp sd_probe_result
-SD_PROBE_REQUEST_CODE_END:
-
 	.org CBIOS_STORAGE_SD_CODE_BASE
 
 SD_STORAGE_CODE_START:
@@ -497,44 +476,50 @@ SD_STORAGE_DPB_DATA:
 	.dw SD_STORAGE_OFFSET_TRACKS
 
 ; ---------------------------------------------------------------------------
-; SD selection-probe continuations.
+; ---------------------------------------------------------------------------
+; SD selection probe.
 ;
-; These tiny pieces occupy validated gaps between existing fixed components.
-; stg_run saved the caller's HL at storage_caller_sp.  The success and failure
-; paths select the DPH value that its normal return shim will restore.
-; A failed transport or MCU status returns a zero DPH.  BDOS applies the common
-; disk-error policy and warm-boots to the recovery volume on A:.
+; One linear routine.  It used to be four fragments -- request at F41Bh,
+; recovery at DFEDh in the core BIOS tail, success at F909h and the result store
+; at FA74h -- wedged into whatever gaps existed when each piece was written, and
+; stitched together with jp instructions.  Nothing about the behaviour required
+; that; only the absence of 41 contiguous bytes did.  Slot 5 has them now.
+;
+; The behaviour is unchanged and deliberately so: this is normal failure
+; handling.  A failed transport or MCU status returns a zero DPH, BDOS applies
+; its usual disk-error policy, and the machine warm-boots to A: instead of
+; looping on a drive that will never answer.
+;
+; stg_run saved the caller's HL at storage_caller_sp; the paths below select the
+; DPH value its return shim will restore.
+;
+; Inputs: none.  Output: the protected SELDSK caller receives the B: DPH in HL
+; on success, or HL = 0 on failure.  Clobbers AF/BC/DE/HL.  May block for card
+; initialization and IOCALL; emits IOC Command traffic, no Virtual Drip traffic.
+; Foreground only: uses MOVE_BUFFER and is not ISR-safe.
 ; ---------------------------------------------------------------------------
 	.area CODE (ABS)
-	.org CBIOS_SD_PROBE_RECOVERY_BASE
+	.org CBIOS_SD_PROBE_CODE_BASE
 
-SD_PROBE_RECOVERY_CODE_START:
+SD_PROBE_CODE_START:
+sd_storage_probe:
+	call sd_zero_frames
+	ld a,#SD_CMD_PROBE
+	ld (MOVE_BUFFER + SD_STORAGE_TX_OFF),a
+	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
+	ld de,#(MOVE_BUFFER + SD_STORAGE_RX_OFF)
+	call IOCALL
+	; A = transport status; fall through rather than jumping to a fragment.
 sd_probe_result:
 	or a
 	jr nz,sd_probe_failed
 	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + IOC_OFF_STATUS)
 	or a
-	jp z,sd_probe_success
-sd_probe_failed:
-	xor a
-	ld d,a
-	ld e,a
-	jp sd_probe_store_result
-SD_PROBE_RECOVERY_CODE_END:
-
-	.area CODE (ABS)
-	.org CBIOS_SD_PROBE_SUCCESS_BASE
-
-SD_PROBE_SUCCESS_CODE_START:
-sd_probe_success:
+	jr nz,sd_probe_failed
 	ld de,#SD_STORAGE_DPH
-	jp sd_probe_store_result
-SD_PROBE_SUCCESS_CODE_END:
-
-	.area CODE (ABS)
-	.org CBIOS_SD_PROBE_RESULT_BASE
-
-SD_PROBE_RESULT_CODE_START:
+	jr sd_probe_store_result
+sd_probe_failed:
+	ld de,#0x0000			; no DPH: drive unavailable
 ; In: DE = DPH to return, or zero for an unavailable drive.
 ; Out: saved SELDSK HL replaced with DE.  Clobbers HL; foreground only.
 sd_probe_store_result:
@@ -543,4 +528,4 @@ sd_probe_store_result:
 	inc hl
 	ld (hl),d
 	ret
-SD_PROBE_RESULT_CODE_END:
+SD_PROBE_CODE_END:

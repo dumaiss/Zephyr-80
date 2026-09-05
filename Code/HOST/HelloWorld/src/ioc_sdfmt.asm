@@ -12,6 +12,13 @@
 ; CP/M never reads a block that the directory does not reference, so zeroing
 ; 8 MiB would buy nothing and cost an hour of card writes.
 ;
+; A normal run prints 32 dots -- one per 512-byte card block -- and finishes in
+; seconds.  Each record costs three exchanges (SD_WRITE_REC, the bulk transfer,
+; then XFER_STATUS to confirm the card actually committed), so 128 records is
+; 384 round trips; that is the whole cost, and it is not minutes.  If the dots
+; stop, the run is stalled inside wr_rec at the record the dot count names, and
+; that is a transport or card fault to chase -- not this tool being slow.
+;
 ; Talks to the controller directly rather than through the BIOS storage driver.
 ; That is deliberate -- this is the tool that has to work before the driver can
 ; be trusted, so it must not depend on it.
@@ -38,6 +45,23 @@ BDOS_PRINT	= 0x09
 BDOS_CONIN	= 0x01
 IOCALL		= 0xDA3F
 IOCBULKW	= 0xDA48
+
+; This program switches to its own stack, so it CANNOT exit with ret: the
+; return address the CCP pushed is on the stack it abandoned, and ret pops
+; whatever its own empty stack holds and jumps there.  That is why every run
+; printed "directory initialised" and then hung -- the work was complete and
+; the exit was not.
+;
+; ioc_sdbench.asm and ioc_sdsoak.asm switch stacks too, but they save the
+; entry SP and restore it before returning; this one never did, which is the
+; whole bug.  It warm-boots rather than adopting their pattern because warm
+; boot is the semantically right exit HERE, not merely a working one: this tool
+; rewrites the SD directory behind the BIOS driver, so CP/M's in-memory
+; allocation vector and directory checksums for that drive are stale the moment
+; it finishes.  A warm boot re-logs the disks and drops them.  Returning to the
+; CCP would leave it handing out blocks from a map of a directory that no
+; longer exists -- which is a far worse failure than the hang it replaces.
+WBOOT		= 0x0000
 
 	.include "ioc_levels.inc"
 
@@ -67,7 +91,7 @@ start:
 	ld de,#msg_stale
 	ld c,#BDOS_PRINT
 	call BDOS
-	ret
+	jp WBOOT
 level_ok:
 	; This tool is destructive, so require the matching controller build too.
 	; A current BIOS paired with old firmware is still an incompatible wire.
@@ -89,7 +113,7 @@ controller_stale:
 	ld de,#msg_stale_controller
 	ld c,#BDOS_PRINT
 	call BDOS
-	ret
+	jp WBOOT
 controller_ok:
 
 	; Confirm, because this is not reversible.
@@ -105,7 +129,7 @@ controller_ok:
 	ld de,#msg_abort
 	ld c,#BDOS_PRINT
 	call BDOS
-	ret
+	jp WBOOT
 go:
 	ld de,#msg_crlf
 	ld c,#BDOS_PRINT
@@ -126,6 +150,21 @@ dir_loop:
 	call wr_rec
 	or a
 	jp nz,fail
+
+	; One dot per 512-byte card block, which is four 128-byte records.
+	;
+	; The loop was silent for its entire run, so a stall inside wr_rec looked
+	; exactly like slowness and there was no way to say where it stopped.  The
+	; whole job is 16 KiB -- 128 records, 32 dots -- so if the dots stop
+	; appearing, that is a hang at a known record, not a long wait.
+	ld a,(cur_rec)
+	and #0x03
+	cp #0x03
+	jr nz,no_dot
+	ld e,#'.
+	ld c,#BDOS_CONOUT
+	call BDOS
+no_dot:
 	ld hl,(cur_rec)
 	inc hl
 	ld (cur_rec),hl
@@ -140,10 +179,13 @@ dir_loop:
 	or a
 	jp nz,fail
 
+	ld de,#msg_crlf
+	ld c,#BDOS_PRINT
+	call BDOS
 	ld de,#msg_done
 	ld c,#BDOS_PRINT
 	call BDOS
-	ret
+	jp WBOOT
 
 ; ---------------------------------------------------------------------------
 ; Write rec_buf to cur_rec.  A = 0 on success.
@@ -295,7 +337,7 @@ fail:
 	ld de,#msg_crlf
 	ld c,#BDOS_PRINT
 	call BDOS
-	ret
+	jp WBOOT
 
 print_hex_byte:
 	push af

@@ -520,26 +520,71 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ;     E000h... Virtual Drip V9958 console (no BIOS screen mirror)
 ;
 ; Moved up from F900h to reclaim room for the transport, which sits immediately
-; below it and was FULL -- adding nine bytes to vdrip_transport_wait_ready
-; overflowed straight into this base.  Slot 5 ends at FA7Fh and the storage
-; backend ended at FA63h, so the 28 unused bytes were on the wrong side of this
-; constant.  Shifting it up 16 hands those to the transport and still leaves the
-; storage backend clear of FA80h; check_overlap.py enforces both ends.
-CBIOS_STORAGE_VDRIP_CODE_BASE         = 0xf910                                ; follows common VDrip transport
+; ---------------------------------------------------------------------------
+; Driver slot 5 layout
+; ---------------------------------------------------------------------------
+;
+; Slot 5 is F680h-FA7Fh, 1024 bytes.  What lives where depends on whether the
+; shared VDrip transport is linked, because that transport owns the head of the
+; slot when it is present and nothing at all when it is not.
+;
+; The direct build used to inherit the VDrip build's addresses anyway: the
+; drive A: backend sat at F910h with the comment "follows common VDrip
+; transport", long after that transport had stopped being linked.  That left
+; 649 bytes at F680h-F908h reserved for code that was not there, plus 194 more
+; between the backend tail and a stray probe fragment.
+;
+; Both builds now use the same ORDER -- probe, then drive A: backend, then
+; headroom -- so the two configurations differ only in where the run starts.
+CBIOS_VDRIP_TRANSPORT_CODE_BASE       = CBIOS_DRIVER_SLOT5_BASE              ; F680h
+
+; The consolidated SD selection probe.  Fixed window rather than "whatever is
+; left", so the drive A: backend that follows has a stable base; the probe is
+; 41 bytes and check_overlap.py enforces the ceiling.
+CBIOS_SD_PROBE_CODE_SIZE              = 0x30
+
+	.if VDRIP_TRANSPORT_LINKED
+; The transport occupies F680h-F908h -- 649 bytes, not the 633 recorded in
+; docs/phase0-storage-restoration.md, which is stale.  F909h is the first byte
+; clear of it.
+;
+; With STORAGE_A=rom the run ends well short of FA7Fh.  With STORAGE_A=vdrip it
+; does not fit: 649 + 41 + 356 = 1046 bytes in a 1024-byte slot, and that build
+; fails layout validation by 29 bytes.  See the STORAGE_A comment in the
+; Makefile; it is a known, documented state, not a regression.
+CBIOS_SD_PROBE_CODE_BASE              = 0xf909
+	.else
+; Nothing precedes it: the slot head is the slot head.
+CBIOS_SD_PROBE_CODE_BASE              = CBIOS_DRIVER_SLOT5_BASE              ; F680h
+	.endif
 
 ; Neutral name for the drive A: backend code slot.  Exactly one A: backend links
 ; per build (see STORAGE_A in the Makefile); they are mutually exclusive because
 ; the common window has no room for two.  cbios_storage_rom.asm, the retained
 ; cbios_storage_vdrip.asm, and the older cbios_storage_ramdisk.asm all .org here.
-CBIOS_STORAGE_A_CODE_BASE             = CBIOS_STORAGE_VDRIP_CODE_BASE
-CBIOS_VDRIP_TRANSPORT_CODE_BASE       = CBIOS_DRIVER_SLOT5_BASE              ; F680h
-; Reclaimed gap between the banking module (ends DCB0h) and the SIO core, which
-; is pinned at DD10h.  95 bytes that belonged to nothing.
+CBIOS_STORAGE_A_CODE_BASE             = CBIOS_SD_PROBE_CODE_BASE + CBIOS_SD_PROBE_CODE_SIZE
+
+; Compatibility alias.  The VDrip and ramdisk backends still name this.
+CBIOS_STORAGE_VDRIP_CODE_BASE         = CBIOS_STORAGE_A_CODE_BASE
+; Core BIOS tail: DCB1h to the SIO core, which is pinned at DD10h.  95 bytes
+; between the banking module and a fixed address, originally belonging to
+; nothing.
 ;
-; It exists because the core BIOS regions are byte-full: boot (DAADh-DB7Bh),
-; banking and the SIO core all have ZERO free bytes, so adding a single 3-byte
-; call to cold boot overflowed into the console facade.  Small self-contained
-; routines are relocated here to buy that space back.
+; It exists because the core BIOS regions were byte-full: boot, banking and the
+; SIO core all had ZERO free bytes, so adding a single 3-byte call to cold boot
+; overflowed into the console facade.  Small self-contained routines were
+; relocated here to buy that space back.
+;
+; It is no longer spare in any meaningful sense -- it now holds three named
+; components in sequence, and the name is kept only because it is the .org that
+; ctc_disable_interrupts uses:
+;
+;   DCB1h  ctc_disable_interrupts
+;   DCC0h  the 16-byte IOC link failure record  (CBIOS_IOC_DIAG_BASE)
+;   DCD1h  the boot banner printer              (CBIOS_BOOT_BANNER_CODE_BASE)
+;
+; The generated memory map's Headroom table is the authority on what is left
+; here; do not assume this region is open.
 CBIOS_SPARE_CODE_BASE           = CBIOS_BASE + 0x02b1                  ; DCB1h
 
 ; Link diagnostic block, at a FIXED address so a .COM can read it directly when
@@ -734,6 +779,28 @@ ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_IOCTRL_CODE_BASE - 1           ; DF7Ah
 ; re-copy from ROM to SRAM bank 0 at warm boot (same technique as CCP restore).
 ; Programs may overwrite this TPA address after boot; the warm-boot restore
 ; refreshes it from ROM before text_load_font is called.
+; Boot banner printer, in the core-BIOS space freed by removing the IOC
+; bring-up trace block and the ISR counter.  It cannot stay where the old
+; ten-byte banner was: that slot is packed against the console facade at
+; DB7Ch, and printing a version number needs a hex converter.
+;
+; DCD1h is the first byte after ioc_bulk_synced and runs to the SIO core at
+; DD10h -- 63 bytes, contiguous, and free in every build configuration.
+CBIOS_BOOT_BANNER_CODE_BASE     = CBIOS_IOC_DIAG_BASE + 0x11           ; DCD1h
+
+; Boot banner text, in bank 0 read-only data immediately after the font.
+;
+; The banner used to live in core BIOS and was capped at ten bytes, wedged
+; against the console facade.  It is not code and it is read exactly once, at
+; cold boot, after select_ram_bank0 and the console init -- so it belongs in
+; bank 0 beside the font rather than competing with drivers for the common
+; window.  This is the read-only-data region the debug/test review asked for;
+; W5 may move it, but it costs no resident BIOS bytes where it is.
+BOOT_BANNER_ROM_BASE            = 0x8800                ; follows the 2 KiB font
+
+; Reply offset carrying the controller's own IOC_FW_LEVEL, in a PING response.
+IOC_OFF_PING_LEVEL              = 20
+
 CONSOLE_FONT_ROM_BASE           = 0x8000                ; font start in bank 0 TPA
 VDRIP_FONT_ROM_BASE             = CONSOLE_FONT_ROM_BASE ; compatibility alias
 
@@ -889,10 +956,11 @@ CBIOS_STORAGE_SD_CODE_BASE            = 0xf430
 CBIOS_STORAGE_SD_CODE_LIMIT           = 0xf680
 ; The select probe is split across exact, otherwise-unused fixed-layout gaps.
 ; The generated memory-layout checks validate every fragment independently.
-CBIOS_SD_PROBE_RECOVERY_BASE          = 0xdfed
-CBIOS_SD_PROBE_REQUEST_BASE           = 0xf41b
-CBIOS_SD_PROBE_SUCCESS_BASE           = 0xf909
-CBIOS_SD_PROBE_RESULT_BASE            = 0xfa74
+; The probe was split across four gaps -- DFEDh in the core BIOS tail, F41Bh in
+; the packed extension, F909h and FA74h in slot 5 -- because those were the
+; holes that existed when each piece was written.  It is one linear routine and
+; is now assembled as one, at CBIOS_SD_PROBE_CODE_BASE.  Consolidating it also
+; turned three inter-fragment jp instructions into fall-through.
 
 ; Per-drive state.  The allocation vector is the only large piece; it lands in
 ; the 256 bytes of scratch that were unallocated, which it fills exactly.

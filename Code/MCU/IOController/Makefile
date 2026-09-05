@@ -47,9 +47,16 @@ XC8FLAGS ?= -mcpu=$(DEVICE) -mdfp=$(DFP) -I$(INC_DIR) \
 #   make DEFS=-DEXTSYNC_SPI_BAUD=63u          # SCK 500 kHz
 DEFS ?=
 
-.PHONY: all clean test size force
+.PHONY: all clean test size force check-xc8-patches
 
-all: $(FIRMWARE_HEX)
+# The TinyUSB XC8 correctness workarounds are checked before anything is built.
+# Seven of them share the usbh_xc8_* prefix with 68 trace variables, so a
+# cleanup or a vendor refresh can remove them without breaking the build -- it
+# breaks enumeration on hardware instead.  See docs/XC8-PATCHES.md.
+check-xc8-patches:
+	@./tools/check_xc8_patches.sh
+
+all: check-xc8-patches $(FIRMWARE_HEX)
 
 $(BUILD_DIR):
 	mkdir -p $@

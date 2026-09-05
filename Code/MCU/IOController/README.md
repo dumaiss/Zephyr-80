@@ -116,9 +116,16 @@ full root-cause trail, what has been ruled out, and the bisection guide.
 ## Controller Latch Bring-Up
 
 The cascaded 74HC595 pair on the port C bus (SPI1) is driven by
-`controller_latch_tick()` from the main loop: every 500 ms it writes an
-incrementing pair `(n, n+1)` to the two latches. See
-[docs/pinout.md](docs/pinout.md) for the timer and SPI1 settings.
+`controller_latch.c`. In a normal build the outputs are parked at zero by
+`controller_latch_init()` and nothing writes them afterwards:
+`CONTROLLER_LATCH_COUNTER_TEST` defaults to **0**, which compiles
+`controller_latch_tick()` down to an empty call.
+
+Build with `CONTROLLER_LATCH_COUNTER_TEST=1` to get the bring-up behaviour --
+an incrementing pair `(n, n+1)` written to the two latches every 500 ms. This
+section previously described that pattern as if it always ran, which it has not
+since the flag was added. See [docs/pinout.md](docs/pinout.md) for the timer and
+SPI1 settings.
 
 See [docs/external_sync_protocol.md](docs/external_sync_protocol.md) for the
 wire-level walkthrough, timing notes, and Z80 SIO references.
