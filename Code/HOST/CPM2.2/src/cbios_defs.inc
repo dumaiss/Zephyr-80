@@ -496,6 +496,13 @@ CBIOS_DRIVER_SLOT3_BASE         = 0xec00
 CBIOS_DRIVER_SLOT3_LIMIT        = CBIOS_DRIVER_SLOT3_BASE + CBIOS_DRIVER_SLOT_SIZE
 CBIOS_DRIVER_SLOT3_END          = CBIOS_DRIVER_SLOT3_LIMIT - 1
 
+; Stack-switch shims for the two published bulk entry points, in the slack
+; between the console driver's code end and the Bulk lane's base at ED00h.
+; They live here rather than beside their bodies because the Bulk region runs
+; solid from ED00h to the EFFFh slot ceiling; this is the nearest free run.
+; 34 bytes used of 90.  See CBIOS_XPORT_STACK_TOP for why they exist.
+CBIOS_XPORT_SHIM_CODE_BASE      = 0xeca6
+
 CBIOS_DRIVER_SLOT4_BASE         = 0xf000
 CBIOS_DRIVER_SLOT4_LIMIT        = CBIOS_DRIVER_SLOT4_BASE + CBIOS_DRIVER_SLOT_SIZE
 CBIOS_DRIVER_SLOT4_END          = CBIOS_DRIVER_SLOT4_LIMIT - 1
@@ -945,14 +952,36 @@ CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 ; ------------------------------------------------------------------------------
 ; FE80h-FFFFh = BIOS stack / reserve.
 ;
-; Stack top remains FFF0h.
+; Three tops, each owning a disjoint run.  They are private stacks, not nested
+; frames on one stack, so their ranges must not overlap:
+;
+;   FFF0h  CBIOS_STACK_TOP          boot/warm-boot, grows down toward FF80h
+;   FF80h  CBIOS_CONSOLE_STACK_TOP  console dispatch and storage dispatch
+;   FF00h  CBIOS_XPORT_STACK_TOP    IOCALL / IOCBULK / IOCBULKW
+;
 ; Console backend calls use a lower private top so boot-time BIOS stack frames
 ; near FFF0h stay intact when CONOUT is called during BOOT.
+;
+; The transport gets its own top for two reasons.  The first is the bug it was
+; added for: IOCALL, IOCBULK and IOCBULKW are published at ZBIOS_EXT_BASE and a
+; CP/M transient calls them on the CCP's stack, which is sixteen bytes total
+; (see CCPSTACK in cpm22.asm).  The transport nests roughly twenty-five bytes
+; deep and re-enables interrupts while it waits for the MCU's reply, so an ISR
+; can land on top of that -- comfortably enough to run off the bottom of the
+; CCP's stack and into the CCP's own code.  Because a transient exits through
+; RET rather than a warm boot, restore_ccp_from_rom never runs and the damage
+; survives until the next cold boot.
+;
+; The second is that it makes the 128-byte console/storage run sufficient: the
+; deepest thing that used to nest inside it was the transport, and that now
+; runs here instead.
+;
 ; Stack grows downward and should not cross FE80h.
 
 CBIOS_STACK_GUARD               = CBIOS_WORK_AREA_LIMIT            ; FE80h
 CBIOS_STACK_TOP                 = 0xfff0
 CBIOS_CONSOLE_STACK_TOP         = 0xff80
+CBIOS_XPORT_STACK_TOP           = 0xff00
 
 CBIOS_AREA_LIMIT                = 0x10000
 CBIOS_AREA_END                  = 0xffff

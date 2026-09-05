@@ -39,6 +39,7 @@
 	.globl IOC_DIAG_BULK_STATUS
 	.globl IOCALL,MOVE_BUFFER
 	.globl IOCBULK,IOCBULKW
+	.globl XPORT_SHIM_CODE_START,XPORT_SHIM_CODE_END
 	.globl ioc_crc_block,ioc_frame_stamp,ioc_packet_crc_mailbox
 	.globl ioc_bulk_tx_type,ioc_bulk_tx_seq,ioc_bulk_rx_type,ioc_bulk_rx_seq
 	.globl IOC_CMD_CODE_START,IOC_CMD_CODE_END
@@ -879,7 +880,7 @@ IOC_CMD_RECV_FAIL:
 	; high byte matched, which was only correct while the limit was exactly
 	; 512.  Raising it to 514 for the CRC trailer made that logic reject every
 	; single 514-byte transfer -- the low byte of the limit is no longer zero.
-IOCBULK:
+iocbulk_body:
 	ld (ioc_bulk_ptr),hl		; kept for the CRC pass after the transfer
 	ld (ioc_bulk_len),de
 	ld a,d
@@ -1237,11 +1238,50 @@ IOCBULK_RTS_OFF:
 ; ---------------------------------------------------------------------------
 IOC_CMD_CODE_END:
 
+; ---------------------------------------------------------------------------
+; IOCBULK / IOCBULKW - public entry points (ZBIOS_EXT_BASE + 12h and + 15h)
+; ---------------------------------------------------------------------------
+; Same stack switch, and for the same reason, as the IOCALL shim in
+; cbios_iocall.asm: these are published vectors, a CP/M transient reaches them
+; on the CCP's sixteen-byte stack, and the bodies nest well past that.
+;
+; Two saved slots rather than one shared word.  The phases are strictly
+; sequential today -- IOCALL's READY reply authorises exactly one bulk transfer,
+; and neither body calls the other -- so one word would do, but a shared slot
+; would turn any future nesting into a silent wrong-SP restore instead of an
+; assembler error.  Two bytes is not worth that.
+;
+; In/Out: exactly the bodies' contracts.  HL, DE and A pass through untouched.
+	.area CODE (ABS)
+	.org CBIOS_XPORT_SHIM_CODE_BASE
+XPORT_SHIM_CODE_START:
+IOCBULK:
+	ld (xport_iocbulk_sp),sp
+	ld sp,#CBIOS_XPORT_STACK_TOP
+	call iocbulk_body
+	ld sp,(xport_iocbulk_sp)
+	ret
+
+IOCBULKW:
+	ld (xport_iocbulkw_sp),sp
+	ld sp,#CBIOS_XPORT_STACK_TOP
+	call iocbulkw_body
+	ld sp,(xport_iocbulkw_sp)
+	ret
+
+; Caller stack pointers, parked while a transfer runs.  Code region, which is
+; RAM at runtime after the shadow copy.
+xport_iocbulk_sp:
+	.dw 0
+xport_iocbulkw_sp:
+	.dw 0
+XPORT_SHIM_CODE_END:
+
 	.area CODE (ABS)
 	.org CBIOS_IOC_BULK_CODE_BASE
 IOC_BULK_CODE_START:
 
-IOCBULKW:
+iocbulkw_body:
 	ld a,d
 	cp #(IOC_BULK_MAX_LEN >> 8)
 	jr c,IOCBULKW_LEN_OK

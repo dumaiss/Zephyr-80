@@ -49,6 +49,31 @@ EXPECT_LANE	= IOC_DIAG_LANE_BULK
 EXPECT_STAGE	= IOC_BULK_REASON_INPUT
 
 start:
+	; Private stack.
+	;
+	; CP/M enters a .COM through CALL TBASE, on the CCP's own stack -- sixteen
+	; bytes total, several of them already spent getting here.  The BIOS
+	; transport nests roughly twenty-five bytes deep and runs with interrupts
+	; enabled while it waits for the MCU, so calling it from here used to run
+	; off the bottom of that stack and into the CCP's own code.  Nothing
+	; repaired it: a .COM exits through RET, not a warm boot, so WBOOT's
+	; restore_ccp_from_rom never ran and the next CCP command died.
+	;
+	; The BIOS shims for IOCALL/IOCBULK/IOCBULKW now switch stacks themselves,
+	; so this is no longer the only thing standing between here and a wedged
+	; machine -- but BDOS nesting and an interrupt frame still land on whatever
+	; stack this program is running on, and sixteen bytes is not enough for
+	; those either.
+	;
+	; Entered through CALL so every RET in the body below lands back here and
+	; the CCP's stack pointer is put back exactly once.
+	ld (entry_sp),sp
+	ld sp,#stack_top
+	call main
+	ld sp,(entry_sp)
+	ret
+
+main:
 	ld de,#msg_banner
 	ld c,#BDOS_PRINT
 	call BDOS
@@ -242,3 +267,9 @@ msg_stale_bios:
 
 iocbulk_rc:	.ds 1
 rx_buf:		.ds 8
+
+; Private stack, and the CCP stack pointer parked while it is in use.
+; Reserved, not emitted: the .COM image ends at the last byte above.
+entry_sp:	.ds 2
+	.ds 128				; BDOS nesting plus an interrupt frame
+stack_top:

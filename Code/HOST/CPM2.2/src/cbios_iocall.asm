@@ -70,7 +70,10 @@ IOCTRL_CODE_START:
 ; request it sends nothing, and the host waits out its receive timeout -- but
 ; RTS is already high by then, so the MCU cannot mistake that wait for another
 ; request and clock junk windows into a host that is trying to listen.
-IOCALL:
+;
+; Entered from the IOCALL shim at the end of this region, never directly: the
+; shim owns the stack switch every caller depends on.
+iocall_body:
 	; ONCE, not per call.  sio_command_init issues a channel reset, and the SIO
 	; manual lists chip reset as one of the three things that destroy character
 	; synchronisation -- so running it here defeated persistent External Sync
@@ -226,6 +229,44 @@ sio_command_init:
 
 	xor a
 	ret
+
+; ---------------------------------------------------------------------------
+; IOCALL - public entry point (ZBIOS_EXT_BASE + 0Ch)
+; ---------------------------------------------------------------------------
+; Runs the transaction on the BIOS transport stack instead of the caller's.
+;
+; This is not defensive: the caller's stack is genuinely too small.  A CP/M
+; transient reaches here on the CCP's sixteen-byte stack, already several levels
+; deep because the CCP enters a .COM through CALL TBASE, so it arrives with under
+; a dozen bytes to spare.  The body above needs roughly twenty-five -- frame
+; stamp, send, CRC, receive, CRC again -- and it holds interrupts enabled across
+; the reply wait, so an ISR frame can land on top of that.  What gets overwritten
+; is the CCP's own code, and because a transient returns through RET rather than
+; a warm boot, restore_ccp_from_rom never repairs it: every CCP command after
+; that runs on wreckage until the machine is cold booted.
+;
+; BIOS callers come through here too.  They are already on a BIOS stack and do
+; not need the protection, but routing them here is what takes the deepest
+; nesting out of the console/storage run -- see CBIOS_XPORT_STACK_TOP.
+;
+; CALL rather than a pushed return address: it puts the return on the new stack
+; without touching a register, and HL and DE are both live arguments here.
+;
+; Not re-entrant, which costs nothing: the body already shares one set of packet
+; scratch across all callers, so a second concurrent IOCALL was never possible.
+;
+; In/Out: exactly the body's contract.  HL, DE and A pass through untouched.
+IOCALL:
+	ld (xport_iocall_sp),sp
+	ld sp,#CBIOS_XPORT_STACK_TOP
+	call iocall_body
+	ld sp,(xport_iocall_sp)
+	ret
+
+; Caller's stack pointer, parked while the transaction runs.  Lives in the code
+; region, which is RAM at runtime after the shadow copy.
+xport_iocall_sp:
+	.dw 0
 
 IOCTRL_CODE_END:
 
