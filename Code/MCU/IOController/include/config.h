@@ -5,6 +5,32 @@
 #define _XTAL_FREQ 64000000UL
 
 /* ===========================================================================
+ * Build profile
+ * ===========================================================================
+ *
+ * 0 = normal firmware: what the machine runs.
+ * 1 = diagnostic firmware: adds bring-up, benchmark and stress facilities.
+ *
+ * Set from the Makefile with IOC_PROFILE=diagnostic.  It gates INCLUSION only
+ * -- no transport behaviour, timing or error handling differs between the two
+ * builds, so a fault reproduced on one is a fault on the other.
+ *
+ * What it gates is deliberately narrower than "everything that looks like a
+ * diagnostic".  Three things that read as instrumentation are load-bearing and
+ * are NOT gated:
+ *
+ *   uprof_now()          a microsecond time source.  bulk_channel.c's bounded
+ *                        wait for host RTS uses it for its 500 ms failure
+ *                        contract; removing it wedges or slows every transfer.
+ *   the SD failure trace small, and the only thing that distinguishes
+ *                        electrical silence from a bad init stage.
+ *   sd_card CRC checks   data integrity, never overhead.
+ */
+#ifndef IOC_DIAGNOSTIC_BUILD
+#define IOC_DIAGNOSTIC_BUILD 0
+#endif
+
+/* ===========================================================================
  * U15 PIC18F57Q84-I/PT pin map
  * ===========================================================================
  *

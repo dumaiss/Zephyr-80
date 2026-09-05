@@ -1,6 +1,8 @@
 #ifndef TIMEBASE_H
 #define TIMEBASE_H
 
+#include "config.h"
+
 #include <stdint.h>
 
 /* Shared 10 ms tick, sourced from Timer2.
@@ -60,8 +62,21 @@ uint16_t timebase_ticks(void);
 #define UPROF_PUBLIC_SLOTS 6u
 #define UPROF_SLOTS   10u
 
+/* uprof_init() and uprof_now() are NOT gated on the build profile.
+ *
+ * uprof_now() is a microsecond time source, not a profiler.  bulk_channel.c's
+ * wait_for_host_ready() uses it to bound the wait for the host's RTS: Timer3
+ * gives that its 500 ms failure contract without adding ~1 ms to every good
+ * transfer, which is what sampling the millisecond tick instead would cost.
+ * Compiling it out would either wedge the controller on a host that never
+ * arrives or slow down every transfer that succeeds.
+ *
+ * The accumulation below IS the profiler, and it is gated. */
 void     uprof_init(void);
 uint16_t uprof_now(void);
+
+#if IOC_DIAGNOSTIC_BUILD
+
 void     uprof_add(uint8_t slot, uint16_t start);
 uint16_t uprof_ms(uint8_t slot);
 
@@ -70,3 +85,15 @@ uint16_t uprof_ms(uint8_t slot);
  * the reset transaction leaks into the following benchmark. */
 void uprof_request_reset(void);
 void uprof_apply_pending_reset(void);
+
+#else
+
+/* The brackets stay in the source, where they document which phase is which,
+ * and compile to nothing.  Arguments are consumed so a normal build does not
+ * warn about the locals that feed them. */
+#define uprof_add(slot, start)     ((void)(slot), (void)(start))
+#define uprof_ms(slot)             ((void)(slot), (uint16_t)0)
+#define uprof_request_reset()      ((void)0)
+#define uprof_apply_pending_reset() ((void)0)
+
+#endif

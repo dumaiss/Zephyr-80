@@ -46,6 +46,7 @@ uint16_t timebase_ticks(void)
  * Microsecond phase profiler.  See timebase.h.
  * --------------------------------------------------------------------------- */
 
+#if IOC_DIAGNOSTIC_BUILD
 static uint32_t uprof_acc[UPROF_SLOTS];
 static bool     uprof_reset_pending;
 
@@ -56,6 +57,7 @@ static void uprof_clear(void)
     for (i = 0u; i < UPROF_SLOTS; i++)
         uprof_acc[i] = 0uL;
 }
+#endif
 
 void uprof_init(void)
 {
@@ -73,9 +75,13 @@ void uprof_init(void)
     TMR3H = 0x00;
     TMR3L = 0x00;
 
+#if IOC_DIAGNOSTIC_BUILD
     uprof_clear();
     uprof_reset_pending = false;
+#endif
 
+    /* Timer3 runs in every build: uprof_now() is the time source bulk_channel's
+     * bounded wait for host RTS depends on, not a profiling facility. */
     T3CONbits.ON = 1;
 }
 
@@ -90,6 +96,8 @@ uint16_t uprof_now(void)
 
     return (uint16_t)(((uint16_t)hi << 8) | lo);
 }
+
+#if IOC_DIAGNOSTIC_BUILD
 
 void uprof_add(uint8_t slot, uint16_t start)
 {
@@ -121,3 +129,5 @@ void uprof_apply_pending_reset(void)
     uprof_clear();
     uprof_reset_pending = false;
 }
+
+#endif /* IOC_DIAGNOSTIC_BUILD */

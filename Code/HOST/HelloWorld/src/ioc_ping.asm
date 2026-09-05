@@ -156,12 +156,11 @@ verify_payload:
 	ld de,#msg_reinit
 	ld hl,#(rx_frame + 24)
 	call say_word
-	ld de,#msg_rx_edges
-	ld hl,#(rx_frame + 26)
-	call say_word
-	ld de,#msg_tx_edges
-	ld hl,#(rx_frame + 28)
-	call say_word
+	; The physical RB3/SCK edge counts that used to print here are gone.
+	; They measured PPS and gate-clock glitches during transport bring-up and
+	; are now built only into diagnostic firmware, where a normal build leaves
+	; their reply offsets reserved and zero.  Printing them unconditionally
+	; would have reported "0000 clocks" on a healthy link.
 
 	; PROFILE is a second transaction.  It must come last: it reports the
 	; accumulated totals, and issuing it earlier would leave its own exchange
@@ -504,17 +503,22 @@ msg_link_synced:
 msg_retry:	.db 13,10
 		.ascii "  service calls           : $"
 msg_reinit:	.ascii "  .. aborted, no frame    : $"
-msg_rx_edges:	.ascii "  current request clocks  : $"
-msg_tx_edges:	.ascii "  previous reply clocks   : $"
 msg_prof:	.db 13,10
 		.ascii "  ms in rx window         : $"
-msg_p1:		.ascii "  ms in frame decode      : $"
-msg_p2:		.ascii "  ms in dispatch/card     : $"
-msg_p3:		.ascii "  ms in reply send        : $"
-msg_p4:		.ascii "  ms in bulk phase        : $"
-msg_p5:		.ascii "  ms total (all phases)   : $"
-msg_calls:	.ascii "  service calls           : $"
-msg_aborts:	.ascii "  .. aborted, no frame    : $"
+msg_p1:		.db 13,10
+		.ascii "  ms in frame decode      : $"
+msg_p2:		.db 13,10
+		.ascii "  ms in dispatch/card     : $"
+msg_p3:		.db 13,10
+		.ascii "  ms in reply send        : $"
+msg_p4:		.db 13,10
+		.ascii "  ms in bulk phase        : $"
+msg_p5:		.db 13,10
+		.ascii "  ms total (all phases)   : $"
+msg_calls:	.db 13,10
+		.ascii "  service calls           : $"
+msg_aborts:	.db 13,10
+		.ascii "  .. aborted, no frame    : $"
 ; Labelled for what it actually is.  The controller re-arms this trace and
 ; zeroes it on EVERY CMD17, so on a healthy machine it permanently shows the
 ; last successful read's R1 poll -- typically FF FF 00, meaning "polled twice,

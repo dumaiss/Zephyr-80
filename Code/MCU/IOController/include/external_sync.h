@@ -1,6 +1,8 @@
 #ifndef EXTERNAL_SYNC_H
 #define EXTERNAL_SYNC_H
 
+#include "config.h"
+
 #include <stdbool.h>
 #include "ioc_frame.h"
 
@@ -266,8 +268,12 @@ bool external_sync_receive(IocFrame *frame);
 /* Physical RB3/SCK rising-edge counts captured by Timer1.  RX is the current
  * request window by the time a handler runs; TX is the preceding reply because
  * the current reply has not been clocked yet. */
+#if IOC_DIAGNOSTIC_BUILD
+/* Physical RB3/SCK edge counts from Timer1.  Diagnostic build only: nothing
+ * branches on them and only PING ever read them. */
 uint16_t external_sync_last_rx_edges(void);
 uint16_t external_sync_last_tx_edges(void);
+#endif
 bool external_sync_is_established(void);
 /* Transmit one common packet mapped from the compatibility mailbox. */
 void external_sync_send(const IocFrame *frame);

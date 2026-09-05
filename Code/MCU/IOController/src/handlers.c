@@ -57,12 +57,18 @@ void handler_ping(const IocFrame *request, IocFrame *reply)
         reply->bytes[IOC_OFF_PING_ABORTS_LO] = (uint8_t)i;
         reply->bytes[IOC_OFF_PING_ABORTS_HI] = (uint8_t)(i >> 8);
 
+#if IOC_DIAGNOSTIC_BUILD
+        /* Physical RB3/SCK edge counts.  The offsets stay reserved in a normal
+         * build and read zero there -- the reply is zeroed before this runs --
+         * so no tool's frame layout changes, but nothing pretends to have
+         * measured them. */
         r = external_sync_last_rx_edges();
         i = external_sync_last_tx_edges();
         reply->bytes[IOC_OFF_PING_RX_EDGES_LO] = (uint8_t)r;
         reply->bytes[IOC_OFF_PING_RX_EDGES_HI] = (uint8_t)(r >> 8);
         reply->bytes[IOC_OFF_PING_TX_EDGES_LO] = (uint8_t)i;
         reply->bytes[IOC_OFF_PING_TX_EDGES_HI] = (uint8_t)(i >> 8);
+#endif
     }
 }
 
@@ -151,6 +157,9 @@ void handler_sd_read(const IocFrame *request, IocFrame *reply)
     memcpy(&reply->bytes[IOC_OFF_PAYLOAD], xfer_block, IOC_SD_READ_BYTES);
 }
 
+#if IOC_DIAGNOSTIC_BUILD
+/* Synthetic ramp and raw 512-byte block paths.  No normal storage or HID
+ * path depends on them; the CP/M filesystem uses record reads and writes. */
 /* Channel-A bring-up: stream a known ramp so the bulk lane can be verified
  * independently of the SD card.  Reuses the transfer buffer; nothing else is
  * live at the same time because the foreground loop is single-threaded. */
@@ -281,6 +290,7 @@ void handler_sd_write_bulk(const IocFrame *request, IocFrame *reply)
 }
 
 /* The DONE half of the lifecycle. */
+#endif /* IOC_DIAGNOSTIC_BUILD */
 void handler_xfer_status(const IocFrame *request, IocFrame *reply)
 {
     memset(reply->bytes, 0, IOC_FRAME_SIZE);
@@ -292,7 +302,19 @@ void handler_xfer_status(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_DONE_XFER_ID] = bulk_channel_last_xfer_id();
     reply->bytes[IOC_OFF_DONE_STATUS]  = bulk_channel_last_status();
 
-    /* Bring-up diagnostic: what the transfer buffer actually holds. */
+#if IOC_DIAGNOSTIC_BUILD
+    /* Bring-up diagnostic: what the transfer buffer actually holds.
+     *
+     * IOC_DONE_PAYLOAD_LEN is deliberately unchanged between profiles, so the
+     * wire packet is the same length in both and these fields simply read zero
+     * in a normal build.  Shrinking LEN would change the packet on the wire and
+     * would have to be coordinated with the BIOS and every tool that decodes a
+     * DONE reply; that is a bigger step than removing a fill.
+     *
+     * IOC_OFF_DONE_XFER_ID and IOC_OFF_DONE_STATUS above are NOT diagnostic:
+     * the transfer identity and the final status are how a caller learns
+     * whether the card actually committed a write.  SDFMT reads the status byte
+     * on every record it writes. */
     {
         uint8_t i;
         const uint8_t *raw = bulk_channel_rx_window();
@@ -314,6 +336,7 @@ void handler_xfer_status(const IocFrame *request, IocFrame *reply)
         reply->bytes[IOC_OFF_DONE_BULK_SYNC_LIVE] =
             bulk_channel_sync_live();
     }
+#endif /* IOC_DIAGNOSTIC_BUILD */
 }
 
 /* Link bring-up.  Releasing /SYNC and clearing the flag BEFORE the reply is
@@ -746,6 +769,7 @@ void handler_sd_flush(const IocFrame *request, IocFrame *reply)
     reply_header(request, reply, RSP_SD_FLUSH, sd_status_to_ioc(st), 0u);
 }
 
+#if IOC_DIAGNOSTIC_BUILD
 /* Accumulated microsecond profile.  Page 0 returns the original six 16-bit
  * millisecond totals; page 1 returns four bulk-TX subphase totals.
  *
@@ -802,3 +826,4 @@ void handler_profile(const IocFrame *request, IocFrame *reply)
         reply->bytes[IOC_OFF_PROFILE_0 + (uint8_t)(i * 2u) + 1u] = (uint8_t)(ms >> 8);
     }
 }
+#endif /* IOC_DIAGNOSTIC_BUILD */

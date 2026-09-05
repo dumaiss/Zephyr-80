@@ -81,6 +81,7 @@ static uint8_t rx_window[EXTSYNC_RX_WINDOW_BYTES];
  * the sync-establishing branch. */
 static bool link_synced;
 
+#if IOC_DIAGNOSTIC_BUILD
 /* Timer1 counts the physical RB3/SCK rising edges.  Unlike a software exchange
  * counter, this sees PPS handover glitches and clocks emitted by the SPI module
  * itself.  The pin input buffer remains available while RB3 is an output. */
@@ -109,6 +110,15 @@ static uint16_t edge_counter_stop(void)
     T1CONbits.ON = 0;
     return TMR1;
 }
+#else
+/* Timer1 and its counters exist only in the diagnostic build.  Nothing branches
+ * on the counts -- they were read solely by PING -- so the whole facility goes,
+ * Timer1 with it.  They measured PPS and gate-clock glitches while the
+ * transport was being brought up; that question is answered. */
+#define edge_counter_init()  ((void)0)
+#define edge_counter_start() ((void)0)
+#define edge_counter_stop()  ((uint16_t)0)
+#endif
 
 static void sync_release(void)
 {
@@ -125,6 +135,7 @@ void external_sync_request_resync(void)
     link_synced = false;
 }
 
+#if IOC_DIAGNOSTIC_BUILD
 uint16_t external_sync_last_rx_edges(void)
 {
     return last_rx_edges;
@@ -134,6 +145,7 @@ uint16_t external_sync_last_tx_edges(void)
 {
     return last_tx_edges;
 }
+#endif
 
 bool external_sync_is_established(void)
 {
@@ -579,8 +591,10 @@ void external_sync_init(void)
      * manual requires ("the SYNC input must be held Low until character
      * synchronization is lost"). */
     link_synced = false;
+#if IOC_DIAGNOSTIC_BUILD
     last_rx_edges = 0u;
     last_tx_edges = 0u;
+#endif
     edge_counter_init();
     sync_release();
 }
@@ -610,14 +624,22 @@ bool external_sync_receive(IocFrame *frame)
             /* Give the pins and the bus back before bailing out, or the next
              * transaction starts with RB1/RB3 still routed to the module. */
             sio_link_pins_to_lat();
+#if IOC_DIAGNOSTIC_BUILD
             last_rx_edges = edge_counter_stop();
+#else
+            (void)edge_counter_stop();
+#endif
             bus_release_siob();
             return false;
         }
         sio_link_byte_gap();
     }
     sio_link_pins_to_lat();
+#if IOC_DIAGNOSTIC_BUILD
     last_rx_edges = edge_counter_stop();
+#else
+    (void)edge_counter_stop();
+#endif
     uprof_add(UPROF_RX, t_rx);
 
     bus_release_siob();
@@ -726,7 +748,11 @@ void external_sync_send(const IocFrame *frame)
      * next packet's A5/5A marker search. */
     (void)sio_link_exchange(0xFFu, &discard);
     sio_link_pins_to_lat();
+#if IOC_DIAGNOSTIC_BUILD
     last_tx_edges = edge_counter_stop();
+#else
+    (void)edge_counter_stop();
+#endif
 
     /* /SYNCB is NOT released here.  It was, and that single line defeated the
      * whole persistent-sync change: the establishing reply delivered the falling

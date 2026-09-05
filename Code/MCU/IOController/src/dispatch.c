@@ -15,6 +15,14 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
         handler_sd_read(request, reply);
         return true;
 
+#if IOC_DIAGNOSTIC_BUILD
+    /* Bring-up and benchmark paths.  Absent from a normal build, where they
+     * fall through to handler_unknown() and are rejected explicitly -- which is
+     * the designed answer for a class this firmware does not implement, and is
+     * distinguishable from a transport fault.
+     *
+     * Their CP/M callers (BULK, SDBLK, SDWRITE, SDBENCH) already ship only on
+     * the diagnostic ROM profile, so a normal rescue disk cannot reach them. */
     case CMD_BULK_TEST:
         handler_bulk_test(request, reply);
         return true;
@@ -26,6 +34,7 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
     case CMD_SD_WRITE_BULK:
         handler_sd_write_bulk(request, reply);
         return true;
+#endif
 
     case CMD_SD_READ_REC:
         handler_sd_read_rec(request, reply);
@@ -39,9 +48,11 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
         handler_link_sync(request, reply);
         return true;
 
+#if IOC_DIAGNOSTIC_BUILD
     case CMD_PROFILE:
         handler_profile(request, reply);
         return true;
+#endif
 
     case CMD_HID_STATUS:
         handler_hid_status(request, reply);

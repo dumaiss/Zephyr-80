@@ -45,6 +45,23 @@ XC8FLAGS ?= -mcpu=$(DEVICE) -mdfp=$(DFP) -I$(INC_DIR) \
 # Extra -D defines, for sweeping tunables without editing headers. e.g.
 #   make DEFS=-DEXTSYNC_TARGET_BYTE_US=16u     # 500 kbit/s
 #   make DEFS=-DEXTSYNC_SPI_BAUD=63u          # SCK 500 kHz
+# Firmware build profile.
+#
+#   normal      what the machine runs (default)
+#   diagnostic  adds the profiler, the physical edge counters, the synthetic
+#               bulk ramp and the raw block commands
+#
+# Inclusion only: transport behaviour, timing and error handling are identical,
+# so a fault seen on one profile is a fault on the other.
+IOC_PROFILE ?= normal
+ifeq ($(IOC_PROFILE),diagnostic)
+PROFILE_DEFS := -DIOC_DIAGNOSTIC_BUILD=1
+else ifeq ($(IOC_PROFILE),normal)
+PROFILE_DEFS :=
+else
+$(error Unsupported IOC_PROFILE='$(IOC_PROFILE)'; choose normal or diagnostic)
+endif
+
 DEFS ?=
 
 .PHONY: all clean test size force check-xc8-patches
@@ -62,10 +79,10 @@ $(BUILD_DIR):
 	mkdir -p $@
 
 $(FLAGS_STAMP): force | $(BUILD_DIR)
-	@echo '$(DEFS)' | cmp -s - $@ || echo '$(DEFS)' > $@
+	@echo '$(PROFILE_DEFS) $(DEFS)' | cmp -s - $@ || echo '$(PROFILE_DEFS) $(DEFS)' > $@
 
 $(FIRMWARE_HEX): $(FIRMWARE_SRCS) $(FLAGS_STAMP) | $(BUILD_DIR)
-	$(XC8) $(XC8FLAGS) $(DEFS) $(FIRMWARE_SRCS) -o $(BUILD_DIR)/$(TARGET)
+	$(XC8) $(XC8FLAGS) $(PROFILE_DEFS) $(DEFS) $(FIRMWARE_SRCS) -o $(BUILD_DIR)/$(TARGET)
 
 test:
 	@echo "No host tests yet: firmware only."
