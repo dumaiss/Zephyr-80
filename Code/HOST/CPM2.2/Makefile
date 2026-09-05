@@ -83,6 +83,7 @@ RUNTIME_SRCS ?= \
 	$(SRC_DIR)/cbios_iocall.asm \
 	$(SRC_DIR)/cbios_ioc_command.asm \
 	$(SRC_DIR)/cbios_hid_input.asm \
+	$(SRC_DIR)/cbios_sercon.asm \
 	$(CONSOLE_SRC) \
 	$(SRC_DIR)/cbios_storage.asm \
 	$(STORAGE_A_SRC) \

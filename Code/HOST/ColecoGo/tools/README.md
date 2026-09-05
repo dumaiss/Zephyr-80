@@ -1,10 +1,8 @@
 # Tools
 
-Host-side development and validation utilities for ColecoGo will live in this directory.
+- `ihx_to_com.py` converts the linked Intel HEX image at origin `0100h` into a
+  CP/M `.COM` file and validates Intel HEX checksums.
+- `check_build.py` checks the code/TPA boundary and the size and placement of
+  both takeover stages from the assembler listing.
 
-Possible future tools include:
-
-- Coleco ROM size/header inspection
-- BIOS/cartridge image validation
-- test-image generation
-- build-time checks for trampoline size and placement
+Both tools run as part of `make`.

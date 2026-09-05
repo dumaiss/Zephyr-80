@@ -135,8 +135,24 @@ Before jumping to the ColecoVision BIOS, ColecoGo only needs to establish the Ze
 
 1. select the Coleco-compatible VDP interrupt route, with the V9958 interrupt presented to the Z80 as NMI
 2. program the V9958 palette to reproduce the fixed Coleco/TMS9918 palette
+3. reset V9958-only registers inherited from the CP/M graphics console to a
+   TMS-compatible baseline
 
 The ColecoVision BIOS is then allowed to initialize the ordinary TMS9918-compatible VDP registers itself.
+
+There is one electrical address-decoding difference that the loader must also
+bridge. A ColecoVision aliases the TMS9928A throughout `A0h-BFh` and uses only
+address bit A0 to choose data or command/status. LunchCrema passes A1:A0 to the
+V9958, where those two bits select four distinct ports. Stock BIOS accesses to
+`BEh/BFh` therefore select the V9958 palette/indirect ports instead of its
+data/command ports.
+
+The current loader recognizes the standard Coleco BIOS layout (CRC32
+`3AA93EF3`) by checking every affected operand and patches its in-memory copy
+from `BEh/BFh` to LunchCrema's `A0h/A1h`. The disk file is not modified. A BIOS
+with a different layout is rejected before bank 7 is changed. Cartridge code
+that performs its own direct `BEh/BFh` VDP I/O is not yet adapted; the initial
+target is software such as Donkey Kong that uses the standard BIOS VDP calls.
 
 ### Controller input
 
@@ -199,9 +215,52 @@ Code/HOST/ColecoGo/
 |-- README.md
 |-- Makefile
 |-- src/
-|   `-- README.md
+|   |-- README.md
+|   `-- colecogo.asm
 `-- tools/
-    `-- README.md
+    |-- README.md
+    |-- check_build.py
+    `-- ihx_to_com.py
 ```
 
-The current Makefile is intentionally a placeholder until the assembler/linker and source organization are selected.
+## Current first-pass implementation
+
+The repository now contains an SDCC/ASxxxx Z80 implementation in
+`src/colecogo.asm`. It implements the conventional-ROM path described above:
+
+- accepts the cartridge name from CP/M's first default FCB
+- opens and validates `COLECO.ROM` and the requested cartridge
+- reads both files completely before changing the takeover bank
+- guards and adapts the standard BIOS's VDP ports for LunchCrema
+- fills unused cartridge space with `FFh`
+- constructs bank 7 through the public Zephyr `XMOVE`/`MOVE` ABI
+- installs the common Stage A and target-bank Stage B handoff routines
+- disables CP/M CTC/SIO interrupt sources
+- establishes a clean TMS-compatible V9958 baseline, LunchCrema WAIT/DRAM
+  state, Coleco palette, and NMI route
+- completes the upper cartridge mapping, clears Coleco RAM, and jumps to `0000h`
+
+Build it with:
+
+```text
+make
+```
+
+The result is `build/COLECOGO.COM`. The build also checks that the ordinary
+program remains below its fixed file buffers, Stage A fits in `C000h-C3FFh`,
+and Stage B fits in the backed-up 128-byte staging record.
+
+CP/M 2.2 records file sizes in 128-byte units. Runtime validation can therefore
+prove that the BIOS occupies exactly 64 records and the cartridge no more than
+256 records, but it cannot recover a host file's byte length within its final
+record. ROM images should be copied to CP/M without text-mode translation.
+
+This first pass intentionally does not support bank-switched cartridges, a
+return to CP/M, title-specific timing adaptation, cartridge-side direct VDP
+port rewriting, or runtime emulation/proxying of Coleco hardware. Hardware
+testing of version 0.2 reached both the BIOS title and Donkey Kong's option
+screen, exposing inherited CP/M V9958 state: the BIOS VRAM clear ran with G6
+mode and CPU VRAM page 7 still selected. Version 0.3 resets that state before
+takeover and requires a hardware retest. Successful takeover overwrites SRAM
+bank 7 by design; it does not remove or reconfigure the CP/M RAM-disk driver in
+the system image.
