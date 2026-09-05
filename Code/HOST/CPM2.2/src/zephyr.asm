@@ -118,6 +118,9 @@ ZBIOS_EXT_BASE:
 	.include "cbios_iocall.asm"
 	.include "cbios_ioc_command.asm"
 	.include "cbios_hid_input.asm"
+	.ifeq VDRIP_TRANSPORT_LINKED
+	.include "cbios_sercon.asm"
+	.endif
 	.include "cbios_console_vdrip.asm"
 	.include "cbios_storage.asm"
 	.include "cbios_storage_vdrip.asm"

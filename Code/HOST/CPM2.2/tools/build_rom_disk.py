@@ -77,6 +77,10 @@ MANIFEST = (
     ("hello", "ioc_sdfmt.com", "SDFMT.COM", PROFILE_NORMAL),
     # Separates IOC HID translation and queueing from BIOS CONST/CONIN.
     ("hello", "hidkey.com", "HIDKEY.COM", PROFILE_NORMAL),
+    # Arms or disarms the serial console tee.  Rescue tool by definition: it is
+    # what you reach for when the screen is dark, or what turns the mirror off
+    # again once a terminal has been unplugged.
+    ("hello", "sercon.com", "SERCON.COM", PROFILE_NORMAL),
     # The only recovery environment that still works with no usable disk:
     # L loads Intel HEX over the console, DB dumps a bank, I/O reach ports.
     # Built from source rather than copied, so it always matches the tree.

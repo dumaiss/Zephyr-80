@@ -13,6 +13,9 @@
 	.globl runtime_clear_default_dma
 	.globl console_init
 	.globl console_backend_cold_init
+	.ifeq VDRIP_TRANSPORT_LINKED
+	.globl sercon_init,sercon_install
+	.endif
 	.globl sio_core_init,sio1_ioc_init,ioc_link_bringup,ctc_disable_interrupts,sio_core_enable_interrupts
 	.globl BOOT_BANNER_CODE_START,BOOT_BANNER_CODE_END
 	.globl BOOT_BANNER_TEXT,BOOT_BANNER_TEXT_END
@@ -60,6 +63,12 @@ boot:
 	call ioc_link_bringup
 
 	call console_backend_cold_init
+	.ifeq VDRIP_TRANSPORT_LINKED
+	; Install the serial console tee.  After the backend, because it copies
+	; the backend's driver table; before the banner, so a terminal that has
+	; already armed the tee sees the boot messages.
+	call sercon_init
+	.endif
 	call boot_print_banner
 	call prepare_runnable_bank
 	xor a
@@ -126,6 +135,13 @@ wboot_resident:
 	; restoration. The VDrip backend may temporarily enable SIO RX for its READY
 	; handshake; the direct V9958 backend performs only physical VDP/HID setup.
 	call console_init
+	.ifeq VDRIP_TRANSPORT_LINKED
+	; Rebind the serial console.  console_init() just reset CONSOLE_DRIVER to
+	; the backend table and sio_core_init() above cleared the RX sink, so
+	; without this the tee and the serial input die on the first warm boot.
+	; sercon_install preserves the armed flags; sercon_init would clear them.
+	call sercon_install
+	.endif
 	call sio_core_enable_interrupts
 	ld a,(TDRIVE)
 	ld c,a

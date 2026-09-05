@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 from pathlib import Path
 import re
 import sys
@@ -950,19 +951,40 @@ def find_headroom(listing_path: Path) -> list[tuple[int, int]]:
     which is precisely the wrong answer to give someone looking for room.
     """
     emitted: set[int] = set()
-    reserved_starts: set[int] = set()
+    listed: set[int] = set()
+    ds_starts: list[int] = []
     emit_re = re.compile(r"^\s+0000([0-9A-Fa-f]{4}) ((?:[0-9A-Fa-f]{2} )+)")
     addr_re = re.compile(r"^\s+0000([0-9A-Fa-f]{4})\s")
     for line in listing_path.read_text(errors="replace").splitlines():
         match = emit_re.match(line)
         if match:
             base = int(match.group(1), 16)
+            listed.add(base)
             for index in range(len(match.group(2).split())):
                 emitted.add(base + index)
             continue
         match = addr_re.match(line)
-        if match and ".ds" in line:
-            reserved_starts.add(int(match.group(1), 16))
+        if match:
+            address = int(match.group(1), 16)
+            listed.add(address)
+            if ".ds" in line:
+                ds_starts.append(address)
+
+    # A .ds reserves space without emitting anything, so it looks like a gap.
+    # Its extent runs to the next address the listing mentions -- the label or
+    # directive that follows it.  Deriving the extent that way rather than
+    # parsing the operand is what makes this correct for `.ds SYMBOL`, which
+    # the listing does not resolve to a number.
+    #
+    # An earlier version treated a gap whose first address was a .ds as
+    # reserved in its entirety.  That is right only when the .ds fills the gap;
+    # an 8-byte buffer at the head of 547 free bytes hid all of them.
+    ordered = sorted(listed)
+    reserved: set[int] = set()
+    for start in ds_starts:
+        index = bisect.bisect_right(ordered, start)
+        end = ordered[index] if index < len(ordered) else start + 1
+        reserved.update(range(start, end))
 
     gaps: list[tuple[int, int]] = []
     for _, start, limit in HEADROOM_REGIONS:
@@ -974,10 +996,18 @@ def find_headroom(listing_path: Path) -> list[tuple[int, int]]:
             elif not free and run is not None:
                 gaps.append((run, address - 1))
                 run = None
-    return [
-        (start, end) for start, end in gaps
-        if end - start + 1 >= HEADROOM_MIN_BYTES and start not in reserved_starts
-    ]
+    out: list[tuple[int, int]] = []
+    for start, end in gaps:
+        run: int | None = None
+        for address in range(start, end + 2):
+            free = address <= end and address not in reserved
+            if free and run is None:
+                run = address
+            elif not free and run is not None:
+                if address - run >= HEADROOM_MIN_BYTES:
+                    out.append((run, address - 1))
+                run = None
+    return out
 
 
 def headroom_lines(listing_path: Path) -> list[str]:

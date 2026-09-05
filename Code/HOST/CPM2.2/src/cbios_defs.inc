@@ -788,6 +788,55 @@ ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_IOCTRL_CODE_BASE - 1           ; DF7Ah
 ; DD10h -- 63 bytes, contiguous, and free in every build configuration.
 CBIOS_BOOT_BANNER_CODE_BASE     = CBIOS_IOC_DIAG_BASE + 0x11           ; DCD1h
 
+; ---------------------------------------------------------------------------
+; Serial console fallback (cbios_sercon.asm)
+; ---------------------------------------------------------------------------
+;
+; Built only when the VDrip transport is NOT linked, for two reasons.  A VDrip
+; build already IS a host-serial console -- VDrip talks over this same SIO0/B --
+; so a fallback would be redundant.  And slot 5 in that build has no room: the
+; transport takes F680h-F908h and the storage backend follows it.
+;
+; The state block sits at the top of the runtime work area, above the SIO core
+; state in either build (v9958 ends at FE74h, vdrip at FE76h), so SERCON_FLAGS
+; is at a FIXED address that a .COM can poke without knowing the build.
+	.ifeq VDRIP_TRANSPORT_LINKED
+CBIOS_SERCON_CODE_BASE          = 0xf760
+	.endif
+
+SERCON_STATE_BASE               = CBIOS_WORK_AREA + 0x0078      ; FE78h
+SERCON_FLAGS                    = SERCON_STATE_BASE + 0x00      ; FE78h
+SERCON_ESC_COUNT                = SERCON_STATE_BASE + 0x01
+SERCON_RX_HEAD                  = SERCON_STATE_BASE + 0x02
+SERCON_RX_TAIL                  = SERCON_STATE_BASE + 0x03
+SERCON_RX_COUNT                 = SERCON_STATE_BASE + 0x04
+
+; How long sercon_tx waits for /CTS before giving up on a character.
+;
+; Not zero, because a terminal program that closes and reopens the port drops
+; RTS while it does so, and dropping output on a flap that short makes a working
+; link look broken.  Not large either: when NOTHING is connected every character
+; pays this, so it trades directly against how sluggish an armed-but-unplugged
+; tee feels.  About 256 iterations of a ~12 us loop, so roughly 3 ms.
+;
+; The full SIO_CONSOLE_TIMEOUT of FFFFh is what this exists to avoid -- that is
+; about a second per character, which reads as a hung machine.
+SERCON_CTS_WAIT                 = 0x0100
+
+; SERCON_FLAGS bits.  Published: SERCON.COM writes this byte directly.
+SERCON_FLAG_TEE                 = 0x01   ; mirror CONOUT to the serial port
+SERCON_FLAG_INPUT               = 0x02   ; serial owns CONST/CONIN
+
+; Three ESCs toggle input ownership and arm the tee.  Reserved: a terminal
+; cannot send this sequence through to an application.
+SERCON_ESC                      = 0x1b
+SERCON_ESC_TRIGGER              = 0x03
+
+; Eight bytes, power of two so the index wrap is an AND.  It covers ISR latency,
+; not a burst: IOCBULK masks interrupts for ~3 ms and the terminal is expected
+; to pace rather than the BIOS to apply flow control.
+SERCON_RX_BUFFER_SIZE           = 0x08
+
 ; Boot banner text, in bank 0 read-only data immediately after the font.
 ;
 ; The banner used to live in core BIOS and was capped at ten bytes, wedged

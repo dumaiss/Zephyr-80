@@ -22,7 +22,7 @@ CPM_STAGE_DIR ?= ../CPM2.2/images/A/0
 CPM_USER ?= 0
 
 ASXXXX_TARGETS := vdrip_checkerboard vdrip_smiley shadow_copy_test shadow_copy_low vdrip_text_mode_test
-COM_TARGETS := video_smiley video_smiley_v9958 mandelbrot_v9958 mandelbrot_v9958_real v9958tst nowrap wrapon ioc_ping ioc_reset ioc_rts_probe ioc_sd_read ioc_bulk ioc_sdblk ioc_sdwrite ioc_sdsoak ioc_sdrec ioc_sdfmt ioc_sdbench ioc_diagchk hidstat hidkey sndtest
+COM_TARGETS := video_smiley video_smiley_v9958 mandelbrot_v9958 mandelbrot_v9958_real v9958tst nowrap wrapon ioc_ping ioc_reset ioc_rts_probe ioc_sd_read ioc_bulk ioc_sdblk ioc_sdwrite ioc_sdsoak ioc_sdrec ioc_sdfmt ioc_sdbench ioc_diagchk sercon hidstat hidkey sndtest
 ASXXXX_SRCS := $(addprefix $(SRC_DIR)/,$(addsuffix .asm,$(ASXXXX_TARGETS)))
 COM_SRCS := $(addprefix $(SRC_DIR)/,$(addsuffix .asm,$(COM_TARGETS)))
 ASXXXX_INCS := $(wildcard $(SRC_DIR)/*.inc)
@@ -46,7 +46,7 @@ ASXXXX_RELS := $(addprefix $(ASXXXX_DIR)/,$(addsuffix .rel,$(ASXXXX_TARGETS)))
 COM_RELS := $(addprefix $(ASXXXX_DIR)/,$(addsuffix .rel,$(COM_TARGETS)))
 COM_IHXS := $(addprefix $(BUILD_DIR)/,$(addsuffix .ihx,$(COM_TARGETS)))
 COM_BINS := $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(COM_TARGETS)))
-DIAGNOSTIC_COM_TARGETS := ioc_ping ioc_reset ioc_rts_probe ioc_sd_read ioc_bulk ioc_sdblk ioc_sdwrite ioc_sdsoak ioc_sdrec ioc_sdfmt ioc_sdbench ioc_diagchk hidstat hidkey sndtest
+DIAGNOSTIC_COM_TARGETS := ioc_ping ioc_reset ioc_rts_probe ioc_sd_read ioc_bulk ioc_sdblk ioc_sdwrite ioc_sdsoak ioc_sdrec ioc_sdfmt ioc_sdbench ioc_diagchk sercon hidstat hidkey sndtest
 DIAGNOSTIC_COMS := $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(DIAGNOSTIC_COM_TARGETS)))
 
 # The IOC failure-record layout lives in the BIOS project; this mirror is what
