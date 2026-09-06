@@ -25,9 +25,8 @@ DIAGNOSTICS = (
     ("ioc_sdrec.com", "sdrec.com"),
     ("ioc_sdfmt.com", "sdfmt.com"),
     ("ioc_sdbench.com", "sdbench.com"),
-    ("hidstat.com", "hidstat.com"),
-    ("hidstat.com", "hidkstat.com"),
     ("hidkey.com", "hidkey.com"),
+    ("padstat.com", "padstat.com"),
     ("sndtest.com", "sndtest.com"),
 )
 

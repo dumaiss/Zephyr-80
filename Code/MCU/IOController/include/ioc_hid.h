@@ -104,6 +104,30 @@ typedef struct {
 
 void hid_host_usb_state(HidHostUsbState *state);
 
+/* Stable, passive gamepad enumeration state for HID_STATUS page 6.  Counts
+ * saturate rather than wrapping so a long-running machine cannot look unused.
+ * Per-slot report fields describe the current or most recently removed F310;
+ * addr 0 means the slot is not currently mounted. */
+typedef struct {
+    uint8_t  device_count;      /* live mounted addresses 1..DEVICE_MAX */
+    uint8_t  mount_count;
+    uint8_t  unmount_count;
+    uint8_t  last_device_addr;  /* highest live non-hub address, or 0xff */
+    uint16_t last_device_vid;
+    uint16_t last_device_pid;
+    uint8_t  hid_mount_count;
+    uint8_t  last_hid_addr;
+    uint8_t  last_hid_protocol;
+    uint8_t  gamepad_addr[2];
+    uint8_t  gamepad_instance[2];
+    uint8_t  gamepad_first_arm[2];
+    uint16_t gamepad_reports[2];
+    uint8_t  gamepad_last_len[2];
+    uint8_t  gamepad_latch[2];
+} HidHostGamepadState;
+
+void hid_host_gamepad_state(HidHostGamepadState *state);
+
 #if IOC_DIAGNOSTIC_BUILD
 
 /* Perform visible bring-up probes at each supported test rate.

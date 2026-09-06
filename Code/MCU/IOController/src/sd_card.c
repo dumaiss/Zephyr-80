@@ -162,14 +162,15 @@ static void sd_select(void)
     spi1_bus_select(SPI1_DEVICE_SD_CARD);
 }
 
-/* Deselect, then give the card its trailing clock.
+/* Deselect, then give the card its trailing clocks.
  *
- * The SD spec wants one clock after CS rises so the card releases DO.  The
- * clock reaches the card with CS high -- there is no gating on this bus -- so
- * this byte does its job. */
+ * The clocks reach the card with CS high -- there is no gating on this bus --
+ * so these two bytes give the card 16 idle clocks to release DO and finish
+ * internal housekeeping before another SPI1 device can be selected. */
 static void sd_deselect(void)
 {
     spi1_bus_select(SPI1_DEVICE_NONE);
+    (void)spi1_bus_write(0xFFu);
     (void)spi1_bus_write(0xFFu);
 }
 

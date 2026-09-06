@@ -17,7 +17,6 @@ monitor_tpa_start:
 	xor a
 	ld (EOL_CR_FLAG),a
 	ld (HISTORY_LEN),a
-	call wait_for_first_enter
 	ld hl,#msg_banner
 	call sio_puts
 

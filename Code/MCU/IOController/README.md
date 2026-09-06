@@ -96,9 +96,14 @@ adapter is isolated in `src/ioc_hid.c`; it shares SPI1 only through the central
 one-hot selector, so selecting the MAX3421E always releases the SD card and
 controller latch first.
 
-The MAX3421E, FE1.1 hub and one boot keyboard now enumerate in the foreground
-TinyUSB task.  `CMD_HID_STATUS` exposes controller, enumeration and live-report
-diagnostics to `HIDSTAT.COM`.  Boot-keyboard press transitions are translated
+The MAX3421E and FE1.1 hub now support up to two HID interfaces in the
+foreground TinyUSB task.  One boot keyboard may be used alongside a Logitech
+F310 in DirectInput mode (USB `046d:c216`), or two F310s may feed the two
+Coleco controller bytes.  F310 interrupt-IN requests are paced at 10 ms in the
+application because TinyUSB's MAX3421E scheduler does not yet enforce endpoint
+`bInterval`.  Passive `CMD_HID_STATUS` page 6 reads TinyUSB's live non-hub
+device table and exposes USB/F310 enumeration, report-arm, report-count and
+decoded-latch state to `PADSTAT.COM` in a normal build.  Boot-keyboard press transitions are translated
 inside the HID module to ASCII/control bytes and VT100 key sequences, then held
 in a 128-byte queue.  The nonblocking `CMD_HID_INPUT` dequeues up to 24 bytes;
 `HIDKEY.COM` exercises that path directly without changing BIOS `CONST` or
@@ -115,10 +120,19 @@ full root-cause trail, what has been ruled out, and the bisection guide.
 
 ## Controller Latch Bring-Up
 
-The cascaded 74HC595 pair on the port C bus (SPI1) is driven by
-`controller_latch.c`. In a normal build the outputs are parked at zero by
-`controller_latch_init()` and nothing writes them afterwards:
-`CONTROLLER_LATCH_COUNTER_TEST` defaults to **0**, which compiles
+The cascaded 74AHC595 pair on the port C bus (SPI1) is driven by
+`controller_latch.c`. Both controller bytes start at the standard Coleco idle
+value `FFh`.  Each changed F310 report is decoded to the active-low Coleco data
+bus and committed at SPI1's 32 MHz maximum.  Mount order assigns controller 1
+and then controller 2; unplugging a pad restores that byte to `FFh`.
+
+The F310 mapping is d-pad (or left stick while the Mode LED is on) to Coleco
+directions, A/B to fire, Back/X to keypad 1, and Start/Y to keypad 2.  The board
+does not capture the Coleco keypad/joystick mode-select writes, so keypad 1/2
+temporarily override the direction nibble while held.  The raw latch codes are
+`02h` for key 1 and `08h` for key 2.
+
+`CONTROLLER_LATCH_COUNTER_TEST` still defaults to **0**, which compiles
 `controller_latch_tick()` down to an empty call.
 
 Build with `CONTROLLER_LATCH_COUNTER_TEST=1` to get the bring-up behaviour --

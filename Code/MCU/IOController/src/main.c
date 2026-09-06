@@ -89,9 +89,11 @@ static void platform_init(void)
     DCDB_LAT  = DCDB_IDLE;
     DCDB_TRIS = 0;
 
-    /* /NMI is an output and must be idle before anything else runs. */
+    /* The PIC does not currently implement the manual NMI request.  Leave its
+     * /NMI connection high-impedance so it cannot fight another card driving
+     * the shared bus signal.  Preload the latch for any future use. */
     HOST_NMI_LAT  = HOST_NMI_IDLE;
-    HOST_NMI_TRIS = 0;
+    HOST_NMI_TRIS = 1;
 
     /* /PWR_OFF was taken to its idle level above, deliberately early.
      * /SHUTDOWN_RQ is set up by power_init(); it is an input and nothing is
@@ -112,9 +114,10 @@ static void platform_init(void)
      * pins; each device sets its own clock rate before a transaction. */
     spi1_bus_init();
 
-    /* Park the controller latch at zero.  Its periodic counter test is disabled
-     * during SD-card bring-up, so idle firmware creates no SPI1 traffic.  The
-     * card still initialises lazily on the first SD request. */
+    /* Park both controller ports at their active-low idle value.  The periodic
+     * counter test is disabled during SD-card bring-up, so the latch is only
+     * rewritten when a USB controller changes state.  The card still
+     * initialises lazily on the first SD request. */
     timebase_init();
     controller_latch_init();
     sd_cache_init();

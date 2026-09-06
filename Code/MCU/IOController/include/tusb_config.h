@@ -5,7 +5,7 @@
  *
  * The first supported topology is deliberately narrow:
  *
- *   MAX3421E root port -> one hub -> one HID device/interface
+ *   MAX3421E root port -> one hub -> up to two HID devices/interfaces
  *
  * There is no RTOS and no USB mass-storage class.  SD storage continues to
  * use the IOC's existing native SPI driver and transport paths. */
@@ -20,7 +20,7 @@
  * the FE1.1S -- a keyboard and nothing else, ever. */
 #define CFG_TUH_DEVICE_MAX                 2
 #define CFG_TUH_HUB                        1
-#define CFG_TUH_HID                        1
+#define CFG_TUH_HID                        2
 
 #define CFG_TUH_ENUMERATION_BUFSIZE        128
 #define CFG_TUH_HUB_BUFSIZE                12

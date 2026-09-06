@@ -241,6 +241,42 @@
 #define IOC_HID_PAGE_HUB           0x03u
 #define IOC_HID_PAGE_ENUM          0x04u
 #define IOC_HID_PAGE_HIDCFG        0x05u
+#define IOC_HID_PAGE_GAMEPAD       0x06u
+
+/* Page 6: stable passive gamepad enumeration state, available in normal and
+ * diagnostic firmware.  Unlike pages 1-5, reading it performs no active probe
+ * and depends on no temporary TinyUSB internal trace.  DEVICES and LAST_* are
+ * derived from TinyUSB's live non-hub address table; MOUNTS/UNMOUNTS count the
+ * optional generic callbacks separately. */
+#define IOC_OFF_HIDPAD_PAGE         (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_HIDPAD_DEVICES      (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_HIDPAD_MOUNTS       (IOC_OFF_PAYLOAD + 2u)
+#define IOC_OFF_HIDPAD_UNMOUNTS     (IOC_OFF_PAYLOAD + 3u)
+#define IOC_OFF_HIDPAD_LAST_ADDR    (IOC_OFF_PAYLOAD + 4u)
+#define IOC_OFF_HIDPAD_LAST_VID_LO  (IOC_OFF_PAYLOAD + 5u)
+#define IOC_OFF_HIDPAD_LAST_VID_HI  (IOC_OFF_PAYLOAD + 6u)
+#define IOC_OFF_HIDPAD_LAST_PID_LO  (IOC_OFF_PAYLOAD + 7u)
+#define IOC_OFF_HIDPAD_LAST_PID_HI  (IOC_OFF_PAYLOAD + 8u)
+#define IOC_OFF_HIDPAD_HID_MOUNTS   (IOC_OFF_PAYLOAD + 9u)
+#define IOC_OFF_HIDPAD_LAST_HID_ADDR (IOC_OFF_PAYLOAD + 10u)
+/* Seven bytes per controller: address, instance, first-arm result, 16-bit
+ * report count, last report length and current decoded latch byte. */
+#define IOC_OFF_HIDPAD_PAD0_ADDR    (IOC_OFF_PAYLOAD + 11u)
+#define IOC_OFF_HIDPAD_PAD0_INST    (IOC_OFF_PAYLOAD + 12u)
+#define IOC_OFF_HIDPAD_PAD0_ARM     (IOC_OFF_PAYLOAD + 13u)
+#define IOC_OFF_HIDPAD_PAD0_RPT_LO  (IOC_OFF_PAYLOAD + 14u)
+#define IOC_OFF_HIDPAD_PAD0_RPT_HI  (IOC_OFF_PAYLOAD + 15u)
+#define IOC_OFF_HIDPAD_PAD0_LEN     (IOC_OFF_PAYLOAD + 16u)
+#define IOC_OFF_HIDPAD_PAD0_LATCH   (IOC_OFF_PAYLOAD + 17u)
+#define IOC_OFF_HIDPAD_PAD1_ADDR    (IOC_OFF_PAYLOAD + 18u)
+#define IOC_OFF_HIDPAD_PAD1_INST    (IOC_OFF_PAYLOAD + 19u)
+#define IOC_OFF_HIDPAD_PAD1_ARM     (IOC_OFF_PAYLOAD + 20u)
+#define IOC_OFF_HIDPAD_PAD1_RPT_LO  (IOC_OFF_PAYLOAD + 21u)
+#define IOC_OFF_HIDPAD_PAD1_RPT_HI  (IOC_OFF_PAYLOAD + 22u)
+#define IOC_OFF_HIDPAD_PAD1_LEN     (IOC_OFF_PAYLOAD + 23u)
+#define IOC_OFF_HIDPAD_PAD1_LATCH   (IOC_OFF_PAYLOAD + 24u)
+#define IOC_OFF_HIDPAD_LAST_HID_PROTO (IOC_OFF_PAYLOAD + 25u)
+#define IOC_HID_GAMEPAD_PAYLOAD_LEN 26u
 
 #define IOC_OFF_HIDDBG_PAGE        (IOC_OFF_PAYLOAD + 0u)
 #define IOC_OFF_HIDDBG_TASK_LO     (IOC_OFF_PAYLOAD + 1u)
@@ -501,8 +537,11 @@
  *      tool decodes the same frame either way.  Level 69 says which of those
  *      fields carry real measurements.  Build with IOC_PROFILE=diagnostic to
  *      get level 69 firmware with the full surface.
+ *  70  HID_STATUS page 6 adds passive, production-safe USB/F310 enumeration,
+ *      first report-arm, report-count and decoded-latch state.  VID/PID output
+ *      storage is persistent so XC8 cannot overlay it across tuh_vid_pid_get().
  */
-#define IOC_FW_LEVEL  69
+#define IOC_FW_LEVEL  70
 
 /* PING reply: a snapshot of the power handshake pins.
  *

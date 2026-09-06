@@ -11,10 +11,12 @@
 ; Preserves: BC, DE, HL, IX, IY. Clobbers: AF.
 sio_putc:
 	push bc
+	push de
 	push hl
 	ld c,a
 	call BCOUT
 	pop hl
+	pop de
 	pop bc
 	ret
 
@@ -23,9 +25,13 @@ sio_putc:
 ; Output: A = received byte.
 ; Preserves: BC, DE, HL, IX, IY. Clobbers: AF.
 sio_getc:
+	push bc
+	push de
 	push hl
 	call BCIN
 	pop hl
+	pop de
+	pop bc
 	ret
 
 ; Query BIOS CONST.
@@ -33,29 +39,13 @@ sio_getc:
 ; Output: A = 00h if no character is pending, FFh if one is available.
 ; Preserves: BC, DE, HL, IX, IY. Clobbers: AF.
 sio_const:
+	push bc
+	push de
 	push hl
 	call BCNST
 	pop hl
-	ret
-
-; Wait silently until the operator presses Enter once.
-; If Enter arrives as CRLF, remember the CR so sio_getline ignores the pending LF.
-; Input: none.
-; Output: EOL_CR_FLAG set when CR was the terminating byte, clear for LF.
-; Clobbers: AF.
-wait_for_first_enter:
-	call sio_getc
-	cp #CR
-	jr z,wait_for_first_enter_cr
-	cp #LF
-	jr nz,wait_for_first_enter
-	xor a
-	ld (EOL_CR_FLAG),a
-	ret
-
-wait_for_first_enter_cr:
-	ld a,#0x01
-	ld (EOL_CR_FLAG),a
+	pop de
+	pop bc
 	ret
 
 ; Print a NUL-terminated string at HL.

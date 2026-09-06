@@ -9,8 +9,8 @@ Zephyr-80 CP/M BIOS has already initialized the machine before Monitor starts.
 Monitor therefore does not initialize RAM, relocate ROM, configure banking, or
 initialize the SIO.
 
-At startup, Monitor initializes only its own command-line state, waits silently
-until Enter is pressed once, prints the banner, and then displays the prompt.
+At startup, Monitor initializes only its own command-line state, prints the
+banner, and displays the prompt immediately.
 
 Console input and output use the resident BIOS jump table:
 

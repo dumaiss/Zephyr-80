@@ -11,20 +11,46 @@
 #include "spi1_bus.h"
 #include "timebase.h"
 #include "ioc_hid.h"
+#include "controller_latch.h"
 
 /* Live USB state, owned by the TinyUSB callbacks below and read out by
  * CMD_HID_STATUS.  Updated only from hid_host_task(), which the main loop runs
  * in its idle branch, so no interrupt discipline is needed here. */
 static uint8_t  usb_device_count;
+static uint8_t  usb_mount_count;
+static uint8_t  usb_unmount_count;
+static uint8_t  usb_last_device_addr = 0xffu;
+static uint16_t usb_last_device_vid  = 0xffffu;
+static uint16_t usb_last_device_pid  = 0xffffu;
 static uint8_t  keyboard_addr;      /* 0 = no keyboard mounted */
 static uint8_t  keyboard_instance;
 static uint8_t  keyboard_speed;     /* tusb_speed_t, 0xff when unknown */
+
+/* Logitech F310 support is intentionally tied to its DirectInput USB identity
+ * and fixed 8-byte report.  In XInput mode the device has a different PID and
+ * is not exposed as this HID interface. */
+#define F310_VID                    0x046du
+#define F310_DIRECTINPUT_PID        0xc216u
+#define GAMEPAD_POLL_MS             10u
+#define GAMEPAD_SLOT_NONE           0xffu
+static uint8_t  gamepad_addr[CONTROLLER_LATCH_PORTS];
+static uint8_t  gamepad_instance[CONTROLLER_LATCH_PORTS];
+static bool     gamepad_report_pending[CONTROLLER_LATCH_PORTS];
+static uint32_t gamepad_next_poll_ms[CONTROLLER_LATCH_PORTS];
+static uint8_t  gamepad_first_arm[CONTROLLER_LATCH_PORTS];
+static uint16_t gamepad_reports[CONTROLLER_LATCH_PORTS];
+static uint8_t  gamepad_last_len[CONTROLLER_LATCH_PORTS];
 /* What tuh_hid_mount_cb() was actually handed, recorded before any filtering. */
 static uint8_t  hid_mount_calls;
 static uint8_t  hid_mount_daddr = 0xffu;
 static uint8_t  hid_mount_inst  = 0xffu;
 static uint8_t  hid_mount_proto = 0xffu;
 static uint8_t  hid_arm_ok      = 0xffu;
+/* Passed by pointer into tuh_vid_pid_get().  These must not be automatic
+ * locals: XC8's non-reentrant overlay has corrupted caller locals across
+ * nested TinyUSB calls elsewhere in this port. */
+static uint16_t hid_mount_vid = 0xffffu;
+static uint16_t hid_mount_pid = 0xffffu;
 static uint16_t keyboard_reports;
 static uint8_t  keyboard_last[8];
 static uint16_t usb_task_calls;      /* proves the main loop reaches us */
@@ -70,6 +96,36 @@ static uint32_t repeat_due_ms;
  * translate_key() and its nested helpers, which is exactly the shape XC8's
  * static-auto overlay corrupts.  See docs/max3421-bring-up-debug.md. */
 static uint32_t task_now_ms;
+
+static uint8_t gamepad_slot_for(uint8_t dev_addr, uint8_t instance)
+{
+    uint8_t slot;
+
+    for (slot = 0u; slot < CONTROLLER_LATCH_PORTS; slot++) {
+        if (gamepad_addr[slot] == dev_addr &&
+            gamepad_instance[slot] == instance)
+            return slot;
+    }
+    return GAMEPAD_SLOT_NONE;
+}
+
+static void gamepad_unmount(uint8_t dev_addr, uint8_t instance,
+                            bool match_instance)
+{
+    uint8_t slot;
+
+    for (slot = 0u; slot < CONTROLLER_LATCH_PORTS; slot++) {
+        if (gamepad_addr[slot] == dev_addr &&
+            (!match_instance || gamepad_instance[slot] == instance)) {
+            gamepad_addr[slot]           = 0u;
+            gamepad_instance[slot]       = 0u;
+            gamepad_report_pending[slot] = false;
+            gamepad_next_poll_ms[slot]   = 0uL;
+            gamepad_first_arm[slot]      = 0xffu;
+            controller_latch_release(slot);
+        }
+    }
+}
 
 static void led_refresh(void)
 {
@@ -598,6 +654,8 @@ static uint8_t gpout_loopback_at(uint8_t baud)
 
 void hid_host_init(void)
 {
+    uint8_t slot;
+
     input_head               = 0u;
     input_tail               = 0u;
     input_count              = 0u;
@@ -613,6 +671,28 @@ void hid_host_init(void)
     spi_failed               = false;
     last_timebase_tick       = timebase_ticks();
     usb_time_ms              = 0uL;
+    usb_device_count         = 0u;
+    usb_mount_count          = 0u;
+    usb_unmount_count        = 0u;
+    usb_last_device_addr     = 0xffu;
+    usb_last_device_vid      = 0xffffu;
+    usb_last_device_pid      = 0xffffu;
+    hid_mount_calls          = 0u;
+    hid_mount_daddr          = 0xffu;
+    hid_mount_inst           = 0xffu;
+    hid_mount_proto          = 0xffu;
+    hid_arm_ok               = 0xffu;
+    hid_mount_vid            = 0xffffu;
+    hid_mount_pid            = 0xffffu;
+    for (slot = 0u; slot < CONTROLLER_LATCH_PORTS; slot++) {
+        gamepad_addr[slot]           = 0u;
+        gamepad_instance[slot]       = 0u;
+        gamepad_report_pending[slot] = false;
+        gamepad_next_poll_ms[slot]   = 0uL;
+        gamepad_first_arm[slot]      = 0xffu;
+        gamepad_reports[slot]        = 0u;
+        gamepad_last_len[slot]       = 0u;
+    }
 
     /* Bootstrap out of half-duplex before the first read.  Without this the
      * revision probe below can only ever fail, and its failure would return
@@ -688,6 +768,27 @@ void hid_host_task(void)
     }
 
     tuh_task();
+
+    /* The MAX3421E backend currently does not honour interrupt endpoint
+     * bInterval (its scheduler carries an explicit TODO), so immediately
+     * re-arming an F310 would poll it as fast as the main loop can run.  Pace
+     * only gamepad requests here.  Timer2 advances the USB clock in 10 ms
+     * quanta, making the requested 10 ms controller cadence exact at this
+     * layer; a failed submit is retried on the next foreground pass. */
+    task_now_ms = tusb_time_millis_api();
+    {
+        uint8_t slot;
+
+        for (slot = 0u; slot < CONTROLLER_LATCH_PORTS; slot++) {
+            if (gamepad_addr[slot] != 0u &&
+                !gamepad_report_pending[slot] &&
+                (int32_t)(task_now_ms - gamepad_next_poll_ms[slot]) >= 0) {
+                if (tuh_hid_receive_report(gamepad_addr[slot],
+                                           gamepad_instance[slot]))
+                    gamepad_report_pending[slot] = true;
+            }
+        }
+    }
 
     /* LEDs are written here rather than from translate_key(): SET_REPORT is a
      * control transfer, and issuing one from inside the report callback would
@@ -1004,6 +1105,48 @@ void hid_host_usb_state(HidHostUsbState *state)
         state->last_report[i] = keyboard_last[i];
 }
 
+void hid_host_gamepad_state(HidHostGamepadState *state)
+{
+    uint8_t daddr;
+    uint8_t slot;
+
+    /* Do not infer enumeration from tuh_mount_cb().  On this XC8 build the
+     * HID class callback and reports can be active even when that optional
+     * generic callback was not dispatched.  Addresses through
+     * CFG_TUH_DEVICE_MAX are TinyUSB's non-hub slots; hub addresses follow
+     * them.  Read the configured-device table directly so this status page
+     * describes the host's live state. */
+    state->device_count      = 0u;
+    state->last_device_addr  = 0xffu;
+    state->last_device_vid   = 0xffffu;
+    state->last_device_pid   = 0xffffu;
+    for (daddr = 1u; daddr <= CFG_TUH_DEVICE_MAX; daddr++) {
+        if (tuh_mounted(daddr)) {
+            state->device_count++;
+            state->last_device_addr = daddr;
+        }
+    }
+    if (state->last_device_addr != 0xffu)
+        (void)tuh_vid_pid_get(state->last_device_addr,
+                              &state->last_device_vid,
+                              &state->last_device_pid);
+
+    state->mount_count       = usb_mount_count;
+    state->unmount_count     = usb_unmount_count;
+    state->hid_mount_count   = hid_mount_calls;
+    state->last_hid_addr     = hid_mount_daddr;
+    state->last_hid_protocol = hid_mount_proto;
+
+    for (slot = 0u; slot < CONTROLLER_LATCH_PORTS; slot++) {
+        state->gamepad_addr[slot]      = gamepad_addr[slot];
+        state->gamepad_instance[slot]  = gamepad_instance[slot];
+        state->gamepad_first_arm[slot] = gamepad_first_arm[slot];
+        state->gamepad_reports[slot]   = gamepad_reports[slot];
+        state->gamepad_last_len[slot]  = gamepad_last_len[slot];
+        state->gamepad_latch[slot]     = controller_latch_value(slot);
+    }
+}
+
 HidHostStatus hid_host_status(void)
 {
     return controller_status;
@@ -1246,14 +1389,26 @@ usbh_class_driver_t const *usbh_app_driver_get_cb(uint8_t *driver_count)
 
 void tuh_mount_cb(uint8_t dev_addr)
 {
-    (void)dev_addr;
-    usb_device_count++;
+    if (usb_device_count != 0xffu)
+        usb_device_count++;
+    if (usb_mount_count != 0xffu)
+        usb_mount_count++;
+
+    usb_last_device_addr = dev_addr;
+    usb_last_device_vid  = 0xffffu;
+    usb_last_device_pid  = 0xffffu;
+    (void)tuh_vid_pid_get(dev_addr, &usb_last_device_vid,
+                          &usb_last_device_pid);
 }
 
 void tuh_umount_cb(uint8_t dev_addr)
 {
     if (usb_device_count != 0u)
         usb_device_count--;
+    if (usb_unmount_count != 0xffu)
+        usb_unmount_count++;
+
+    gamepad_unmount(dev_addr, 0u, false);
 
     if (dev_addr == keyboard_addr) {
         keyboard_addr    = 0u;
@@ -1268,6 +1423,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
                       uint8_t const *report_desc, uint16_t desc_len)
 {
     uint8_t i;
+    uint8_t slot;
 
     (void)report_desc;
     (void)desc_len;
@@ -1277,6 +1433,36 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
     hid_mount_daddr = dev_addr;
     hid_mount_inst  = instance;
     hid_mount_proto = tuh_hid_interface_protocol(dev_addr, instance);
+    hid_mount_vid   = 0xffffu;
+    hid_mount_pid   = 0xffffu;
+
+    /* Bind F310 DirectInput interfaces before the deliberately permissive
+     * keyboard fallback below can mistake their 8-byte reports for boot-key
+     * reports.  Mount order assigns controller 1, then controller 2. */
+    if (tuh_vid_pid_get(dev_addr, &hid_mount_vid, &hid_mount_pid) &&
+        hid_mount_vid == F310_VID &&
+        hid_mount_pid == F310_DIRECTINPUT_PID) {
+        slot = gamepad_slot_for(dev_addr, instance);
+        if (slot == GAMEPAD_SLOT_NONE) {
+            for (slot = 0u; slot < CONTROLLER_LATCH_PORTS; slot++) {
+                if (gamepad_addr[slot] == 0u)
+                    break;
+            }
+        }
+
+        if (slot < CONTROLLER_LATCH_PORTS) {
+            gamepad_addr[slot]           = dev_addr;
+            gamepad_instance[slot]       = instance;
+            gamepad_next_poll_ms[slot]   = 0uL;
+            gamepad_report_pending[slot] =
+                tuh_hid_receive_report(dev_addr, instance);
+            hid_arm_ok = gamepad_report_pending[slot] ? 1u : 0u;
+            gamepad_first_arm[slot] = hid_arm_ok;
+            gamepad_reports[slot]   = 0u;
+            gamepad_last_len[slot]  = 0u;
+        }
+        return;
+    }
 
     /* Deliberately permissive.  bInterfaceProtocol is only meaningful when the
      * interface declares the boot subclass, and plenty of keyboards report 0
@@ -1324,6 +1510,8 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
 
 void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 {
+    gamepad_unmount(dev_addr, instance, true);
+
     if (dev_addr == keyboard_addr && instance == keyboard_instance) {
         keyboard_addr    = 0u;
         keyboard_reports = 0u;
@@ -1379,6 +1567,7 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
     uint8_t i;
     uint8_t pressed;
     uint8_t copy = (len < 8u) ? (uint8_t)len : 8u;
+    uint8_t gamepad_slot = gamepad_slot_for(dev_addr, instance);
 
     /* Counted before the guard, so "the callback never ran" and "the callback
      * ran and the guard rejected it" cannot be confused. */
@@ -1390,7 +1579,16 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
     if (len == 0u && rpt_zero_len != 0xffu)
         rpt_zero_len++;
 
-    if (dev_addr == keyboard_addr && instance == keyboard_instance) {
+    if (gamepad_slot != GAMEPAD_SLOT_NONE) {
+        gamepad_report_pending[gamepad_slot] = false;
+        if (gamepad_reports[gamepad_slot] != 0xffffu)
+            gamepad_reports[gamepad_slot]++;
+        gamepad_last_len[gamepad_slot] =
+            (len > 0xffu) ? 0xffu : (uint8_t)len;
+        (void)controller_latch_f310_report(gamepad_slot, report, len);
+        gamepad_next_poll_ms[gamepad_slot] =
+            tusb_time_millis_api() + GAMEPAD_POLL_MS;
+    } else if (dev_addr == keyboard_addr && instance == keyboard_instance) {
         /* Latched here, acted on by the main loop.
          *
          * Deliberately NOT a direct call to handler_reset() from inside a USB
@@ -1450,10 +1648,11 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
         keyboard_reports++;
     }
 
-    /* Re-arm unconditionally, including for interfaces being ignored: an
-     * un-armed endpoint is simply never polled again, and a device that stops
-     * being serviced looks identical to one that was unplugged. */
-    (void)tuh_hid_receive_report(dev_addr, instance);
+    /* F310 reports are re-armed by hid_host_task() at the 10 ms deadline.
+     * Everything else remains continuously armed as before; an ignored
+     * interface that is not re-armed is never polled again and looks unplugged. */
+    if (gamepad_slot == GAMEPAD_SLOT_NONE)
+        (void)tuh_hid_receive_report(dev_addr, instance);
 }
 
 void tuh_hid_report_sent_cb(uint8_t dev_addr, uint8_t instance,

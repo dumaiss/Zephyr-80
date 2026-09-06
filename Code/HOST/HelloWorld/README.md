@@ -283,6 +283,12 @@ CP/M staging directory, and replace their copies in the bootable disk image:
 make install-diags
 ```
 
+`PADSTAT.COM` is the passive production-safe F310 status utility.  It reads
+normal IOC firmware's HID status page 6 and reports the live non-hub device
+count and highest live VID/PID independently of the optional generic mount
+callback, plus HID mount, controller-slot assignment, first report arm, report
+count and latch value.
+
 The installer updates `../CPM2.2/images/A/0` and
 `../CPM2.2/images/zephyr80-vdrip2.cpm`, then extracts every installed file and
 verifies it byte-for-byte. The image is replaced only after all checks pass.

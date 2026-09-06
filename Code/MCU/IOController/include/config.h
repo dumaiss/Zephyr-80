@@ -40,8 +40,8 @@
  *
  * Polarity follows the schematic overbars.  The barred, active-low nets are the
  * five selects, USB_INT, /SYNCA, /SYNCB, /CTSA, /CTSB, /DCDA, /DCDB,
- * /SIO1A_INT, /SIO1B_INT, RESET and /NMI.  The unbarred, active-high nets are
- * NMI_RQ, RESET_HIGH, PWR_OFF and SHUTDOWN_RQ.
+ * /SIO1A_INT, /SIO1B_INT, /NMI_RQ, RESET and /NMI.  The unbarred, active-high
+ * nets are RESET_HIGH, PWR_OFF and SHUTDOWN_RQ.
  *
  *   Pin  Port  Net             Dir  Notes
  *   ---  ----  --------------  ---  ---------------------------------------
@@ -90,8 +90,8 @@
  *    37  RF1   /SIO1A_INT       I   SIO1/A service request
  *    38  RF2   RESET            O   active-low host reset
  *    39  RF3   RESET_HIGH       O   active-high complementary host reset
- *    12  RF4   NMI_RQ           I   NMI request in
- *    13  RF5   /NMI             O   active-low NMI to the Z80
+ *    12  RF4   /NMI_RQ          I   active-low manual NMI request
+ *    13  RF5   /NMI             I   high-Z; shared active-low Z80 NMI
  *    14  RF6   PWR_OFF          O   LEVEL signal to the PMU (not a pulse)
  *    15  RF7   SHUTDOWN_RQ      I   shutdown request in
  *
@@ -242,9 +242,9 @@
  * Every select is driven idle-high at boot so no inactive device sees a select
  * while SIO_SCK is clocking another one.
  *
- * CTRL_LAT_CS doubles as the 74HC595 RCLK.  The 595 latches on RCLK's rising
- * edge, which is the deselect edge: hold the select asserted for the shift,
- * then release it to commit the shift register to the outputs.
+ * CTRL_LAT_CS enables the clock buffer feeding the 74AHC595 pair.  Each 595's
+ * SRCLK and RCLK are tied to that gated clock, so the storage register is one
+ * clock behind the shift register; controller_latch_write() accounts for it.
  * --------------------------------------------------------------------------- */
 #define CTRL_LAT_CS_TRIS     TRISAbits.TRISA1
 #define CTRL_LAT_CS_ANSEL    ANSELAbits.ANSELA1
@@ -338,13 +338,13 @@
 /* ---------------------------------------------------------------------------
  * NMI pair (RF4 / RF5)
  *
- * NMI_RQ is a request into the PIC; /NMI is the active-low line the PIC drives
- * to the Z80.  The PIC owns the policy between the two.
+ * /NMI is a shared active-low bus signal.  Until manual NMI support is
+ * implemented, RF5 must remain an input so the PIC cannot drive that net.
  * --------------------------------------------------------------------------- */
 #define NMI_RQ_TRIS          TRISFbits.TRISF4
 #define NMI_RQ_ANSEL         ANSELFbits.ANSELF4
 #define NMI_RQ_PORT          PORTFbits.RF4
-#define NMI_RQ_ACTIVE        1   /* high = something is requesting an NMI */
+#define NMI_RQ_ACTIVE        0   /* low = manual switch requests an NMI */
 
 #define HOST_NMI_TRIS        TRISFbits.TRISF5
 #define HOST_NMI_ANSEL       ANSELFbits.ANSELF5

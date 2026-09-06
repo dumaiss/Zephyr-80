@@ -12,7 +12,8 @@
 void spi1_bus_select(Spi1BusDevice device)
 {
     /* Break-before-make, always.  Even if a caller arrives with stale state,
-     * no two devices can remain selected while ownership changes. */
+     * no two devices can remain selected while ownership changes.  For the
+     * controller, inactive disables the external shift-clock buffer. */
     CTRL_LAT_CS_LAT = CTRL_LAT_CS_IDLE;
     IO_SD_CS_LAT    = IO_SD_CS_IDLE;
     IO_USB_CS_LAT   = IO_USB_CS_IDLE;

@@ -27,6 +27,7 @@
 #define SPI1_BAUD_1_33MHZ  23u    /* 64 MHz /  48 = 1.333 MHz */
 #define SPI1_BAUD_2MHZ     15u    /* 64 MHz /  32 = 2.000 MHz */
 #define SPI1_BAUD_4MHZ      7u    /* 64 MHz /  16 = 4.000 MHz */
+#define SPI1_BAUD_32MHZ     0u    /* 64 MHz /   2 = 32.00 MHz -- PIC maximum */
 
 #define SPI1_MSB_FIRST     0u
 #define SPI1_LSB_FIRST     1u
@@ -48,8 +49,8 @@ void spi1_bus_init(void);
  * device.  SPI1_DEVICE_NONE releases the bus.  This makes electrical one-hot
  * selection an invariant rather than an assumption spread across drivers.
  *
- * The controller latch signal is really the 74HC595 RCLK: selecting it drives
- * RCLK low for shifting, and selecting NONE raises it to latch the result. */
+ * /CTRL_LAT_CS enables the clock buffer feeding the controller-register pair;
+ * selecting NONE disables that clock path again. */
 void spi1_bus_select(Spi1BusDevice device);
 
 /* Set the clock rate and bit order for the next transaction.

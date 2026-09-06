@@ -556,6 +556,48 @@ static void handler_hid_enum_page(const IocFrame *request, IocFrame *reply)
 
 
 #endif /* IOC_DIAGNOSTIC_BUILD */
+
+/* Stable passive F310 status.  This page is intentionally available in both
+ * firmware profiles and reads only foreground-owned state. */
+static void handler_hid_gamepad_page(const IocFrame *request, IocFrame *reply)
+{
+    static HidHostGamepadState pad;
+
+    hid_host_gamepad_state(&pad);
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_HID_STATUS;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+    reply->bytes[IOC_OFF_LEN]    = IOC_HID_GAMEPAD_PAYLOAD_LEN;
+
+    reply->bytes[IOC_OFF_HIDPAD_PAGE]          = IOC_HID_PAGE_GAMEPAD;
+    reply->bytes[IOC_OFF_HIDPAD_DEVICES]       = pad.device_count;
+    reply->bytes[IOC_OFF_HIDPAD_MOUNTS]        = pad.mount_count;
+    reply->bytes[IOC_OFF_HIDPAD_UNMOUNTS]      = pad.unmount_count;
+    reply->bytes[IOC_OFF_HIDPAD_LAST_ADDR]     = pad.last_device_addr;
+    reply->bytes[IOC_OFF_HIDPAD_LAST_VID_LO]   = (uint8_t)pad.last_device_vid;
+    reply->bytes[IOC_OFF_HIDPAD_LAST_VID_HI]   = (uint8_t)(pad.last_device_vid >> 8);
+    reply->bytes[IOC_OFF_HIDPAD_LAST_PID_LO]   = (uint8_t)pad.last_device_pid;
+    reply->bytes[IOC_OFF_HIDPAD_LAST_PID_HI]   = (uint8_t)(pad.last_device_pid >> 8);
+    reply->bytes[IOC_OFF_HIDPAD_HID_MOUNTS]    = pad.hid_mount_count;
+    reply->bytes[IOC_OFF_HIDPAD_LAST_HID_ADDR] = pad.last_hid_addr;
+    reply->bytes[IOC_OFF_HIDPAD_PAD0_ADDR]     = pad.gamepad_addr[0];
+    reply->bytes[IOC_OFF_HIDPAD_PAD0_INST]     = pad.gamepad_instance[0];
+    reply->bytes[IOC_OFF_HIDPAD_PAD0_ARM]      = pad.gamepad_first_arm[0];
+    reply->bytes[IOC_OFF_HIDPAD_PAD0_RPT_LO]   = (uint8_t)pad.gamepad_reports[0];
+    reply->bytes[IOC_OFF_HIDPAD_PAD0_RPT_HI]   = (uint8_t)(pad.gamepad_reports[0] >> 8);
+    reply->bytes[IOC_OFF_HIDPAD_PAD0_LEN]      = pad.gamepad_last_len[0];
+    reply->bytes[IOC_OFF_HIDPAD_PAD0_LATCH]    = pad.gamepad_latch[0];
+    reply->bytes[IOC_OFF_HIDPAD_PAD1_ADDR]     = pad.gamepad_addr[1];
+    reply->bytes[IOC_OFF_HIDPAD_PAD1_INST]     = pad.gamepad_instance[1];
+    reply->bytes[IOC_OFF_HIDPAD_PAD1_ARM]      = pad.gamepad_first_arm[1];
+    reply->bytes[IOC_OFF_HIDPAD_PAD1_RPT_LO]   = (uint8_t)pad.gamepad_reports[1];
+    reply->bytes[IOC_OFF_HIDPAD_PAD1_RPT_HI]   = (uint8_t)(pad.gamepad_reports[1] >> 8);
+    reply->bytes[IOC_OFF_HIDPAD_PAD1_LEN]      = pad.gamepad_last_len[1];
+    reply->bytes[IOC_OFF_HIDPAD_PAD1_LATCH]    = pad.gamepad_latch[1];
+    reply->bytes[IOC_OFF_HIDPAD_LAST_HID_PROTO] = pad.last_hid_protocol;
+}
+
 void handler_hid_status(const IocFrame *request, IocFrame *reply)
 {
     /* File-static, not a local.  Every one of these is passed by pointer into a
@@ -570,6 +612,11 @@ void handler_hid_status(const IocFrame *request, IocFrame *reply)
 #endif
     static HidHostUsbState usb;
     uint8_t         i;
+
+    if (request->bytes[IOC_OFF_HID_REQ_PAGE] == IOC_HID_PAGE_GAMEPAD) {
+        handler_hid_gamepad_page(request, reply);
+        return;
+    }
 
 #if IOC_DIAGNOSTIC_BUILD
     /* Detail pages 1-5: TinyUSB and MAX3421E internals, for bring-up.  A normal

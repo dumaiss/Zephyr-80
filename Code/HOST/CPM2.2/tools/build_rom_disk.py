@@ -77,6 +77,8 @@ MANIFEST = (
     ("hello", "ioc_sdfmt.com", "SDFMT.COM", PROFILE_NORMAL),
     # Separates IOC HID translation and queueing from BIOS CONST/CONIN.
     ("hello", "hidkey.com", "HIDKEY.COM", PROFILE_NORMAL),
+    # Passive normal-firmware USB/F310 enumeration and report status.
+    ("hello", "padstat.com", "PADSTAT.COM", PROFILE_NORMAL),
     # Arms or disarms the serial console tee.  Rescue tool by definition: it is
     # what you reach for when the screen is dark, or what turns the mirror off
     # again once a terminal has been unplugged.
