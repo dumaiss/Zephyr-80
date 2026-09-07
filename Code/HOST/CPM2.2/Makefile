@@ -131,7 +131,14 @@ ROM_DISK_PROFILE ?= normal
 PAYLOAD_CONFIG ?= images/banks.ini
 ROM_DISK_PAGES ?= 3
 ROM_DISK_IMAGE ?= $(BUILD_DIR)/romdisk.img
-ROM_DISK_STAGE ?= images/ROM/0
+# Staging for the ROM A: volume.  A BUILD OUTPUT, not a source: build_rom_disk.py
+# copies the resolved manifest here and then builds the image from it.
+#
+# It used to live at images/ROM/0 and 24 of its files were tracked in git, so
+# every build rewrote checked-in content and dirtied the tree -- and the tracked
+# copies drifted from the projects that actually produce them, which is the same
+# trap NOWRAP.com and WRAPON.COM fell into on the ROM itself.
+ROM_DISK_STAGE ?= $(BUILD_DIR)/romdisk-stage
 ROM_DISK_CHUNKS := $(foreach n,$(shell seq 1 $(ROM_DISK_PAGES)),$(BUILD_DIR)/romdisk.p$(n).bin)
 
 # The volume is assembled from binaries built by sibling projects.  Listing them
