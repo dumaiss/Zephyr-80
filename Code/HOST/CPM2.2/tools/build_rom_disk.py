@@ -173,7 +173,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--monitor-dir", type=Path, default=Path("../Monitor/build"))
     parser.add_argument("--stock-dir0", type=Path, default=Path("../Software/disk1/0"))
     parser.add_argument("--stock-dir1", type=Path, default=Path("../Software/disk1/1"))
-    parser.add_argument("--staging-dir", type=Path, default=Path("images/ROM/0"))
+    parser.add_argument("--staging-dir", type=Path, default=Path("build/romdisk-stage"))
     parser.add_argument("--diskdef", type=Path, default=Path("images/diskdef"))
     parser.add_argument("--format", dest="disk_format", default="zephyr80-rom")
     parser.add_argument("--build-dir", type=Path, default=Path("build"))
