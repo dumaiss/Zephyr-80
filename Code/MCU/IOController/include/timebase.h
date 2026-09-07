@@ -62,9 +62,14 @@ uint16_t timebase_ticks(void);
 #define UPROF_PUBLIC_SLOTS 6u
 #define UPROF_SLOTS   10u
 
-/* uprof_init() and uprof_now() are NOT gated on the build profile.
+/* timebase_us_init() and timebase_us_now() are NOT gated on the build profile,
+ * and are NOT part of the profiler -- which is why they no longer carry its
+ * name.  They were uprof_init() and uprof_now() until an audit found that an
+ * instrumentation cleanup trusting the prefix would have deleted the
+ * controller's only sub-millisecond clock.  Renaming is the fix: the mistake is
+ * no longer available to make.
  *
- * uprof_now() is a microsecond time source, not a profiler.  bulk_channel.c's
+ * timebase_us_now() is a microsecond time source.  bulk_channel.c's
  * wait_for_host_ready() uses it to bound the wait for the host's RTS: Timer3
  * gives that its 500 ms failure contract without adding ~1 ms to every good
  * transfer, which is what sampling the millisecond tick instead would cost.
@@ -72,8 +77,8 @@ uint16_t timebase_ticks(void);
  * arrives or slow down every transfer that succeeds.
  *
  * The accumulation below IS the profiler, and it is gated. */
-void     uprof_init(void);
-uint16_t uprof_now(void);
+void     timebase_us_init(void);
+uint16_t timebase_us_now(void);
 
 #if IOC_DIAGNOSTIC_BUILD
 

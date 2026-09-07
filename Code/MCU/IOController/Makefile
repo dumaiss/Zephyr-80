@@ -6,6 +6,23 @@ SRC_DIR   := src
 INC_DIR   := include
 TINYUSB_DIR := third_party/tinyusb
 
+XC8_DIR ?= /opt/microchip/xc8/v3.10/bin
+XC8     ?= $(XC8_DIR)/xc8-cc
+DFP     ?= /home/kitamura/Downloads/xc8
+
+# An empty $(XC8) does NOT fail loudly, which is why this guard exists.
+#
+# The compile recipe below begins with $(XC8).  If that expands to nothing the
+# line starts with `-mcpu=...`, and GNU make strips a leading `-` from a recipe
+# line as its IGNORE-ERRORS modifier.  Make then runs `mcpu=...` as the command,
+# the shell reports "not found", make reports "(ignored)", and the build exits 0
+# having produced no hex at all -- leaving a stale build/ that looks like
+# success.  These three variables were once lost to an over-broad edit and the
+# breakage survived a commit for exactly that reason.
+ifeq ($(strip $(XC8)),)
+$(error XC8 is empty -- the compiler variable was lost.  See XC8_DIR above.)
+endif
+
 # FatFs, vendored under third_party/fatfs.  Build with IOC_FATFS=1 to link it.
 #
 # ON: confirmed working on hardware.  It was believed unlinkable here for

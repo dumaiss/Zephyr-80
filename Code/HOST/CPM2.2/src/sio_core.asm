@@ -550,8 +550,8 @@ SIO_RX_KICK_CONSOLE:
 	push hl
 	in a,(SIO0B_DATA_PORT)
 	ld c,a
-	call sio0b_record_rx_diag
-	; sio0b_record_rx_diag returns A=0, matching SIO_CH_CONSOLE.
+	call sio0b_clear_rx_error
+	; sio0b_clear_rx_error returns A=0, matching SIO_CH_CONSOLE.
 	call sio_core_dispatch_rx
 	pop hl
 	pop de
@@ -667,8 +667,8 @@ sio_core_isr_rx_once:
 	ret z
 	in a,(SIO0B_DATA_PORT)
 	ld c,a
-	call sio0b_record_rx_diag
-	; sio0b_record_rx_diag returns A=0, matching SIO_CH_CONSOLE.
+	call sio0b_clear_rx_error
+	; sio0b_clear_rx_error returns A=0, matching SIO_CH_CONSOLE.
 	jp sio_core_dispatch_rx
 
 ; SIO0/B console RTS helpers.
@@ -704,7 +704,7 @@ SIO0B_DISCARD_RX_LOOP:
 	jr z,SIO0B_DISCARD_RX_DONE
 	in a,(SIO0B_DATA_PORT)
 	ld c,a
-	call sio0b_record_rx_diag
+	call sio0b_clear_rx_error
 	djnz SIO0B_DISCARD_RX_LOOP
 SIO0B_DISCARD_RX_DONE:
 	ld a,#SIO_WR0_RESET_ERROR
@@ -718,6 +718,12 @@ SIO0B_DISCARD_RX_DONE:
 
 ; Clear any SIO0/B receive error latch, and record it while something reads it.
 ;
+; NAMED FOR THE FUNCTIONAL EFFECT, deliberately.  This was
+; sio0b_record_rx_diag until an audit found that a cleanup trusting the "diag"
+; in the name would have removed the only thing that clears the latch.  The
+; name now says the part that must not be deleted; the recording is the
+; optional half.
+;
 ; The error reset is FUNCTIONAL and stays in every build: a latched special
 ; receive condition is cleared only by Error Reset, and SIO0/B interrupts are
 ; enabled by cbios_boot.asm whatever console is linked.  Leaving a latch
@@ -730,7 +736,7 @@ SIO0B_DISCARD_RX_DONE:
 ; In: C = received byte to preserve for the RX sink.
 ; Out: A = 0 (matching SIO_CH_CONSOLE for the dispatch that follows),
 ;      C preserved.
-sio0b_record_rx_diag:
+sio0b_clear_rx_error:
 	ld a,#0x01
 	out (SIO0B_CTRL_PORT),a
 	in a,(SIO0B_CTRL_PORT)
@@ -741,10 +747,10 @@ sio0b_record_rx_diag:
 	.if VDRIP_TRANSPORT_LINKED
 	ld (SIO0B_LAST_RX_ERROR),a
 	.endif
-	jr z,SIO0B_RX_DIAG_DONE
+	jr z,SIO0B_RX_ERROR_DONE
 	ld a,#SIO_WR0_RESET_ERROR
 	out (SIO0B_CTRL_PORT),a
-SIO0B_RX_DIAG_DONE:
+SIO0B_RX_ERROR_DONE:
 	xor a
 	out (SIO0B_CTRL_PORT),a
 	ret

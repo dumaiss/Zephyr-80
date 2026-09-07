@@ -135,7 +135,7 @@ static void platform_init(void)
 #endif
 
     power_init();
-    uprof_init();
+    timebase_us_init();
 }
 
 /* ---------------------------------------------------------------------------
@@ -292,7 +292,7 @@ static void service_command_request(void)
     bool     have_request;
     bool     dispatched;
     uint16_t t;
-    uint16_t t_total = uprof_now();
+    uint16_t t_total = timebase_us_now();
 
     svc_calls++;
 
@@ -315,12 +315,12 @@ static void service_command_request(void)
         return;
     }
 
-    t = uprof_now();
+    t = timebase_us_now();
     dispatched = dispatch_command(&request, &reply);
     uprof_add(UPROF_DISPATCH, t);
 
     if (dispatched) {
-        t = uprof_now();
+        t = timebase_us_now();
         external_sync_send(&reply);
         uprof_add(UPROF_SEND, t);
 
@@ -330,7 +330,7 @@ static void service_command_request(void)
          *
          * The old PING diagnostic that wrote payload bytes to the controller
          * latch lived here.  It is gone; PING does not touch SPI1. */
-        t = uprof_now();
+        t = timebase_us_now();
         (void)bulk_channel_run_if_armed();
         uprof_add(UPROF_BULK, t);
     }

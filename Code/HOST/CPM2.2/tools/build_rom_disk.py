@@ -97,6 +97,22 @@ MANIFEST = (
     # than DDT: DDT's assembler and disassembler are 8080-only.
     ("stock1", "ZSID.COM", "ZSID.COM", PROFILE_NORMAL),
     ("stock1", "DUMP.COM", "DUMP.COM", PROFILE_NORMAL),
+    # Reports which addressing mode each storage unit is really using -- an
+    # 8 MiB file on a FAT card, or the raw card.  A rescue tool because the
+    # alternative is inferring the mode from whether the disk looks right,
+    # which is the slowest possible way to discover that an image failed to
+    # mount and the firmware fell back to raw.
+    ("hello", "volinfo.com", "VOLINFO.COM", PROFILE_NORMAL),
+    # The /SHARED/ folder tools.  Rescue tools in the most literal sense: with a
+    # FAT card in the socket these are how a file gets off this machine, or onto
+    # it, when nothing else works -- no serial link, no second drive.  None can
+    # reach /CPM/: the controller builds every path itself under /SHARED/ and
+    # rejects any name carrying a separator, which is what keeps a user program
+    # structurally unable to touch a mounted disk image.
+    ("hello", "sddir.com", "SDDIR.COM", PROFILE_NORMAL),
+    ("hello", "sdget.com", "SDGET.COM", PROFILE_NORMAL),
+    ("hello", "sdput.com", "SDPUT.COM", PROFILE_NORMAL),
+    ("hello", "sddel.com", "SDDEL.COM", PROFILE_NORMAL),
 
     # --- Diagnostic profile only -----------------------------------------
     # Synthetic ramp throughput/integrity test for the Bulk lane.

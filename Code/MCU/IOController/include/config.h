@@ -19,7 +19,7 @@
  * diagnostic".  Three things that read as instrumentation are load-bearing and
  * are NOT gated:
  *
- *   uprof_now()          a microsecond time source.  bulk_channel.c's bounded
+ *   timebase_us_now()          a microsecond time source.  bulk_channel.c's bounded
  *                        wait for host RTS uses it for its 500 ms failure
  *                        contract; removing it wedges or slows every transfer.
  *   the SD failure trace small, and the only thing that distinguishes

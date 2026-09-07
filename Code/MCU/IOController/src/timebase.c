@@ -59,7 +59,7 @@ static void uprof_clear(void)
 }
 #endif
 
-void uprof_init(void)
+void timebase_us_init(void)
 {
     /* Timer1 belongs to external_sync.c: it is reconfigured to count physical
      * RB3/SCK edges on every command transaction.  Sharing it made every
@@ -80,12 +80,12 @@ void uprof_init(void)
     uprof_reset_pending = false;
 #endif
 
-    /* Timer3 runs in every build: uprof_now() is the time source bulk_channel's
+    /* Timer3 runs in every build: timebase_us_now() is the time source bulk_channel's
      * bounded wait for host RTS depends on, not a profiling facility. */
     T3CONbits.ON = 1;
 }
 
-uint16_t uprof_now(void)
+uint16_t timebase_us_now(void)
 {
     uint8_t lo, hi;
 
@@ -103,7 +103,7 @@ void uprof_add(uint8_t slot, uint16_t start)
 {
     /* Unsigned 16-bit subtraction, so a wrap between start and now still gives
      * the right span as long as it is under 2.1 seconds. */
-    uprof_acc[slot] += (uint32_t)(uint16_t)(uprof_now() - start);
+    uprof_acc[slot] += (uint32_t)(uint16_t)(timebase_us_now() - start);
 }
 
 uint16_t uprof_ms(uint8_t slot)

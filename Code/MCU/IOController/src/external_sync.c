@@ -645,7 +645,7 @@ bool external_sync_receive(IocFrame *frame)
     sio_link_set_baud(EXTSYNC_SPI_BAUD);
     sio_link_clear_fifos();
     sio_link_pins_to_spi();
-    t_rx = uprof_now();
+    t_rx = timebase_us_now();
     for (i = 0u; i < EXTSYNC_RX_WINDOW_BYTES; i++) {
         if (!sio_link_exchange(0xFFu, &rx_window[i])) {
             /* Give the pins and the bus back before bailing out, or the next
@@ -671,7 +671,7 @@ bool external_sync_receive(IocFrame *frame)
 
     bus_release_siob();
 
-    t_dec = uprof_now();
+    t_dec = timebase_us_now();
     ok = copy_received_frame(frame);
     uprof_add(UPROF_DECODE, t_dec);
 

@@ -254,7 +254,7 @@ static uint8_t        last_status;
  * arrives fails one transfer instead of wedging the controller. */
 static bool wait_for_host_ready(void)
 {
-    uint16_t start = uprof_now();
+    uint16_t start = timebase_us_now();
 
     for (;;) {
         if (SIO1A_INT_PORT == SIO1A_INT_ACTIVE)
@@ -264,7 +264,7 @@ static bool wait_for_host_ready(void)
          * for one millisecond between samples.  Timer3 gives the same bounded
          * 500 ms failure contract without adding ~1 ms to every good transfer.
          * Unsigned subtraction remains valid across one Timer3 wrap. */
-        if ((uint16_t)(uprof_now() - start) >=
+        if ((uint16_t)(timebase_us_now() - start) >=
             (uint16_t)BULK_HOST_READY_TIMEOUT_TICKS)
             return false;
     }
@@ -444,7 +444,7 @@ static bool bulk_run_send(void)
     uint8_t  value;
     bool     ok = true;
 
-    t = uprof_now();
+    t = timebase_us_now();
 
     /* Advertise RX admission and mark the bulk phase live.  Auto Enables is
      * off, so these are status levels; they never disable the host receiver. */
@@ -515,7 +515,7 @@ static bool bulk_run_send(void)
     sio_link_pins_to_spi();
 
     uprof_add(UPROF_BULK_PREP, t);
-    t = uprof_now();
+    t = timebase_us_now();
 
     /* Always send the complete marker as ordinary aligned packet bytes. */
     ok = bulk_send_packet_byte(IOC_PACKET_SYNC0);
@@ -575,7 +575,7 @@ static bool bulk_run_send(void)
     sio_link_pins_to_lat();
 
     uprof_add(UPROF_BULK_DATA, t);
-    t = uprof_now();
+    t = timebase_us_now();
 
     /* /SYNCA is NOT released.  Dropped once by the hand-clocked byte above and
      * held for the life of the link, as the SIO manual requires of an External
@@ -774,7 +774,7 @@ bool bulk_channel_run_if_armed(void)
 
     /* READY has gone out; wait for the host to say it is ready to move bytes.
      * Same signal in both directions: RTS on channel A. */
-    t = uprof_now();
+    t = timebase_us_now();
     if (!wait_for_host_ready()) {
         uprof_add(UPROF_BULK_WAIT, t);
         armed_length = 0u;
