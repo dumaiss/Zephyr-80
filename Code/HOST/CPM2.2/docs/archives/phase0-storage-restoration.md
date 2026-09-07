@@ -1,5 +1,23 @@
 # Phase 0 Virtual Drip Storage Restoration
 
+> **HISTORICAL.** This records the VDrip storage restoration as it stood when
+> written. Two of its figures are now wrong and were trusted during the slot 5
+> realignment before being measured:
+>
+> | | This document | Measured |
+> |---|---:|---:|
+> | Shared VDrip transport | 633 bytes | **649** |
+> | VDrip storage backend | 338 bytes | **356** |
+>
+> That 22-byte difference is why `CONSOLE=vdrip STORAGE_A=vdrip` no longer fits
+> in driver slot 5 once the SD probe is consolidated, and why that configuration
+> is deliberately left failing. See `docs/bios-realignment-plan.md` W4.
+>
+> The drive-A backend base described below as `F900h`/`F910h` has also moved:
+> it is now derived from `CBIOS_SD_PROBE_CODE_BASE`, and in a build without the
+> VDrip transport it starts at `F6B0h` rather than trailing a transport that is
+> not linked.
+
 ## Result
 
 The BIOS now builds against the proxy's current no-CRC protocol and routes

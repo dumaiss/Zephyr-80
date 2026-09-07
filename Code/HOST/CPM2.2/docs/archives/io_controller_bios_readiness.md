@@ -4,6 +4,13 @@
 **Assessment date:** 2026-06-01  
 **Scope:** IO Controller transport (SIO1/A Bulk, SIO1/B Command).
 
+> **HISTORICAL.** A 2026-06-01 pre-implementation snapshot, kept for its
+> reasoning about the SIO1 transport design. Its slack estimate — "~703 bytes
+> of unallocated resident code space between the VDrip console driver tail and
+> the VDrip storage backend (`F52Ch–F7EAh`)" — describes a layout that no longer
+> exists. Slot 5 has since been realigned; `docs/memory-map.md` and its Headroom
+> table are the authority on free space.
+
 **Current-status note (2026-06-03):** This is a 2026-06-01 pre-implementation readiness snapshot. Phase 1 source now contains a fixed-frame SIO1/B IOCALL path and the corrected SIO1 port map. Keep this document as historical planning context; use the current Phase 1 failure-analysis report for the active debug state.
 
 **VDrip status:** VDrip is the current working development proxy. It will be removed entirely once the IO Controller architecture is complete and proven. It is not a permanent coexistent path. During the IOC bring-up phases documented here, VDrip is not touched — it remains the active console and storage backend. Replacing the VDrip console and storage drivers is the final step, not an early one.

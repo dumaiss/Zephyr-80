@@ -2878,6 +2878,29 @@ This also raises the value of the cleanup task below rather than lowering it: if
 an upgrade is coming, having the XC8 delta as one reviewable patch file is the
 difference between a day's work and an archaeology exercise.
 
+## Diagnostics triaged at level 65
+
+A clean build emits 771 warnings/advisories. Almost all are noise, but two
+looked like live defects and were run down:
+
+- **`(2098) indirect function call via a NULL pointer ignored`**, at
+  `usbh.c:772` -- the `USBH_EVENT_FUNC_CALL` dispatch. XC8 found no targets for
+  the pointer and **compiled the call away**, which would silently drop every
+  deferred function call. Checked: `usbh_defer_func()` has no callers anywhere
+  in the host stack or the classes this port compiles. The only producers are
+  in `hcd_ch32_usbfs.c` and `dcd_msp430x5xx.c`, neither of which is built. XC8
+  is correct that there are no targets; the elision is harmless. **Not a bug --
+  recorded so it is not re-investigated.**
+- **`(1610) function had its address taken and shall use a reentrant data
+  stack`** x11, all completion callbacks (`process_enumeration`,
+  `hub_set_config`, `set_report_complete`, ...). This is XC8 reporting that it
+  is placing exactly those functions on the reentrant stack rather than in the
+  overlay -- i.e. the compiler doing the right thing, not a warning about it.
+
+The remaining `(2053)` unused-function and `(1498)` no-targets advisories are
+inherent to compiling a function-pointer-driven stack with whole-program
+analysis.
+
 ## CLEANUP TASK — do not ship without doing this
 
 The vendored TinyUSB tree at `third_party/tinyusb` now carries **33 `__XC8`
@@ -3259,17 +3282,599 @@ fixed `hybrid:512` reservation, not a warning.
 
 ## Still open
 
-1. BIOS CONST/CONIN integration. Decode, the IOC-side queue and the
-   `CMD_HID_INPUT` transport all work end to end, and `HIDKEY.COM` exercises
-   them. What remains is delivering those bytes through the BIOS console
-   entry points instead of a polling test program, so that ordinary CP/M
-   programs see USB keystrokes. hidkey stays a harness and is not the
-   destination.
+1. BIOS CONST/CONIN integration -- **built, awaiting hardware test.** See
+   "Console integration" below.
 2. `possible hardware stack overflow detected; estimated stack depth: unknown
-   (due to recursion)` at `main.c` appeared once the enumeration path became
-   reachable. This is the PIC18 **hardware** call stack, not the data stack
-   whose 100% figure was a false alarm. XC8 cannot bound the depth because
+   (due to recursion)` at `main.c` -- still present at level 65. This is the
+   PIC18 **hardware** call stack, not the data stack whose 100% figure is just
+   the fixed `hybrid:512` reservation. XC8 cannot bound the depth because
    TinyUSB's function-pointer callback tables look cyclic to its call-graph
-   analysis. It was not implicated in enumeration or report delivery, but
-   remains an explicit risk to assess before declaring the USB path production
-   ready.
+   analysis.
+
+   Partly mitigated at level 65: `STVREN = ON` is now stated explicitly in
+   `config.h`. It was already the erased-state default, so nothing changed
+   functionally -- but the firmware relies on it, and with it an overflow
+   resets the device rather than silently corrupting a return address. That
+   converts an unprovable property into a visible failure.
+
+   Still worth closing properly. Static analysis cannot do it, but the hardware
+   can: sample `STKPTR` at its peak (enumeration is the deepest path) and report
+   the high-water mark through HIDSTAT. That replaces "unknown (due to
+   recursion)" with a measured number against the device's stack depth.
+
+3. Untested paths. Power-cycle mount and **hot unplug/replug** have both now
+   been exercised repeatedly and work. **Two devices on the hub at once**
+   (`CFG_TUH_DEVICE_MAX` is 2) has not, and cannot be until defect 4 below is
+   resolved -- it runs code the XC8 overlay defect has already been found in
+   eight times, on a path bring-up never reached.
+
+4. **OPEN DEFECT: hub port 2 does not work.** See below.
+
+
+## OPEN REGRESSION — storage fails after HID integration
+
+Observed after the level-65 HID keyboard path was working in CP/M:
+
+- PING and the command lane work.
+- USB keyboard input, VT100 translation, auto-repeat and lock LEDs work.
+- `SDREC.COM` reports `FAIL code 15 rec 0000 info 03`.
+- SDBULK reports expected `00h`, received `FFh`.
+
+The first interpretation of this report was wrong and is retained here as a
+warning about the diagnostic's two namespaces: SDREC's **failure code** `15h`
+is not an IOC/SD status. In `ioc_sdrec.asm`, failure code `15h` names the
+`wr_bulk` stage; `info 03h` is the return from BIOS `IOCBULKW`, namely
+`IOC_XPORT_HW_ERROR`. Thus this is a real Bulk-lane transmit failure, not
+`SD_ERR_NO_CARD`.
+
+The physical card-detect path has also been checked at the socket and across the
+backplane and the signal reaches the IOC. The temporary no-detect build is
+therefore irrelevant and must not be used to diagnose this failure.
+
+BIOS `IOCBULKW` currently collapses two conditions into `03h`:
+
+1. SIO RR1 reports Tx Underrun/EOM after the payload; or
+2. `/CTSA` remains asserted after the PIC should have completed and released
+   the Bulk phase.
+
+The next transport probe must distinguish these exits rather than infer one
+from the shared return code.
+
+### Definite BIOS integration collision found
+
+The first HID console build placed `hid_tx_frame` at `FD00h`, describing that
+page as unused scratch. It is not unused: `SD_STORAGE_ALV_BUFFER` owns the whole
+`FD00h-FDFFh` page as the SD drive's CP/M allocation vector. HID initialization
+and polling therefore corrupted the SD ALV, while CP/M drive login could corrupt
+the HID mailboxes and queue in return.
+
+Corrected locally on 2026-08-29 without moving driver code or changing disk
+geometry. The HID request only needs five bytes, so all mutable HID state now
+fits in the existing post-SD/pre-VDrip gap:
+
+- `F642h-F646h`: five-byte HID request;
+- `F647h-F666h`: 32-byte reply mailbox;
+- `F667h-F67Bh`: 16-byte queue plus five control bytes;
+- `F67Ch-F67Fh`: guard before VDrip transport at `F680h`.
+
+The normal BIOS build, byte-overlap check, generated map and layout validation
+all pass. The memory-document generator now includes the SD ALV, so it no longer
+labels `FD00h-FDFFh` as free.
+
+Hardware retest produced the same `SDREC` failure. The collision was real and
+had to be removed, but it was not the immediate cause of the Bulk transport
+regression.
+
+### Bulk flood isolates the failure from storage
+
+`BULK.COM` now fails before its first transfer as well. That command never
+touches the card or cache: the controller creates a 512-byte ramp in SRAM and
+sends it directly over SIO1/A. The repeated result is:
+
+```text
+bulk transport error 02
+bulk diag reason=02 count=08 last 40 hdr 00 00 00 00 00
+rr=70 27 sync=00 exp(len/type/seq)=0203 84 <sequence>
+completed before failure: 0 transfers
+```
+
+`reason=02` is the BIOS marker rejection: its eight-byte search never saw the
+aligned `A5 5A` packet marker. `sync=00` is the BIOS software flag, which is set
+only after a CRC-valid Bulk packet, so it is expected to remain clear after
+this rejection. This result rules out SD detect, SD SPI, cache lookup and card
+initialisation. The common failure is specifically the first MCU-to-Z80 Bulk
+receive after the host enters Hunt.
+
+The generated assembly was compared with the last known-good firmware before
+terminal translation. `sio_link_clock_sync_byte()` has the same COMRAM
+parameters (`0523h-0526h`) and the same `/SYNCA` branch. Adding the 128-byte HID
+queue changed linker placement of `bulk_synced` from PIC RAM `067Ch` to `0688h`,
+but all accesses are symbolic and no source contains either hard-coded address.
+
+Level 66 adds a non-invasive discriminator to the existing `XFER_STATUS`
+reply. `BULK.COM` queries it only after a failed transfer and prints:
+
+```text
+PIC bulk sync decision=DD live=LL
+```
+
+Decision bits: bit 0 was the pre-send `bulk_synced` flag; bit 1 was an idle-high
+`/SYNCA` latch; bit 2 means the setup/sync-byte path ran; bit 3 means `/SYNCA`
+was low afterwards. Live bit 0 is the current flag and bit 1 is the current-low
+latch. The decisive interpretations are:
+
+- `decision=0E live=03`: the PIC began with `/SYNCA` high, ran the establishing
+  path and now holds `/SYNCA`
+  low; investigate edge timing/acceptance on the host side.
+- `decision=01 live=03`: the PIC skipped establishment because its flag was
+  already set; the host and PIC persistent-sync states diverged.
+- `decision=0C live=03`: the path ran while `/SYNCA` was already low, so it
+  could not create a fresh falling edge.
+- `decision=06`: `/SYNCA` started high but did not end low; the
+  hand-clocked path did not drive the expected latch state.
+
+No recovery or sync-policy change is included with this probe, so the result
+describes the failing path rather than a modified one.
+
+### Direction split and `/CTSA` lifetime defect
+
+The level-66 retest changed the diagnosis again, usefully:
+
+- `BULK.COM` completed all 128 MCU-to-Z80 transfers at the established baseline
+  (`95 KiB/s` lane, `64 KiB/s` active transport).
+- `SDREC.COM` still failed at `wr_bulk`: `FAIL code 15`, `info 03`.
+- Its freshly cleared BIOS Bulk reason remained `00h`, ruling out the distinct
+  RR1 Tx-underrun exit (`40h`).
+
+This proves that persistent receive sync is currently sound and that the
+remaining failure is direction-specific. `IOCBULKW` sent the Z80-to-MCU packet
+but timed out waiting for the PIC to release `/CTSA`.
+
+The timeout mismatch is present in the source, not inferred from timing noise.
+The PIC deliberately held `/CTSA` through `armed_commit()`, which for record 0
+can include a cache-miss read followed by the write-through SD write. The Z80
+wait is one 16-bit polling loop, about 0.45 seconds at 10 MHz. The SD driver
+allows the card alone to remain busy for 0.48 seconds after CMD24, before any
+read, initialisation or software overhead is counted. A legal card delay can
+therefore be reported incorrectly as Bulk hardware error `03h`.
+
+Level 67 separates the layers. After the complete incoming packet and CRC are
+accepted, the PIC releases `/CTSA` and then runs the commit. The host may leave
+`IOCBULKW`, but it cannot issue the mandatory DONE command early: command READY
+(`/DCDB`) stays deasserted until `service_command_request()` has completed the
+commit and returned to the main loop. This preserves serialization and the
+lost-request protection without making a transport handshake inherit SD-card
+latency.
+
+The level-67 hardware result confirms the split worked:
+
+```text
+FAIL code 17 rec 0000 info 12
+rx 86 44 00 14 01 12 ...
+```
+
+Failure `17h` is the mandatory DONE-status stage, not Bulk transport. The DONE
+payload's `12h` is `IOC_STATUS_SD_NOT_READY`: the PIC accepted and CRC-checked
+the complete Z80-to-MCU packet, then the record-0 commit failed because
+`sd_card_init()` exhausted ACMD41 without the card leaving idle. Bulk transport
+is therefore cleared in both directions; the remaining regression is on the
+shared SPI1/card-initialisation path.
+
+Level 68 reuses the existing eight-byte SD trace, without adding another
+persistent trace buffer, to preserve the failing init state. XC8's changed
+automatic-variable live ranges increase the linked data total by eight bytes
+(`7434` to `7442`), still leaving 41.9% of SRAM free:
+
+```text
+byte 0  final CMD0 R1
+byte 1  CMD8 R1
+byte 2  final CMD55 R1
+byte 3  final ACMD41 R1
+byte 4  final iteration low
+byte 5  final iteration high
+byte 6  live SPI1BAUD
+byte 7  bit 0 SPI timeout, bit 1 card-present pin active
+```
+
+After reproducing with `SDREC.COM`, `PING.COM` reports this as `SD SPI trace`.
+The decisive normal-idle failure is `01 01 01 01 AF 04 FF 02`: CMD0 and CMD8
+worked, CMD55/ACMD41 remained in idle through iteration 1199 (`04AFh`), SPI1 was
+at the intended 125 kHz divisor (`FFh`), no SPI byte timed out, and card detect
+was active. Other values distinguish command rejection or loss of MISO/CS.
+
+
+## RESOLVED — hub port 2 dead (2026-08-29)
+
+**Port 2 now works.** The firmware analysis below stands as recorded -- port power
+was never the fault -- and the remainder was physical. Kept for the diagnostic
+chain, in particular why an unloaded DMM reading proved nothing.
+
+**Symptom.** Any device in the second hub port reads not-mounted. The keyboard's
+own LEDs stay dark there, and on this keyboard they light on VBUS alone, so the
+device appears to be unpowered rather than un-enumerated. Port 1 is completely
+reliable, including repeated hot unplug/replug.
+
+**Eliminated -- firmware port power is correct.**
+
+`hidstat 3` reports `port1` through `port4` all reading `81`. Two conclusions
+from one measurement:
+
+- Each port's `SET_FEATURE(PORT_POWER)` completed. `config_port_power_complete`
+  walks the ports one at a time and stops when `wIndex == p_hub->bNbrPorts`, so
+  a `bNbrPorts` that read as 1 would have left ports 2-4 unpowered and their
+  traces at the `FF` initialiser. All four are written, so the walk ran to
+  completion.
+- `81` is `p_hub->ep_in` sampled at each step. It is intact at all four, so
+  `p_hub` was not corrupted across that call chain -- the overlay defect is not
+  involved here. This was a live hypothesis, since the `HUB_TRACE_DESC_*` taps
+  in that same function exist because `p_hub` *was* being clobbered at level 36.
+
+**Not yet established.** A DMM reads 5 V at the port, but **unloaded**. That
+measurement does not discriminate: a tripped polyfuse, a port-power switch in
+current-limit shutdown, or a high-resistance joint all read a clean 5 V with no
+load and collapse under a keyboard's ~100 mA. An open ground return on the
+connector also reads a perfect 5 V when the meter is referenced to chassis
+ground rather than to that port's own GND pin.
+
+**Next measurements, in order:**
+
+1. VBUS **with the device plugged in**. A sag means current delivery -- fuse,
+   port-power switch, or joint.
+2. VBUS referenced to **that port's own GND pin**, not chassis ground.
+3. `hidstat 4`, note `hubchange`, plug a device into port 2, run it again.
+   - `hubchange` static -> the hub never saw a connection, so the device never
+     powered its D+ pull-up. Confirms the power path independently of the meter.
+   - `hubchange` increments but nothing mounts -> power did reach the device and
+     this is an **enumeration** fault, not electrical. That puts it back in
+     firmware, specifically on the second-device path that has never run.
+
+Outcome 3b is the one worth being ready for: nothing has ever enumerated two
+devices on this stack.
+
+
+## Console integration (BIOS)
+
+USB keystrokes now reach CP/M through CONST/CONIN. `HIDKEY.COM` remains a
+harness and is not on this path.
+
+`src/cbios_hid_input.asm` in the BIOS holds a 16-byte queue and fetches from the
+controller with `CMD_HID_INPUT`. `vdrip_console_const` reports a character ready
+when **either** `textq` (proxy keyboard) or this queue has bytes;
+`vdrip_console_conin` drains both. It is deliberately additive: `textq` is filled
+from the SIO0/B receive interrupt while this queue is touched only at task level,
+so the two never race, and dropping proxy keyboard support later means the proxy
+simply stops sending -- `textq` stays empty and no BIOS change is needed.
+
+### Why there is no timer
+
+CONST is the poll point and CP/M calls it hard: BDOS `OUTCHAR` calls CONST once
+per character printed, before every CONOUT. An unconditional IOCALL there would
+add ~0.6 ms to **every character of console output** -- about 48 ms per
+80-column line. That single fact rules out the naive design.
+
+The limiter counts CONST calls rather than time, and needs no timer, because the
+controller already owns both the clock and the buffer. Asking late never loses a
+keystroke: bytes accumulate in the IOC's 128-byte queue and arrive whenever the
+host next asks. That makes wall-clock latency irrelevant in the one case a timer
+would seem to help -- a program computing without calling CONST -- because there
+is nowhere better to put the bytes than the queue they are already in.
+
+A Z80 CTC does exist, but the BIOS resets it at boot and both `cbios_defs.inc`
+and `sio_core.asm` state that it stays application-owned. Claiming a channel
+would be a policy change, and would add a third source to a daisy chain that
+already has a known masking problem.
+
+The interval is adaptive, which matches the two regimes CP/M produces:
+
+- a poll returning data drops the interval to 1, so the rest of a typing burst
+  is fetched at full rate;
+- an idle CONST spin backs off to 64, and since that spin runs thousands of
+  times a second the first keystroke still lands in well under a millisecond;
+- console output calls CONST once per character, so the same backoff costs
+  roughly 10 us per character amortised instead of 600.
+
+### Correctness notes
+
+- **The request is sized to the free slots**, not to a constant. The controller
+  *dequeues* what it sends, so anything returned that does not fit in the local
+  16-byte queue would be lost rather than left behind.
+- **RTS is asserted before CONIN consults the USB queue**, not after. Returning a
+  USB byte while RTS is still deasserted from a prior storage transaction would
+  leave the proxy keyboard blocked indefinitely.
+- **Any transport or protocol failure is reported as "no input"** and leaves the
+  queue untouched. A broken IOC link must not wedge the console, which still has
+  the proxy keyboard.
+- State lives at `F642h-F67Bh` in the fixed gap after the SD backend, **not**
+  `MOVE_BUFFER` and not the SD allocation vector at `FD00h-FDFFh`. The storage
+  driver stages IOCALL mailboxes in MOVE_BUFFER, and CONST can fire from
+  `OUTCHAR` while a storage request is staged.
+
+### Placement
+
+193 bytes at `EF3Bh-EFFBh`, filling the tail of driver slot 3 after the IOC Bulk
+overflow ends at `EF3Ah`; 58 bytes of state at `F642h-F67Bh`, between the SD
+backend and VDrip transport. Shrinking the request allocation from 32 bytes to
+the five bytes IOCALL actually transmits made that placement possible without
+moving code. `check_overlap.py` and the generated layout validation pass.
+
+### Build-system defect found on the way
+
+`RUNTIME_SRCS` in the BIOS Makefile did not list `cbios_ioc_command.asm` or
+`cbios_bios_ext.asm`, both of which `zephyr.asm` includes. Editing either would
+**not** trigger a rebuild -- the link would silently reuse stale object code.
+This cost a confusing cycle here (a fixed source with a stale overlap error) and
+would have been far worse on the transport. All three files are now listed.
+
+### Open tuning question
+
+`HID_BACKOFF_MAX` is 64. During the CONIN blocking spin that polls roughly every
+0.7 ms, which is excellent for latency but means the controller spends most of
+its main loop servicing command transactions rather than running `tuh_task()`.
+A keyboard needs servicing only every ~8 ms so this should be comfortable, but
+it has not been measured under load. Raising the cap trades first-keystroke
+latency for controller headroom, and is a one-constant change.
+
+
+## Bulk lane wedges permanently after any failed transfer
+
+**Symptom.** `bulk.com` passes (128 transfers, CRC and ramp verified, 95 KiB/s).
+Then `sdbulk.com` fails with `MISMATCH expected 0x00 got 0xFF`. From that point
+`bulk.com` **also** fails -- `bulk transport error 0x02`, 0 transfers -- and
+stays broken until a power cycle.
+
+**Two separate faults, and they were worth separating.**
+
+1. `sdbulk`'s SD read delivers nothing. Still open.
+2. That failure then wedges the lane for everything else. Diagnosed and fixed
+   here, and it is what made (1) expensive to investigate: every attempt cost a
+   power cycle before anything else could be tested.
+
+### Diagnosis
+
+The failing `bulk` diagnostic reports `rr=7D 27`:
+
+- **RR0 = 7Dh**, bit 4 Sync/Hunt set -- the receiver is *still hunting*; the
+  character boundary was never re-established.
+- **RR1 = 27h**, bit 5 Rx Overrun latched.
+
+Both ends latch "synced" independently and each is set when the boundary is
+*believed* established:
+
+- host `ioc_bulk_synced`, set only after a CRC-verified transfer, cleared only
+  by cold link init or an explicit `LINK_SYNC`;
+- MCU `bulk_synced` in `bulk_channel.c`, cleared only by
+  `bulk_channel_request_resync()`.
+
+The host diag confirms the MCU's half: `PIC bulk sync decision=01`, bit 0 set,
+meaning `bulk_synced` was true and **the MCU therefore emitted no /SYNCA edge**.
+
+So a transfer that fails after the receiver has lost sync leaves *both* latches
+set. The host arms `SIO_WR3_BULK_RX_NO_HUNT` and the MCU sends no edge. Neither
+side can re-establish the boundary, and the lane is dead.
+
+This is the same failure the command lane already documents and guards at
+bring-up:
+
+> the MCU sets that flag when it SENDS the edge, not when the host receives it.
+> Without this, one missed reply left the MCU believing the boundary was
+> established and the host hunting for an edge that would never come again --
+> an unrecoverable link from a single lost byte.
+
+The bulk lane simply had no equivalent for **mid-session** failures.
+
+### Fix
+
+`IOCBULK` now self-heals. `ioc_bulk_needs_resync` is set pessimistically at
+entry and cleared **only** at the CRC-verified success point -- extending the
+doctrine already stated there, that a verified transfer is the only evidence the
+boundary was established. On entry, if the flag is set, `IOC_BULK_RECOVER` runs
+`ioc_link_bringup`, which clears both host latches and sends `LINK_SYNC`, whose
+MCU handler calls `bulk_channel_request_resync()`.
+
+Three things this had to get right:
+
+- **Both ends, or neither.** Clearing only the host's latch would be worse than
+  doing nothing: the host would hunt for an edge the MCU had no reason to send.
+  `LINK_SYNC` is the only mechanism that clears both in agreement.
+- **Recovery runs before the transfer, never during.** It issues an IOCALL, and
+  the bulk contract forbids that mid-transfer -- both lanes share the MCU's
+  single SPI2 engine. At entry the previous transfer is long finished.
+- **Mailboxes do not collide.** `ioc_link_bringup` stages at `MOVE_BUFFER+00h`,
+  the SD backend at `MOVE_BUFFER+80h/A0h`. Disjoint, so recovery cannot corrupt
+  a storage request in flight.
+
+Marking the *failure exits* instead was the first attempt and was abandoned:
+`ret` -> `jp` costs two bytes at each of four sites, and the two in the ED00h
+overflow region had none to give -- it overflowed into the HID module. Setting
+at entry costs one site and is the safer default anyway, since a path that
+returns without reaching the CRC check leaves the lane marked suspect rather
+than silently trusted.
+
+14 bytes at `ECD9h-ECE6h`, between the console's state (ends ECD8h) and the Bulk
+overflow region (ED00h), with 25 spare.
+
+### The .ds trap, twice
+
+Placing this nearly repeated the bug that put the HID queue on top of the SD
+allocation vector. A gap scan of `firmware.ihx` shows "free" space at `EC00h`
+and `EC40h`, and both are **occupied**: they are the console's `print_run_col/
+row/count` and its 64-byte `print_run_buffer`, declared with `.ds`. Reserved
+space emits no bytes, so it is invisible both to an image scan and to
+`check_overlap.py`.
+
+**Never size a region from the ihx.** The symbol table is the authority --
+`build/firmware.sym`, or the generated `docs/memory-map.md`, which states the
+console owns `E000h-ECD8h` outright.
+
+
+## Bulk recovery: REVERTED, and why the diagnosis was wrong
+
+Two iterations were needed, and both are worth recording.
+
+### Recovery at IOCBULK entry was wrong
+
+The first attempt ran the resync at IOCBULK **entry**, gated by a flag. It
+failed, and the capture said exactly why: `live` went `03` -> `00` between two
+`bulk` runs, which is `bulk_synced=false` plus `SYNCA` released -- only
+`bulk_channel_request_resync()` does that, and only `handler_link_sync` calls
+it. So the recovery fired and the latches cleared. The mechanism was right.
+
+But entry is reached **after** the caller's READY has already armed a bulk on
+the MCU. The recovery issues an IOCALL, and `service_command_request()` ends in
+`bulk_channel_run_if_armed()` -- so the MCU clocked the armed transfer out while
+the host was busy with LINK_SYNC and not listening. Measured result:
+`IOC_XPORT_TIMEOUT`, `reason=00 count=00`, nothing received. And it could not
+escape, because entry re-armed the flag, the transfer failed, and the next call
+consumed its transfer the same way.
+
+Recovery now runs from the **failure exits**, where the bulk is already consumed
+and nothing is armed. Confirmed working: a later capture shows `sync=00` and
+`live=00` together -- both ends agreeing they are unsynced, which the entry
+placement never achieved. The flag is gone; "we just failed" is the trigger.
+
+### Do not add state changes to the arm path for diagnostics
+
+`IOC_BULK_DIAG_FINISH` snapshots RR0 without first issuing Reset
+External/Status, so RR0 bits 3/4/5 (DCD, Sync/Hunt, CTS) are latched and can be
+arbitrarily stale. That is a real diagnostic weakness -- it is why "the receiver
+is still hunting" was asserted from `rr=7D` during this investigation and had to
+be retracted; the bit was not evidence of anything.
+
+The fix attempted was a `SIO_WR0_RESET_EXT_STATUS` at bulk arm, to bound every
+latched bit to the current transfer. **It broke `bulk.com`** and was reverted.
+
+The lesson is the one this file already states about the sync waveform: the arm
+path is state- and timing-sensitive, and a change there needs a scope, not
+taste. A diagnostic improvement is never worth a state change on the path it
+observes. If the stale-latch problem is worth fixing later, do it inside
+`IOC_BULK_DIAG_FINISH` -- read RR0, then reset, then read again, and report both
+-- so nothing outside the diagnostic changes.
+
+### Still open
+
+`sdbulk` fails on the **first** transfer after a cold boot, with the keyboard
+disconnected. That eliminates accumulated lane state and eliminates USB/SPI1
+interference as causes. `bulk` exercises the same `bulk_run_send()` and passes,
+so the transport and sync machinery are proven; the difference is only the data
+source. `sd_card.c`, `sd_cache.c`, `spi1_bus.c` and `cbios_storage_sd.asm` are
+byte-identical to d8642d8, the last commit where SD and bulk both worked.
+
+Note that `sd_card_read_block()` must be returning `SD_OK` -- a failure returns
+before arming, which would give the host a timeout rather than a data mismatch.
+So the card is reporting success and delivering `FF`. That, not the transport,
+is where to look next. `hid_host_init()` runs at boot regardless of whether a
+keyboard is attached, so "unplug the keyboard" does not remove the MAX3421E as
+a tenant of SPI1 -- it only stops `tuh_task()` traffic.
+
+
+### Verdict: reverted, and it was making things worse
+
+`cbios_ioc_command.asm` is back at HEAD. With the transport at baseline and only
+the console/keyboard work on top, **`bulk` passes standalone from a cold boot**.
+Both of my changes to that file are gone: the resync recovery and the
+`RESET_EXT_STATUS`.
+
+The recovery introduced a failure mode that did not exist before it. Once it was
+running from the failure exits, `bulk` began failing with the marker found, the
+header **correct and matching** (`hdr 03 02 84 58 00` against
+`exp 0203 84 58`), `decision=0E` showing the PIC had established sync properly
+-- and then a timeout in the payload. Before the recovery, failures were
+marker-not-found. Getting a clean header and dying in the payload was new, and
+it tracked my change.
+
+**Where the reasoning went wrong.** The evidence for the resync diagnosis was
+real and reproducible: both ends latch "synced" independently, the PIC's
+`decision=01` genuinely showed it suppressing the /SYNCA edge, and after the
+recovery ran the captures genuinely showed `live` going `03` -> `00` and later
+`sync=00 live=00` -- both ends agreeing they were unsynced, exactly as intended.
+Every one of those observations still stands.
+
+The error was treating "the latches now agree" as equivalent to "the lane
+works". They are not the same claim, and no capture ever supported the second
+one. The mechanism did what it was designed to do and the lane still failed,
+which should have prompted backing out rather than moving the call site and
+continuing.
+
+**Process note.** Two changes were made to the transport before establishing
+that the transport was at fault. The first (`RESET_EXT_STATUS` on the arm path)
+broke `bulk` outright. The second changed the failure mode without fixing
+anything. The measurement that settled it -- run `bulk` alone from a cold boot
+with the transport at baseline -- cost one flash and should have come first.
+
+### What this leaves
+
+The transport, the bulk lane and the sync machinery are **not** at fault.
+`bulk` moves 64 KiB with CRC and ramp verified. The remaining fault is the SD
+read, and the narrowest statement the evidence supports is unchanged:
+
+- `sd_card_read_block()` returns `SD_OK` -- a failure returns before arming,
+  which would give the host a timeout, not a data mismatch. So the card reports
+  success and delivers `FF` (or `A9`).
+- `sd_card.c`, `sd_cache.c`, `spi1_bus.c` and `cbios_storage_sd.asm` are
+  byte-identical to d8642d8, the last commit where SD and bulk both worked.
+- It fails on the first transfer after a cold boot, so no accumulated state.
+- `bulk` and `sdbulk` share `bulk_run_send()`; only the data source differs.
+
+Still unmeasured at baseline: whether `sdbulk` still wedges a subsequent `bulk`.
+If it does, that wedging is pre-existing and unrelated to anything done here --
+and it may simply be a downstream symptom of the SD fault, in which case fixing
+the read makes it moot. Worth one test, but not worth another transport change
+before the read is understood.
+
+
+## The boundary is SHIFTED, not lost — and residue is ruled out
+
+Two experiments at baseline settled the mechanism.
+
+**Residue: disproved.** `IOC_BULK_PACKET_SCAN_LIMIT` was raised from `0x08` to
+`0xA0`, matching the command lane, on the theory that `sdbulk` left stale bytes
+the narrow window could not skip. Result: `count=A0` -- the scan consumed all
+160 bytes, found no marker, and **did not time out**. Reverted.
+
+That negative is worth more than the hypothesis was. It establishes:
+
+- the MCU is streaming real data continuously (160 reads, no stall);
+- there is no `A5 5A` anywhere in 160 bytes;
+- `last 38` / `last 40` are plausible ramp payload values.
+
+**Therefore the marker is not missing -- it is not byte-aligned.** The character
+boundary is *shifted*, not lost. No amount of scanning can recover it, because
+the pattern never appears as an aligned pair. Only Enter Hunt plus a fresh
+/SYNCA edge can, and neither end will do that while both latches read synced
+(`sync=01`, `decision=01`, `live=03`).
+
+### This vindicates the resync direction
+
+Retracting the resync work earlier went too far. The capture that was dismissed
+is the proof it worked: with recovery active, the transfer immediately after a
+resync produced `hdr 03 02 84 58 00`, matching `exp 0203 84 58` **exactly**. A
+correct header can only mean the boundary was re-established. The mechanism did
+what it was designed to do.
+
+What was never explained is the step after: marker found, header correct, then
+the **payload times out**. That single unexplained step -- not the resync -- is
+the blocker, and it is self-sustaining: the host sets `ioc_bulk_synced` only on
+a CRC-verified transfer, so a payload timeout leaves the host re-arming Hunt
+while the MCU, having set `bulk_synced` after its sync byte, sends no further
+edge. The two ends then disagree in the opposite direction and the boundary
+shifts again.
+
+### What broke `bulk` standalone
+
+Of the two changes shipped together, `SIO_WR0_RESET_EXT_STATUS` on the arm path
+is the one that ran on *every* transfer; the recovery runs only on failure and
+should be inert for a healthy standalone `bulk`. Those two were never separated:
+the configuration "recovery present, RESET_EXT_STATUS absent, standalone `bulk`
+from cold boot" has not been measured. Until it is, blaming the recovery for
+that regression is not supported by evidence either.
+
+### Not attempted, and why
+
+Testing the resync from a `.COM` was considered and rejected.
+`handler_link_sync` resyncs **both** lanes, so a userland LINK_SYNC that did not
+also clear the host's `ioc_rx_synced` would leave the host armed NO_HUNT while
+the MCU's reply carried a fresh command-lane edge -- desynchronising the command
+lane itself. Doing it safely means poking BIOS internals whose symbols are
+truncated to eight characters in `firmware.sym`, where `ioc_bulk_synced` is
+indistinguishable from `ioc_bulk_ptr`/`_len`/`_crc`. Not worth the risk for a
+diagnostic.

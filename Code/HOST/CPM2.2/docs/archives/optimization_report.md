@@ -1,5 +1,16 @@
 # Zephyr-80 BIOS Size Optimization Report
 
+> **HISTORICAL — and it describes the VDrip console, which is no longer linked.**
+>
+> This records one pass over `cbios_console_vdrip.asm`, reclaiming 341 bytes in
+> the console driver slot. The default build has since moved to the direct V9958
+> console, so the addresses and the deferred targets below apply to a driver the
+> normal build does not contain.
+>
+> For current numbers use `docs/memory-map.md`, whose Headroom table is generated
+> from the build. For what has been reclaimed since, and why, see
+> `docs/bios-realignment-plan.md`.
+
 ## Summary
 
 | Metric | Before | After | Delta |
@@ -127,7 +138,10 @@ All public console driver exports preserved:
 
 ## Known remaining size targets (deferred)
 
-These were identified but left for a future pass:
+**Superseded.** These target `cbios_console_vdrip.asm`, which the normal build
+no longer links, so acting on them would shrink a driver nobody loads. They are
+also worth about 14 bytes in total — the later packages found space in hundreds
+by fixing placement rather than instruction selection. Kept for the record:
 
 - Many `call vdrip_cursor_set_position_current / ret` tail-calls scattered through cursor movement handlers (~12+ instances, ~12 bytes). Left intact for readability.
 - `call app_maybe_resume_rts / ret` tail calls in IL/DL handlers (2 instances, 2 bytes). Left intact.
