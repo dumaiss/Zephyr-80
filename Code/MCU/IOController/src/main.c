@@ -15,6 +15,11 @@
 #include "sd_card.h"
 #include "ioc_hid.h"
 #include "handlers.h"
+#include "volume.h"
+#include "boot_guard.h"
+#if IOC_FS_COMMANDS
+#include "fs_share.h"
+#endif
 
 /* ---------------------------------------------------------------------------
  * Platform initialization
@@ -121,6 +126,14 @@ static void platform_init(void)
     timebase_init();
     controller_latch_init();
     sd_cache_init();
+
+    /* Neither of these touches the card, and neither can reach FatFs.  See the
+     * boot-path rule in volume.h. */
+    vol_init();
+#if IOC_FS_COMMANDS
+    fs_share_init();
+#endif
+
     power_init();
     uprof_init();
 }
@@ -328,6 +341,9 @@ static void service_command_request(void)
 
 int main(void)
 {
+    /* First, before anything can disturb PCON0 or the persistent counters. */
+    boot_guard_init();
+
     platform_init();
     boot_reset_pulse();
     hid_host_init();
@@ -436,6 +452,35 @@ int main(void)
             (void)sd_cache_flush();
             handler_reset();            /* does not return */
         }
+
+        /* One auto-mount attempt, here and nowhere else.
+         *
+         * Same placement rule as the cache flush and hid_host_task() above:
+         * idle branch only, after any command in flight has fully completed.
+         * FatFs is not reachable from a command handler, so its call depth is
+         * never spent on top of the dispatch chain -- which matters because
+         * STVREN turns a hardware stack overflow into a device reset, and the
+         * controller drives the host reset pair.
+         *
+         * Does nothing unless the build enables it; see vol_service(). */
+        /* COMMAND_READY drops around a mount for the same reason it drops
+         * around a cache flush: resolving an image reads directory sectors and
+         * walks a cluster chain, and the host gates every IOCALL on that line.
+         * The Z80 holds /SIO1B_INT until acknowledged, so a request arriving
+         * mid-mount is delayed rather than lost -- this only tells the host the
+         * truth about when to bother asking. */
+        if (vol_service_pending()) {
+            command_ready_set(false);
+            vol_service();
+            command_ready_set(true);
+        } else {
+            vol_service();          /* cheap no-op */
+        }
+
+        /* Once the controller has stayed up long enough to be considered
+         * healthy, forget the reset count.  Placed after vol_service() so a
+         * boot only counts as settled if it survived the risky path too. */
+        boot_guard_settle();
 
         /* Empty unless CONTROLLER_LATCH_COUNTER_TEST is explicitly enabled. */
         controller_latch_tick();

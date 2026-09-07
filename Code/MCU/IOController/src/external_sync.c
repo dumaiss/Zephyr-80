@@ -411,6 +411,24 @@ static uint8_t read_wire_byte(uint16_t bit_index)
     return value;
 }
 
+/* ===========================================================================
+ * EVERY NEW COMMAND MUST BE ADDED HERE.
+ * ===========================================================================
+ *
+ * This is frame VALIDATION, not dispatch.  A class that is not on this list is
+ * treated as a window that could not have decoded, so the frame is dropped --
+ * and dropped SILENTLY, because service_command_request() sends no reply when
+ * external_sync_receive() returns false.
+ *
+ * The host therefore sees nothing at all: not RSP_UNKNOWN_COMMAND, which would
+ * name the problem, but IOC_XPORT_TIMEOUT_REPLY_MARKER, which reads as a dead
+ * or wedged controller.  CMD_VOL_INFO was added to ioc_frame.h and to
+ * dispatch_command() and not to this list, and cost an afternoon looking at
+ * handlers, reply lengths and timeouts for a frame the transport had already
+ * thrown away.
+ *
+ * If you add a command: ioc_frame.h, dispatch.c, AND here.
+ * =========================================================================== */
 static bool is_command_class(uint8_t value)
 {
     return (value == CMD_PING) ||
@@ -426,7 +444,16 @@ static bool is_command_class(uint8_t value)
            (value == CMD_LINK_SYNC) ||
            (value == CMD_HID_STATUS) ||
            (value == CMD_HID_INPUT) ||
-           (value == CMD_XFER_STATUS);
+           (value == CMD_XFER_STATUS) ||
+           (value == CMD_VOL_MOUNT) ||
+           (value == CMD_VOL_INFO)
+#if IOC_FS_COMMANDS
+           || (value >= CMD_FS_OPENDIR && value <= CMD_FS_SELFTEST)
+#endif
+           ;
+    /* The CMD_FS_* block (20h-28h) follows IOC_FS_COMMANDS, which the Makefile
+     * ties to IOC_FATFS: a build without the shared folder must not accept
+     * frames it has no handler for. */
 }
 
 /* The bit offset of the last CRC-verified marker.  Requests normally retain a

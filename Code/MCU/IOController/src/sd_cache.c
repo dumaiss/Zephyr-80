@@ -5,7 +5,7 @@
 #include "timebase.h"
 
 /* One cached 512-byte block.  Every slot participates in the same LRU policy;
- * LBA 0 remains write-through, but is no longer pinned in SRAM. */
+ * a write-through block is committed at once but is not pinned in SRAM. */
 typedef struct {
     uint32_t lba;
     uint8_t  data[SD_BLOCK_SIZE];
@@ -153,9 +153,9 @@ SdStatus sd_cache_read_record(uint32_t record, uint8_t *dst)
     SdCacheSlot *s;
     SdStatus     st;
 
-    if (record > SD_CACHE_MAX_RECORD)
-        return SD_ERR_READ;
-
+    /* No range check here any more.  `record` is absolute, so this module has
+     * nothing to compare it against; vol_map() bounds the relative record
+     * against the mounted image before it ever gets this far. */
     s = acquire(record >> SD_CACHE_REC_SHIFT, &st);
     if (s == NULL)
         return st;
@@ -167,14 +167,12 @@ SdStatus sd_cache_read_record(uint32_t record, uint8_t *dst)
     return SD_OK;
 }
 
-SdStatus sd_cache_write_record(uint32_t record, const uint8_t *src)
+SdStatus sd_cache_write_record(uint32_t record, const uint8_t *src,
+                               bool write_through)
 {
     SdCacheSlot *s;
     SdStatus     st;
     uint32_t     lba;
-
-    if (record > SD_CACHE_MAX_RECORD)
-        return SD_ERR_WRITE;
 
     lba = record >> SD_CACHE_REC_SHIFT;
 
@@ -191,8 +189,69 @@ SdStatus sd_cache_write_record(uint32_t record, const uint8_t *src)
            SD_CACHE_RECORD_SIZE);
     s->dirty = true;
 
-    if (lba == 0uL)
-        return slot_commit(s);      /* write-through */
+    if (write_through)
+        return slot_commit(s);
+
+    return SD_OK;
+}
+
+/* Whole-block access for FatFs.  Deliberately the same acquire() the record
+ * path uses, so a block is cached once no matter which side asked for it. */
+SdStatus sd_cache_read_block(uint32_t lba, uint8_t *dst)
+{
+    SdCacheSlot *s;
+    SdStatus     st;
+
+    s = acquire(lba, &st);
+    if (s == NULL)
+        return st;
+
+    memcpy(dst, s->data, SD_BLOCK_SIZE);
+    return SD_OK;
+}
+
+SdStatus sd_cache_read_bytes(uint32_t lba, uint16_t offset, uint16_t len,
+                             uint8_t *dst)
+{
+    SdCacheSlot *s;
+    SdStatus     st;
+
+    if (((uint32_t)offset + len) > SD_BLOCK_SIZE)
+        return SD_ERR_READ;
+
+    s = acquire(lba, &st);
+    if (s == NULL)
+        return st;
+
+    memcpy(dst, &s->data[offset], len);
+    return SD_OK;
+}
+
+/* A full-block write needs no pre-read: every byte is being replaced.  Take a
+ * slot without touching the card, which also means a FatFs write to a block
+ * already resident simply overwrites it in place. */
+SdStatus sd_cache_write_block(uint32_t lba, const uint8_t *src)
+{
+    SdCacheSlot *s;
+    SdStatus     st;
+
+    s = lookup(lba);
+    if (s == NULL) {
+        s = choose_victim();
+
+        /* Same rule as acquire(): a victim whose commit fails must not be
+         * reused, or data the host was told had been accepted is discarded. */
+        st = slot_commit(s);
+        if (st != SD_OK)
+            return st;
+
+        s->lba   = lba;
+        s->valid = true;
+    }
+
+    memcpy(s->data, src, SD_BLOCK_SIZE);
+    s->dirty = true;
+    touch(s);
 
     return SD_OK;
 }

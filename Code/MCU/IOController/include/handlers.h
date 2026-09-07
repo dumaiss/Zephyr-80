@@ -52,4 +52,9 @@ void handler_sd_flush(const IocFrame *request, IocFrame *reply);
 
 void handler_unknown(const IocFrame *request, IocFrame *reply);
 
+/* Volume management.  See volume.h for what a "unit" is and why an image can
+ * be a file on a FAT32 card rather than the raw card. */
+void handler_vol_mount(const IocFrame *request, IocFrame *reply);
+void handler_vol_info(const IocFrame *request, IocFrame *reply);
+
 #endif /* HANDLERS_H */

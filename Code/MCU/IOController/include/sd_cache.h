@@ -28,33 +28,46 @@
  *   lba    = record >> 2          four 128-byte records per 512-byte block
  *   offset = (record & 3) << 7
  *
- * The BIOS already computes record = track * 4 + sector for the VDrip backend,
- * and that number is exactly what arrives here -- 8 MiB / 128 = 65536 records,
- * so the whole volume fits a 16-bit record number.  The wire field is 32 bits
- * anyway: widening a protocol field later is a breaking change, and this one is
- * sitting precisely at its limit.
+ * The record numbers reaching this module are ABSOLUTE card records, not the
+ * relative ones the BIOS sends.  volume.c does the translation, because it is
+ * the only thing that knows where a mounted image starts.  A 32 GB card holds
+ * about 2^30 records, so the arithmetic here is 32-bit throughout and there is
+ * no upper bound left to check -- SD_CACHE_MAX_RECORD is gone, and the bound it
+ * enforced now lives in vol_map() as a check of the RELATIVE record against the
+ * mounted image's length.  That check is not optional: a wrapped or
+ * out-of-range record is a write to the wrong sector, the one failure mode that
+ * destroys data while reporting success.
  *
- * Record 0 is LBA 0.  The volume has no reserved boot tracks -- CP/M lives in
- * ROM -- and no partition table, so a host OS will see the card as unformatted.
+ * FatFs shares this cache rather than keeping its own.  Its disk_read/disk_write
+ * land on sd_cache_read_block()/sd_cache_write_block() below, so there is
+ * exactly one cached copy of any card block and the two paths cannot disagree.
  *
  * ---------------------------------------------------------------------------
  * WRITE POLICY
  * ---------------------------------------------------------------------------
  *
- * Write-back, except LBA 0 which is write-through.
+ * Write-back, except for blocks the CALLER marks write-through.
  *
- * That is an ADDRESS rule, not a filesystem rule, and the distinction is the
- * whole point: this module knows nothing about directories, extents or
- * allocation vectors, and must not learn.  It happens that LBA 0 is where CP/M
- * keeps the head of its directory, so it is committed synchronously.  LBA 0
- * otherwise participates in the ordinary LRU policy; no slot is reserved for
- * it.
+ * This used to be "LBA 0 is write-through", decided here.  That was correct
+ * only while the CP/M volume started at LBA 0.  Once an image can live inside
+ * a file, relative record 0 is somewhere else entirely and LBA 0 is the card's
+ * own boot sector -- so the rule had to move out of this module, which has no
+ * way to know where a volume begins.
+ *
+ * The volume layer now decides, and passes the answer in.  It still means the
+ * same thing: the block holding the head of the CP/M directory is committed
+ * synchronously.  A write-through block otherwise participates in the ordinary
+ * LRU policy; no slot is reserved for it.
+ *
+ * Getting this wrong is silent.  Nothing fails, no status changes -- the
+ * directory head simply stops being committed synchronously and rides the
+ * flush timer with everything else.
  *
  * Be honest about the coverage: with BLS=4096 and AL0=F0h the directory is four
- * blocks -- 16 KiB, LBA 0..31.  Write-through on LBA 0 covers 1/32 of it.  The
- * rest rides the flush timer, so the exposure is a power loss during a burst
- * that never went idle.  Small, but not zero, and worth knowing rather than
- * assuming away.
+ * blocks -- 16 KiB, 32 card blocks.  Write-through on the first one covers
+ * 1/32 of it.  The rest rides the flush timer, so the exposure is a power loss
+ * during a burst that never went idle.  Small, but not zero, and worth knowing
+ * rather than assuming away.
  *
  * ---------------------------------------------------------------------------
  * WHEN THE FLUSH RUNS
@@ -89,21 +102,40 @@ uint16_t sd_cache_misses(void);
 #define SD_CACHE_REC_SHIFT      2u
 #define SD_CACHE_REC_MASK       (SD_CACHE_RECS_PER_BLOCK - 1u)
 
-/* Highest record the 8 MiB volume holds.  Requests past this are refused rather
- * than wrapped: a wrapped record is a write to the wrong sector, which is the
- * one failure mode that destroys data while reporting success. */
-#define SD_CACHE_MAX_RECORD  0xFFFFuL
-
 void sd_cache_init(void);
 
-/* Copy one 128-byte record out of the cache, reading the card on a miss. */
+/* Copy one 128-byte record out of the cache, reading the card on a miss.
+ * `record` is an absolute card record; see RECORD ADDRESSING above. */
 SdStatus sd_cache_read_record(uint32_t record, uint8_t *dst);
 
 /* Copy one 128-byte record into the cache.  Reads the containing block first on
  * a miss -- a partial write cannot be committed without the other three
  * records.  Returns the card status of that read, or of the immediate commit
- * when the record lands in the write-through block. */
-SdStatus sd_cache_write_record(uint32_t record, const uint8_t *src);
+ * when `write_through` is set. */
+SdStatus sd_cache_write_record(uint32_t record, const uint8_t *src,
+                               bool write_through);
+
+/* Whole-block access, for FatFs's disk_read/disk_write.
+ *
+ * Same slots, same LRU, same flush timer as the record path -- which is the
+ * entire reason these exist rather than FatFs owning a buffer of its own.  A
+ * filesystem structure and a CP/M record can share a card block (they will not
+ * in practice, but nothing enforces it), and one cache means that case cannot
+ * produce two divergent copies.
+ *
+ * Always write-back: FAT and directory updates are flushed explicitly by the
+ * filesystem commands when they matter, and on shutdown. */
+SdStatus sd_cache_read_block(uint32_t lba, uint8_t *dst);
+SdStatus sd_cache_write_block(uint32_t lba, const uint8_t *src);
+
+/* Copy `len` bytes from within one cached block.
+ *
+ * For a caller that wants a couple of bytes out of a sector and has no reason
+ * to own half a kilobyte of SRAM to get them -- the filesystem signature check
+ * in sdfs.c is the case this exists for.  Reads the card on a miss, exactly
+ * like every other entry point here. */
+SdStatus sd_cache_read_bytes(uint32_t lba, uint16_t offset, uint16_t len,
+                             uint8_t *dst);
 
 /* Commit dirty slots until all succeed or one card operation fails.  Stopping
  * on the first failure avoids several re-initialisation attempts in one call. */

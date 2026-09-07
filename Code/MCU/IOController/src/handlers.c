@@ -8,6 +8,8 @@
 #include "external_sync.h"
 #include "timebase.h"
 #include "ioc_hid.h"
+#include "volume.h"
+#include "boot_guard.h"
 
 /* Every record read the host asks for, whether it hits the cache or not.  This
  * is the number that says whether CP/M is issuing the reads the file size
@@ -43,6 +45,7 @@ void handler_ping(const IocFrame *request, IocFrame *reply)
         if (PIR10bits.INT2IF)      p |= IOC_PING_SHUTDOWN_LATCH;
         if (SHUTDOWN_RQ_WPU)       p |= IOC_PING_SHUTDOWN_WPU;
         if (external_sync_is_established()) p |= IOC_PING_LINK_SYNCED;
+        if (boot_stack_reset()) p |= IOC_PING_STACK_RESET;
         reply->bytes[IOC_OFF_PING_POWER] = p;
     }
 
@@ -98,33 +101,19 @@ void handler_reset(void)
  * else the PIC has on the stack. */
 static uint8_t xfer_block[SD_BLOCK_SIZE];
 
-static uint8_t sd_status_to_ioc(SdStatus st)
+static void reply_put32(uint8_t *p, uint32_t v)
 {
-    switch (st) {
-    case SD_OK:              return IOC_STATUS_OK;
-    case SD_ERR_NO_CARD:     return IOC_STATUS_SD_NO_CARD;
-    case SD_ERR_NO_RESPONSE: return IOC_STATUS_SD_NO_RESPONSE;
-    case SD_ERR_UNUSABLE:    return IOC_STATUS_SD_UNUSABLE;
-    case SD_ERR_NOT_READY:   return IOC_STATUS_SD_NOT_READY;
-    case SD_ERR_READ:        return IOC_STATUS_SD_READ_FAIL;
-    case SD_ERR_NO_TOKEN:    return IOC_STATUS_SD_NO_TOKEN;
-    case SD_ERR_CRC:         return IOC_STATUS_SD_CRC;
-    case SD_ERR_BUS:         return IOC_STATUS_SD_BUS;
-    case SD_ERR_WRITE:       return IOC_STATUS_SD_WRITE_FAIL;
-    case SD_ERR_WRITE_REJECTED: return IOC_STATUS_SD_WRITE_REJ;
-    case SD_ERR_WRITE_BUSY:  return IOC_STATUS_SD_WRITE_BUSY;
-    default:                 return IOC_STATUS_ERROR;
-    }
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
 }
 
 /* Echo the LBA the MCU decoded, so the host can verify it before moving data.
  * See IOC_OFF_READY_LBA for why this exists. */
 static void reply_echo_lba(IocFrame *reply, uint32_t lba)
 {
-    reply->bytes[IOC_OFF_READY_LBA + 0u] = (uint8_t)lba;
-    reply->bytes[IOC_OFF_READY_LBA + 1u] = (uint8_t)(lba >> 8);
-    reply->bytes[IOC_OFF_READY_LBA + 2u] = (uint8_t)(lba >> 16);
-    reply->bytes[IOC_OFF_READY_LBA + 3u] = (uint8_t)(lba >> 24);
+    reply_put32(&reply->bytes[IOC_OFF_READY_LBA], lba);
 }
 
 /* Read block 0 and hand back its first IOC_SD_READ_BYTES bytes.
@@ -143,7 +132,7 @@ void handler_sd_read(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_SEQ]   = request->bytes[IOC_OFF_SEQ];
 
     st = sd_card_read_block(0uL, xfer_block);
-    reply->bytes[IOC_OFF_STATUS] = sd_status_to_ioc(st);
+    reply->bytes[IOC_OFF_STATUS] = ioc_status_from_sd(st);
 
     if (st != SD_OK) {
         /* Hand back what the card actually said instead of nothing.  All FFh
@@ -215,7 +204,7 @@ void handler_sd_read_bulk(const IocFrame *request, IocFrame *reply)
         | ((uint32_t)request->bytes[IOC_OFF_LBA_0 + 3u] << 24);
 
     st = sd_card_read_block(lba, xfer_block);
-    ioc_status = sd_status_to_ioc(st);
+    ioc_status = ioc_status_from_sd(st);
 
     memset(reply->bytes, 0, IOC_FRAME_SIZE);
     reply->bytes[IOC_OFF_CLASS]  = RSP_SD_READ_BULK;
@@ -250,7 +239,7 @@ static uint32_t pending_write_lba;
  * for a write: the bytes reaching the MCU says nothing about the card. */
 static uint8_t commit_sd_write(void)
 {
-    return sd_status_to_ioc(sd_card_write_block(pending_write_lba, xfer_block));
+    return ioc_status_from_sd(sd_card_write_block(pending_write_lba, xfer_block));
 }
 
 /* Write one sector, payload arriving on the bulk lane.
@@ -750,6 +739,20 @@ static uint32_t decode_record(const IocFrame *request)
          | ((uint32_t)request->bytes[IOC_OFF_RECORD_0 + 3u] << 24);
 }
 
+/* The optional unit byte.
+ *
+ * Read only when the frame says it is there.  A BIOS built before volumes
+ * existed sends LEN 4 and gets unit 0, which is exactly the volume it has
+ * always addressed -- so this whole feature reaches an unmodified Z80 side as
+ * no change at all. */
+static uint8_t decode_unit(const IocFrame *request)
+{
+    if (request->bytes[IOC_OFF_LEN] < IOC_SD_RECORD_UNIT_LEN)
+        return 0u;
+
+    return request->bytes[IOC_OFF_RECORD_UNIT];
+}
+
 static void reply_header(const IocFrame *request, IocFrame *reply,
                          uint8_t cls, uint8_t status, uint8_t len)
 {
@@ -766,14 +769,15 @@ static void reply_header(const IocFrame *request, IocFrame *reply,
 void handler_sd_read_rec(const IocFrame *request, IocFrame *reply)
 {
     uint32_t record = decode_record(request);
+    uint8_t  unit   = decode_unit(request);
 
     rec_reads++;
-    SdStatus st     = sd_cache_read_record(record, xfer_record);
+    uint8_t  status = vol_read_record(unit, record, xfer_record);
 
     reply_header(request, reply, RSP_SD_READ_REC,
-                 sd_status_to_ioc(st), IOC_READY_PAYLOAD_LEN);
+                 status, IOC_READY_PAYLOAD_LEN);
 
-    if (st != SD_OK)
+    if (status != IOC_STATUS_OK)
         return;                 /* no id, no length: host must not read */
 
     reply->bytes[IOC_OFF_READY_XFER_ID]   = bulk_channel_next_xfer_id();
@@ -789,6 +793,7 @@ void handler_sd_read_rec(const IocFrame *request, IocFrame *reply)
 }
 
 static uint32_t pending_write_record;
+static uint8_t  pending_write_unit;
 
 /* Runs once the record has arrived and been de-shifted.
  *
@@ -800,13 +805,15 @@ static uint32_t pending_write_record;
  * read the containing block. */
 static uint8_t commit_sd_write_record(void)
 {
-    return sd_status_to_ioc(sd_cache_write_record(pending_write_record,
-                                                  xfer_record));
+    return vol_write_record(pending_write_unit,
+                            pending_write_record,
+                            xfer_record);
 }
 
 void handler_sd_write_rec(const IocFrame *request, IocFrame *reply)
 {
     pending_write_record = decode_record(request);
+    pending_write_unit   = decode_unit(request);
 
     reply_header(request, reply, RSP_SD_WRITE_REC,
                  IOC_STATUS_OK, IOC_READY_PAYLOAD_LEN);
@@ -834,7 +841,7 @@ void handler_sd_flush(const IocFrame *request, IocFrame *reply)
 {
     SdStatus st = sd_cache_flush();
 
-    reply_header(request, reply, RSP_SD_FLUSH, sd_status_to_ioc(st), 0u);
+    reply_header(request, reply, RSP_SD_FLUSH, ioc_status_from_sd(st), 0u);
 }
 
 #if IOC_DIAGNOSTIC_BUILD
@@ -895,3 +902,86 @@ void handler_profile(const IocFrame *request, IocFrame *reply)
     }
 }
 #endif /* IOC_DIAGNOSTIC_BUILD */
+
+
+/* ---------------------------------------------------------------------------
+ * Volume commands
+ *
+ * Neither of these is needed to boot.  The controller auto-mounts by
+ * convention on first SD use, which is what keeps the default path free of Z80
+ * code; CMD_VOL_MOUNT exists so a MOUNT.COM can swap volumes at runtime, and
+ * CMD_VOL_INFO so a host reads the mode rather than inferring it.
+ * --------------------------------------------------------------------------- */
+
+static void fill_vol_info(IocFrame *reply, uint8_t unit)
+{
+    /* Written STRAIGHT into the reply frame -- no intermediate array.
+     *
+     * This used to stage through a 21-byte automatic and copy it across.  On a
+     * part whose overlay allocator is already working from a call graph XC8
+     * cannot analyse, a local array of that size in a command handler is
+     * exactly the kind of demand that has broken this firmware before, and the
+     * staging bought nothing: the destination offsets are contiguous. */
+    reply->bytes[IOC_OFF_VOL_UNIT] = unit;
+    vol_report(unit, &reply->bytes[IOC_OFF_VOL_MODE]);
+
+    /* Reported, not inferred.  A unit in raw mode because the guard tripped
+     * and a unit in raw mode because the card has no filesystem look exactly
+     * alike from the outside, and they are entirely different problems. */
+    reply->bytes[IOC_OFF_VOL_GUARD]  = boot_degraded() ? 1u : 0u;
+    reply->bytes[IOC_OFF_VOL_RESETS] = boot_reset_count();
+    reply->bytes[IOC_OFF_VOL_STKRST] = boot_stack_reset() ? 1u : 0u;
+}
+
+void handler_vol_mount(const IocFrame *request, IocFrame *reply)
+{
+    uint8_t  unit = request->bytes[IOC_OFF_VOL_REQ_UNIT];
+    uint8_t  status;
+    SdStatus st;
+
+    if (unit >= VOL_UNITS) {
+        reply_header(request, reply, RSP_VOL_MOUNT,
+                     IOC_STATUS_VOL_UNMOUNTED, IOC_VOL_INFO_LEN);
+        reply->bytes[IOC_OFF_VOL_UNIT] = unit;
+        return;
+    }
+
+    /* Bring the conventional mounts up first, so a MOUNT.COM that runs before
+     * any disk access sees the same starting state a booted system does. */
+    st = vol_ensure_mounted();
+    if (st == SD_OK)
+        st = vol_mount(unit, &request->bytes[IOC_OFF_VOL_REQ_NAME]);
+
+    /* SD_ERR_UNUSABLE is what vol_mount() returns for a file that is the wrong
+     * size or too fragmented -- a real answer with a real remedy, and not the
+     * "this card is not a card" the SD driver means by it. */
+    status = (st == SD_ERR_UNUSABLE) ? IOC_STATUS_VOL_BAD_IMAGE
+                                     : ioc_status_from_sd(st);
+
+    reply_header(request, reply, RSP_VOL_MOUNT, status, IOC_VOL_INFO_LEN);
+
+    fill_vol_info(reply, unit);
+}
+
+void handler_vol_info(const IocFrame *request, IocFrame *reply)
+{
+    uint8_t unit = request->bytes[IOC_OFF_VOL_REQ_UNIT];
+
+    /* NO vol_ensure_mounted() HERE.  A status query must not change state and
+     * must not block.
+     *
+     * It used to call it, and that was wrong twice.  It can run sd_card_init(),
+     * which polls ACMD41 at 125 kHz and takes up to about a second -- far past
+     * the BIOS's IOCALL timeout, so the query returned
+     * IOC_XPORT_TIMEOUT_REPLY_MARKER instead of an answer.  And when the card
+     * session has been lost it calls vol_init(), which DISCARDS every mount --
+     * so asking what was mounted could unmount it.
+     *
+     * This reports what is known right now.  If nothing has touched storage
+     * yet, "not mounted" is the honest answer, not something to go and fix. */
+    reply_header(request, reply, RSP_VOL_INFO, IOC_STATUS_OK,
+                 IOC_VOL_INFO_LEN);
+
+    fill_vol_info(reply, unit);
+}
+

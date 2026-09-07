@@ -6,9 +6,46 @@ SRC_DIR   := src
 INC_DIR   := include
 TINYUSB_DIR := third_party/tinyusb
 
-XC8_DIR ?= /opt/microchip/xc8/v3.10/bin
-XC8     ?= $(XC8_DIR)/xc8-cc
-DFP     ?= /home/kitamura/Downloads/xc8
+# FatFs, vendored under third_party/fatfs.  Build with IOC_FATFS=1 to link it.
+#
+# ON: confirmed working on hardware.  It was believed unlinkable here for
+# eleven builds; that was a confound -- every FatFs build also carried the
+# vol_name() pointer defect -- and the retest passed.  See the correction in
+# ../../HOST/CPM2.2/docs/ioc-fat32-images-and-shared-fs.md.
+#
+# FatFs serves /SHARED/ ONLY.  Image resolution stays on src/fatmap.c even
+# though FatFs could do it, and that split is deliberate: mounting a CP/M volume
+# is boot-critical, and keeping it on 500 lines with an analysable call graph
+# means a fault in the 7,000-line library costs a user-space tool rather than
+# the machine's ability to boot.
+FATFS_DIR := third_party/fatfs
+
+IOC_FATFS ?= 1
+ifeq ($(IOC_FATFS),1)
+FATFS_SRCS := \
+    $(SRC_DIR)/sdfs.c \
+    $(SRC_DIR)/diskio.c \
+    $(SRC_DIR)/fs_share.c \
+    $(FATFS_DIR)/ff.c
+FATFS_DEFS := -DIOC_FS_COMMANDS=1 -I$(FATFS_DIR)
+else
+FATFS_SRCS :=
+FATFS_DEFS :=
+endif
+
+# Historical note, kept because it cost twelve builds to settle.
+#
+# FatFs was believed unlinkable here.  It is not: the bisect that produced that
+# conclusion gated the volume handlers and the filesystem handlers behind ONE
+# flag, so every build that linked ff.c also linked a defect in volume.c -- a
+# function returning a pointer that might address either RAM or program memory,
+# which reset-looped the PIC from code that never ran.  Fixing that, FatFs links
+# and runs.  Across eleven builds the pointer defect predicted the outcome
+# 11/11; ff.c predicted 2/11.
+#
+# The lesson is about the bisect, not the library: one flag must gate one
+# variable.  Full table in
+# ../../HOST/CPM2.2/docs/ioc-fat32-images-and-shared-fs.md.
 
 FIRMWARE_SRCS := \
     $(SRC_DIR)/main.c       \
@@ -23,12 +60,17 @@ FIRMWARE_SRCS := \
     $(SRC_DIR)/sd_cache.c \
     $(SRC_DIR)/power.c \
     $(SRC_DIR)/ioc_hid.c \
+    $(SRC_DIR)/boot_guard.c \
+    $(SRC_DIR)/ioc_status.c \
+    $(SRC_DIR)/fatmap.c \
+    $(SRC_DIR)/volume.c \
     $(TINYUSB_DIR)/src/tusb.c \
     $(TINYUSB_DIR)/src/common/tusb_fifo.c \
     $(TINYUSB_DIR)/src/host/usbh.c \
     $(TINYUSB_DIR)/src/host/hub.c \
     $(TINYUSB_DIR)/src/class/hid/hid_host.c \
-    $(TINYUSB_DIR)/src/portable/analog/max3421/hcd_max3421.c
+    $(TINYUSB_DIR)/src/portable/analog/max3421/hcd_max3421.c \
+    $(FATFS_SRCS)
 
 FIRMWARE_HEX := $(BUILD_DIR)/$(TARGET).hex
 
@@ -64,6 +106,12 @@ endif
 
 DEFS ?=
 
+# `check-xc8-patches` is the first real target in this file, and GNU make takes
+# the first real target as the default goal -- so a bare `make` ran the patch
+# check, printed OK, exited 0 and built nothing.  Silently: no error, no hex,
+# and a stale build/ left in place to make it look like it had worked.
+.DEFAULT_GOAL := all
+
 .PHONY: all clean test size force check-xc8-patches
 
 # The TinyUSB XC8 correctness workarounds are checked before anything is built.
@@ -82,7 +130,7 @@ $(FLAGS_STAMP): force | $(BUILD_DIR)
 	@echo '$(PROFILE_DEFS) $(DEFS)' | cmp -s - $@ || echo '$(PROFILE_DEFS) $(DEFS)' > $@
 
 $(FIRMWARE_HEX): $(FIRMWARE_SRCS) $(FLAGS_STAMP) | $(BUILD_DIR)
-	$(XC8) $(XC8FLAGS) $(PROFILE_DEFS) $(DEFS) $(FIRMWARE_SRCS) -o $(BUILD_DIR)/$(TARGET)
+	$(XC8) $(XC8FLAGS) $(PROFILE_DEFS) $(FATFS_DEFS) $(DEFS) $(FIRMWARE_SRCS) -o $(BUILD_DIR)/$(TARGET)
 
 test:
 	@echo "No host tests yet: firmware only."

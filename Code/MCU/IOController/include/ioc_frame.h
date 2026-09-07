@@ -1,6 +1,8 @@
 #ifndef IOC_FRAME_H
 #define IOC_FRAME_H
 
+#include "sd_card.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -157,6 +159,30 @@
 #define CMD_HID_STATUS       0x0D
 #define CMD_HID_INPUT        0x0E
 
+/* Volume management.  A CP/M image can be an ordinary file on a FAT32 card
+ * rather than the raw card, and these say which and let it be swapped.
+ * Neither is needed to boot: the controller auto-mounts /CPM/CPM_1.DRV as
+ * unit 0 and /CPM/CPM_2.DRV as unit 1 by convention, so the default path
+ * costs the BIOS nothing. */
+#define CMD_VOL_MOUNT        0x10
+#define CMD_VOL_INFO         0x11
+
+/* Shared folder, for CP/M user space only.  Not a BIOS feature: these are
+ * driven from a transient through the published IOCALL / IOCBULK / IOCBULKW
+ * entries, exactly as IOC_SDREC.COM and HIDSTAT.COM already do.
+ *
+ * Every path is built by the firmware under /SHARED/ and every data command is
+ * capped at 512 bytes.  Both of those are load-bearing; see fs_share.c. */
+#define CMD_FS_OPENDIR       0x20
+#define CMD_FS_READDIR       0x21
+#define CMD_FS_OPEN          0x22
+#define CMD_FS_READ          0x23
+#define CMD_FS_WRITE         0x24
+#define CMD_FS_CLOSE         0x25
+#define CMD_FS_STAT          0x26
+#define CMD_FS_DELETE        0x27
+#define CMD_FS_SELFTEST      0x28
+
 /* Response class bytes (MCU → Z80) */
 #define RSP_PING             0x81
 #define RSP_SD_READ          0x83
@@ -171,6 +197,117 @@
 #define RSP_LINK_SYNC        0x8C
 #define RSP_HID_STATUS       0x8D
 #define RSP_HID_INPUT        0x8E
+#define RSP_VOL_MOUNT        0x90
+#define RSP_VOL_INFO         0x91
+#define RSP_FS_OPENDIR       0xA0
+#define RSP_FS_READDIR       0xA1
+#define RSP_FS_OPEN          0xA2
+#define RSP_FS_READ          0xA3
+#define RSP_FS_WRITE         0xA4
+#define RSP_FS_CLOSE         0xA5
+#define RSP_FS_STAT          0xA6
+#define RSP_FS_DELETE        0xA7
+#define RSP_FS_SELFTEST      0xA8
+
+/* ---------------------------------------------------------------------------
+ * Volume commands
+ * ---------------------------------------------------------------------------
+ *
+ * Names are packed 8.3 throughout -- eleven bytes, space padded, no dot.  That
+ * is the FCB layout, so a transient drops a reply straight into an FCB and a
+ * request straight out of one, with no parsing on the Z80 at all.
+ */
+#define IOC_NAME_LEN               11u
+
+/* CMD_VOL_MOUNT request: unit, then the packed name. */
+#define IOC_OFF_VOL_REQ_UNIT       (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_VOL_REQ_NAME       (IOC_OFF_PAYLOAD + 1u)
+#define IOC_VOL_MOUNT_REQ_LEN      (1u + IOC_NAME_LEN)
+
+/* Reply to both volume commands: what is mounted on that unit. */
+#define IOC_OFF_VOL_UNIT           (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_VOL_MODE           (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_VOL_EXTENTS        (IOC_OFF_PAYLOAD + 2u)
+#define IOC_OFF_VOL_BASE_LBA       (IOC_OFF_PAYLOAD + 3u)   /* 4 bytes, LE */
+#define IOC_OFF_VOL_RECORDS        (IOC_OFF_PAYLOAD + 7u)   /* 4 bytes, LE */
+#define IOC_OFF_VOL_NAME           (IOC_OFF_PAYLOAD + 11u)  /* 11 bytes */
+/* Boot-guard state, so a degraded controller says so rather than just looking
+ * like a card with no filesystem.  See boot_guard.h. */
+#define IOC_OFF_VOL_GUARD          (IOC_OFF_PAYLOAD + 22u)
+#define IOC_OFF_VOL_RESETS         (IOC_OFF_PAYLOAD + 23u)
+#define IOC_OFF_VOL_STKRST         (IOC_OFF_PAYLOAD + 24u)
+#define IOC_VOL_INFO_LEN           25u
+
+/* Mode byte, matching VolMode.  Reported rather than inferred: a host must be
+ * able to tell a file-backed volume from the raw card without guessing. */
+#define IOC_VOL_MODE_NONE          0x00u
+#define IOC_VOL_MODE_RAW           0x01u
+#define IOC_VOL_MODE_FILE          0x02u
+
+/* ---------------------------------------------------------------------------
+ * Optional unit byte on the record commands
+ * ---------------------------------------------------------------------------
+ *
+ * It lands at payload offset 4, immediately after the 32-bit record, which the
+ * 32-byte mailbox has ample room for.  The firmware reads it only when the
+ * frame's LEN is 5 or more and defaults to unit 0 otherwise -- so a BIOS built
+ * before volumes existed keeps working against unit 0 with no edit at all.
+ */
+#define IOC_OFF_RECORD_UNIT        (IOC_OFF_PAYLOAD + 4u)
+#define IOC_SD_RECORD_UNIT_LEN     5u
+
+/* ---------------------------------------------------------------------------
+ * Shared-folder commands
+ * ---------------------------------------------------------------------------
+ *
+ * Read and write carry an explicit offset.  Four bytes out of a payload with
+ * room for twenty-six, and it is what makes a transfer idempotent: with an
+ * implicit file position a retried transaction -- which this link does -- would
+ * silently advance twice and corrupt the copy somewhere in the middle.
+ */
+#define IOC_FS_CHUNK_MAX           512u
+
+/* Request layouts */
+#define IOC_OFF_FS_NAME            (IOC_OFF_PAYLOAD + 0u)   /* 11 bytes */
+#define IOC_OFF_FS_OPEN_MODE       (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_FS_OPEN_NAME       (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_FS_XFER_HANDLE     (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_FS_XFER_OFFSET     (IOC_OFF_PAYLOAD + 1u)   /* 4 bytes, LE */
+#define IOC_OFF_FS_XFER_LEN        (IOC_OFF_PAYLOAD + 5u)   /* 2 bytes, LE */
+#define IOC_OFF_FS_CLOSE_HANDLE    (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_FS_CLOSE_SIZE      (IOC_OFF_PAYLOAD + 1u)   /* 4 bytes, LE */
+
+/* CMD_FS_OPEN mode byte */
+#define IOC_FS_MODE_READ           0x00u
+#define IOC_FS_MODE_WRITE          0x01u   /* create, truncate */
+
+/* CMD_FS_READDIR reply */
+#define IOC_OFF_FS_DIR_NAME        (IOC_OFF_PAYLOAD + 0u)   /* 11 bytes */
+#define IOC_OFF_FS_DIR_ATTR        (IOC_OFF_PAYLOAD + 11u)
+#define IOC_OFF_FS_DIR_SIZE        (IOC_OFF_PAYLOAD + 12u)  /* 4 bytes, LE */
+#define IOC_OFF_FS_DIR_MORE        (IOC_OFF_PAYLOAD + 16u)
+#define IOC_FS_READDIR_LEN         17u
+
+/* CMD_FS_OPEN / CMD_FS_STAT reply */
+#define IOC_OFF_FS_OPEN_HANDLE     (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_FS_OPEN_SIZE       (IOC_OFF_PAYLOAD + 1u)   /* 4 bytes, LE */
+#define IOC_FS_OPEN_REPLY_LEN      5u
+#define IOC_OFF_FS_STAT_SIZE       (IOC_OFF_PAYLOAD + 0u)   /* 4 bytes, LE */
+#define IOC_OFF_FS_STAT_ATTR       (IOC_OFF_PAYLOAD + 4u)
+#define IOC_FS_STAT_REPLY_LEN      5u
+
+/* CMD_FS_SELFTEST reply: what the mount found, and a checksum of a known file.
+ * Cheap insurance against XC8's overlay allocator -- run it before trusting
+ * any of this on hardware.  See the risk section of the design document. */
+#define IOC_OFF_FS_SELF_MOUNTED    (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_FS_SELF_FSTYPE     (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_FS_SELF_CSIZE      (IOC_OFF_PAYLOAD + 2u)   /* 2 bytes, LE */
+#define IOC_OFF_FS_SELF_DATABASE   (IOC_OFF_PAYLOAD + 4u)   /* 4 bytes, LE */
+#define IOC_OFF_FS_SELF_FILES      (IOC_OFF_PAYLOAD + 8u)   /* 2 bytes, LE */
+#define IOC_OFF_FS_SELF_SUM        (IOC_OFF_PAYLOAD + 10u)  /* 2 bytes, LE */
+#define IOC_OFF_FS_SELF_BYTES      (IOC_OFF_PAYLOAD + 12u)  /* 4 bytes, LE */
+#define IOC_OFF_FS_SELF_FRESULT    (IOC_OFF_PAYLOAD + 16u)
+#define IOC_FS_SELFTEST_LEN        17u
 
 /* HID_INPUT is a nonblocking terminal-input dequeue.  The request payload is
  * one byte: the maximum number of bytes wanted (0 is a status-only query).
@@ -570,6 +707,17 @@
 #define IOC_PING_SHUTDOWN_LATCH 0x10u
 #define IOC_PING_SHUTDOWN_WPU   0x20u
 #define IOC_PING_LINK_SYNCED    0x40u
+/* The last reset was a PIC18 hardware call-stack overflow or underflow.
+ *
+ * STVREN is ON, so an overflow resets the device rather than corrupting a
+ * return address -- and because the controller drives the host reset pair, a
+ * PIC that resets on the same code path every time presents as a machine that
+ * reboots continuously with nothing on the console to say why.
+ *
+ * Latched from PCON0 at startup and cleared there, so this reports the reset
+ * that produced the CURRENT session.  Without it the cause has to be inferred
+ * from symptoms, which is how an afternoon goes missing. */
+#define IOC_PING_STACK_RESET    0x80u
 
 /* PING reply diagnostics.  PING echoes request DATA bytes 4..19, then appends
  * fields at 20..29 and declares the full 26-byte command DATA length. */
@@ -651,8 +799,28 @@
  * committed to the card looking exactly like a good one. */
 #define IOC_STATUS_BULK_CRC       0x23
 
+/* Volume and filesystem failures.
+ *
+ * Kept distinct from the SD codes on purpose: "the card did not answer" and
+ * "the card is fine but that file is not there" are different problems with
+ * different remedies, and collapsing them into IOC_STATUS_ERROR is what makes
+ * a storage fault take an afternoon to diagnose. */
+#define IOC_STATUS_VOL_UNMOUNTED  0x30  /* no volume on that unit */
+#define IOC_STATUS_VOL_RANGE      0x31  /* record past the end of the volume */
+#define IOC_STATUS_VOL_BAD_IMAGE  0x32  /* wrong size, or too fragmented */
+#define IOC_STATUS_FS_NOT_MOUNTED 0x33  /* card carries no FAT filesystem */
+#define IOC_STATUS_FS_NO_FILE     0x34
+#define IOC_STATUS_FS_BAD_NAME    0x35  /* separator, traversal, or empty */
+#define IOC_STATUS_FS_NO_HANDLE   0x36  /* no file open, or wrong handle */
+#define IOC_STATUS_FS_RANGE       0x37  /* chunk longer than IOC_FS_CHUNK_MAX */
+#define IOC_STATUS_FS_ERROR       0x38  /* anything else FatFs reported */
+
 typedef struct {
     uint8_t bytes[IOC_FRAME_SIZE];
 } IocFrame;
+
+/* Card status to wire status.  Defined in ioc_status.c; declared here because
+ * it is protocol knowledge, and because three layers now need it. */
+uint8_t ioc_status_from_sd(SdStatus st);
 
 #endif /* IOC_FRAME_H */
