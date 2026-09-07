@@ -109,7 +109,7 @@ MEMORY_MAP_DOC ?= $(DOCS_DIR)/memory-map.md
 # The CP/M tools read the IOC failure record at fixed addresses through this
 # mirror of the layout in cbios_defs.inc.  Two hand-maintained copies have
 # already drifted once; check_diag_record.py is what notices.
-DIAG_RECORD_MIRROR ?= ../HelloWorld/src/ioc_diag_record.inc
+DIAG_RECORD_MIRROR ?= ../Utilities/src/ioc_diag_record.inc
 
 IMAGE_TOOL := $(TOOLS_DIR)/build_zephyr_image.py
 ROM_DISK_TOOL := $(TOOLS_DIR)/build_rom_disk.py
@@ -137,11 +137,14 @@ ROM_DISK_CHUNKS := $(foreach n,$(shell seq 1 $(ROM_DISK_PAGES)),$(BUILD_DIR)/rom
 # The volume is assembled from binaries built by sibling projects.  Listing them
 # here is only for change detection: build_rom_disk.py owns the real manifest and
 # reports precisely which file is missing if one has not been built yet.
-HELLOWORLD_BUILD ?= ../HelloWorld/build
+UTILITIES_BUILD ?= ../Utilities/build
 MONITOR_BUILD ?= ../Monitor/build
-ROM_DISK_INPUTS := $(wildcard $(HELLOWORLD_BUILD)/*.com) \
+# Stock DRI tools (PIP, STAT, ZSID, DUMP) come from the software volumes, which
+# is where the machine's third-party CP/M software now lives.
+SOFTWARE_DIR ?= ../Software
+ROM_DISK_INPUTS := $(wildcard $(UTILITIES_BUILD)/*.com) \
 	$(wildcard $(MONITOR_BUILD)/zephyr80_monitor.bin) \
-	$(wildcard images/A/0/*) $(wildcard images/A/1/*)
+	$(wildcard $(SOFTWARE_DIR)/disk1/0/*) $(wildcard $(SOFTWARE_DIR)/disk1/1/*)
 
 ifeq ($(STORAGE_A),rom)
 PAYLOAD_ARGS := --payload-config "$(PAYLOAD_CONFIG)"
@@ -226,8 +229,10 @@ $(ROM_DISK_IMAGE): $(ROM_DISK_TOOL) $(CPMTOOLS_DISKDEF) $(ROM_DISK_INPUTS) | $(B
 		--profile "$(ROM_DISK_PROFILE)" \
 		--diskdef "$(CPMTOOLS_DISKDEF)" \
 		--staging-dir "$(ROM_DISK_STAGE)" \
-		--hello-dir "$(HELLOWORLD_BUILD)" \
+		--utils-dir "$(UTILITIES_BUILD)" \
 		--monitor-dir "$(MONITOR_BUILD)" \
+		--stock-dir0 "$(SOFTWARE_DIR)/disk1/0" \
+		--stock-dir1 "$(SOFTWARE_DIR)/disk1/1" \
 		--build-dir "$(BUILD_DIR)" \
 		--image "$(ROM_DISK_IMAGE)" \
 		--page-count $(ROM_DISK_PAGES)

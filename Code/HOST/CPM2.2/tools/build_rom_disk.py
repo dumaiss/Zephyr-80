@@ -31,7 +31,7 @@ from pathlib import Path
 # (source root key, file name in that root, CP/M file name).
 #
 # The diagnostics keep the same build-name -> CP/M-name mapping that
-# HelloWorld/tools/install_diagnostics.py already uses for the VDrip volume, so a
+# the software volumes already use, so a
 # utility is called the same thing on both disks.
 #
 # SUBMIT is deliberately absent: the CCP hard-codes drive A for $$$.SUB
@@ -65,24 +65,24 @@ PROFILES = (PROFILE_NORMAL, PROFILE_DIAGNOSTIC)
 MANIFEST = (
     # --- Rescue and provisioning: present on every profile ---------------
     # Non-destructive version, transport, power and controller-health check.
-    ("hello", "ioc_ping.com", "PING.COM", PROFILE_NORMAL),
+    ("utils", "ioc_ping.com", "PING.COM", PROFILE_NORMAL),
     # Deliberate recovery: resets host and controller together.
-    ("hello", "ioc_reset.com", "RESET.COM", PROFILE_NORMAL),
+    ("utils", "ioc_reset.com", "RESET.COM", PROFILE_NORMAL),
     # Non-destructive command-lane read; separates controller/SD failure from
     # CP/M filesystem failure.  The BIOS media probe uses the same command.
-    ("hello", "ioc_sd_read.com", "SDREAD.COM", PROFILE_NORMAL),
+    ("utils", "ioc_sd_read.com", "SDREAD.COM", PROFILE_NORMAL),
     # Provisioning, not a soak test: a fresh SD volume needs its directory
     # initialised.  Destructive, and kept only because without it a new card
     # cannot be made usable at all.  See the warning note below.
-    ("hello", "ioc_sdfmt.com", "SDFMT.COM", PROFILE_NORMAL),
+    ("utils", "ioc_sdfmt.com", "SDFMT.COM", PROFILE_NORMAL),
     # Separates IOC HID translation and queueing from BIOS CONST/CONIN.
-    ("hello", "hidkey.com", "HIDKEY.COM", PROFILE_NORMAL),
+    ("utils", "hidkey.com", "HIDKEY.COM", PROFILE_NORMAL),
     # Passive normal-firmware USB/F310 enumeration and report status.
-    ("hello", "padstat.com", "PADSTAT.COM", PROFILE_NORMAL),
+    ("utils", "padstat.com", "PADSTAT.COM", PROFILE_NORMAL),
     # Arms or disarms the serial console tee.  Rescue tool by definition: it is
     # what you reach for when the screen is dark, or what turns the mirror off
     # again once a terminal has been unplugged.
-    ("hello", "sercon.com", "SERCON.COM", PROFILE_NORMAL),
+    ("utils", "sercon.com", "SERCON.COM", PROFILE_NORMAL),
     # The only recovery environment that still works with no usable disk:
     # L loads Intel HEX over the console, DB dumps a bank, I/O reach ports.
     # Built from source rather than copied, so it always matches the tree.
@@ -90,9 +90,12 @@ MANIFEST = (
     # Required to provision and inspect the SD volume from the ROM disk.
     ("stock0", "pip.com", "PIP.COM", PROFILE_NORMAL),
     ("stock0", "STAT.COM", "STAT.COM", PROFILE_NORMAL),
-    # User-facing console configuration, not hardware bring-up.
-    ("stock0", "NOWRAP.com", "NOWRAP.COM", PROFILE_NORMAL),
-    ("stock0", "WRAPON.COM", "WRAPON.COM", PROFILE_NORMAL),
+    # User-facing console configuration, not hardware bring-up.  Built from
+    # source in ../Utilities: these used to be shipped as prebuilt binaries
+    # carried in a software volume, so the ROM could ship a build that no longer
+    # matched the source it was supposedly made from.
+    ("utils", "nowrap.com", "NOWRAP.COM", PROFILE_NORMAL),
+    ("utils", "wrapon.com", "WRAPON.COM", PROFILE_NORMAL),
     # General Z80 diagnosis that adds no BIOS instrumentation.  ZSID rather
     # than DDT: DDT's assembler and disassembler are 8080-only.
     ("stock1", "ZSID.COM", "ZSID.COM", PROFILE_NORMAL),
@@ -102,40 +105,40 @@ MANIFEST = (
     # alternative is inferring the mode from whether the disk looks right,
     # which is the slowest possible way to discover that an image failed to
     # mount and the firmware fell back to raw.
-    ("hello", "volinfo.com", "VOLINFO.COM", PROFILE_NORMAL),
+    ("utils", "volinfo.com", "VOLINFO.COM", PROFILE_NORMAL),
     # The /SHARED/ folder tools.  Rescue tools in the most literal sense: with a
     # FAT card in the socket these are how a file gets off this machine, or onto
     # it, when nothing else works -- no serial link, no second drive.  None can
     # reach /CPM/: the controller builds every path itself under /SHARED/ and
     # rejects any name carrying a separator, which is what keeps a user program
     # structurally unable to touch a mounted disk image.
-    ("hello", "sddir.com", "SDDIR.COM", PROFILE_NORMAL),
-    ("hello", "sdget.com", "SDGET.COM", PROFILE_NORMAL),
-    ("hello", "sdput.com", "SDPUT.COM", PROFILE_NORMAL),
-    ("hello", "sddel.com", "SDDEL.COM", PROFILE_NORMAL),
+    ("utils", "sddir.com", "SDDIR.COM", PROFILE_NORMAL),
+    ("utils", "sdget.com", "SDGET.COM", PROFILE_NORMAL),
+    ("utils", "sdput.com", "SDPUT.COM", PROFILE_NORMAL),
+    ("utils", "sddel.com", "SDDEL.COM", PROFILE_NORMAL),
 
     # --- Diagnostic profile only -----------------------------------------
     # Synthetic ramp throughput/integrity test for the Bulk lane.
-    ("hello", "ioc_bulk.com", "BULK.COM", PROFILE_DIAGNOSTIC),
+    ("utils", "ioc_bulk.com", "BULK.COM", PROFILE_DIAGNOSTIC),
     # Raw 512-byte Bulk path isolation; redundant with the record path in
     # normal use.
-    ("hello", "ioc_sdblk.com", "SDBLK.COM", PROFILE_DIAGNOSTIC),
+    ("utils", "ioc_sdblk.com", "SDBLK.COM", PROFILE_DIAGNOSTIC),
     # DESTRUCTIVE: overwrites records 0-7, the head of the CP/M directory.
-    ("hello", "ioc_sdrec.com", "SDREC.COM", PROFILE_DIAGNOSTIC),
+    ("utils", "ioc_sdrec.com", "SDREC.COM", PROFILE_DIAGNOSTIC),
     # DESTRUCTIVE: addressing/interrupt stress across multiple LBAs.
-    ("hello", "ioc_sdsoak.com", "SDSOAK.COM", PROFILE_DIAGNOSTIC),
+    ("utils", "ioc_sdsoak.com", "SDSOAK.COM", PROFILE_DIAGNOSTIC),
     # DESTRUCTIVE: overwrites block 0 and destroys the partition table.
-    ("hello", "ioc_sdwrite.com", "SDWRITE.COM", PROFILE_DIAGNOSTIC),
+    ("utils", "ioc_sdwrite.com", "SDWRITE.COM", PROFILE_DIAGNOSTIC),
     # DESTRUCTIVE: writes a fixed high LBA repeatedly, never restores it.
-    ("hello", "ioc_sdbench.com", "SDBENCH.COM", PROFILE_DIAGNOSTIC),
+    ("utils", "ioc_sdbench.com", "SDBENCH.COM", PROFILE_DIAGNOSTIC),
     # Writes SIO registers behind the BIOS and invalidates persistent sync.
-    ("hello", "ioc_rts_probe.com", "RTSPROBE.COM", PROFILE_DIAGNOSTIC),
+    ("utils", "ioc_rts_probe.com", "RTSPROBE.COM", PROFILE_DIAGNOSTIC),
     # Verifies the BIOS failure record by provoking a rejection that never
     # reaches the wire.  Harmless, but it is a test tool, not a rescue tool.
-    ("hello", "ioc_diagchk.com", "DIAGCHK.COM", PROFILE_DIAGNOSTIC),
+    ("utils", "ioc_diagchk.com", "DIAGCHK.COM", PROFILE_DIAGNOSTIC),
     # V9958 console bring-up test.  The console it tests is now the production
     # console, so this is a display bring-up aid rather than a rescue tool.
-    ("hello", "v9958tst.com", "V9958TST.COM", PROFILE_DIAGNOSTIC),
+    ("utils", "v9958tst.com", "V9958TST.COM", PROFILE_DIAGNOSTIC),
 )
 
 # Unallocated space is filled with E5h, the conventional "formatted but empty"
@@ -166,10 +169,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=PROFILES, default=PROFILE_NORMAL,
                         help="which utility set to place on the volume")
-    parser.add_argument("--hello-dir", type=Path, default=Path("../HelloWorld/build"))
+    parser.add_argument("--utils-dir", type=Path, default=Path("../Utilities/build"))
     parser.add_argument("--monitor-dir", type=Path, default=Path("../Monitor/build"))
-    parser.add_argument("--stock-dir0", type=Path, default=Path("images/A/0"))
-    parser.add_argument("--stock-dir1", type=Path, default=Path("images/A/1"))
+    parser.add_argument("--stock-dir0", type=Path, default=Path("../Software/disk1/0"))
+    parser.add_argument("--stock-dir1", type=Path, default=Path("../Software/disk1/1"))
     parser.add_argument("--staging-dir", type=Path, default=Path("images/ROM/0"))
     parser.add_argument("--diskdef", type=Path, default=Path("images/diskdef"))
     parser.add_argument("--format", dest="disk_format", default="zephyr80-rom")
@@ -189,9 +192,31 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def _find(root: Path, name: str) -> Path | None:
+    """Locate one manifest entry, matching the filename case-insensitively.
+
+    CP/M filenames are case-insensitive and canonically upper case, while the
+    trees these are collected from are a mixture: the software volumes are
+    normalised lower case, the build directories use whatever the source file
+    was called.  Matching exactly meant STAT.COM and stat.com were different
+    inputs, and the manifest had to know which spelling each tree happened to
+    use -- a difference that carries no meaning on the target.
+    """
+    exact = root / name
+    if exact.is_file():
+        return exact
+    if not root.is_dir():
+        return None
+    wanted = name.lower()
+    for candidate in sorted(root.iterdir()):
+        if candidate.is_file() and candidate.name.lower() == wanted:
+            return candidate
+    return None
+
+
 def collect_sources(args: argparse.Namespace) -> list[tuple[Path, str]]:
     roots = {
-        "hello": args.hello_dir,
+        "utils": args.utils_dir,
         "monitor": args.monitor_dir,
         "stock0": args.stock_dir0,
         "stock1": args.stock_dir1,
@@ -201,16 +226,16 @@ def collect_sources(args: argparse.Namespace) -> list[tuple[Path, str]]:
     for root_key, name, cpm_name, profile in MANIFEST:
         if profile == PROFILE_DIAGNOSTIC and args.profile != PROFILE_DIAGNOSTIC:
             continue
-        source = roots[root_key] / name
-        if source.is_file():
+        source = _find(roots[root_key], name)
+        if source is not None:
             resolved.append((source, cpm_name))
         else:
-            missing.append(str(source))
+            missing.append(str(roots[root_key] / name))
     if missing:
         raise SystemExit(
             "missing ROM disk input:\n  " + "\n  ".join(missing)
             + "\n\nBuild the contributing projects first "
-              "(HelloWorld: `make com`, Monitor: `make`)."
+              "(Utilities: `make`, Monitor: `make`)."
         )
     return resolved
 

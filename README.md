@@ -34,6 +34,7 @@ physical machine, while others remain under bring-up or development.
 | IOCALL fixed-frame transport | Implemented in the BIOS and MCU firmware; hardware integration in progress |
 | Percolator Lunch Crema V9958 card | Hardware and firmware bring-up |
 | SD-card and USB HID services through the I/O Controller | In progress |
+| CP/M images as files on a FAT card | Working on physical hardware |
 | Percolator Afternoon Blend four-chip SN76489 card | Hardware subsystem; software integration in progress |
 
 ## Hardware architecture

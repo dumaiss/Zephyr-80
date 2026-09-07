@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 53940 bytes |
+| Firmware symbol map | `build/firmware.map` | 54623 bytes |
 | Burnable image | `build/zephyr80.bin` | 262144 bytes |
 | Layout manifest | `build/layout.manifest` | 903 bytes |
 
@@ -147,11 +147,14 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `IOCALL` | `DFEDh` | Zephyr extended BIOS IO Controller transaction call. |
 | `IOCTRL_CODE_END` | `DFFEh` | IOCALL transaction code end. |
 | `SD_PROBE_CODE_START` | `F680h` | SD selection probe code start. |
-| `sd_probe_result` | `F691h` | Handles the SD select-probe result and returns no DPH on failure. |
-| `SD_PROBE_CODE_END` | `F6A9h` | SD selection probe code end. |
+| `sd_probe_store_result` | `F68Dh` | Returns the selected DPH, or zero for an unavailable drive. |
+| `SD_PROBE_CODE_END` | `F694h` | SD selection probe code end. |
 | `IOC_CMD_CODE_START` | `F000h` | Common-packet Command-lane helper code start. |
 | `IOC_CMD_CODE_END` | `F415h` | Common-packet Command-lane helper code end. |
-| `sd_storage_probe` | `F680h` | Issues the non-destructive SD block-zero availability probe. |
+| `sd_storage_probe` | `F680h` | B: select probe: card availability, then the B: DPH. |
+| `sd_storage_probe_card` | `F918h` | Non-destructive SD block-zero probe shared by B: and C:. |
+| `sd_storage_probe2` | `F930h` | C: select probe: card availability, then CMD_VOL_INFO for a mounted unit 1. |
+| `stg_seldsk` | `F8D0h` | Drive dispatcher: A: to the ROM backend, B:/C: to volume units 0/1. |
 | `IOC_BULK_CODE_START` | `ED00h` | Common-packet Bulk-write helper code start. |
 | `IOC_BULK_CODE_END` | `EF3Dh` | Common-packet Bulk-write helper code end. |
 | `HID_INPUT_CODE_START` | `EF3Eh` | USB keyboard IOC polling helper code start. |
@@ -159,8 +162,8 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `HID_INPUT_STATE_START` | `F642h` | USB keyboard IOC mailbox and queue state start. |
 | `HID_INPUT_STATE_END` | `F67Ch` | USB keyboard IOC mailbox and queue state end. |
 | `SD_STORAGE_CODE_START` | `F430h` | SD-card BIOS backend code start. |
-| `SD_STORAGE_CODE_END` | `F642h` | SD-card BIOS backend code end. |
-| `sd_probe_store_result` | `F6A2h` | Stores the SD select result in the protected caller frame. |
+| `SD_STORAGE_CODE_END` | `F61Bh` | SD-card BIOS backend code end. |
+| `sd_probe_store_result` | `F68Dh` | Stores the SD select result in the protected caller frame. |
 | `ccp_read_up_sequence` | `EC83h` | Consumes the `ESC [ A` suffix for CCP one-line recall. |
 | `V9958_CONSOLE_CODE_START` | `E000h` | Direct LunchCrema V9958 console driver code start. |
 | `v9958_console_driver` | `E000h` | Direct V9958 console driver dispatch table. |

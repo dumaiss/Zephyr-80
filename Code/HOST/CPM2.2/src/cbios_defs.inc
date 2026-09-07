@@ -1043,6 +1043,39 @@ CBIOS_STORAGE_SD_CODE_LIMIT           = 0xf680
 ; Per-drive state.  The allocation vector is the only large piece; it lands in
 ; the 256 bytes of scratch that were unallocated, which it fills exactly.
 SD_STORAGE_ALV_BUFFER                 = CBIOS_SCRATCH_BASE + 0x0280   ; FD00h
+
+; C: state, placed in the tail of driver slot 5.
+;
+; The scratch region FA80h-FDFFh is exactly full, so a third drive's 272 bytes
+; had to come from somewhere else; slot 5's free tail was the only contiguous
+; block large enough.  These sit at its very top so the code below them stays
+; one region, and the allocation vector ends exactly at FA7Fh where the scratch
+; region begins.
+;
+; C: needs no DPB of its own: it is the same 8 MiB geometry as B:, so its DPH
+; points at SD_STORAGE_DPB.  It needs no CSV either -- CKS is zero.  The
+; allocation vector is the one thing CP/M cannot share between drives.
+SD_STORAGE_ALV2_BUFFER                = CBIOS_SCRATCH_BASE - 0x0100   ; F980h
+; (DSM 2047 >> 3) + 1 -- one bit per block, matching B:'s vector exactly.
+SD_STORAGE_ALV2_SIZE                  = 0x0100
+SD_STORAGE_DPH2                       = CBIOS_SCRATCH_BASE - 0x0110   ; F970h
+
+; C:'s selection probe, the card probe both SD drives share, and the drive
+; dispatcher.
+;
+; The dispatcher lives here rather than in the main SD block because that block
+; ends where HID's mutable state begins: growing it in place pushed the SD code
+; into HID_INPUT_STATE, which generate_memory_docs.py catches by name.
+;
+; It gets its own named region rather than being wedged into the 48-byte
+; CBIOS_SD_PROBE_CODE block, which is full: B: uses 41 of those 48.  Growing
+; that block would shift the A: backend and everything after it, for no reason
+; beyond adjacency.  This is a named region with a declared size, not an
+; incidental hole -- which is the distinction docs/memory-map.md's headroom
+; table exists to preserve.
+CBIOS_SD_PROBE2_CODE_BASE             = SD_STORAGE_DPH2 - 0x00a0      ; F8D0h
+CBIOS_SD_PROBE2_CODE_SIZE             = 0x00a0
+CBIOS_SD_PROBE2_CODE_END              = CBIOS_SD_PROBE2_CODE_BASE + CBIOS_SD_PROBE2_CODE_SIZE - 1
 SD_STORAGE_DPH                        = VDRIP_STORAGE_DPHDPB_BASE + 0x20  ; FB60h
 
 ; B: gets its own DPB in the last 16 bytes of the DPH/DPB window.  It used to
@@ -1094,6 +1127,28 @@ sd_storage_record                     = SD_STORAGE_WORK_AREA + 0x04
 sd_storage_saved_bank                 = SD_STORAGE_WORK_AREA + 0x06
 sd_storage_expect                     = SD_STORAGE_WORK_AREA + 0x07
 stg_drive                             = SD_STORAGE_WORK_AREA + 0x08
+; Volume unit the selected drive addresses on the controller: B: = 0, C: = 1.
+; Sent in every record request, so the wire says which volume it means instead
+; of relying on the firmware's default-to-zero compatibility path.
+sd_storage_unit                       = SD_STORAGE_WORK_AREA + 0x09
+
+; Drive letters map to controller volume units by subtracting one:
+;   A: = 0  ROM disk (not an SD unit)
+;   B: = 1  -> unit 0, /CPM/CPM_1.DRV
+;   C: = 2  -> unit 1, /CPM/CPM_2.DRV
+;   D: = 3  -> unit 2, when the firmware's VOL_UNITS and a DPH exist for it
+; SD_STORAGE_DRIVE_LIMIT is the first drive letter with no backing unit, so
+; adding a drive is a DPH, an allocation vector and one bump here.
+SD_STORAGE_DRIVE2                     = 0x02       ; C:
+SD_STORAGE_DRIVE_LIMIT                = 0x03
+
+; CMD_VOL_INFO is how C: decides whether it exists.  It is a pure query -- it
+; performs no card I/O and changes no state -- so it can be issued at SELDSK
+; without the cost or the side effects of a read.
+SD_CMD_VOL_INFO                       = 0x11
+SD_RSP_VOL_INFO                       = 0x91
+SD_VOL_INFO_MODE_OFF                  = 0x05       ; reply payload + 1
+SD_VOL_MODE_NONE                      = 0x00
 VDRIP_STORAGE_RECORD_BYTES            = 0x0080
 VDRIP_STORAGE_TOTAL_RECORDS           = 0x10000
 VDRIP_STORAGE_SECTORS_PER_TRACK       = 0x0004

@@ -33,6 +33,7 @@
 	.globl storage_caller_sp
 	.globl SD_STORAGE_CODE_START,SD_STORAGE_CODE_END
 	.globl SD_PROBE_CODE_START,SD_PROBE_CODE_END
+	.globl SD_PROBE2_CODE_END
 	.globl cbios_dma_addr
 
 	.area CODE (ABS)
@@ -116,7 +117,7 @@ sd_build_request:
 	inc hl
 	ld (hl),#0x00			; status
 	inc hl
-	ld (hl),#0x04			; payload length: 32-bit record
+	ld (hl),#0x05			; payload: 32-bit record, then the unit
 	inc hl
 	ld de,(sd_storage_record)
 	ld (hl),e
@@ -126,6 +127,16 @@ sd_build_request:
 	ld (hl),#0x00
 	inc hl
 	ld (hl),#0x00
+	inc hl
+	; The unit is sent EXPLICITLY, including B:'s zero.
+	;
+	; The controller reads this byte only when LEN is 5 or more and defaults
+	; to unit 0 otherwise, so a length of 4 would still work -- but it would
+	; mean B: relied on a compatibility fallback to address the right volume,
+	; and a request whose meaning depends on what it omits is one edit away
+	; from addressing the wrong disk.
+	ld a,(sd_storage_unit)
+	ld (hl),a
 	ret
 
 ; Send the staged request and check the reply.
@@ -343,33 +354,7 @@ sd_flush_failed:
 ; without a preceding SELDSK fails rather than silently addressing A:.
 ; ---------------------------------------------------------------------------
 
-stg_seldsk:
-	ld a,c
-	cp #SD_STORAGE_DRIVE
-	jr z,stg_sel_sd
-	cp #STORAGE_A_DRIVE
-	jr z,stg_sel_a
-	ld a,#0xff
-	ld (stg_drive),a
-	jp stg_a_seldsk_unsupported
-stg_sel_sd:
-	ld a,#SD_STORAGE_DRIVE
-	ld (stg_drive),a
-	push bc
-	push de
-	push hl
-	ld hl,#sd_storage_probe
-	jr stg_run
-stg_sel_a:
-	ld a,#STORAGE_A_DRIVE
-	ld (stg_drive),a
-	jp stg_a_seldsk
 
-; Z set when the SD backend is the live one.
-stg_is_sd:
-	ld a,(stg_drive)
-	cp #SD_STORAGE_DRIVE
-	ret
 
 stg_home:
 	call stg_is_sd
@@ -476,6 +461,39 @@ SD_STORAGE_DPB_DATA:
 	.dw SD_STORAGE_OFFSET_TRACKS
 
 ; ---------------------------------------------------------------------------
+; C: -- the second SD volume.
+;
+; Same geometry as B:, so it shares SD_STORAGE_DPB, and the same shared DIRBUF
+; every DPH uses.  CSV is empty because CKS is zero.  The allocation vector is
+; the only thing CP/M will not let two drives share, and it is why a third drive
+; costs 272 bytes rather than 16.
+; ---------------------------------------------------------------------------
+	.area CODE (ABS)
+	.org SD_STORAGE_DPH2
+SD_STORAGE_DPH2_DATA:
+	.dw 0x0000			; XLT: no skew table
+	.dw 0x0000
+	.dw 0x0000
+	.dw 0x0000
+	.dw CBIOS_STORAGE_DIRBUF	; shared with A: and B:
+	.dw SD_STORAGE_DPB		; shared with B:: identical 8 MiB geometry
+	.dw 0x0000			; CSV: CKS = 0
+	.dw SD_STORAGE_ALV2_BUFFER
+
+; C:'s allocation vector, RESERVED not merely addressed.
+;
+; Without this .blkb the 256 bytes are invisible to the layout tools: the
+; headroom table in docs/memory-map.md listed F980h-FA7Fh as free slot-5 space
+; while C:'s DPH was already pointing at it.  The next component placed there
+; would have been handed CP/M's live allocation bitmap to overwrite -- and
+; nothing would have reported it, because check_overlap.py only sees bytes that
+; are emitted or reserved.
+	.area WORK (ABS)
+	.org SD_STORAGE_ALV2_BUFFER
+SD_STORAGE_ALV2:
+	.ds SD_STORAGE_ALV2_SIZE
+
+; ---------------------------------------------------------------------------
 ; ---------------------------------------------------------------------------
 ; SD selection probe.
 ;
@@ -503,21 +521,11 @@ SD_STORAGE_DPB_DATA:
 
 SD_PROBE_CODE_START:
 sd_storage_probe:
-	call sd_zero_frames
-	ld a,#SD_CMD_PROBE
-	ld (MOVE_BUFFER + SD_STORAGE_TX_OFF),a
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
-	ld de,#(MOVE_BUFFER + SD_STORAGE_RX_OFF)
-	call IOCALL
-	; A = transport status; fall through rather than jumping to a fragment.
-sd_probe_result:
-	or a
-	jr nz,sd_probe_failed
-	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + IOC_OFF_STATUS)
-	or a
+	call sd_storage_probe_card
 	jr nz,sd_probe_failed
 	ld de,#SD_STORAGE_DPH
 	jr sd_probe_store_result
+
 sd_probe_failed:
 	ld de,#0x0000			; no DPH: drive unavailable
 ; In: DE = DPH to return, or zero for an unavailable drive.
@@ -529,3 +537,122 @@ sd_probe_store_result:
 	ld (hl),d
 	ret
 SD_PROBE_CODE_END:
+
+; ---------------------------------------------------------------------------
+; C: selection probe, in its own region.
+; ---------------------------------------------------------------------------
+	.area CODE (ABS)
+	.org CBIOS_SD_PROBE2_CODE_BASE
+stg_seldsk:
+	ld a,c
+	cp #STORAGE_A_DRIVE
+	jp z,stg_sel_a
+	; Every other supported drive is an SD volume, and the unit it addresses
+	; is the drive letter minus one: B: -> 0, C: -> 1.  Deriving it rather
+	; than tabulating it means a future D: costs a DPH and an allocation
+	; vector, and nothing here.
+	cp #SD_STORAGE_DRIVE
+	jr c,stg_sel_bad
+	cp #SD_STORAGE_DRIVE_LIMIT
+	jr nc,stg_sel_bad
+	ld (stg_drive),a
+	dec a
+	ld (sd_storage_unit),a
+	push bc
+	push de
+	push hl
+	or a				; unit 0 is B:
+	jr z,stg_sel_unit0
+	ld hl,#sd_storage_probe2
+	jp stg_run
+stg_sel_unit0:
+	ld hl,#sd_storage_probe
+	jp stg_run
+stg_sel_bad:
+	ld a,#0xff
+	ld (stg_drive),a
+	jp stg_a_seldsk_unsupported
+stg_sel_a:
+	ld a,#STORAGE_A_DRIVE
+	ld (stg_drive),a
+	jp stg_a_seldsk
+
+; Z set when the SD backend is the live one -- for ANY of its drives.
+;
+; This used to compare against SD_STORAGE_DRIVE alone, which was the same thing
+; while B: was the only SD volume.  With C: it is not: the routines that gate on
+; it would have routed C:'s reads to the A: backend.
+stg_is_sd:
+	ld a,(stg_drive)
+	cp #SD_STORAGE_DRIVE
+	jr c,stg_not_sd			; below B: -- A:, or nothing selected
+	cp #SD_STORAGE_DRIVE_LIMIT
+	jr nc,stg_not_sd		; above the last SD drive, incl. the FFh park
+	xor a				; Z set: an SD drive is live
+	ret
+stg_not_sd:
+	; A: is drive 0, so `or a` would set Z here and route A: to the SD
+	; backend.  The flag is set from a constant instead.
+	ld a,#0xff
+	or a				; NZ
+	ret
+
+; Card-level probe, shared by B: and C:.  Out: Z when the card answered.
+sd_storage_probe_card:
+	call sd_zero_frames
+	ld a,#SD_CMD_PROBE
+	ld (MOVE_BUFFER + SD_STORAGE_TX_OFF),a
+	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
+	ld de,#(MOVE_BUFFER + SD_STORAGE_RX_OFF)
+	call IOCALL
+	or a				; transport status
+	ret nz
+	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + IOC_OFF_STATUS)
+	or a
+	ret
+
+; ---------------------------------------------------------------------------
+; C: selection probe.
+;
+; Two transactions, and the order matters.
+;
+; The card probe runs first because it is what INITIALISES the card.  Only once
+; the card is up does the controller's idle loop resolve /CPM/CPM_1.DRV and
+; CPM_2.DRV into volume units -- so asking about unit 1 before that would
+; truthfully answer "nothing mounted" on a perfectly good card.  The two IOCALLs
+; are separate transactions, so the controller's main loop runs between them and
+; the mount has happened by the time the second one is answered.
+;
+; CMD_VOL_INFO is then a pure query: no card I/O, no state change.  A mode of
+; zero means unit 1 has no volume -- an unformatted card, or one with no
+; CPM_2.DRV on it -- and C: reports itself unavailable, which is a clean select
+; error rather than reads that fail one at a time later.
+; ---------------------------------------------------------------------------
+sd_storage_probe2:
+	call sd_storage_probe_card
+	jp nz,sd_probe_failed
+	call sd_zero_frames
+	ld a,#SD_CMD_VOL_INFO
+	ld (MOVE_BUFFER + SD_STORAGE_TX_OFF),a
+	ld a,#0x01
+	ld (MOVE_BUFFER + SD_STORAGE_TX_OFF + IOC_OFF_LEN),a
+	ld a,(sd_storage_unit)
+	ld (MOVE_BUFFER + SD_STORAGE_TX_OFF + IOC_OFF_PAYLOAD),a
+	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
+	ld de,#(MOVE_BUFFER + SD_STORAGE_RX_OFF)
+	call IOCALL
+	or a
+	jp nz,sd_probe_failed
+	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + IOC_OFF_STATUS)
+	or a
+	jp nz,sd_probe_failed
+	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + SD_VOL_INFO_MODE_OFF)
+	cp #SD_VOL_MODE_NONE
+	jp z,sd_probe_failed		; unit exists, but nothing is mounted on it
+	ld de,#SD_STORAGE_DPH2
+	jp sd_probe_store_result
+
+; The region ends at CBIOS_SD_PROBE2_CODE_END (F96Fh); SD_STORAGE_DPH2 is
+; org'd immediately after it, so overrunning this block collides with C:'s own
+; DPH and tools/check_overlap.py reports it by name.
+SD_PROBE2_CODE_END:

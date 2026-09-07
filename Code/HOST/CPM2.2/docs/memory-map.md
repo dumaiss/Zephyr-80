@@ -66,8 +66,8 @@ The direct V9958 console does not register or poll the SIO0/B Virtual Drip input
 
 The IOC transport uses SIO1/B as its Command lane and SIO1/A as its Bulk lane. Both run the common A5/5A packet with persistent External Sync and Auto Enables off.
 `IOCALL` mailbox code is at `DF7Bh-DFFDh` in core BIOS; packet helpers occupy `F000h-F414h` and `ED00h-EF3Ch`.
-The SD-card BIOS backend follows at `F430h-F641h`; the generated overlap check validates these adjacent ranges.
-The SD selection probe is one contiguous block at `F680h-F6A8h`; it was previously four fragments wedged into unrelated gaps.
+The SD-card BIOS backend follows at `F430h-F61Ah`; the generated overlap check validates these adjacent ranges.
+The SD selection probe is one contiguous block at `F680h-F693h`; it was previously four fragments wedged into unrelated gaps.
 USB keyboard mailbox and queue state occupies `F642h-F67Bh` in the fixed gap after the SD backend.
 
 ## BIOS Jump Table Layout
@@ -187,17 +187,19 @@ regions.
 | `EBFFh-EC14h` | 22 | Driver slots 0-4 |
 | `ECC8h-ECFFh` | 56 | Driver slots 0-4 |
 | `F415h-F42Fh` | 27 | Packed driver extension |
+| `F61Bh-F641h` | 39 | Packed driver extension |
 | `F67Ch-F67Fh` | 4 | Packed driver extension |
-| `F6A9h-F6AFh` | 7 | Driver slot 5 |
+| `F694h-F6AFh` | 28 | Driver slot 5 |
 | `F752h-F75Fh` | 14 | Driver slot 5 |
-| `F883h-FA7Fh` | 509 | Driver slot 5 |
+| `F883h-F8CFh` | 77 | Driver slot 5 |
+| `F96Bh-F96Fh` | 5 | Driver slot 5 |
 
 | Region | Free bytes | Largest fragment |
 |---|---:|---:|
 | Core BIOS | 47 | 36 |
 | Driver slots 0-4 | 78 | 56 |
-| Packed driver extension | 31 | 27 |
-| Driver slot 5 | 530 | 509 |
+| Packed driver extension | 70 | 39 |
+| Driver slot 5 | 124 | 77 |
 
 ## Validation Report
 

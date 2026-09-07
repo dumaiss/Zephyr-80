@@ -338,7 +338,19 @@ SdStatus vol_ensure_mounted(void)
      * file-backed image is mounted by vol_service() from the idle branch of
      * the main loop, or on demand by CMD_VOL_MOUNT -- never from here.
      */
-    mount_raw(0u);
+    /* Raw is a FALLBACK, never a reset.
+     *
+     * This used to be unconditional, which was safe only while this function
+     * was guaranteed to run before anything else could mount a unit.  It is
+     * not any more: vol_service() now auto-mounts as soon as the card is up by
+     * any path -- including the BIOS's selection probe -- so by the time the
+     * first CP/M record read arrives, unit 0 may already be serving
+     * /CPM/CPM_1.DRV.  Overwriting that with raw addressing pointed B: at the
+     * card's own boot sector while C:, which mount_raw() does not touch, went
+     * on working from its file.  VOLINFO reported exactly that: unit 0 raw,
+     * unit 1 file. */
+    if (units[0].mode == VOL_MODE_NONE)
+        mount_raw(0u);
 
     return SD_OK;
 }
@@ -370,8 +382,14 @@ SdStatus vol_ensure_mounted(void)
 bool vol_service_pending(void)
 {
 #if IOC_VOL_AUTOMOUNT
-    return (!automount_done) && mount_attempted && sd_card_is_initialized()
-        && !boot_degraded();
+    /* Deliberately NOT gated on mount_attempted.
+     *
+     * It was, and that made the auto-mount depend on a CP/M RECORD read having
+     * already happened -- so selecting a unit-1 drive first, before anything
+     * touched B:, found nothing mounted and failed.  The card being up is the
+     * only real precondition, and sd_card_is_initialized() is a state query
+     * that performs no I/O, so this still never initialises the card itself. */
+    return (!automount_done) && sd_card_is_initialized() && !boot_degraded();
 #else
     return false;
 #endif
@@ -385,10 +403,10 @@ void vol_service(void)
     if (automount_done)
         return;
 
-    /* Only once the record path has brought the card up.  This must never be
-     * the thing that initialises the card: an idle-loop card init would run
-     * while the host is waiting on COMMAND_READY. */
-    if (!mount_attempted || !sd_card_is_initialized())
+    /* Any path may have brought the card up -- a record read, or the BIOS's
+     * selection probe.  This must never be the thing that initialises it: an
+     * idle-loop card init would run while the host waits on COMMAND_READY. */
+    if (!sd_card_is_initialized() || boot_degraded())
         return;
 
     automount_done = true;

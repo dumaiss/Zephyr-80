@@ -132,11 +132,14 @@ IMPLEMENTATION_SYMBOLS = [
     (("IOCALL",), "Zephyr extended BIOS IO Controller transaction call."),
     (("IOCTRL_CODE_END",), "IOCALL transaction code end."),
     (("SD_PROBE_CODE_START",), "SD selection probe code start."),
-    (("sd_probe_result",), "Handles the SD select-probe result and returns no DPH on failure."),
+    (("sd_probe_store_result",), "Returns the selected DPH, or zero for an unavailable drive."),
     (("SD_PROBE_CODE_END",), "SD selection probe code end."),
     (("IOC_CMD_CODE_START",), "Common-packet Command-lane helper code start."),
     (("IOC_CMD_CODE_END",), "Common-packet Command-lane helper code end."),
-    (("sd_storage_probe",), "Issues the non-destructive SD block-zero availability probe."),
+    (("sd_storage_probe",), "B: select probe: card availability, then the B: DPH."),
+    (("sd_storage_probe_card",), "Non-destructive SD block-zero probe shared by B: and C:."),
+    (("sd_storage_probe2",), "C: select probe: card availability, then CMD_VOL_INFO for a mounted unit 1."),
+    (("stg_seldsk",), "Drive dispatcher: A: to the ROM backend, B:/C: to volume units 0/1."),
     (("IOC_BULK_CODE_START",), "Common-packet Bulk-write helper code start."),
     (("IOC_BULK_CODE_END",), "Common-packet Bulk-write helper code end."),
     (("HID_INPUT_CODE_START",), "USB keyboard IOC polling helper code start."),
@@ -967,7 +970,12 @@ def find_headroom(listing_path: Path) -> list[tuple[int, int]]:
         if match:
             address = int(match.group(1), 16)
             listed.add(address)
-            if ".ds" in line:
+            # `.blkb` is asxxxx's synonym for `.ds` and reserves space the
+            # same way.  Matching only ".ds" meant a .blkb reservation inside
+            # the resident window was reported as FREE -- which is how C:'s
+            # 256-byte allocation vector came to be listed as headroom while
+            # its DPH already pointed at it.
+            if ".ds" in line or ".blkb" in line:
                 ds_starts.append(address)
 
     # A .ds reserves space without emitting anything, so it looks like a gap.
