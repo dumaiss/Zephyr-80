@@ -44,6 +44,7 @@ boot:
 	ld sp,#CBIOS_STACK_TOP
 	call select_ram_bank0
 	call ctc_disable_interrupts
+	call sound_silence_psgs
 	call sio_core_init
 
 	; SIO1/A is a cold-init device.  WBOOT must not repeat this call: its
@@ -125,6 +126,7 @@ wboot_resident:
 	; Protected stack handoff happens immediately after bank 0 selection.
 	ld sp,#CBIOS_STACK_TOP
 	call ctc_disable_interrupts
+	call sound_silence_psgs
 	; Rebuild the console only.  SIO1/A deliberately retains its receiver state
 	; and persistent External-Sync character boundary across CP/M warm boots.
 	call sio_core_init
@@ -234,6 +236,25 @@ runtime_clear_default_dma_loop:
 	ld (hl),a
 	inc hl
 	djnz runtime_clear_default_dma_loop
+	ret
+
+; Silence all four Afternoon Blend PSGs.
+; Inputs: none.
+; Outputs: PSG0-PSG3 tone and noise channels are set to maximum attenuation.
+; Clobbers: AF, BC. Does not block and is not ISR-safe.
+; The channel command advances 9Fh/BFh/DFh/FFh; adding 20h carries only after
+; FFh and ends the inner loop. PSG ports are contiguous at E0h-E3h.
+sound_silence_psgs:
+	ld c,#SOUND_PSG0_PORT
+	ld b,#SOUND_PSG_COUNT
+sound_silence_psgs_device:
+	ld a,#SOUND_PSG_MUTE_TONE0
+sound_silence_psgs_channel:
+	out (c),a
+	add a,#0x20
+	jr nc,sound_silence_psgs_channel
+	inc c
+	djnz sound_silence_psgs_device
 	ret
 
 ; Print the banner and the BIOS version.  Located at

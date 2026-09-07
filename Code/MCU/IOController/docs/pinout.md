@@ -4,7 +4,7 @@ Target MCU: `PIC18F57Q84` (U15, `-I/PT`, 48-pin TQFP)
 
 Net names are the schematic net names.  Polarity follows the schematic
 overbars: barred nets are active-low, everything else is active-high.  Only
-`NMI_RQ`, `RESET_HIGH`, `PWR_OFF` and `SHUTDOWN_RQ` are active-high; the five
+`RESET_HIGH`, `PWR_OFF` and `SHUTDOWN_RQ` are active-high; the six
 `*_CS` selects and `/USB_INT` are active-low like the rest.
 
 Macro names keep a `HOST_` prefix on the reset and NMI outputs because `<xc.h>`
@@ -18,7 +18,7 @@ already claims `RESET()` and `NMI`.
 | Pin | Port | Signal | Direction | Active | Macro | Notes |
 |---|---|---|---|---|---|---|
 | 21 | RA0 | `/USB_INT` | Input | Low | `USB_INT_PORT` | MAX3421E interrupt. Configured as an input; dispatch is intentionally deferred until the enumeration phase. |
-| 22 | RA1 | `/CTRL_LAT_CS` | Output | Low | `CTRL_LAT_CS_LAT` | Select for the cascaded controller 74HC595s on the **port C** bus; doubles as their RCLK. The 595 latches on RCLK's rising edge, so releasing the select is what commits the outputs. |
+| 22 | RA1 | `/CTRL_LAT_CS` | Output | Low | `CTRL_LAT_CS_LAT` | Enables the buffer feeding the cascaded controller 74AHC595s' tied SRCLK/RCLK inputs on the **port C** bus. |
 | 23 | RA2 | `/IO_SD_CS` | Output | Low | `IO_SD_CS_LAT` | SD card select. Held idle by the current firmware. |
 | 24 | RA3 | `/IO_USB_CS` | Output | Low | `IO_USB_CS_LAT` | MAX3421E select. Used during bounded controller bring-up; otherwise released until enumeration is enabled. |
 | 25 | RA4 | `/SIOB_CS` | Output | Low | `SIOB_CS_LAT` | Puts SIO1/B on the shared bus and enables the TXDB buffer. Held asserted for a whole command transaction. |
@@ -126,8 +126,8 @@ The header numbering runs opposite to the port bit numbering: `GPIO0` is RD7 and
 | 37 | RF1 | `/SIO1A_INT` | Input | Low | `SIO1A_INT_PORT` | Host SIO1/A RTS/service request. The PIC waits for it before advertising admission or clocking Bulk. |
 | 38 | RF2 | `RESET` | Output | Low | `HOST_RESET_LAT` | System reset to Z80 and bus. |
 | 39 | RF3 | `RESET_HIGH` | Output | High | `HOST_RESET_HIGH_LAT` | Complementary reset signal. |
-| 12 | RF4 | `NMI_RQ` | Input | High | `NMI_RQ_PORT` | Incoming NMI request. Unused by the current firmware. |
-| 13 | RF5 | `/NMI` | Output | Low | `HOST_NMI_LAT` | NMI to the Z80. Parked idle. |
+| 12 | RF4 | `/NMI_RQ` | Input | Low | `NMI_RQ_PORT` | Manual NMI pushbutton request; currently unused. |
+| 13 | RF5 | `/NMI` | Input | Low | `HOST_NMI_LAT` | Shared Z80 NMI signal; deliberately high-impedance so the PIC cannot fight another driver. |
 | 14 | RF6 | `PWR_OFF` | **Floating** | High | `PWR_OFF_LAT` | Left high-Z: the PMU side is not finished and driving this pin at all stops the machine from starting. When claimed, it is a **LEVEL** signal to the PMU, not a pulse — once asserted the PMU cuts the rails and keeps them cut. |
 | 15 | RF7 | `SHUTDOWN_RQ` | Input | High | `SHUTDOWN_RQ_PORT` | Incoming shutdown request. Unused by the current firmware; left as an input. |
 
@@ -162,21 +162,24 @@ Z80 BIOS deasserts /SIO1B_INT
 
 ## Controller Latch Bring-Up
 
-The cascaded 74HC595 pair (2 x 8 bits) is driven over SPI1 on the port C bus.
-At boot it is written once with `(0,0)`.  The periodic diagnostic is disabled by
-default (`CONTROLLER_LATCH_COUNTER_TEST=0`), so it produces no idle SCK/MOSI
-traffic while the SD card is being brought up.
+The cascaded 74AHC595 pair (2 x 8 bits) is driven over SPI1 on the port C bus.
+At boot both standard-controller bytes are written as the active-low idle value
+`FFh`.  USB F310 reports update a byte only when its decoded state changes.  The
+periodic diagnostic is disabled by default (`CONTROLLER_LATCH_COUNTER_TEST=0`),
+so it produces no additional idle SCK/MOSI traffic.
 
 If the diagnostic is explicitly enabled, `controller_latch_tick()` writes an
 incrementing pair `(n, n+1)` every 500 ms.  Each write goes through the central
-SPI1 selector, which releases the SD and USB selects before pulsing latch RCLK.
+SPI1 selector, which releases the SD and USB selects before enabling the gated
+controller clock.
 
 ```text
 Timer2: FOSC/4 16 MHz, 1:128 prescale, T2PR=249, 1:5 postscale -> 10 ms tick
         50 ticks -> 500 ms
-SPI1:   Fosc, BAUD=31 -> 1 MHz; 16 bits per update = 16 us
+SPI1:   Fosc, BAUD=31 -> 1 MHz; 24 clocks per update = 24 us on the wire
         LSBF = 0 -- the 595 shifts MSB first, unlike the Z80 SIO
-Latch:  /CTRL_LAT_CS asserted for the 16-bit shift, released to commit
+Latch:  /CTRL_LAT_CS enables the external clock buffer for the packed transfer
+USB:    F310 DirectInput reports are requested every 10 ms
 ```
 
 `byte0` is shifted first and lands in the **far** device of the chain; `byte1`

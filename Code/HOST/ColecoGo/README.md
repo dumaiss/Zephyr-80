@@ -162,7 +162,13 @@ The Zephyr I/O Controller maintains controller state in hardware latches at the 
 
 ### Sound
 
-Coleco-compatible sound accesses are expected to reach the appropriate SN76489-compatible path directly through the Zephyr hardware decode. ColecoGo may silence/reset the sound path during handoff if required, but it should not remain involved at runtime.
+ColecoVision writes its single SN76489 at `FFh`. Although Zephyr routes writes
+in the `E0h-FFh` range to Afternoon Blend, that card uses A2:A0 to select an
+individual sound device: `FFh` selects an unused slot and `E0h` selects PSG0.
+ColecoGo therefore patches the standard BIOS's guarded `FFh` output operands
+to `E0h` in memory. The BIOS's normal sound initialization and runtime engine
+then drive PSG0 directly; ColecoGo is not involved after takeover. Cartridge
+code that writes directly to `FFh` is not yet adapted.
 
 ## Final takeover sequence
 

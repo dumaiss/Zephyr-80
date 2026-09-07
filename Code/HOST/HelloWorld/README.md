@@ -254,6 +254,48 @@ timing is entirely software. `LDAC` is grounded, so the output updates on the
 rising edge of `/WR`. The test leaves `80h` loaded on exit so the DAC sits at
 mid-rail instead of holding a DC offset into the mixer.
 
+### `vgmplay.asm`
+
+`VGMPLAY.COM` streams compiled SN76489 music to Afternoon Blend PSG0 at `E0h`.
+CTC channel 0 interrupts at approximately 180.01 Hz. A phase accumulator derives
+the ZVGC header's requested 1-180 Hz tick rate from that clock; 60 Hz retains an
+exact divide-by-three schedule. The ISR only publishes pending ticks; stream
+decoding, PSG writes, and all CP/M/SD access remain in the foreground so timer
+latency cannot disrupt the IOC storage transport.
+
+Two alternating 6144-byte buffers occupy `8000h-AFFFh`. This allows compiled
+files larger than 32 KiB while giving the foreground reader a complete inactive
+chunk to refill. After startup, the inactive chunk is filled one 128-byte CP/M
+record per foreground pass so pending music ticks are serviced between SD
+transfers. The file can reside on any CP/M drive; use drive B for the SD volume:
+
+```text
+VGMPLAY B:MUSIC.ZVG
+```
+
+Create a `.ZVG` file on the development host with:
+
+```sh
+python3 tools/compile_vgm.py music.vgm music.zvg
+python3 tools/compile_vgm.py music.vgz music.zvg --loops 3
+```
+
+The compiler accepts VGM or gzip-compressed VGZ input, extracts PSG0 `50h`
+writes, combines intervening waits, quantizes timestamps from the VGM 44.1 kHz
+timebase to the VGM header's declared playback rate (defaulting to 60 Hz when
+that field is zero), and optionally expands the VGM loop section a finite number
+of times. The compact ZVGC v1 command stream is:
+
+| Byte | Meaning |
+| ---: | --- |
+| `00h` | End playback. |
+| `01h ddh` | Write byte `ddh` to PSG0. |
+| `02h lo hi` | Wait 1-65535 ticks. |
+| `40h-7Fh` | Wait 1-64 ticks. |
+
+Any key aborts playback. On every exit path the player stops CTC channel 0,
+restores the original IM2 page, and silences PSG0. PSG1-PSG3 are not changed.
+
 
 ## Build
 

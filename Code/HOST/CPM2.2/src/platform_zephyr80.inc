@@ -35,6 +35,12 @@ CTC1_CTRL                   = 0x41
 CTC2_CTRL                   = 0x42
 CTC3_CTRL                   = 0x43
 
+; Afternoon Blend PSG0 is the Coleco-compatible SN76489 used by ColecoGo.
+; All four PSG ports are contiguous from E0h through E3h.
+SOUND_PSG0_PORT             = 0xe0
+SOUND_PSG_COUNT             = 4
+SOUND_PSG_MUTE_TONE0        = 0x9f
+
 ; --- Memory & Bank Configuration ---
 MEM                         = 56
 RAM_BANK_MASK               = 0x07

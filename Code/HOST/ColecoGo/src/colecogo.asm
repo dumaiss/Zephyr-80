@@ -99,6 +99,13 @@ COLECO_VDP_DATA_PORT	= 0xbe
 COLECO_VDP_COMMAND_PORT	= 0xbf
 ZEPHYR_VDP_DATA_PORT	= 0xa0
 ZEPHYR_VDP_COMMAND_PORT	= 0xa1
+
+; ColecoVision writes its single SN76489 through FFh. Afternoon Blend uses
+; A2:A0 to select one of four PSGs, so FFh selects an unused slot while E0h
+; selects PSG0. The standard BIOS sound operands are guarded and adapted with
+; the VDP operands below.
+COLECO_SOUND_PORT	= 0xff
+ZEPHYR_SOUND_PORT	= 0xe0
 BIOS_PATCH_ENTRY_BYTES	= 4
 
 BIOS_RECORDS		= BIOS_BYTES / 128
@@ -287,11 +294,13 @@ load_bios_file:
 	jp z,error_bios_close
 	ret
 
-; Adapt the standard ColecoVision BIOS's VDP port operands for LunchCrema.
+; Adapt the standard ColecoVision BIOS for LunchCrema's V9958 and Afternoon
+; Blend's first SN76489.
 ; Each table entry contains an address in BIOS_BUFFER, the required original
 ; operand, and its replacement. Verifying every operand prevents an unknown
 ; 8 KiB BIOS variant from being patched at arbitrary locations.
-; Output: the BIOS buffer uses A0h/A1h for VDP data/control. Clobbers AF, BC,
+; Output: the BIOS buffer uses A0h/A1h for VDP data/control, does not rely on
+; TMS9928A register-number aliasing, and writes PSG0 at E0h. Clobbers AF, BC,
 ; DE, HL, IX. Does not block, emit I/O, or modify the takeover bank.
 adapt_bios_vdp_ports:
 	ld ix,#bios_vdp_patch_table
@@ -714,6 +723,33 @@ read_error_target:
 
 ; Standard BIOS CRC32 3AA93EF3. Addresses name operand bytes, not opcodes.
 bios_vdp_patch_table:
+	; Afternoon Blend decodes A2:A0 within the E0h/F0h sound blocks. The stock
+	; BIOS's FFh selects 111 (unused); E0h selects PSG0. These cover the BIOS
+	; sound writer plus its four-channel startup mute and update paths.
+	.dw BIOS_BUFFER + 0x0173
+	.db COLECO_SOUND_PORT,ZEPHYR_SOUND_PORT
+	.dw BIOS_BUFFER + 0x017c
+	.db COLECO_SOUND_PORT,ZEPHYR_SOUND_PORT
+	.dw BIOS_BUFFER + 0x018e
+	.db COLECO_SOUND_PORT,ZEPHYR_SOUND_PORT
+	.dw BIOS_BUFFER + 0x023e
+	.db COLECO_SOUND_PORT,ZEPHYR_SOUND_PORT
+	.dw BIOS_BUFFER + 0x0242
+	.db COLECO_SOUND_PORT,ZEPHYR_SOUND_PORT
+	.dw BIOS_BUFFER + 0x0246
+	.db COLECO_SOUND_PORT,ZEPHYR_SOUND_PORT
+	.dw BIOS_BUFFER + 0x024a
+	.db COLECO_SOUND_PORT,ZEPHYR_SOUND_PORT
+	.dw BIOS_BUFFER + 0x0336
+	.db COLECO_SOUND_PORT,ZEPHYR_SOUND_PORT
+	.dw BIOS_BUFFER + 0x0355
+	.db COLECO_SOUND_PORT,ZEPHYR_SOUND_PORT
+
+	; The TMS9928A decodes only three register-select bits, so the BIOS's 0Fh
+	; means R#7.  On a V9958 it would select real R#15 and leave status reads on
+	; S#4, preventing S#0 reads from releasing the vertical interrupt request.
+	.dw BIOS_BUFFER + 0x1988
+	.db 0x0f,0x07
 	.dw BIOS_BUFFER + 0x18d7
 	.db COLECO_VDP_COMMAND_PORT,ZEPHYR_VDP_COMMAND_PORT
 	.dw BIOS_BUFFER + 0x18dc

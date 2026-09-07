@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 52198 bytes |
+| Firmware symbol map | `build/firmware.map` | 53940 bytes |
 | Burnable image | `build/zephyr80.bin` | 262144 bytes |
 | Layout manifest | `build/layout.manifest` | 903 bytes |
 
@@ -80,16 +80,16 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `BANK_HELPERS_END` | `DAADh` | Low-level bank helper code end. |
 | `sio_init` | `DD12h` | Compatibility entry that jumps to `sio_core_init`. |
 | `boot` | `DAADh` | Cold boot implementation; starts the CP/M CCP. |
-| `wboot` | `DAE2h` | Warm boot trampoline. |
-| `wboot_resident` | `DAE5h` | Protected warm boot implementation; returns to the CP/M CCP. |
-| `WBOOT_RESIDENT_START` | `DAE5h` | Resident warm boot body start. |
-| `WBOOT_RESIDENT_END` | `DB10h` | Resident warm boot body end. |
-| `restore_ccp_from_rom` | `DB10h` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
+| `wboot` | `DAE8h` | Warm boot trampoline. |
+| `wboot_resident` | `DAEBh` | Protected warm boot implementation; returns to the CP/M CCP. |
+| `WBOOT_RESIDENT_START` | `DAEBh` | Resident warm boot body start. |
+| `WBOOT_RESIDENT_END` | `DB1Ch` | Resident warm boot body end. |
+| `restore_ccp_from_rom` | `DB1Ch` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
 | `ctc_disable_interrupts` | `DCB1h` | CTC interrupt disable helper. |
-| `prepare_runnable_bank` | `DB28h` | Page-zero and DMA preparation helper. |
-| `init_page_zero` | `DB32h` | Installs `JP WBOOT` and `JP FBASE`. |
-| `runtime_set_default_dma` | `DB47h` | Sets default DMA to `0080h`. |
-| `runtime_clear_default_dma` | `DB55h` | Clears command tail/default DMA area. |
+| `prepare_runnable_bank` | `DB34h` | Page-zero and DMA preparation helper. |
+| `init_page_zero` | `DB3Eh` | Installs `JP WBOOT` and `JP FBASE`. |
+| `runtime_set_default_dma` | `DB53h` | Sets default DMA to `0080h`. |
+| `runtime_clear_default_dma` | `DB61h` | Clears command tail/default DMA area. |
 | `DSKERROR` | `CCA1h` | BDOS disk-error recovery; reports the failing drive and warm-boots on A:. |
 | `CONSOLE_CODE_START` | `DB7Ch` | Console BIOS facade start. |
 | `console_init` | `DB7Ch` | Installs and initializes the default console driver. |
@@ -115,13 +115,13 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `CCP_QOL_CODE_START` | `DBDDh` | CCP clear-screen prompt-redraw helper start. |
 | `ccp_clear_redraw` | `DBDDh` | Clears the console and redraws the CCP prompt. |
 | `CCP_QOL_CODE_END` | `DC02h` | CCP clear-screen prompt-redraw helper end. |
-| `STORAGE_A_CODE_START` | `F910h` | Drive A: storage backend code start. |
-| `stg_a_seldsk` | `F921h` | Selects CP/M drive A and returns its DPH. |
-| `stg_a_read` | `F935h` | Reads one 128-byte record from the drive A: backend. |
-| `stg_a_write` | `F961h` | Writes one 128-byte record to the drive A: backend. |
+| `STORAGE_A_CODE_START` | `F6B0h` | Drive A: storage backend code start. |
+| `stg_a_seldsk` | `F6C1h` | Selects CP/M drive A and returns its DPH. |
+| `stg_a_read` | `F6D5h` | Reads one 128-byte record from the drive A: backend. |
+| `stg_a_write` | `F701h` | Writes one 128-byte record to the drive A: backend. |
 | `STORAGE_A_DPH` | `FB40h` | Drive A disk parameter header. |
 | `STORAGE_A_DPB` | `FB50h` | Drive A disk parameter block. |
-| `STORAGE_A_CODE_END` | `F9B2h` | Drive A: storage backend code end. |
+| `STORAGE_A_CODE_END` | `F752h` | Drive A: storage backend code end. |
 | `SIO_CORE_CODE_START` | `DD10h` | BIOS-owned SIO core code start in core BIOS. |
 | `CONSOLE_IM2_VECTOR_ENTRY` | `DD10h` | SIO core exact IM2 vector table entry address. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |
@@ -144,16 +144,14 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `sio_console_isr` | `DF29h` | Compatibility label that jumps to `sio_core_isr`. |
 | `SIO_CORE_CODE_END` | `DF2Ch` | BIOS-owned SIO core code end. |
 | `IOCTRL_CODE_START` | `DF7Bh` | IOCALL transaction code start in core BIOS. |
-| `IOCALL` | `DF7Bh` | Zephyr extended BIOS IO Controller transaction call. |
-| `IOCTRL_CODE_END` | `DFEDh` | IOCALL transaction code end. |
-| `SD_PROBE_RECOVERY_CODE_START` | `DFEDh` | SD select-probe recovery code start in core BIOS. |
-| `sd_probe_result` | `DFEDh` | Handles the SD select-probe result and returns no DPH on failure. |
-| `SD_PROBE_RECOVERY_CODE_END` | `DFFDh` | SD select-probe recovery code end. |
+| `IOCALL` | `DFEDh` | Zephyr extended BIOS IO Controller transaction call. |
+| `IOCTRL_CODE_END` | `DFFEh` | IOCALL transaction code end. |
+| `SD_PROBE_CODE_START` | `F680h` | SD selection probe code start. |
+| `sd_probe_result` | `F691h` | Handles the SD select-probe result and returns no DPH on failure. |
+| `SD_PROBE_CODE_END` | `F6A9h` | SD selection probe code end. |
 | `IOC_CMD_CODE_START` | `F000h` | Common-packet Command-lane helper code start. |
 | `IOC_CMD_CODE_END` | `F415h` | Common-packet Command-lane helper code end. |
-| `SD_PROBE_REQUEST_CODE_START` | `F41Bh` | SD select-probe request code start. |
-| `sd_storage_probe` | `F41Bh` | Issues the non-destructive SD block-zero availability probe. |
-| `SD_PROBE_REQUEST_CODE_END` | `F42Fh` | SD select-probe request code end. |
+| `sd_storage_probe` | `F680h` | Issues the non-destructive SD block-zero availability probe. |
 | `IOC_BULK_CODE_START` | `ED00h` | Common-packet Bulk-write helper code start. |
 | `IOC_BULK_CODE_END` | `EF3Dh` | Common-packet Bulk-write helper code end. |
 | `HID_INPUT_CODE_START` | `EF3Eh` | USB keyboard IOC polling helper code start. |
@@ -162,12 +160,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `HID_INPUT_STATE_END` | `F67Ch` | USB keyboard IOC mailbox and queue state end. |
 | `SD_STORAGE_CODE_START` | `F430h` | SD-card BIOS backend code start. |
 | `SD_STORAGE_CODE_END` | `F642h` | SD-card BIOS backend code end. |
-| `SD_PROBE_SUCCESS_CODE_START` | `F909h` | SD select-probe success continuation start. |
-| `sd_probe_success` | `F909h` | Returns the drive B disk parameter header after a successful probe. |
-| `SD_PROBE_SUCCESS_CODE_END` | `F90Fh` | SD select-probe success continuation end. |
-| `SD_PROBE_RESULT_CODE_START` | `FA74h` | SD select-probe result-store helper start. |
-| `sd_probe_store_result` | `FA74h` | Stores the SD select result in the protected caller frame. |
-| `SD_PROBE_RESULT_CODE_END` | `FA7Bh` | SD select-probe result-store helper end. |
+| `sd_probe_store_result` | `F6A2h` | Stores the SD select result in the protected caller frame. |
 | `ccp_read_up_sequence` | `EC83h` | Consumes the `ESC [ A` suffix for CCP one-line recall. |
 | `V9958_CONSOLE_CODE_START` | `E000h` | Direct LunchCrema V9958 console driver code start. |
 | `v9958_console_driver` | `E000h` | Direct V9958 console driver dispatch table. |
@@ -180,8 +173,8 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `MOVE` | `DC25h` | Same-bank or cross-bank memory move. |
 | `BANKING_CODE_END` | `DCB1h` | Banking extension implementation end. |
 | `VIDEO_SEND` | `DF50h` | Extended BIOS call: selected-backend raw video request. |
-| `IOCBULK` | `F2B7h` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
-| `IOCBULKW` | `ED00h` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
+| `IOCBULK` | `ECA6h` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
+| `IOCBULKW` | `ECB5h` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
 | `BIOS_EXT_CODE_START` | `DF50h` | BIOS extension code start. |
 | `BIOS_EXT_CODE_END` | `DF78h` | BIOS extension code end. |
 | `BIOS_CODE_END` | `DF78h` | End of core BIOS code. |
