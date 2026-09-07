@@ -1,0 +1,23 @@
+{
+  "format": "colecogo-patch-v1",
+  "title": "Zaxxon experimental 10 MHz RST 08h throttle",
+  "load_address": "0x8000",
+  "rom": {
+    "size": 24576,
+    "sha256": "440a043660e041ac5021df37d65ac402e121bcfa498a1cb796e0c7c91d407ab3"
+  },
+  "patches": [
+    {
+      "name": "redirect RST 08h cartridge vector to timing trampoline",
+      "address": "0x800C",
+      "expect": "C3 32 89",
+      "replace": "C3 C1 DF"
+    },
+    {
+      "name": "install 203-iteration timing trampoline in unused padding",
+      "address": "0xDFC1",
+      "expect": "FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF",
+      "replace": "F5 C5 01 CB 00 0B 78 B1 20 FB C1 F1 C3 32 89 FF"
+    }
+  ]
+}
