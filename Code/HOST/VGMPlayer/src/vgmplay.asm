@@ -1,4 +1,5 @@
 ; VGMPLAY.COM -- streamed SN76489 music player for Afternoon Blend PSG0.
+; Standalone VGMPlayer project source.
 ;
 ; Usage:
 ;   VGMPLAY B:MUSIC.ZVG
