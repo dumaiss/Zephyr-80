@@ -1,0 +1,59 @@
+From 9b6d9291416d7efcb671206f1f769c5e134a5b9c Mon Sep 17 00:00:00 2001
+From: Kitamura <sdumais.dumais@gmail.com>
+Date: Tue, 1 Sep 2026 21:45:12 -0400
+Subject: [PATCH 3/3] don't get stalled on a bad sector
+
+---
+ src/cpm22.asm | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/src/cpm22.asm b/src/cpm22.asm
+index 8d26d8a..1bdc9ab 100644
+--- a/src/cpm22.asm
++++ b/src/cpm22.asm
+@@ -1307,13 +1307,13 @@ FUNCTNS:DEFW    WBOOT,GETCON,OUTCON,GETRDR,PUNCH,LIST,DIRCIO,GETIOB
+ ;   Bdos error message section.
+ ;
+ ERROR1: LD      HL,BADSEC       ;bad sector message.
+-        CALL    PRTERR          ;print it and get a 1 char responce.
+-        CP      CNTRLC          ;re-boot request (control-c)?
+-        JP      Z,0             ;yes.
+-        RET                     ;no, return to retry i/o function.
++        JR      DSKERROR        ;report it, then recover on drive A.
+ ;
+ ERROR2: LD      HL,BADSEL       ;bad drive selected.
+-        JR      ERROR5
++DSKERROR:CALL   PRTERR          ;print it and get a 1 char response.
++        XOR     A
++        LD      (TDRIVE),A      ;warm boot on the recovery disk, A: user 0.
++        JP      0
+ ;
+ ERROR3: LD      HL,DISKRO       ;disk is read only.
+         JR      ERROR5
+@@ -1326,7 +1326,7 @@ ERROR5: CALL    PRTERR
+ BDOSERR:DEFB    'Bdos Err On '
+ BDOSDRV:DEFB    ' : $'
+ BADSEC: DEFB    'Bad Sector$'
+-BADSEL: DEFB    'Select$'
++BADSEL: DEFB    'No Disk$'
+ FILERO: DEFB    'File '
+ DISKRO: DEFB    'R/O$'
+ ;
+@@ -2423,7 +2423,7 @@ STBITMAP: PUSH  DE
+ ;
+ STBMAP1:RRCA                    ;restore original bit position.
+         DEC     D
+-        JP      NZ,STBMAP1
++        JR      NZ,STBMAP1
+         LD      (HL),A          ;and stor byte in table.
+         RET     
+ ;
+@@ -2441,7 +2441,7 @@ SETFL1: POP     DE
+         PUSH    DE
+         LD      A,(BIGDISK)     ;check disk size for 16 bit block numbers.
+         OR      A
+-        JP      Z,SETFL2
++        JR      Z,SETFL2
+         PUSH    BC              ;only 8 bit numbers. set (BC) to this one.
+         PUSH    HL
+         LD      C,(HL)          ;get low byte from table, always

@@ -6,14 +6,15 @@ for the generated address report in `docs/memory-map.md`.
 
 ## Source Boundaries
 
-The project keeps the stock CP/M 2.2 source under `cpm-2.2/` and layers local
-Zephyr-80 runtime code under `src/`.
+The project keeps the patched stock CP/M 2.2 source under `cpm22/` and layers
+local Zephyr-80 runtime code under `src/`.  The `cpm-2.2/` submodule is upstream
+reference material and is not a build input.
 
 Current top-level assembly entry:
 
 ```text
 src/zephyr.asm
--> cpm-2.2/src/cpm22.asm
+-> cpm22/cpm22.asm
 -> boot_shadow_copy.asm
 -> cbios_bank_select.asm
 -> cbios_boot.asm

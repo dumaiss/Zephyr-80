@@ -1,0 +1,604 @@
+From 3e1d8be9d60cd897bf4af3ca24c06cc33161aa29 Mon Sep 17 00:00:00 2001
+From: Kitamura <sdumais.dumais@gmail.com>
+Date: Tue, 1 Sep 2026 11:25:00 -0400
+Subject: [PATCH 2/3] Added "quality of life" change to support "up-arrow"
+ single history command recall and CTRL-L to clear the screen
+
+---
+ src/cpm22.asm | 184 +++++++++++++++++++++++++++++++-------------------
+ 1 file changed, 115 insertions(+), 69 deletions(-)
+
+diff --git a/src/cpm22.asm b/src/cpm22.asm
+index 94bdd09..8d26d8a 100644
+--- a/src/cpm22.asm
++++ b/src/cpm22.asm
+@@ -29,6 +29,7 @@ TAB:     EQU     09H             ;tab
+ LF:      EQU     0AH             ;line feed
+ FF:      EQU     0CH             ;form feed
+ CR:      EQU     0DH             ;carriage return
++ESC:     EQU     1BH             ;escape
+ CNTRLP:  EQU     10H             ;control-p
+ CNTRLR:  EQU     12H             ;control-r
+ CNTRLS:  EQU     13H             ;control-s
+@@ -237,7 +238,7 @@ UPPER:  CP      'a'             ;check for letters in the range of 'a' to 'z'.
+ ;
+ GETINP: LD      A,(BATCH)       ;if =0, then use console input.
+         OR      A
+-        JP      Z,GETINP1
++        JR      Z,GETINP1
+ ;
+ ;   Use the submit file ($$$.sub) which is prepared by a
+ ; SUBMIT run. It must be on drive (A) and it will be deleted
+@@ -249,13 +250,13 @@ GETINP: LD      A,(BATCH)       ;if =0, then use console input.
+         CALL    NZ,DSKSEL       ;select it if required.
+         LD      DE,BATCHFCB
+         CALL    OPEN            ;look for it.
+-        JP      Z,GETINP1       ;if not there, use normal input.
++        JR      Z,GETINP1       ;if not there, use normal input.
+         LD      A,(BATCHFCB+15) ;get last record number+1.
+         DEC     A
+         LD      (BATCHFCB+32),A
+         LD      DE,BATCHFCB
+         CALL    RDREC           ;read last record.
+-        JP      NZ,GETINP1      ;quit on end of file.
++        JR      NZ,GETINP1      ;quit on end of file.
+ ;
+ ;   Move this record into input buffer.
+ ;
+@@ -269,7 +270,7 @@ GETINP: LD      A,(BATCH)       ;if =0, then use console input.
+         DEC     (HL)
+         LD      DE,BATCHFCB     ;close the batch file now.
+         CALL    CLOSE
+-        JP      Z,GETINP1       ;quit on an error.
++        JR      Z,GETINP1       ;quit on an error.
+         LD      A,(CDRIVE)      ;re-select previous drive if need be.
+         OR      A
+         CALL    NZ,DSKSEL       ;don't do needless selects.
+@@ -279,7 +280,7 @@ GETINP: LD      A,(BATCH)       ;if =0, then use console input.
+         LD      HL,INBUFF+2
+         CALL    PLINE2
+         CALL    CHKCON          ;check console, quit on a key.
+-        JP      Z,GETINP2       ;jump if no key is pressed.
++        JR      Z,GETINP2       ;jump if no key is pressed.
+ ;
+ ;   Terminate the submit job on any keyboard input. Delete this
+ ; file such that it is not re-started and jump to normal keyboard
+@@ -305,12 +306,12 @@ GETINP2:LD      HL,INBUFF+1
+ GETINP3:INC     HL
+         LD      A,B             ;end of the line?
+         OR      A
+-        JP      Z,GETINP4
++        JR      Z,GETINP4
+         LD      A,(HL)          ;convert to upper case.
+         CALL    UPPER
+         LD      (HL),A
+         DEC     B               ;adjust character count.
+-        JP      GETINP3
++        JR      GETINP3
+ GETINP4:LD      (HL),A          ;add trailing null.
+         LD      HL,INBUFF+2
+         LD      (INPOINT),HL    ;reset input line pointer.
+@@ -368,7 +369,7 @@ VERIFY1:LD      A,(DE)
+         INC     DE
+         INC     HL
+         DEC     B
+-        JP      NZ,VERIFY1
++        JR      NZ,VERIFY1
+         RET     
+ ;
+ ;   Print back file name with a '?' to indicate a syntax error.
+@@ -377,7 +378,7 @@ SYNERR: CALL    CRLF            ;end current line.
+         LD      HL,(NAMEPNT)    ;this points to name in error.
+ SYNERR1:LD      A,(HL)          ;print it until a space or null is found.
+         CP      ' '
+-        JP      Z,SYNERR2
++        JR      Z,SYNERR2
+         OR      A
+         JP      Z,SYNERR2
+         PUSH    HL
+@@ -635,6 +636,11 @@ CMMND1: LD      SP,CCPSTACK     ;set stack straight.
+         CALL    PRTUSER         ;print user number then '>' (size-neutral: was
+         NOP                     ;LD A,'>'/CALL PRINT = 5 bytes; now CALL+2 NOP).
+         NOP
++        LD      A,(INBUFF+1)    ;remember the most recent non-empty command.
++        OR      A               ;an empty command must not erase one-line history.
++        JR      Z,CMMNDH
++        LD      (NBYTES),A      ;safe while idle; TYPE reinitializes this counter.
++CMMNDH:
+         CALL    GETINP          ;get line from user.
+ ;
+ ;   Process command line here.
+@@ -1220,7 +1226,8 @@ FCB:    DEFB    0,'           ',0,0,0,0,0,'           ',0,0,0,0,0
+ RTNCODE:DEFB    0               ;status returned from bdos call.
+ CDRIVE: DEFB    0               ;currently active drive.
+ CHGDRV: DEFB    0               ;change in drives flag (0=no change).
+-NBYTES: DEFW    0               ;byte counter used by TYPE.
++NBYTES: DEFW    0               ;TYPE byte counter; low byte holds prompt history length while idle.
++                                ;WBOOT reloads the CCP, intentionally clearing it.
+ ;
+ ;   Room for expansion?  Now holds PRTUSER: prints the current user number as a
+ ; single digit followed by '>'. Exactly 13 bytes, so it fills this pad and the
+@@ -1306,10 +1313,10 @@ ERROR1: LD      HL,BADSEC       ;bad sector message.
+         RET                     ;no, return to retry i/o function.
+ ;
+ ERROR2: LD      HL,BADSEL       ;bad drive selected.
+-        JP      ERROR5
++        JR      ERROR5
+ ;
+ ERROR3: LD      HL,DISKRO       ;disk is read only.
+-        JP      ERROR5
++        JR      ERROR5
+ ;
+ ERROR4: LD      HL,FILERO       ;file is read only.
+ ;
+@@ -1378,13 +1385,13 @@ CHKCHAR:CP      CR              ;check for carriage return, line feed, backspace
+ ;
+ CKCONSOL: LD    A,(CHARBUF)     ;check buffer.
+         OR      A               ;if anything, just return without checking.
+-        JP      NZ,CKCON2
++        JR      NZ,CKCON2
+         CALL    CONST           ;nothing in buffer. Check console.
+         AND     01H             ;look at bit 0.
+         RET     Z               ;return if nothing.
+         CALL    CONIN           ;ok, get it.
+         CP      CNTRLS          ;if not control-s, return with zero cleared.
+-        JP      NZ,CKCON1
++        JR      NZ,CKCON1
+         CALL    CONIN           ;halt processing until another char
+         CP      CNTRLC          ;is typed. Control-c?
+         JP      Z,0             ;yes, reboot now.
+@@ -1400,7 +1407,7 @@ CKCON2: LD      A,1             ;set (A) to non zero to mean something is ready.
+ ;
+ OUTCHAR:LD      A,(OUTFLAG)     ;check output flag.
+         OR      A               ;anything and we won't generate output.
+-        JP      NZ,OUTCHR1
++        JR      NZ,OUTCHR1
+         PUSH    BC
+         CALL    CKCONSOL        ;check console (we don't care whats there).
+         POP     BC
+@@ -1425,7 +1432,7 @@ OUTCHR1:LD      A,C             ;update cursors position.
+         RET     Z               ;ingnore control characters at the start of the line.
+         LD      A,C
+         CP      BS              ;is it a backspace?
+-        JP      NZ,OUTCHR2
++        JR      NZ,OUTCHR2
+         DEC     (HL)            ;yes, backup pointer.
+         RET     
+ OUTCHR2:CP      LF              ;is it a line feed?
+@@ -1438,7 +1445,7 @@ OUTCHR2:CP      LF              ;is it a line feed?
+ ;
+ SHOWIT: LD      A,C
+         CALL    CHKCHAR         ;check character.
+-        JP      NC,OUTCON       ;not a control, use normal output.
++        JR      NC,OUTCON       ;not a control, use normal output.
+         PUSH    AF
+         LD      C,'^'           ;for a control character, preceed it with '^'.
+         CALL    OUTCHAR
+@@ -1451,13 +1458,13 @@ SHOWIT: LD      A,C
+ ;
+ OUTCON: LD      A,C
+         CP      TAB             ;is it a tab?
+-        JP      NZ,OUTCHAR      ;use regular output.
++        JR      NZ,OUTCHAR      ;use regular output.
+ OUTCON1:LD      C,' '           ;yes it is, use spaces instead.
+         CALL    OUTCHAR
+         LD      A,(CURPOS)      ;go until the cursor is at a multiple of 8
+ 
+         AND     07H             ;position.
+-        JP      NZ,OUTCON1
++        JR      NZ,OUTCON1
+         RET     
+ ;
+ ;   Echo a backspace character. Erase the prevoius character
+@@ -1481,7 +1488,7 @@ NEWLN1: LD      A,(CURPOS)      ;move the cursor to the starting position.
+         RET     NC              ;there yet?
+         LD      C,' '
+         CALL    OUTCHAR         ;nope, keep going.
+-        JP      NEWLN1
++        JR      NEWLN1
+ ;
+ ;   Output a (cr) (lf) to the console device (screen).
+ ;
+@@ -1500,7 +1507,7 @@ PRTMESG:LD      A,(BC)          ;check for terminating character.
+         LD      C,A
+         CALL    OUTCON
+         POP     BC
+-        JP      PRTMESG
++        JR      PRTMESG
+ ;
+ ;   Function to execute a buffered read.
+ ;
+@@ -1521,34 +1528,48 @@ RDBUF2: CALL    GETCHAR         ;get the next input character.
+         JP      Z,RDBUF17
+         CP      LF
+         JP      Z,RDBUF17
++        CP      FF              ;CCP control-l clear-screen request?
++        JP      Z,RDBUFCLR
++        CP      ESC             ;CCP cursor-up sequence starts with escape.
++        JR      NZ,RDBUFKEY
++        CALL    RDBUFCCP        ;only extend the CCP's own input buffer.
++        LD      A,ESC
++        JP      NZ,RDBUF14      ;other callers retain stock escape handling.
++        PUSH    HL
++        CALL    ccp_read_up_sequence
++        POP     HL
++        JR      Z,RDBUF1        ;not ESC [ A, partial input, or no history.
++        PUSH    BC              ;RDBUF11 echoes it and resumes normal editing.
++        JR      RDBUF11
++RDBUFKEY:
+         CP      BS              ;how about a backspace?
+-        JP      NZ,RDBUF3
++        JR      NZ,RDBUF3
+         LD      A,B             ;yes, but ignore at the beginning of the line.
+         OR      A
+-        JP      Z,RDBUF1
++        JR      Z,RDBUF1
+         DEC     B               ;ok, update counter.
+         LD      A,(CURPOS)      ;if we backspace to the start of the line,
+         LD      (OUTFLAG),A     ;treat as a cancel (control-x).
+-        JP      RDBUF10
++        JR      RDBUF10
+ RDBUF3: CP      DEL             ;user typed a rubout?
+-        JP      NZ,RDBUF4
++        JR      NZ,RDBUF4
+         LD      A,B             ;ignore at the start of the line.
+         OR      A
+-        JP      Z,RDBUF1
++        JR      Z,RDBUF1
+         LD      A,(HL)          ;ok, echo the prevoius character.
+         DEC     B               ;and reset pointers (counters).
+         DEC     HL
+-        JP      RDBUF15
++        JR      RDBUF15
+ RDBUF4: CP      CNTRLE          ;physical end of line?
+-        JP      NZ,RDBUF5
++        JR      NZ,RDBUF5
+         PUSH    BC              ;yes, do it.
+         PUSH    HL
+         CALL    OUTCRLF
+         XOR     A               ;and update starting position.
+         LD      (STARTING),A
+-        JP      RDBUF2
++        JR      RDBUF2
+ RDBUF5: CP      CNTRLP          ;control-p?
+-        JP      NZ,RDBUF6
++        JR      NZ,RDBUF6
+         PUSH    HL              ;yes, flip the print flag filp-flop byte.
+         LD      HL,PRTFLAG
+         LD      A,1             ;PRTFLAG=1-PRTFLAG
+@@ -1557,7 +1578,7 @@ RDBUF5: CP      CNTRLP          ;control-p?
+         POP     HL
+         JP      RDBUF1
+ RDBUF6: CP      CNTRLX          ;control-x (cancel)?
+-        JP      NZ,RDBUF8
++        JR      NZ,RDBUF8
+         POP     HL
+ RDBUF7: LD      A,(STARTING)    ;yes, backup the cursor to here.
+         LD      HL,CURPOS
+@@ -1565,14 +1586,14 @@ RDBUF7: LD      A,(STARTING)    ;yes, backup the cursor to here.
+         JP      NC,RDBUFF       ;done yet?
+         DEC     (HL)            ;no, decrement pointer and output back up one space.
+         CALL    BACKUP
+-        JP      RDBUF7
++        JR      RDBUF7
+ RDBUF8: CP      CNTRLU          ;cntrol-u (cancel line)?
+-        JP      NZ,RDBUF9
++        JR      NZ,RDBUF9
+         CALL    NEWLINE         ;start a new line.
+         POP     HL
+         JP      RDBUFF
+ RDBUF9: CP      CNTRLR          ;control-r?
+-        JP      NZ,RDBUF14
++        JR      NZ,RDBUF14
+ RDBUF10:PUSH    BC              ;yes, start a new line and retype the old one.
+         CALL    NEWLINE
+         POP     BC
+@@ -1581,7 +1602,7 @@ RDBUF10:PUSH    BC              ;yes, start a new line and retype the old one.
+         PUSH    BC
+ RDBUF11:LD      A,B             ;done whole line yet?
+         OR      A
+-        JP      Z,RDBUF12
++        JR      Z,RDBUF12
+         INC     HL              ;nope, get next character.
+         LD      C,(HL)
+         DEC     B               ;count it.
+@@ -1590,7 +1611,7 @@ RDBUF11:LD      A,B             ;done whole line yet?
+         CALL    SHOWIT          ;and display it.
+         POP     HL
+         POP     BC
+-        JP      RDBUF11
++        JR      RDBUF11
+ RDBUF12:PUSH    HL              ;done with line. If we were displaying
+         LD      A,(OUTFLAG)     ;then update cursor position.
+         OR      A
+@@ -1601,7 +1622,7 @@ RDBUF12:PUSH    HL              ;done with line. If we were displaying
+ RDBUF13:CALL    BACKUP          ;note that as long as (OUTFLAG) is non
+         LD      HL,OUTFLAG      ;zero, the screen will not be changed.
+         DEC     (HL)
+-        JP      NZ,RDBUF13
++        JR      NZ,RDBUF13
+         JP      RDBUF2          ;now just get the next character.
+ ;
+ ;   Just a normal character, put this in our buffer and echo.
+@@ -1618,7 +1639,7 @@ RDBUF15:PUSH    BC
+         LD      A,(HL)          ;was it an abort request?
+         CP      CNTRLC          ;control-c abort?
+         LD      A,B
+-        JP      NZ,RDBUF16
++        JR      NZ,RDBUF16
+         CP      1               ;only if at start of line.
+         JP      Z,0
+ RDBUF16:CP      C               ;nope, have we filled the buffer?
+@@ -1627,16 +1648,42 @@ RDBUF17:POP     HL              ;yes end the line and return.
+         LD      (HL),B
+         LD      C,CR
+         JP      OUTCHAR         ;output (cr) and return.
++
++;   Return Z only when BDOS function 10 is reading the CCP input buffer.
++; Preserves (BC,HL); clobbers (AF,DE). This keeps the quality-of-life keys
++; private to the CCP instead of changing buffered input for applications.
++;
++RDBUFCCP:PUSH   HL
++        LD      HL,(PARAMS)
++        LD      DE,INBUFF
++        XOR     A               ;clear carry for the 16-bit comparison.
++        SBC     HL,DE
++        POP     HL
++        RET
++
++;   Control-L clears the VDrip display, redraws the CCP prompt, then uses the
++; existing retype loop so any characters already entered remain editable.
++;
++RDBUFCLR:CALL   RDBUFCCP
++        LD      A,FF
++        JR      NZ,RDBUF14      ;stock behavior outside the CCP.
++        PUSH    BC
++        CALL    ccp_clear_redraw
++        POP     BC
++        LD      HL,(PARAMS)
++        INC     HL              ;point at the buffer's current-length byte.
++        PUSH    BC
++        JR      RDBUF11
+ ;
+ ;   Function to get a character from the console device.
+ ;
+ GETCON: CALL    GETECHO         ;get and echo.
+-        JP      SETSTAT         ;save status and return.
++        JR      SETSTAT         ;save status and return.
+ ;
+ ;   Function to get a character from the tape reader device.
+ ;
+ GETRDR: CALL    READER          ;get a character from reader, set status and return.
+-        JP      SETSTAT
++        JR      SETSTAT
+ ;
+ ;  Function to perform direct console i/o. If (C) contains (FF)
+ ; then this is an input request. If (C) contains (FE) then
+@@ -1644,7 +1691,7 @@ GETRDR: CALL    READER          ;get a character from reader, set status and ret
+ ;
+ DIRCIO: LD      A,C             ;test for (FF).
+         INC     A
+-        JP      Z,DIRC1
++        JR      Z,DIRC1
+         INC     A               ;test for (FE).
+         JP      Z,CONST
+         JP      CONOUT          ;just output (C).
+@@ -1652,12 +1699,12 @@ DIRC1:  CALL    CONST           ;this is an input request.
+         OR      A
+         JP      Z,GOBACK1       ;not ready? Just return (directly).
+         CALL    CONIN           ;yes, get character.
+-        JP      SETSTAT         ;set status and return.
++        JR      SETSTAT         ;set status and return.
+ ;
+ ;   Function to return the i/o byte.
+ ;
+ GETIOB: LD      A,(IOBYTE)
+-        JP      SETSTAT
++        JR      SETSTAT
+ ;
+ ;   Function to set the i/o byte.
+ ;
+@@ -1686,7 +1733,7 @@ RTN:    RET
+ ;   Set the status to 1 (read or write error code).
+ ;
+ IOERR1: LD      A,1
+-        JP      SETSTAT
++        JR      SETSTAT
+ ;
+ OUTFLAG:DEFB    0               ;output flag (non zero means no output).
+ STARTING: DEFB  2               ;starting position for cursor.
+@@ -1728,7 +1775,7 @@ DE2HL1: DEC     C
+         LD      (HL),A
+         INC     DE
+         INC     HL
+-        JP      DE2HL1          ;and repeat.
++        JR      DE2HL1          ;and repeat.
+ ;
+ ;   Select the desired drive.
+ ;
+@@ -1770,7 +1817,7 @@ SELECT: LD      A,(ACTIVE)      ;get active disk.
+         LD      HL,BIGDISK
+         LD      (HL),0FFH       ;set to samll.
+         OR      A
+-        JP      Z,SELECT1
++        JR      Z,SELECT1
+         LD      (HL),0          ;wrong, set to large.
+ SELECT1:LD      A,0FFH          ;clear the zero flag.
+         OR      A
+@@ -1793,7 +1840,7 @@ HOMEDRV:CALL    HOME            ;home the head.
+ ;   Do the actual disk read and check the error return status.
+ ;
+ DOREAD: CALL    READ
+-        JP      IORET
++        JR      IORET
+ ;
+ ;   Do the actual disk write and handle any bios error.
+ ;
+@@ -1832,7 +1879,7 @@ TRKSEC2:LD      A,C             ;is desired sector before current one?
+         SUB     E
+         LD      A,B
+         SBC     A,D
+-        JP      NC,TRKSEC3
++        JR      NC,TRKSEC3
+         PUSH    HL              ;yes, decrement sectors by one track.
+         LD      HL,(SECTORS)    ;get sectors per track.
+         LD      A,E
+@@ -1843,20 +1890,20 @@ TRKSEC2:LD      A,C             ;is desired sector before current one?
+         LD      D,A             ;now we have backed up one full track.
+         POP     HL
+         DEC     HL              ;adjust track counter.
+-        JP      TRKSEC2
++        JR      TRKSEC2
+ TRKSEC3:PUSH    HL              ;desired sector is after current one.
+         LD      HL,(SECTORS)    ;get sectors per track.
+         ADD     HL,DE           ;bump sector pointer to next track.
+-        JP      C,TRKSEC4
++        JR      C,TRKSEC4
+         LD      A,C             ;is desired sector now before current one?
+         SUB     L
+         LD      A,B
+         SBC     A,H
+-        JP      C,TRKSEC4
++        JR      C,TRKSEC4
+         EX      DE,HL           ;not yes, increment track counter
+         POP     HL              ;and continue until it is.
+         INC     HL
+-        JP      TRKSEC3
++        JR      TRKSEC3
+ ;
+ ;   here we have determined the track number that contains the
+ ; desired sector.
+@@ -1904,17 +1951,17 @@ GETBLOCK: LD    HL,BLKSHFT      ;get logical to physical conversion.
+ GETBLK1:OR      A               ;compute (A)=(A)/2^BLKSHFT.
+         RRA     
+         DEC     C
+-        JP      NZ,GETBLK1
++        JR      NZ,GETBLK1
+         LD      B,A             ;save result in (B).
+         LD      A,8
+         SUB     (HL)
+         LD      C,A             ;compute (C)=8-BLKSHFT.
+         LD      A,(SAVEXT)
+ GETBLK2:DEC     C               ;compute (A)=SAVEXT*2^(8-BLKSHFT).
+-        JP      Z,GETBLK3
++        JR      Z,GETBLK3
+         OR      A
+         RLA     
+-        JP      GETBLK2
++        JR      GETBLK2
+ GETBLK3:ADD     A,B
+         RET     
+ ;
+@@ -1929,7 +1976,7 @@ EXTBLK: LD      HL,(PARAMS)     ;get fcb address.
+         ADD     HL,BC
+         LD      A,(BIGDISK)     ;are we using a big-disk?
+         OR      A
+-        JP      Z,EXTBLK1
++        JR      Z,EXTBLK1
+         LD      L,(HL)          ;no, extract an 8 bit number from the fcb.
+         LD      H,0
+         RET     
+@@ -1966,7 +2013,7 @@ LOGICAL:LD      A,(BLKSHFT)     ;get log2(physical/logical sectors).
+         LD      HL,(BLKNMBR)    ;get physical sector desired.
+ LOGICL1:ADD     HL,HL           ;compute logical sector number.
+         DEC     A               ;note logical sectors are 128 bytes long.
+-        JP      NZ,LOGICL1
++        JR      NZ,LOGICL1
+         LD      (LOGSECT),HL    ;save logical sector.
+         LD      A,(BLKMASK)     ;get block mask.
+         LD      C,A
+@@ -2016,7 +2063,7 @@ STRDATA:CALL    SETHLDE
+ SETNREC:CALL    SETHLDE
+         LD      A,(MODE)        ;get sequential flag (=1).
+         CP      2               ;a 2 indicates that no adder is needed.
+-        JP      NZ,STNREC1
++        JR      NZ,STNREC1
+         XOR     A               ;clear adder (random access?).
+ STNREC1:LD      C,A
+         LD      A,(SAVNREC)     ;get last record number.
+@@ -2039,7 +2086,7 @@ SHIFTR1:DEC     C
+         LD      A,L
+         RRA     
+         LD      L,A
+-        JP      SHIFTR1
++        JR      SHIFTR1
+ ;
+ ;   Compute the check-sum for the directory buffer. Return
+ ; integer sum in (A).
+@@ -2050,7 +2097,7 @@ CHECKSUM: LD    C,128           ;length of buffer.
+ CHKSUM1:ADD     A,(HL)             ;and compute sum ignoring carries.
+         INC     HL
+         DEC     C
+-        JP      NZ,CHKSUM1
++        JR      NZ,CHKSUM1
+         RET     
+ ;
+ ;   Shift (HL) left (C) bits.
+@@ -2059,7 +2106,7 @@ SHIFTL: INC     C
+ SHIFTL1:DEC     C
+         RET     Z
+         ADD     HL,HL           ;shift left 1 bit.
+-        JP      SHIFTL1
++        JR      SHIFTL1
+ ;
+ ;   Routine to set a bit in a 16 bit value contained in (BC).
+ ; The bit set depends on the current drive selection.
+@@ -2218,7 +2265,7 @@ CHECKDIR: LD    HL,(CKSUMTBL)
+         ADD     HL,DE           ;set (HL) to point to byte for this drive.
+         POP     BC
+         INC     C               ;set or check ?
+-        JP      Z,CHKDIR1
++        JR      Z,CHKDIR1
+         CP      (HL)            ;check them.
+         RET     Z               ;return if they are the same.
+         CALL    MOREFLS         ;not the same, do we care?
+@@ -2234,7 +2281,7 @@ DIRWRITE: CALL  SETDIR          ;set checksum byte.
+         CALL    DIRDMA          ;set directory dma address.
+         LD      C,1             ;tell the bios to actually write.
+         CALL    DOWRITE         ;then do the write.
+-        JP      DEFDMA
++        JR      DEFDMA
+ ;
+ ;   Read from the directory.
+ ;
+@@ -2244,7 +2291,7 @@ DIRREAD:CALL    DIRDMA          ;set the directory dma address.
+ ;   Routine to set the dma address to the users choice.
+ ;
+ DEFDMA: LD      HL,USERDMA      ;reset the default dma address and return.
+-        JP      DIRDMA1
++        JR      DIRDMA1
+ ;
+ ;   Routine to set the dma address for directory work.
+ ;
+@@ -2296,14 +2343,14 @@ NXENTRY:LD      HL,(DIRSIZE)    ;get directory entry size limit.
+         INC     HL              ;go on to the next one.
+         LD      (FILEPOS),HL
+         CALL    SUBHL           ;(HL)=(DIRSIZE)-(FILEPOS)
+-        JP      NC,NXENT1       ;is there more room left?
+-        JP      STFILPOS        ;no. Set this flag and return.
++        JR      NC,NXENT1       ;is there more room left?
++        JR      STFILPOS        ;no. Set this flag and return.
+ NXENT1: LD      A,(FILEPOS)     ;get file position within directory.
+         AND     03H             ;only look within this sector (only 4 entries fit).
+         LD      B,5             ;convert to relative position (32 bytes each).
+ NXENT2: ADD     A,A             ;note that this is not efficient code.
+         DEC     B               ;5 'ADD A's would be better.
+-        JP      NZ,NXENT2
++        JR      NZ,NXENT2
+         LD      (FCBPOS),A      ;save it as position of fcb.
+         OR      A
+         RET     NZ              ;return if we are within buffer.
+@@ -2356,7 +2403,7 @@ CKBITMAP: LD    A,C             ;determine bit number of interest.
+         LD      A,(HL)          ;now get correct byte.
+ CKBMAP1:RLCA                    ;get correct bit into position 0.
+         DEC     E
+-        JP      NZ,CKBMAP1
++        JR      NZ,CKBMAP1
+         RET     
+ ;
+ ;   Set or clear the bit map such that block number (BC) will be marked
+@@ -3742,4 +3789,3 @@ CKSUMTBL: DEFB  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+ ;*
+ ;******************   E N D   O F   C P / M   *****************
+ ;*
+-

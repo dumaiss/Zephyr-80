@@ -9,7 +9,7 @@ TOOLS_DIR ?= tools
 SRC_DIR ?= src
 DOCS_DIR ?= docs
 
-CPM22_SRC ?= cpm-2.2/src/cpm22.asm
+CPM22_SRC ?= cpm22/cpm22.asm
 CPMTOOLS_DISKDEF ?= config/diskdef
 
 # Which backend is linked as drive A:.  Exactly one can be, because the BIOS
@@ -224,12 +224,16 @@ $(CPM22_ASXXXX_SRC): $(CPM22_SRC) $(CPM22_CONVERT_TOOL) | $(BUILD_DIR)
 
 $(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm $(CPM22_ASXXXX_SRC) Makefile FORCE | $(BUILD_DIR)
 	sed \
-		-e 's|\.include "../cpm-2.2/src/cpm22.asm"|.include "cpm22_asxxxx.asm"|' \
+		-e 's|\.include "../$(CPM22_SRC)"|.include "cpm22_asxxxx.asm"|' \
 		-e 's|\.include "vdrip_transport.asm"|$(VDRIP_TRANSPORT_INCLUDE)|' \
 		-e 's|^VDRIP_TRANSPORT_LINKED = 1$$|VDRIP_TRANSPORT_LINKED = $(VDRIP_TRANSPORT_LINKED)|' \
 		-e 's|\.include "cbios_console_vdrip.asm"|.include "cbios_console_$(CONSOLE).asm"|' \
 		-e 's|\.include "cbios_storage_vdrip.asm"|.include "cbios_storage_$(STORAGE_A).asm"|' \
 		"$<" > "$@"
+	@grep -q 'cpm22_asxxxx\.asm' "$@" || { \
+		echo "The CP/M include rewrite matched nothing in $@."; \
+		echo "CPM22_SRC ($(CPM22_SRC)) and the .include in $(SRC_DIR)/zephyr.asm have drifted apart."; \
+		exit 1; }
 
 $(FIRMWARE_REL): $(FIRMWARE_SRC) $(RUNTIME_SRCS) $(CPM22_ASXXXX_SRC) $(CPM22_SRC) | $(BUILD_DIR)
 	$(SDASZ80) -I$(SRC_DIR) -I$(BUILD_DIR) $(ASFLAGS) $@ $(FIRMWARE_SRC)

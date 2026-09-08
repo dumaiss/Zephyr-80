@@ -34,7 +34,7 @@ reset_vector:
 
 cpm:
 ; Stock CP/M 2.2 source remains read-only in cpm-2.2.
-	.include "../cpm-2.2/src/cpm22.asm"
+	.include "../cpm22/cpm22.asm"
 
 ; CP/M BIOS jump table.
 ;

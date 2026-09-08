@@ -41,8 +41,8 @@ Planned later:
 
 ## Architecture Summary
 
-The firmware keeps stock CP/M source under `cpm-2.2/` and adds local Zephyr-80
-runtime code under `src/`. The top-level runtime wrapper assembles CP/M, installs
+The firmware keeps patched stock CP/M source under `cpm22/` and adds local
+Zephyr-80 runtime code under `src/`. The top-level runtime wrapper assembles CP/M, installs
 the BIOS jump table at `DA00h`, and includes the local CBIOS modules.
 
 Important runtime areas:
@@ -220,7 +220,10 @@ python3 tools/generate_memory_docs.py \
 
 ```text
 src/        Zephyr-80 CBIOS and platform-specific runtime source
-cpm-2.2/    CP/M 2.2 source and reference material
+cpm22/      stock CP/M 2.2 CCP+BDOS source, with the local patches
+zcpr2/      ZCPR2 command processor (replaces the stock CCP)
+zsdos/      ZSDOS (replaces the stock BDOS)
+cpm-2.2/    upstream submodule: manuals and stock .COM files, not built
 tools/      image-building, conversion, and documentation tools
 images/     payload and disk-format inputs
 docs/       generated and hand-written project documentation
