@@ -101,6 +101,28 @@ The discriminator that found the XC8 seven is worth reusing: *correctness
 storage is read back inside the module; telemetry is only written there and read
 from outside.*
 
+### A helper that reads its caller's variables is coupled to that caller
+
+The BIOS's `ccp_clear_redraw` looked like a display routine — clear the screen,
+draw the prompt. It also read `ACTIVE` and `USERNO` and wrote `CURPOS` and
+`STARTING`, all four of them **private variables of the stock BDOS**, at fixed
+addresses inside the region a BDOS replacement overwrites.
+
+Calling it from ZSDOS therefore printed a prompt built from message-string bytes
+(`K=` instead of `A`) and, far worse, **overwrote a `RET` instruction with
+`03h` on every keystroke** — ZSDOS fell through a return into a string as code.
+The visible symptom was cosmetic; the real one was silent.
+
+Nothing in the routine's name, signature or comment said "only valid while the
+stock BDOS is resident". The fix was to need none of it: the console driver
+already clears on `0Ch`, and the drive and user are in page zero at `0004h`
+where every CP/M maintains them.
+
+**Before reusing a routine across a component swap, check what it touches, not
+what it is called.** The same shape appeared twice more in one afternoon —
+`RDBUFCCP` compared against one CCP's buffer address, and `NBYTES` stored
+history inside the CCP that a replacement CCP does not have.
+
 ### One flag must gate one variable
 
 The single most expensive process error in the project's history. During the
@@ -220,10 +242,26 @@ socket with the same firmware. Brand, controller batch, capacity and adapter use
 are confounded in that sample — treat both failing cards as **one** result, not
 two independent data points.
 
-The conservative settings in `sd_card.h` (125 kHz init, 12 power-up clocks with
-CS high, 10 ms settle, CRC verification on) exist because of this and should be
-relaxed **one at a time**, keeping the CRC check, so a regression names its own
-cause.
+The conservative settings in `sd_card.h` (125 kHz init, 12 power-up bytes or 96
+clocks with CS high, 10 ms settle, CRC verification on) exist because of this
+and should be relaxed **one at a time**, keeping the CRC check, so a regression
+names its own cause.
+
+The first successful compatibility change came from comparing the driver with
+John Winans' Z80 Retro implementation. Both drivers deassert CS between `CMD55`
+and `ACMD41`, so that transaction boundary was not the fault and must not be
+removed. The important difference was at the end of each transaction: John's
+driver emits one `FFh` byte while the SD card is still selected, then raises CS
+and emits another two `FFh` bytes.
+
+`sd_deselect()` now preserves that exact order: **8 trailing clocks with SD CS
+low, followed by 16 idle clocks with every SPI1 device deselected.** With that
+single change, a previously failing card initialized through multiple cold
+boots and completed VGM playback of a 120 KiB song, exercising sustained
+multi-block reads. This is strong preliminary evidence, not yet a completed
+soak test. If this failure is revisited, preserve the selected trailing byte
+before changing initialization commands, retry counts, or the `CMD55`/
+`ACMD41` boundary.
 
 ### V9958 R#8 `VR` must be 1 on 64K×4 DRAM
 
@@ -297,6 +335,44 @@ The technique that eventually worked, and is worth reusing:
 
 Also worth building: a *control* that changes size without changing code. Adding
 36 KB of inert `const` to a working firmware proved image size was irrelevant.
+
+### Period toolchains fail in ways that name nothing
+
+Bringing ZCPR2 and ZSDOS into the ROM meant running 1980s CP/M assemblers under
+an emulator, and every failure was silent or misdirected:
+
+- **A CRLF slip reports as `INPUT LINE TOO LONG`.** Three lines edited into a
+  config file with `\n` instead of `\r\n` made ZMAC see the whole file as one
+  line. The error named neither the file nor the line number. Both build
+  scripts now check line endings before assembling.
+- **DRI's `LINK.COM` prints `ABORTED` and nothing else** on `ZMAC` output —
+  bare, with no options, no diagnostic. Microsoft's `L80` reads the identical
+  `.REL` fine. The DRI linker is kept vendored purely to record that it does not
+  work here.
+- **The emulator does not exit when its input ends**, so a build that "hangs"
+  may have finished correctly minutes earlier. Twice I let a timeout expire
+  before checking, and both times the output files were already sitting there.
+  **Judge these builds by their artefacts, not by process exit.** The scripts
+  now watch for the assembler's completion line and stop on it — 1.8 seconds
+  instead of two minutes.
+
+The general rule: when driving a tool that predates useful error reporting,
+build the check into the harness, because the tool will not tell you.
+
+### Zephyr-80 is a textbook 56K CP/M, and that keeps paying
+
+`CBASE=C400h`, `FBASE=CC06h`, `CBIOS_BASE=DA00h` are exactly what the standard
+formulas produce:
+
+```
+CPRLOC = 3400H + (MSIZE-20-BIOSEX)*1024     ; MSIZE=56, BIOSEX=0  -> C400h
+BIOS   = CPRLOC + 800H + 0E00H              ;                     -> DA00h
+```
+
+Both ZCPR2's `Z2HDR.LIB` and ZSDOS's `zsdos.lib` compute their addresses that
+way, so each needed **one or two equates changed and nothing else**. Period
+software drops onto this machine without adjustment, and that is worth
+preserving the next time the memory map is tempted to move.
 
 ### `make` can succeed and build nothing — twice, by two mechanisms
 
@@ -478,7 +554,7 @@ misrepresents the project.
 
 | Item | State |
 |---|---|
-| INDMEM SD cards fail ACMD41 startup | Diagnosed to a card family; remediation phases 3–4 pending |
+| INDMEM SD cards fail ACMD41 startup | Selected trailing byte fixes cold boots and a 120 KiB VGM read; extended soak testing pending |
 | `CONSOLE=vdrip STORAGE_A=vdrip` | Deliberately left failing — 22 bytes over driver slot 5 |
 | CTC1 / CTC2 interrupts | Unresolved observation from VGM bring-up; not proven defective |
 | `/USB_INT` input threshold at RA0 | Never checked; would present as "enumeration never starts" |

@@ -1,0 +1,4 @@
+# Everything the build produces.  Nothing here is a source, and nothing here
+# should be committed -- the ROM staging tree used to be, and its checked-in
+# copies drifted from the projects that actually produce them.
+build/

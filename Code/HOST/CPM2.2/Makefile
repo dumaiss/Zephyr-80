@@ -10,7 +10,7 @@ SRC_DIR ?= src
 DOCS_DIR ?= docs
 
 CPM22_SRC ?= cpm-2.2/src/cpm22.asm
-CPMTOOLS_DISKDEF ?= images/diskdef
+CPMTOOLS_DISKDEF ?= config/diskdef
 
 # Which backend is linked as drive A:.  Exactly one can be, because the BIOS
 # common window has no room for two; they all .org at CBIOS_STORAGE_A_CODE_BASE
@@ -128,7 +128,7 @@ ROM_DISK_TOOL := $(TOOLS_DIR)/build_rom_disk.py
 # them all.
 ROM_DISK_PROFILE ?= normal
 
-PAYLOAD_CONFIG ?= images/banks.ini
+PAYLOAD_CONFIG ?= config/banks.ini
 ROM_DISK_PAGES ?= 3
 ROM_DISK_IMAGE ?= $(BUILD_DIR)/romdisk.img
 # Staging for the ROM A: volume.  A BUILD OUTPUT, not a source: build_rom_disk.py
@@ -169,7 +169,27 @@ FORCE:
 
 all: image
 
+# The built ROM is also copied to a name that states its configuration, and the
+# configuration is printed at the end of every build.
+#
+# This exists because a plain `make` leaves build/zephyr80.bin holding the STOCK
+# system, and a `make CCP=zcpr2 BDOS=zsdos` leaves the same filename holding a
+# Z-System.  Nothing about the file says which -- so verifying one configuration
+# and then flashing "the ROM" can silently flash the other.  That happened.
+# Deferred (=), not immediate (:=): CCP and BDOS are defined further down this
+# file, so an immediate assignment here expands them as empty and produces
+# "zephyr80--.bin".
+CPM_CONFIG = $(CCP)-$(BDOS)
+STAMPED_IMAGE = $(BUILD_DIR)/zephyr80-$(CPM_CONFIG).bin
+
 image: $(FINAL_IMAGE) docs
+	@cp "$(FINAL_IMAGE)" "$(STAMPED_IMAGE)"
+	@echo ""
+	@echo "  ROM built:  CCP=$(CCP)  BDOS=$(BDOS)"
+	@echo "    $(FINAL_IMAGE)"
+	@echo "    $(STAMPED_IMAGE)   <- flash this one to be sure"
+	@echo ""
+
 
 docs: $(FINAL_IMAGE) $(FIRMWARE_LST) $(SYMBOLS_FILE) $(LAYOUT_MANIFEST) $(MEMORY_DOC_TOOL)
 	$(PYTHON) $(MEMORY_DOC_TOOL) \
@@ -220,8 +240,66 @@ $(FIRMWARE_IHX): $(FIRMWARE_REL)
 	$(PYTHON) $(TOOLS_DIR)/check_diag_record.py \
 		--defs "$(SRC_DIR)/cbios_defs.inc" --mirror "$(DIAG_RECORD_MIRROR)"
 
+# Which command processor and BDOS the ROM carries.
+#
+#   CCP  = stock | zcpr2    C400h-CBFFh
+#   BDOS = stock | zsdos    CC00h-D9FFh
+#
+# Both are assembled into the firmware image like everything else, so selecting
+# one is a byte replacement at a fixed address rather than a link change.  The
+# two are independent: ZSDOS runs under the stock CCP and ZCPR2 runs over the
+# stock BDOS.
+#
+# Neither is built by a plain `make`: both need a CP/M emulator to run their
+# period assemblers, so they are explicit targets.  `make CCP=zcpr2` fails with
+# a clear message if `make zcpr2` has not been run.
+CCP  ?= stock
+BDOS ?= stock
+
+CBASE_ADDR ?= 0xC400
+ZCPR2_BIN  ?= $(BUILD_DIR)/ccp-zcpr2.bin
+ZSDOS_BIN  ?= $(BUILD_DIR)/bdos-zsdos.bin
+PATCH_CPM  := $(TOOLS_DIR)/patch_cpm.py
+
+ZCPR2_SRCS := $(wildcard zcpr2/src/*) zcpr2/build-zcpr2.sh $(TOOLS_DIR)/hex_to_ccp.py
+ZSDOS_SRCS := $(wildcard zsdos/src/*) zsdos/build-zsdos.sh $(TOOLS_DIR)/l80_slice.py
+
+.PHONY: zcpr2 zsdos
+zcpr2: $(ZCPR2_BIN)
+zsdos: $(ZSDOS_BIN)
+
+$(ZCPR2_BIN): $(ZCPR2_SRCS) | $(BUILD_DIR)
+	./zcpr2/build-zcpr2.sh $(BUILD_DIR)/zcpr2-build $@
+
+# Depends on the symbol map: ZSDOS calls two BIOS helpers by absolute address,
+# and both move when the BIOS is rebuilt.  The addresses are generated, never
+# written down -- a stale one would assemble cleanly and jump into the middle of
+# something at run time.
+$(ZSDOS_BIN): $(ZSDOS_SRCS) $(SYMBOLS_FILE) $(TOOLS_DIR)/gen_zsdos_bios.py | $(BUILD_DIR)
+	./zsdos/build-zsdos.sh $(BUILD_DIR)/zsdos-build $@ $(SYMBOLS_FILE)
+
+CPM_PATCH_ARGS :=
+CPM_PATCH_DEPS :=
+ifeq ($(CCP),zcpr2)
+CPM_PATCH_ARGS += --ccp $(ZCPR2_BIN)
+CPM_PATCH_DEPS += $(ZCPR2_BIN)
+endif
+ifeq ($(BDOS),zsdos)
+CPM_PATCH_ARGS += --bdos $(ZSDOS_BIN)
+CPM_PATCH_DEPS += $(ZSDOS_BIN)
+endif
+
+$(FIRMWARE_BIN): $(CPM_PATCH_DEPS)
+
 $(FIRMWARE_BIN): $(FIRMWARE_IHX)
 	$(MAKEBIN) $(MAKEBIN_FLAGS) $< $@
+ifneq ($(strip $(CPM_PATCH_ARGS)),)
+	@for f in $(CPM_PATCH_DEPS); do test -f "$$f" || { \
+		echo "Missing $$f -- run 'make zcpr2' / 'make zsdos' (both need RUNCPM)"; \
+		exit 1; }; done
+	$(PYTHON) $(PATCH_CPM) --firmware $@ $(CPM_PATCH_ARGS) \
+		--cbase $(CBASE_ADDR) --output $@
+endif
 
 $(SYMBOLS_FILE): $(FIRMWARE_REL)
 	cp "$(FIRMWARE_SYM)" "$@"

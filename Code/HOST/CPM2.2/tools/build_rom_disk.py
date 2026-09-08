@@ -106,6 +106,11 @@ MANIFEST = (
     # which is the slowest possible way to discover that an image failed to
     # mount and the firmware fell back to raw.
     ("utils", "volinfo.com", "VOLINFO.COM", PROFILE_NORMAL),
+    # Reports which CCP and BDOS are actually EXECUTING, read out of RAM rather
+    # than inferred from what was meant to be flashed.  Uses no IO Controller
+    # traffic, so it answers when the link is dead -- which is when the question
+    # tends to be asked.
+    ("utils", "sysid.com", "SYSID.COM", PROFILE_NORMAL),
     # The /SHARED/ folder tools.  Rescue tools in the most literal sense: with a
     # FAT card in the socket these are how a file gets off this machine, or onto
     # it, when nothing else works -- no serial link, no second drive.  None can
@@ -174,7 +179,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stock-dir0", type=Path, default=Path("../Software/disk1/0"))
     parser.add_argument("--stock-dir1", type=Path, default=Path("../Software/disk1/1"))
     parser.add_argument("--staging-dir", type=Path, default=Path("build/romdisk-stage"))
-    parser.add_argument("--diskdef", type=Path, default=Path("images/diskdef"))
+    parser.add_argument("--diskdef", type=Path, default=Path("config/diskdef"))
     parser.add_argument("--format", dest="disk_format", default="zephyr80-rom")
     parser.add_argument("--build-dir", type=Path, default=Path("build"))
     parser.add_argument("--image", type=Path, default=Path("build/romdisk.img"))
