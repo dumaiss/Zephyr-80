@@ -1,7 +1,7 @@
 ; Local Zephyr-80 CP/M 2.2 runtime definitions.
 ;
 ; Board-specific code includes this file instead of editing the stock CP/M
-; source under cpm-2.2.
+; source in cpm22/.
 ;
 ; ------------------------------------------------------------------------------
 ; Transitional fixed-slot BIOS map, with Virtual Drip

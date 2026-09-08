@@ -33,7 +33,9 @@ reset_vector:
 	jp cpm_rom_entry_high
 
 cpm:
-; Stock CP/M 2.2 source remains read-only in cpm-2.2.
+; Stock CP/M 2.2 CCP+BDOS, vendored with local patches; see cpm22/README.md.
+; The Makefile rewrites this include to the asxxxx-converted copy in build/,
+; matching on CPM22_SRC -- keep the two in step or the build stops.
 	.include "../cpm22/cpm22.asm"
 
 ; CP/M BIOS jump table.
