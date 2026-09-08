@@ -30,7 +30,8 @@ ZCPR2 is configured here to need **nothing** outside the 2 KiB slot:
 | `EXTFCB` | `TRUE`, `FCBADR=005Ch` | reuses page zero's standard FCB, not extra RAM |
 | `WHEEL` | `FALSE` | no wheel byte |
 
-Built with those, ZCPR2 assembles to **1989 bytes of the 2048-byte slot**.
+Built with those, ZCPR2 assembles to **1987 bytes of code in the 2048-byte
+slot**; its internal 48-byte stack occupies most of the reported remainder.
 
 ZCPR3 was considered and rejected: its environment (`Z3ENV`, plus `NDR`, `FCP`,
 `RCP`) must be common and would come out of that same 1 KiB. Its prebuilt
@@ -60,6 +61,17 @@ both cold and warm boot, which is the second of the pair. ZCPR2 keeps the
 convention — as built here, `C400h -> JP C4BAh` (CPR) and `C403h -> JP C4B6h`
 (CPR1). `tools/patch_ccp.py` refuses to install anything that does not begin
 with that two-jump header.
+
+## One-line recall cooperation
+
+ZCPR2 leaves the preceding command text in `CMDLIN` until ZSDOS function 10
+begins reading the next line. ZSDOS saves the preceding length, clears the
+current length normally, and uses the retained bytes when `^R` is pressed on an
+empty CCP line. Non-empty-line `^R` remains the standard retype operation.
+
+The warm-entry path still clears `CMDLIN`, and this machine restores the CCP
+from ROM on WBOOT, so recall intentionally does not survive a warm boot. No
+external buffer or common-TPA allocation is used.
 
 ## What is NOT replaced
 
@@ -119,7 +131,7 @@ builds without depending on anything outside the repository:
 
 | Path | What |
 |---|---|
-| `src/ZCPR2.ASM` | ZCPR2 source, unmodified |
+| `src/ZCPR2.ASM` | ZCPR2 source, locally patched to retain `CMDLIN` for ZSDOS empty-line `^R` recall |
 | `src/Z2HDR.LIB` | configuration header, retargeted |
 | `tools/MAC.COM` | DRI macro assembler — reads the `MACLIB`/macro dialect nothing else does |
 | `tools/MLOAD.COM` | kept for reference; `tools/hex_to_ccp.py` does the HEX→binary step |

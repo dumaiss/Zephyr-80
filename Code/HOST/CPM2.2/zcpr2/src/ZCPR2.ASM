@@ -506,7 +506,9 @@ RS00:
 RS000:
 	LXI	H,CMDLIN	;SET POINTER TO FIRST CHAR IN COMMAND LINE
 	SHLD	NXTCHR		;POINTER TO NEXT CHARACTER TO PROCESS
-	MVI	M,0		;ZERO OUT COMMAND LINE IN CASE OF WARM BOOT
+	; Leave the previous text in place until BDOS reads the next line.  ZSDOS
+	; uses it for empty-line ^R recall; its length byte is still reset by
+	; function 10.  CPR1 clears CMDLIN after a warm boot.
 	PUSH	H		;SAVE PTR
 	CALL	REDBUF		;INPUT COMMAND LINE FROM USER (OR $$$.SUB)
 	POP	H		;GET PTR

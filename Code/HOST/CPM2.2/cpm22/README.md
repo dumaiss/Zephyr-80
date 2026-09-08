@@ -41,4 +41,5 @@ diff -u cpm-2.2/src/cpm22.asm cpm22/cpm22.asm
 
 Both `0002` features are **stock-CCP-resident and are lost under ZCPR2** -- the
 history length lives at `NBYTES` (`CBF1h`), inside the CCP slot. Control-L was
-reinstated inside ZSDOS; see `../zsdos/README.md`. Up-arrow was not.
+reinstated inside ZSDOS. One-line recall is available under ZCPR2+ZSDOS as
+empty-line `^R`, rather than literal up-arrow; see `../zsdos/README.md`.

@@ -17,12 +17,14 @@ without any of this.
 ## It fits, but only just
 
 ```
-Total Code Size 0DF6H     = 3574 bytes
+Total Code Size 0DEFH     = 3567 bytes
 Data  CC00  DA00  < 3584> = the whole CC00h-D9FFh slot
 ```
 
-The BDOS slot is 3584 bytes and ZSDOS wants 3574 of them. There is no room to
-enable further options without something else coming out.
+The assembled code ends at offset `0DEFh`. ZSDOS's fixed high-data block begins
+at `0DF1h` and occupies the rest of the 3584-byte BDOS slot, leaving two bytes
+between code and data. There is no room to enable further options without
+something else coming out.
 
 ## Addresses
 
@@ -92,8 +94,8 @@ made against a stock ROM** and is withdrawn — performance has not been
 characterised. Builds are now stamped `zephyr80-<ccp>-<bdos>.bin` so that
 cannot recur, and `SYSID.COM` reports what is actually executing.
 
-Not exercised: datestamping (`ZS=TRUE` expects a clock driver this machine does
-not have), `^R` retype-line, and ZSDOS's internal path.
+Not exercised on hardware: datestamping (`ZS=TRUE` expects a clock driver this
+machine does not have), empty-line `^R` recall, and ZSDOS's internal path.
 
 ## Control-L, and the trap in reusing the BIOS helper
 
@@ -120,23 +122,33 @@ display on a `0Ch`, the drive and user come from **`0004h`** (the CP/M
 convention both the stock CCP and ZCPR2 maintain), and `WRCON` keeps `TABCNT`
 in step by itself. User 0 prints no digit, matching ZCPR2's own prompt.
 
-Cost: **3551 of 3584 bytes, 33 spare**, paid for with `UPATH=FALSE`.
+Together with empty-line `^R` recall, this leaves two bytes between the main
+code and ZSDOS's fixed high-data block. The space is paid for with
+`UPATH=FALSE`.
 
-## Up-arrow recall is not restorable here
+## Empty-line Control-R recall
 
-`NBYTES` — the saved history length — is at **`CBF1h`, inside the CCP slot**.
-The history lived in the *stock CCP's own buffer*, so **any** CCP replacement
-loses it regardless of which BDOS is installed. The BIOS's
-`ccp_read_up_sequence` reads that address, finds zero under ZCPR2, and declines.
+Literal up-arrow recall still cannot reuse the old BIOS hook: `NBYTES`, the
+stock history length, is at `CBF1h` inside the CCP slot and has unrelated
+contents under ZCPR2. ZSDOS instead gives `^R` a second, CCP-only meaning.
 
-Restoring it means ZSDOS keeping its own history: a line buffer plus an ESC
-state machine and replay code, roughly 130 bytes against 33 spare. `CTLREN`
-cannot be traded for the space because Control-L jumps into its retype path.
+When BDOS function 10 starts, ZSDOS saves the buffer's preceding length before
+clearing the current length. ZCPR2 leaves the preceding text bytes in its input
+buffer. If `^R` is pressed on an empty CCP line, ZSDOS restores that length and
+enters its existing retype loop, leaving the recalled command editable. On a
+non-empty line, and for non-CCP function-10 callers, `^R` retains its standard
+retype-current-line behavior. Control-L continues to share the same retype
+loop.
 
-The viable route, not taken: put the buffer and save/replay in the BIOS, which
-has a 77-byte contiguous fragment, and call it from ZSDOS through generated
-addresses the way `gen_zsdos_bios.py` already does. ZSDOS's share would be ~40
-bytes, inside budget.
+No second command buffer is allocated. Consequently, a blank command replaces
+the retained text, and a warm boot deliberately loses history when the ROM copy
+restores ZCPR2 with a zero command length. Resident commands and transient
+programs that return to ZCPR2 with `RET` retain one command. Programs that exit
+through WBOOT do not.
+
+The ZSDOS delta is 16 bytes. The saved length lives in the immediate operand of
+the recall load instruction, avoiding a separate data byte in the nearly full
+BDOS slot.
 
 ## Provenance and licence
 

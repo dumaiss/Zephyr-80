@@ -560,6 +560,8 @@ CMND07:	LD	A,(RAMLOW+0003H) ; Get I/O byte from RAM
 CMND10:	LD	A,(TABCNT)
 	LD	(TABCX1),A	; Save start tab position
 	INC	DE
+	LD	A,(DE)		; Save preceding line length before clearing it
+	LD	(HISTLN),A	; ..in the inline ^R recall operand below
 	XOR	A
 	LD	(DE),A		; Set char count to zero
 	INC	DE		; Point to actual buffer start
@@ -722,6 +724,15 @@ RDBUF4:			; If CTL-R=True, do following code, else bypass
 	  IF  CTLREN
 	CP	CONTR		; If ^R, type clean buffer version on console
 	JR	NZ,RDBUF5
+	LD	A,(HL)		; Keep stock ^R retype on a non-empty line
+	OR	A
+	JR	NZ,RETYPR
+	CALL	CCPBUF		; Empty-line recall is private to CCP input
+	JR	NZ,RETYPR	; ..other callers retain stock ^R behavior
+HISTLN	EQU	$+1		; Self-modified at CMND10 entry; saves one byte
+	LD	A,0		; Previous function-10 buffer length
+	LD	(HL),A		; Restore it; old text bytes are still in place
+RETYPR:
 	PUSH	HL		; Save pointer to buffer length
 	CALL	CROUT		; Do CR/LF
 	LD	HL,TABCNT

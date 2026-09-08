@@ -158,10 +158,10 @@ FLGBITS	EQU	01101101B	; PUBLIC On, P/P Write Off, R/O On,
 	  IF ZS
 CTLREN	EQU	TRUE
 UNROLL	EQU	TRUE
-UPATH	EQU	FALSE	; [Zephyr-80] pays for the Control-L handler: the BDOS
-			;   slot has 10 spare bytes and this frees 95.  ZCPR2 still
-			;   searches its own path for commands; what is given up is
-			;   BDOS-level path search on every file open.
+UPATH	EQU	FALSE	; [Zephyr-80] pays for the Control-L handler and
+			;   empty-line ^R recall.  ZCPR2 still searches its own path
+			;   for commands; what is given up is BDOS-level path search
+			;   on every file open.
 PICKEY	EQU	FALSE
 	  ELSE
 CTLREN	EQU	FALSE
