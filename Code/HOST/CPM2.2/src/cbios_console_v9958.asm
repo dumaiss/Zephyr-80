@@ -82,6 +82,32 @@ V9958_CURSOR_PATTERN_INDEX = 0x3f
 V9958_CURSOR_HIDE_Y	= 0xd8
 V9958_CURSOR_COLOR	= 0x0b
 
+; Idle-spin throttle for the blocking CONIN wait.
+;
+; This loop is the only thing running while CP/M sits at the prompt, and reading
+; the /CTSB doorbell every pass drove an OUT/IN to SIO1/B every ~12.7 us.  That
+; is audible: measured at -50 dB in the ~200 Hz range, present at the prompt,
+; gone during a file read, and gone during playback INCLUDING the song's silent
+; bars.  Holding the Z80 in reset silences it completely.
+;
+; The mechanism is not bus activity -- a VGM player writes sound registers far
+; more heavily than this loop ever did and is silent.  There are no regulators
+; on any board; the PSU supplies 3v3 and 5v directly, so the CPU's current draw
+; modulates the shared rail with nothing to reject it, and a perfectly periodic
+; loop concentrates that modulation into a few discrete frequencies instead of
+; spreading it.  Player code is aperiodic and disappears into the noise floor;
+; this loop was not, and did not.
+;
+; So the cure is to make the periodic event rare rather than cheap.  The counter
+; below is register-only -- no bus cycles at all -- and sizes the doorbell read
+; at roughly 100 Hz.  Each unit is 26 T-states at 10 MHz, so 3800 is about
+; 9.9 ms.  Keystroke latency is bounded by that and no typist can perceive it;
+; the IOC's own auto-repeat runs at a 60 ms period, so repeat is unaffected too.
+;
+; If any tone remains, this constant is the knob: halving it doubles the rate.
+; A residual that does NOT move with it is not coming from this loop.
+V9958_CONIN_SPIN_DELAY	= 3800
+
 FONT_BYTES		= 2048
 PRINT_RUN_SIZE		= 64
 ATLAS_ROW_BYTES		= V9958_ATLAS_COLS * 3
@@ -299,7 +325,8 @@ v9958_console_const:
 	call v9958_present
 v9958_console_const_output_done:
 
-	; hid_input_status rate-limits itself, so this is safe on
+	; hid_input_status reads the /CTSB doorbell and issues an IOCALL only when
+	; the controller says it has something, so this is safe on
 	; the BDOS output path -- OUTCHAR calls CONST once per character printed,
 	; and an unconditional IOCALL here would add ~0.6 ms to every one of them.
 	call hid_input_status
@@ -343,9 +370,23 @@ v9958_console_conin:
 	call v9958_present
 
 v9958_console_conin_wait:
-	; The blocking spin is where the adaptive backoff earns its keep: it runs
-	; thousands of times a second, so a keystroke lands in well under a
-	; millisecond even at the maximum interval.
+	; Spin without touching the bus, then look at the doorbell once.
+	;
+	; The doorbell already removed the old rate-limited IOCALL, whose burst of
+	; MCU-clocked frames tens of times a second was the loud buzz.  What was
+	; left was this loop reading SIO1/B flat out; the delay is what makes an
+	; idle prompt quiet.  See V9958_CONIN_SPIN_DELAY above.
+	;
+	; Nothing else needs servicing here: console receive is interrupt-driven on
+	; SIO0/B, and the doorbell is a level, so a keystroke that arrives during
+	; the delay is still waiting when the loop looks.
+	ld hl,#V9958_CONIN_SPIN_DELAY
+v9958_console_conin_idle:
+	dec hl
+	ld a,h
+	or l
+	jr nz,v9958_console_conin_idle
+
 	call hid_input_status
 	or a
 	jr z,v9958_console_conin_wait

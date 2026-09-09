@@ -500,8 +500,13 @@ CBIOS_DRIVER_SLOT3_END          = CBIOS_DRIVER_SLOT3_LIMIT - 1
 ; between the console driver's code end and the Bulk lane's base at ED00h.
 ; They live here rather than beside their bodies because the Bulk region runs
 ; solid from ED00h to the EFFFh slot ceiling; this is the nearest free run.
-; 34 bytes used of 90.  See CBIOS_XPORT_STACK_TOP for why they exist.
-CBIOS_XPORT_SHIM_CODE_BASE      = 0xeca6
+; 34 bytes used of 82.  See CBIOS_XPORT_STACK_TOP for why they exist.
+;
+; This base is the V9958 console's code end, not a fixed boundary: it was ECA6h
+; until the console's idle-spin delay grew the driver by eight bytes.  Growing
+; the console again means moving this up again, and the slack is what pays for
+; it -- check_overlap.py names this symbol when the two collide.
+CBIOS_XPORT_SHIM_CODE_BASE      = 0xecae
 
 CBIOS_DRIVER_SLOT4_BASE         = 0xf000
 CBIOS_DRIVER_SLOT4_LIMIT        = CBIOS_DRIVER_SLOT4_BASE + CBIOS_DRIVER_SLOT_SIZE
@@ -744,9 +749,9 @@ CBIOS_HID_INPUT_CODE_BASE       = 0xef3e
 ; FD00h-FDFFh is SD_STORAGE_ALV_BUFFER, the SD drive's CP/M allocation vector.
 ;
 ; The request frame is only five bytes (TYPE/SEQ/STATUS/LEN/max-wanted), not a
-; full 32-byte mailbox.  Together with the 32-byte reply, 16-byte queue and five
-; queue-control bytes, the state occupies 58 bytes: F642h-F67Bh.  The VDrip
-; transport begins at F680h, leaving four guard bytes.
+; full 32-byte mailbox.  Together with the 32-byte reply, 16-byte queue and four
+; queue-control bytes, the state occupies 57 bytes: F642h-F67Ah.  The VDrip
+; transport begins at F680h, leaving five guard bytes.
 CBIOS_HID_INPUT_STATE_BASE      = 0xf642
 
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h

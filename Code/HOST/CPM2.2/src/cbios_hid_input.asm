@@ -10,32 +10,60 @@
 ; Dropping proxy keyboard support later is then a matter of the proxy simply not
 ; sending -- textq stays empty and nothing here changes.
 ;
-; POLLING, AND WHY THERE IS NO TIMER
+; THE DOORBELL, AND WHY THERE IS NO TIMER
 ;
 ; CONST is the poll point, and CP/M calls it hard: BDOS OUTCHAR calls CONST once
 ; per character printed, before every CONOUT.  A full IOCALL is roughly 0.6 ms,
-; so polling the controller on every CONST would add that to every character of
-; console output -- about 48 ms per 80-column line.  That is the whole reason
-; this is rate limited.
+; so asking the controller on every CONST would add that to every character of
+; console output -- about 48 ms per 80-column line.
 ;
-; The limiter counts CONST calls rather than time, and needs no timer, because
-; the controller already has both the clock and the buffer.  Keystrokes are
-; never lost by asking late: they accumulate in the IOC's queue and arrive
-; whenever the host next asks.  That makes wall-clock latency irrelevant in the
-; only case a timer would help -- a program computing without calling CONST --
-; because there is nowhere better to put the bytes than the queue they are
-; already in.
+; So CONST does not ask the controller; it looks at a wire.  The IOC asserts
+; /CTSB on SIO1/B while its keyboard queue holds anything and releases it when
+; the queue empties, and that level appears as RR0 bit 5 on the command lane's
+; control port.  Reading it is one OUT and one IN -- call it 15 us -- and the
+; IOCALL happens only when there is something to fetch.  An idle machine pays
+; nothing, and a keystroke is picked up on the very next CONST.
 ;
-; The interval is adaptive rather than fixed, which matches the two regimes CP/M
-; actually produces:
+; No timer is needed because the controller already has both the clock and the
+; buffer: keystrokes are never lost by asking late, they accumulate in the IOC's
+; queue.  That is also why the doorbell is a LEVEL and not an edge -- this code
+; samples the current state and never counts transitions, so nothing is lost if
+; the SIO's status latch swallows a change.
 ;
-;   - typing arrives in bursts, so a poll that returns data drops the interval
-;     to 1 and the rest of the burst is fetched at full rate;
-;   - an idle CONST spin backs off to HID_BACKOFF_MAX, and since that spin runs
-;     thousands of times a second the first keystroke still lands in well under
-;     a millisecond;
-;   - console output calls CONST once per character, so the same backoff costs
-;     roughly 10 us per character amortised instead of 600.
+; WHY /CTSB CANNOT DISTURB EXTERNAL SYNC
+;
+; The character boundary on SIO1/B is established by the MCU's falling /SYNCB
+; edge alone.  Only three things end character assembly -- chip reset, receiver
+; disabled, and Enter Hunt Phase -- and a CTS transition is none of them.  The
+; single path by which CTS could gate anything is Auto Enables, WR3 bit 5, which
+; is clear on this channel and must stay clear.  SIO1/A is deliberately the
+; opposite, where /DCDA does gate the receiver.  So the doorbell needs no
+; LINK_SYNC and leaves ioc_rx_synced alone.
+;
+; THE RESET EXTERNAL/STATUS BEFORE THE READ IS NOT OPTIONAL
+;
+; The SIO latches ALL of RR0's status bits together on any status change, so a
+; stale latch could report a level the pin no longer carries.  Every reader of
+; RR0 on this port unlatches first; sio_command_wait_ready does exactly the same
+; before sampling /DCDB.
+;
+; FOREGROUND ONLY
+;
+; This must never be called from interrupt context.  ioc_command_recv_frame
+; scans for the reply marker with interrupts ENABLED, polling RR0 on this same
+; port as a WR0 pointer write followed by an IN; an ISR landing between those two
+; instructions would corrupt the read.  CONST is task level, so this is safe, and
+; it is the reason the doorbell is not wired to the SIO's External/Status
+; interrupt.
+;
+; THE STUCK-DOORBELL GUARD
+;
+; A controller that died with the line asserted would otherwise put a full IOCALL
+; timeout on every CONST, which reads as a hung machine.  So a fetch that returns
+; nothing despite the doorbell makes the next HID_STUCK_PENALTY calls ignore it,
+; and any fetch that produces data -- or a released doorbell, the normal idle
+; case -- clears the penalty immediately.  In healthy operation the penalty is
+; always zero and costs one compare.
 
 	.globl hid_input_init,hid_input_status,hid_input_get
 
@@ -46,8 +74,12 @@ HID_INPUT_CODE_START:
 
 HID_Q_SIZE		= 16
 HID_Q_MASK		= (HID_Q_SIZE - 1)
-HID_BACKOFF_MIN		= 1
-HID_BACKOFF_MAX		= 64
+; CONST calls to ignore the doorbell after a fetch that returned nothing.
+HID_STUCK_PENALTY	= 64
+
+; RR0 bit 5 is CTS: SET means the pin is asserted (low), i.e. the controller
+; has queued input.  Same convention as the /CTSA waits in cbios_ioc_command.
+HID_DOORBELL_MASK	= 0x20
 
 CMD_HID_INPUT		= 0x0e
 RSP_HID_INPUT		= 0x8e
@@ -68,9 +100,7 @@ hid_input_init:
 	ld (hid_q_tail),a
 	ld (hid_q_count),a
 	ld (hid_tx_frame + 2),a		; status
-	ld a,#HID_BACKOFF_MIN
-	ld (hid_backoff),a
-	ld (hid_countdown),a
+	ld (hid_penalty),a
 
 	ld a,#CMD_HID_INPUT
 	ld (hid_tx_frame + 0),a
@@ -81,49 +111,57 @@ hid_input_init:
 ; ---------------------------------------------------------------------------
 ; hid_input_status — A = FFh if a USB byte is available, 00h otherwise
 ; ---------------------------------------------------------------------------
-; Polls the controller at most once every hid_backoff calls.  Safe to call from
-; a hot CONST loop; that is the design point.
+; Reads the /CTSB doorbell and fetches only when the controller says it has
+; something.  Safe to call from a hot CONST loop; that is the design point.
 ; Clobbers: AF, BC, DE, HL.
 hid_input_status:
 	ld a,(hid_q_count)
 	or a
 	jr nz,hid_status_yes
 
-	ld a,(hid_countdown)
-	dec a
-	ld (hid_countdown),a
+	; Unlatch RR0's status bits, then sample the doorbell.
+	ld a,#SIO_WR0_RESET_EXT_STATUS
+	out (SIO_COMMAND_CTRL_PORT),a
+	in a,(SIO_COMMAND_CTRL_PORT)
+	and #HID_DOORBELL_MASK
+	jr nz,hid_status_ring
+
+	; Doorbell released: the controller has nothing.  This is the hot path --
+	; every CONST during console output lands here -- and it also clears the
+	; stuck-doorbell penalty, since a line that can still fall is not stuck.
+	xor a
+	ld (hid_penalty),a
+	ret
+
+hid_status_ring:
+	ld a,(hid_penalty)
 	or a
-	jr z,hid_status_poll
+	jr z,hid_status_fetch
+	dec a
+	ld (hid_penalty),a
 	xor a
 	ret
 
-hid_status_poll:
+hid_status_fetch:
 	call hid_input_poll
 	ld a,(hid_q_count)
 	or a
-	jr nz,hid_status_got
-
-	; Nothing waiting — double the interval, capped.
-	ld a,(hid_backoff)
-	add a,a
-	jr c,hid_status_cap
-	cp #(HID_BACKOFF_MAX + 1)
-	jr c,hid_status_set
-hid_status_cap:
-	ld a,#HID_BACKOFF_MAX
-hid_status_set:
-	ld (hid_backoff),a
-	ld (hid_countdown),a
+	jr z,hid_status_stuck
+	; Data arrived.  Typing comes in bursts and the doorbell stays asserted
+	; until the controller's queue drains, so the rest is fetched at full rate.
 	xor a
-	ret
-
-hid_status_got:
-	; Data arrived — typing comes in bursts, so fetch again next call.
-	ld a,#HID_BACKOFF_MIN
-	ld (hid_backoff),a
-	ld (hid_countdown),a
+	ld (hid_penalty),a
 hid_status_yes:
 	ld a,#0xff
+	ret
+
+hid_status_stuck:
+	; The doorbell said yes and the fetch produced nothing: a transport failure,
+	; or a controller that died with the line asserted.  Ignore it for a while
+	; so a dead IOC cannot put an IOCALL timeout on every CONST.
+	ld a,#HID_STUCK_PENALTY
+	ld (hid_penalty),a
+	xor a
 	ret
 
 ; ---------------------------------------------------------------------------
@@ -249,9 +287,7 @@ hid_q_tail:
 	.db 0
 hid_q_count:
 	.db 0
-hid_backoff:
-	.db 0
-hid_countdown:
+hid_penalty:
 	.db 0
 
 HID_INPUT_STATE_END:

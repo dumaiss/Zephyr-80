@@ -413,7 +413,8 @@ vdrip_console_const_output_done:
 	or a
 	jr nz,vdrip_console_const_ready
 
-	; USB keyboard.  hid_input_status rate-limits itself, so this is safe on
+	; USB keyboard.  hid_input_status reads the /CTSB doorbell and issues an
+	; IOCALL only when the controller says it has something, so this is safe on
 	; the BDOS output path -- OUTCHAR calls CONST once per character printed,
 	; and an unconditional IOCALL here would add ~0.6 ms to every one of them.
 	call hid_input_status
@@ -503,9 +504,12 @@ vdrip_console_conin_wait:
 	ld a,(textq_count)
 	or a
 	jr nz,vdrip_console_conin_have_char
-	; The blocking spin is where the adaptive backoff earns its keep: it runs
-	; thousands of times a second, so a keystroke lands in well under a
-	; millisecond even at the maximum interval.
+	; The blocking spin is where the doorbell earns its keep: it runs thousands
+	; of times a second, and with nothing queued every pass is two I/O cycles
+	; on SIO1/B and no transaction at all.  The MCU's gated serial clock never
+	; runs, which is what makes an idle prompt quiet -- the old rate-limited
+	; poll put a burst of clocked frames on the link tens of times a second,
+	; continuously, and that was audible.
 	call hid_input_status
 	or a
 	jr z,vdrip_console_conin_wait
