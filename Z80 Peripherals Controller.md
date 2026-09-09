@@ -9,7 +9,7 @@ The authoritative implementation has four distinct software-visible parts:
 - **SIO1/B** is the command lane used by the Zephyr extended BIOS `IOCALL` entry.
 - **SIO1/A** is the bulk lane used by `IOCBULK` and `IOCBULKW` after command-lane admission.
 
-The committed I/O-board design uses a **PIC18F57Q84** as the I/O controller.  The current firmware is no longer only a PING/reset bring-up target: it also contains SD-card, bulk-transfer, cache, profile, link-sync, and HID status/input handlers.  Unsolicited GameOS-style event delivery remains future work; HID input is currently command-polled.
+The committed I/O-board design uses a **PIC18F57Q84** as the I/O controller.  The current firmware is no longer only a PING/reset bring-up target: it also contains SD-card, bulk-transfer, cache, profile, link-sync, and HID status/input handlers.  Unsolicited GameOS-style event delivery remains future work.  HID input is still fetched by command, but the host no longer polls blind: the MCU raises a hardware doorbell on `/CTSB` when keyboard bytes are waiting, and the BIOS issues `CMD_HID_INPUT` only when it sees it.
 
 ## Hardware overview
 
@@ -99,7 +99,9 @@ Both lanes use **persistent External Sync**:
 - The MCU clocks only during selected transfer windows.
 - The gated SIO clocks idle high.
 - SIO clock windows must contain whole-byte clock counts once sync is established.
-- Auto Enables are off on the SIO1 transport lanes.
+- Auto Enables are off on the SIO1 transport lanes.  On SIO1/B this is now
+  load-bearing twice over: it keeps `/DCDB` from gating the receiver, and it
+  keeps the `/CTSB` doorbell from gating the transmitter.
 - SIO Wait/Ready block-transfer mode is not used by the current BIOS path.
 - SIO1 command and bulk byte loops are foreground-polled; SIO1 interrupts are not part of the current CP/M transport.
 
@@ -127,10 +129,13 @@ The Command lane uses these sideband signals:
 | --- | --- | --- |
 | `/RTSB` / `/SIO1B_INT` | Z80 SIO → MCU | Held-low acknowledged request: the host has one outstanding command request |
 | `/DCDB` | MCU → Z80 SIO | `COMMAND_READY`: MCU is idle and will accept one command |
+| `/CTSB` | MCU → Z80 SIO | HID input doorbell: asserted while the MCU's keyboard queue holds bytes |
 | `/SYNCB` | MCU → Z80 SIO | External Sync/framing input for SIO1/B |
 | `/SIOB_CS` | MCU output | Selects SIO1/B onto the shared SIO bus |
 
 Current request admission is level-based, not edge-based.  The PIC firmware globally disables interrupts and polls `/SIO1B_INT` in the foreground loop.  `COMMAND_READY` on `/DCDB` is asserted only while the controller is in command-idle.  The host waits for `COMMAND_READY`, prepares the packet, and asserts `/RTSB` only when the controller says it is ready.
+
+The `/CTSB` doorbell is independent of all of this and cannot disturb the link.  It is a level, not an edge: the MCU asserts it while its keyboard queue is non-empty and releases it when the queue drains, and the host samples it as RR0 bit 5 rather than counting transitions, so a swallowed status latch costs nothing.  It cannot affect External Sync either — the character boundary is owned by the falling `/SYNCB` edge alone, only chip reset, receiver disable and Enter Hunt Phase end character assembly, and with Auto Enables off CTS gates nothing.  No `CMD_LINK_SYNC` is involved.  Every reader of RR0 on this port must issue `WR0 = Reset External/Status Interrupts` first, because the SIO latches all of RR0's status bits together.
 
 `/RTSB` means **an unacknowledged request exists**, not **the full transaction is active**.  The BIOS releases `/RTSB` after the request frame has left the SIO shift path and before waiting for the reply.  The MCU services the request, positively observes that release, dispatches the command, and then sends the reply.  If the request fails to decode, the MCU sends no reply; the host times out with `/RTSB` already released instead of causing repeated junk windows.
 
@@ -240,8 +245,9 @@ This establishes hardware priority, not automatic software ownership.  In the cu
 - SIO0/A and CTC interrupts belong to application software if enabled.
 - SIO1 command and bulk transports are polled and do not currently generate Z80 service interrupts.
 - The PIC firmware also runs the command path from its foreground loop with global interrupts disabled; `/SIO1B_INT` is sampled as a level.
+- The `/CTSB` HID doorbell is polled, not vectored.  SIO1/B External/Status interrupts stay disabled deliberately: `ioc_command_recv_frame` scans for the reply marker with Z80 interrupts enabled and reads RR0 on port `33h` as a WR0 pointer write followed by an `IN`, so an ISR touching that port could land between the two.  The doorbell is therefore read only from task level, in `CONST`.
 
-Any future unsolicited keyboard, mouse, controller, or GameOS executive event delivery will need an explicit interrupt and buffering ABI.  Current HID input is exposed by command polling through `CMD_HID_INPUT`, not by MCU-initiated SIO event packets.
+Any future unsolicited keyboard, mouse, controller, or GameOS executive event delivery will need an explicit interrupt and buffering ABI.  HID input is still carried by `CMD_HID_INPUT` rather than by MCU-initiated SIO event packets; the doorbell only tells the host when to ask.
 
 ## Current status and future scope
 
@@ -256,7 +262,7 @@ Any future unsolicited keyboard, mouse, controller, or GameOS executive event de
 | Persistent External Sync on both SIO1 lanes | Implemented |
 | MCU-controlled reset | Implemented |
 | SD-card command, bulk, record, and cache paths | Implemented in firmware and used by the CP/M storage path |
-| USB HID status and nonblocking input commands | Implemented as command-polled services |
+| USB HID status and nonblocking input commands | Implemented; input fetch is gated by the `/CTSB` doorbell |
 | SIO Wait/Ready block-transfer optimization | Future optimization; current path is polled |
 | Unsolicited GameOS-style events | Planned; not part of the current CP/M transport ABI |
 
