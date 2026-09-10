@@ -84,7 +84,13 @@ static void platform_init(void)
     SYNCA_LAT  = SYNCA_IDLE;
     SYNCA_TRIS = 0;
 
-    /* SIO1 modem control: the PIC drives all four, parked deasserted. */
+    /* SIO1 modem control: the PIC drives all four, parked deasserted.
+     *
+     * /CTSB is the HID input doorbell, not flow control -- it is asserted
+     * while the keyboard queue holds bytes and released when it empties.  See
+     * input_doorbell_update() in ioc_hid.c.  Parking it idle here is the safe
+     * default: a host that samples it before this runs reads "no input".
+     */
     CTSA_LAT  = CTSA_IDLE;
     CTSA_TRIS = 0;
     CTSB_LAT  = CTSB_IDLE;

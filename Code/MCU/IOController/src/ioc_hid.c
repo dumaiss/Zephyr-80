@@ -147,6 +147,30 @@ static void led_refresh(void)
  * function keys are translated explicitly below. */
 static const uint8_t keycode_ascii[128][2] = { HID_KEYCODE_TO_ASCII };
 
+/* Host doorbell: /CTSB on SIO1/B, asserted while this queue holds anything.
+ *
+ * A LEVEL, never an edge.  The host reads it as RR0 bit 5 on port 33h from
+ * CONST -- an IN instead of a 0.6 ms CMD_HID_INPUT round trip -- and only
+ * fetches when it is asserted.  Level semantics are what make a missed
+ * transition harmless: the host samples the current state rather than counting
+ * changes, exactly as /SIO1B_INT does in the other direction.
+ *
+ * /CTSB is inert on this channel and cannot disturb External Sync.  The
+ * character boundary is owned by the falling /SYNCB edge alone, and the only
+ * path by which CTS could ever gate anything is Auto Enables (WR3 bit 5),
+ * which is clear on SIO1/B -- see the warning above command_ready_set() in
+ * main.c.  Do NOT enable Auto Enables on channel B: it would turn this status
+ * bit into a transmitter gate.
+ *
+ * Foreground only, like the rest of the queue.  The producer runs in
+ * hid_host_task() and the consumer in the CMD_HID_INPUT handler, so no
+ * interrupt discipline is involved.
+ */
+static void input_doorbell_update(void)
+{
+    CTSB_LAT = (input_count != 0u) ? CTSB_ASSERTED : CTSB_IDLE;
+}
+
 static void input_drop(void)
 {
     if (input_drop_count != 0xffu)
@@ -169,6 +193,7 @@ static void input_put_unchecked(uint8_t value)
     input_count++;
     if (input_put_total != 0xffu)
         input_put_total++;
+    input_doorbell_update();
 }
 
 static void input_put_byte(uint8_t value)
@@ -334,6 +359,7 @@ uint8_t hid_input_get(void)
     input_count--;
     if (input_get_total != 0xffu)
         input_get_total++;
+    input_doorbell_update();
     return value;
 }
 
@@ -660,6 +686,7 @@ void hid_host_init(void)
     input_tail               = 0u;
     input_count              = 0u;
     input_drop_count         = 0u;
+    input_doorbell_update();
     caps_lock                = 0u;
     num_lock                 = 1u;   /* keypad numeric at power-on, as before */
     led_report               = 0u;
