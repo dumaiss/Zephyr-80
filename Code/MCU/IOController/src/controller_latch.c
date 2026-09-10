@@ -43,8 +43,10 @@
 #define CTRL_DOWN             0x04u
 #define CTRL_LEFT             0x08u
 #define CTRL_FIRE             0x40u
-#define CTRL_KEYPAD_1         0x02u
-#define CTRL_KEYPAD_2         0x08u
+#define CTRL_KEYPAD_1         0x0du
+#define CTRL_KEYPAD_2         0x07u
+#define CTRL_KEYPAD_STAR      0x09u
+#define CTRL_KEYPAD_POUND     0x06u
 
 static uint8_t controller_value[CONTROLLER_LATCH_PORTS];
 static uint8_t controller_tx[3];
@@ -141,13 +143,17 @@ bool controller_latch_f310_report(uint8_t controller,
         return false;
 
     /* There is no hardware copy of the Coleco keypad/joystick mode select.
-     * Give the two start keys priority while held; all other reports carry the
-     * normal direction nibble.  These are the raw active-low matrix nibbles
-     * returned by the latch: keypad 1 is 02h and keypad 2 is 08h. */
-    if ((report[5] & 0x10u) != 0u || (report[4] & 0x10u) != 0u) {
+     * Give the four keypad substitutes priority while held; all other reports
+     * carry the normal direction nibble.  Back/Start provide the star/pound
+     * codes used by titles such as Donkey Kong when returning from game-over.
+     * These are raw active-low matrix nibbles presented by the latch. */
+    if ((report[5] & 0x10u) != 0u) {
+        value = (uint8_t)((value & 0xf0u) | CTRL_KEYPAD_STAR);
+    } else if ((report[5] & 0x20u) != 0u) {
+        value = (uint8_t)((value & 0xf0u) | CTRL_KEYPAD_POUND);
+    } else if ((report[4] & 0x10u) != 0u) {
         value = (uint8_t)((value & 0xf0u) | CTRL_KEYPAD_1);
-    } else if ((report[5] & 0x20u) != 0u ||
-               (report[4] & 0x80u) != 0u) {
+    } else if ((report[4] & 0x80u) != 0u) {
         value = (uint8_t)((value & 0xf0u) | CTRL_KEYPAD_2);
     } else {
         hat = (uint8_t)(report[4] & 0x0fu);

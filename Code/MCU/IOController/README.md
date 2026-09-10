@@ -127,10 +127,13 @@ bus and committed at SPI1's 32 MHz maximum.  Mount order assigns controller 1
 and then controller 2; unplugging a pad restores that byte to `FFh`.
 
 The F310 mapping is d-pad (or left stick while the Mode LED is on) to Coleco
-directions, A/B to fire, Back/X to keypad 1, and Start/Y to keypad 2.  The board
-does not capture the Coleco keypad/joystick mode-select writes, so keypad 1/2
-temporarily override the direction nibble while held.  The raw latch codes are
-`02h` for key 1 and `08h` for key 2.
+directions, A/B to fire, X/Y to the existing keypad 1/2 selections, and
+Back/Start to the Coleco `*`/`#` codes used by game-over/restart paths. The board
+does not capture the Coleco keypad/joystick mode-select writes, so these keypad
+substitutes temporarily override the direction nibble while held. The raw latch
+codes are `0Dh` for key 1, `07h` for key 2, `09h` for `*`, and `06h` for `#`;
+with the idle upper nibble these appear at the controller port as `FDh`, `F7h`,
+`F9h`, and `F6h` respectively.
 
 `CONTROLLER_LATCH_COUNTER_TEST` still defaults to **0**, which compiles
 `controller_latch_tick()` down to an empty call.
