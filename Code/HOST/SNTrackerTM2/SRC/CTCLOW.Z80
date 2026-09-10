@@ -1,0 +1,247 @@
+; CTCLOW.Z80 -- Turbo Modula-2 CTC/IM2 foreign module for Zephyr-80.
+;
+; Assemble with ZMAC.  Convert CTCLOW.REL plus compiled CTCLOW.SYM with the
+; Turbo Modula-2 REL utility.  Parameters use TM2's normal stack convention;
+; every entry removes its parameters and leaves the return address on stack.
+;
+; The caller supplies 512 bytes.  SETTAB rounds its address upward to the
+; next 256-byte boundary, leaving a complete private IM2 page plus the byte
+; fetched beyond vector FFh.  Zephyr peripherals supply even vectors.  All
+; even vectors default to UNEXISR; the currently active BIOS SIO handler is
+; copied into vectors 10h through 1Eh before I is changed.
+
+        .Z80
+
+        PUBLIC  SETTAB, LSTART, LSTOP
+        PUBLIC  PEND, TAKE, OVER, INTS
+
+CTC0PORT        EQU     040H
+CTCCONTROL      EQU     0A7H
+CTCSTOP         EQU     003H
+CTCTIME         EQU     217
+CTCBASERATE     EQU     180
+
+        CSEG
+
+; PROCEDURE SETTAB(tableStorage : ADDRESS)
+SETTAB:
+        POP     DE
+        POP     HL
+        PUSH    DE
+        LD      A,L
+        OR      A
+        JR      Z,CTSTALIGNED
+        INC     H
+        LD      L,0
+CTSTALIGNED:
+        LD      (TABBASE),HL
+        LD      A,H
+        LD      (TABPAGE),A
+        RET
+
+; PROCEDURE LSTART(rate : CARDINAL)
+LSTART:
+        POP     DE
+        POP     HL
+        PUSH    DE
+        DI
+        LD      A,L
+        LD      (TICKRATE),A
+        XOR     A
+        LD      (TICKPHASE),A
+        LD      (PENDING),A
+        LD      (OVERFLOW),A
+        LD      (OVERFLOW+1),A
+        LD      (INTCOUNT),A
+        LD      (INTCOUNT+1),A
+
+        LD      A,I
+        LD      (SAVEDI),A
+        LD      H,A
+        LD      L,010H
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        LD      (SIOHAND),DE
+
+        LD      HL,(TABBASE)
+        LD      DE,UNEXISR
+        LD      B,128
+CTFILL:
+        LD      (HL),E
+        INC     HL
+        LD      (HL),D
+        INC     HL
+        DJNZ    CTFILL
+        LD      (HL),D
+
+        LD      HL,(TABBASE)
+        LD      DE,010H
+        ADD     HL,DE
+        LD      DE,(SIOHAND)
+        LD      B,8
+CTSIO:
+        LD      (HL),E
+        INC     HL
+        LD      (HL),D
+        INC     HL
+        DJNZ    CTSIO
+
+        LD      HL,(TABBASE)
+        LD      DE,CTCISR
+        LD      (HL),E
+        INC     HL
+        LD      (HL),D
+
+        XOR     A
+        OUT     (CTC0PORT),A
+        LD      A,CTCCONTROL
+        OUT     (CTC0PORT),A
+        LD      A,CTCTIME
+        OUT     (CTC0PORT),A
+        LD      A,(TABPAGE)
+        LD      I,A
+        IM      2
+        LD      A,1
+        LD      (ACTIVE),A
+        EI
+        RET
+
+; PROCEDURE LSTOP
+LSTOP:
+        LD      A,(ACTIVE)
+        OR      A
+        RET     Z
+        DI
+        LD      A,CTCSTOP
+        OUT     (CTC0PORT),A
+        XOR     A
+        OUT     (CTC0PORT),A
+        LD      A,(SAVEDI)
+        LD      I,A
+        IM      2
+        XOR     A
+        LD      (ACTIVE),A
+        EI
+        RET
+
+; PROCEDURE PEND(VAR value : CARDINAL)
+PEND:
+        POP     DE
+        POP     HL
+        PUSH    DE
+        DI
+        LD      A,(PENDING)
+        LD      (HL),A
+        INC     HL
+        XOR     A
+        LD      (HL),A
+        EI
+        RET
+
+; PROCEDURE TAKE(VAR value : CARDINAL)
+TAKE:
+        POP     DE
+        POP     HL
+        PUSH    DE
+        DI
+        LD      A,(PENDING)
+        OR      A
+        JR      Z,CTTAKENONE
+        DEC     A
+        LD      (PENDING),A
+        LD      A,1
+        JR      CTTAKESTORE
+CTTAKENONE:
+        XOR     A
+CTTAKESTORE:
+        LD      (HL),A
+        INC     HL
+        XOR     A
+        LD      (HL),A
+        EI
+        RET
+
+; PROCEDURE OVER(VAR value : CARDINAL)
+OVER:
+        POP     DE
+        POP     HL
+        PUSH    DE
+        DI
+        LD      A,(OVERFLOW)
+        LD      (HL),A
+        LD      A,(OVERFLOW+1)
+        INC     HL
+        LD      (HL),A
+        EI
+        RET
+
+; PROCEDURE INTS(VAR value : CARDINAL)
+INTS:
+        POP     DE
+        POP     HL
+        PUSH    DE
+        DI
+        LD      A,(INTCOUNT)
+        LD      (HL),A
+        LD      A,(INTCOUNT+1)
+        INC     HL
+        LD      (HL),A
+        EI
+        RET
+
+; ISR-safe: publish logical ticks only.  No TM2, BDOS, parsing or PSG calls.
+CTCISR:
+        PUSH    AF
+        PUSH    HL
+        LD      HL,(INTCOUNT)
+        INC     HL
+        LD      (INTCOUNT),HL
+
+        LD      A,(TICKPHASE)
+        LD      HL,TICKRATE
+        ADD     A,(HL)
+        JR      C,CTPHOVER
+        CP      CTCBASERATE
+        JR      C,CTPHSTORE
+        SUB     CTCBASERATE
+        JR      CTTICKDUE
+CTPHOVER:
+        ADD     A,256-CTCBASERATE
+CTTICKDUE:
+        LD      (TICKPHASE),A
+        LD      A,(PENDING)
+        CP      0FFH
+        JR      Z,CTQUEUEFULL
+        INC     A
+        LD      (PENDING),A
+        JR      CTISRDONE
+CTQUEUEFULL:
+        LD      HL,(OVERFLOW)
+        INC     HL
+        LD      (OVERFLOW),HL
+        JR      CTISRDONE
+CTPHSTORE:
+        LD      (TICKPHASE),A
+CTISRDONE:
+        POP     HL
+        POP     AF
+        EI
+        RETI
+
+UNEXISR:
+        EI
+        RETI
+
+TABBASE:        DEFW    0
+SIOHAND:        DEFW    0
+OVERFLOW:       DEFW    0
+INTCOUNT:       DEFW    0
+TABPAGE:        DEFB    0
+SAVEDI:         DEFB    0
+ACTIVE:         DEFB    0
+TICKRATE:       DEFB    0
+TICKPHASE:      DEFB    0
+PENDING:        DEFB    0
+
+        END

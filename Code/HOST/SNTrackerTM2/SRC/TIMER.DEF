@@ -1,0 +1,15 @@
+DEFINITION MODULE Timer;
+
+TYPE
+  Hertz = CARDINAL;
+  Result = (ok, invalidRate, alreadyActive, notActive);
+
+PROCEDURE Start(rate : Hertz) : Result;
+PROCEDURE Stop() : Result;
+PROCEDURE Active() : BOOLEAN;
+PROCEDURE Pending() : BOOLEAN;
+PROCEDURE TakeTick() : BOOLEAN;
+PROCEDURE QueueOverflows() : CARDINAL;
+PROCEDURE Interrupts() : CARDINAL;
+
+END Timer.

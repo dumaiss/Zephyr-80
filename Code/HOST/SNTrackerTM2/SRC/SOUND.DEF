@@ -1,0 +1,25 @@
+DEFINITION MODULE Sound;
+
+CONST
+  ChannelCount = 16;
+
+TYPE
+  Channel = [0..15];
+  TonePeriod = [1..1023];
+  Volume = [0..15];
+  NoiseMode = (periodicNoise, whiteNoise);
+  NoiseRate = (lowRate, mediumRate, highRate, tone2Rate);
+  Result = (ok, wrongVoice);
+
+PROCEDURE Init;
+PROCEDURE Shutdown;
+PROCEDURE MuteAll;
+PROCEDURE SetTone(channel : Channel; period : TonePeriod) : Result;
+PROCEDURE SetVolume(channel : Channel; volume : Volume);
+PROCEDURE SetNoise(channel : Channel;
+                   mode : NoiseMode;
+                   rate : NoiseRate) : Result;
+PROCEDURE RestartNoise(channel : Channel) : Result;
+PROCEDURE WriteCount() : CARDINAL;
+
+END Sound.

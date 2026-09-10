@@ -1,0 +1,17 @@
+DEFINITION MODULE CTCLow;
+
+FROM SYSTEM IMPORT ADDRESS;
+
+(* Private interface used by TIMER.MOD.  These procedures are implemented
+   by CTCLOW.Z80 and converted from Microsoft REL form with TM2's REL tool. *)
+
+(* Microsoft REL public names are limited to six characters. *)
+PROCEDURE SetTab(tableStorage : ADDRESS);
+PROCEDURE LStart(rate : CARDINAL);
+PROCEDURE LStop;
+PROCEDURE Pend(VAR value : CARDINAL);
+PROCEDURE Take(VAR value : CARDINAL);
+PROCEDURE Over(VAR value : CARDINAL);
+PROCEDURE Ints(VAR value : CARDINAL);
+
+END CTCLow.
