@@ -87,6 +87,14 @@ EVENT_VOLUME	= 0x20
 EVENT_EFFECT	= 0x10
 EVENT_OFF	= 0x08
 EVENT_RELEASE	= 0x04
+EVENT_LEGATO	= 0x02
+EVENT_MODIFIERS = 0x01
+
+MOD_RESET	= 0x80
+MOD_ARP_SET	= 0x40
+MOD_ARP_CLEAR	= 0x20
+MOD_HAIRPIN_SET = 0x10
+MOD_HAIRPIN_CLEAR = 0x08
 
 EFFECT_ARPEGGIO = 1
 EFFECT_VOL_SLIDE = 2
@@ -103,6 +111,7 @@ DIRTY_PHASE	= 0x08
 CHANNEL_ACTIVE	= 0x01
 CHANNEL_RELEASED = 0x02
 CHANNEL_LEGATO	= 0x04
+CHANNEL_NOTATION_ARP = 0x08
 
 ; Per-channel state is deliberately a power of two so channel*64 is cheap.
 CH_NOTE		= 0
@@ -143,6 +152,11 @@ CH_EFFECT_PHASE = 48
 CH_ARP_FLAGS	= 49
 CH_LAST_ATTENUATION = 50
 CH_LAST_NOISE	= 51
+CH_NOTATION_ARP_PARAM = 52
+CH_NOTATION_ARP_PHASE = 53
+CH_HAIRPIN_RATE = 54		; signed loudness steps per tick
+CH_HAIRPIN_OFFSET = 55		; signed accumulated loudness adjustment
+CH_HAIRPIN_CEILING = 56		; realized instrument loudness ceiling
 CHANNEL_STATE_BYTES = 64
 
 ; ---------------------------------------------------------------------------
@@ -396,6 +410,10 @@ event_instrument: .ds 1
 event_volume:	.ds 1
 event_effect:	.ds 1
 event_parameter: .ds 1
+event_modifier_flags: .ds 1
+event_arpeggio: .ds 1
+event_hairpin_rate: .ds 1
+event_hairpin_ceiling: .ds 1
 
 macro_slot:	.ds 1
 macro_pointer:	.dw 0

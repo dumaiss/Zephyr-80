@@ -195,20 +195,88 @@ count declared by that role.
 | --- | --- |
 | `c4` | Start a pitched note. Sharps and flats use `c#4` and `db4`. |
 | `c4@20` | Start a note with an explicit duration of 20 ticks. |
+| `-d4` | Change the sounding pitch legato, without another attack. |
+| `-d4@10` | Legato pitch segment with an explicit duration. |
+| `c4^4^7` | Start a note and cycle root, +4, +7 semitones each tick. |
+| `^2` / `^` | Set a root/+2 trill, or clear arpeggiation. |
+| `<2` / `>2` / `=` | Crescendo, diminuendo, or stop the hairpin at its current level. |
 | `~` | Require silence at this slot. |
-| `_` | Continue a preceding explicitly timed note. |
+| `_` | Tie: continue the current pitch without emitting an event. |
 | `x` | Trigger an unpitched rhythm instrument. |
 
 `~` does not mean “leave the channel unchanged.” It silences the layer at that
-point. It is an error for `~` to occur inside the duration of an explicitly
-timed note.
+point and clears its persistent arpeggio and hairpin state. It is an error for
+`~` to occur inside an explicitly timed note or legato segment.
 
-`_` is only valid while an earlier `note@duration` is still active. It emits
-no new note onset, so it does not advance round-robin allocation.
+`_` is only valid while the preceding note or legato segment is still active.
+It emits no new note onset, so it does not advance round-robin allocation or
+extend the segment's duration.
 
 A note without `@duration` uses the layer's `gate`, or the instrument's
 `gate` when the layer has no override. An explicit duration overrides both
-gates.
+gates. Durations are positive integer playback ticks.
+
+#### Legato
+
+`-pitch` is a slur to a different pitch. It is valid only while a preceding
+note or legato segment is sounding. It changes pitch without restarting the
+instrument envelope and without advancing round-robin distribution. A
+legato chain therefore remains on one allocated physical voice.
+
+Like an ordinary note, a legato segment uses its explicit `@duration` when
+present and otherwise uses the layer or instrument gate. Release is measured
+from the end of the final segment in the chain; starting a legato segment
+cancels the release or note-off previously scheduled for the preceding
+segment.
+
+#### Arpeggios and trills
+
+`^x^y` cycles the sounding pitch once per playback tick through the root,
+`+x`, and `+y` semitones. `^x` is shorthand for `^x^x`, giving a root/offset
+trill. Each offset is an integer from 0 through 15. A bare `^` clears the
+arpeggio.
+
+The modifier may be attached directly to a note or legato event, such as
+`c5@12^4^7`, or occupy its own slot, such as `^2`. It changes pitch only: it
+does not attack the note or advance round-robin distribution. The setting
+persists across later onsets on the same layer until `^` or `~` clears it.
+
+#### Hairpins
+
+`<r` raises the output level by `r` units per playback tick and `>r` lowers
+it. The rate is an integer from 1 through 15. `=` stops the change and holds
+the level reached so far. A new `<r` or `>r` changes direction/rate without
+discarding that accumulated level offset.
+
+Hairpins are applied after the instrument envelope, so ADSR and table macros
+continue normally. The result is clamped at silence and at the instrument's
+level ceiling. A hairpin may be attached to a note or legato event, for
+example `c5@12>2`, or placed in its own slot. It persists until another
+hairpin command or `~`; a new note by itself does not clear it.
+
+Suffix modifiers must touch the event they modify: `c5@12>2` is one event,
+while `c5@12 >2` occupies two slots. Arpeggio and hairpin modifiers from the
+two different families may be combined on one event. A standalone modifier
+slot is valid only while a note is sounding.
+
+The pattern-event grammar is:
+
+```text
+event     := note | legato | tie | rest | trigger | modifier+
+note      := pitch [ "@" ticks ] modifier*
+legato    := "-" pitch [ "@" ticks ] modifier*
+tie       := "_"
+rest      := "~"
+trigger   := "x"
+modifier  := "^" [ offset [ "^" offset ] ]
+           | ("<" | ">") rate
+           | "="
+```
+
+Here `ticks` is a positive integer and `offset` and `rate` are integers from
+0–15 and 1–15 respectively. The `-` token is unambiguous in event position
+because it must be followed by a pitch; negative integers remain available
+in property values elsewhere in the language.
 
 ### Reuse, concatenation, and repetition
 
@@ -498,6 +566,7 @@ The compiler expands every enabled layer over the entire form before assigning
 voices. Allocation includes:
 
 - note gates and explicit durations;
+- complete legato chains as one indivisible voice lifetime;
 - envelope release tails;
 - layer delays across section boundaries;
 - separate units created by round-robin distribution; and
@@ -506,7 +575,9 @@ voices. Allocation includes:
 Two layers may share a physical voice when their sounding rows do not overlap.
 Required units are assigned first with deterministic backtracking. Optional
 units are assigned afterward and are dropped if no compatible voice remains.
-A required unit is never silently dropped.
+A required unit is never silently dropped. When ownership of a reused voice
+changes, the compiler emits a reset if persistent notation state could
+otherwise leak from the previous layer.
 
 A `bind` block may force selected units to physical endpoints:
 
@@ -572,9 +643,11 @@ namespace without changing patterns, sections, layers, scenes, or forms.
 
 | Value | Unit or range |
 | --- | --- |
-| Timing fields, `gate`, `delay`, `note@duration` | Playback ticks |
+| Timing fields, `gate`, `delay`, `note@duration`, `-note@duration` | Playback ticks |
 | ADSR and one-shot time arguments | Playback ticks |
 | `level`, sustain, envelope table values | Linear amplitude, 0–255 |
+| Arpeggio offsets | Integer semitones, 0–15 |
+| Hairpin rate | Output-level units per tick, 1–15 |
 | Layer and scene `transpose` | Semitones |
 | Layer `detune` | Signed 1/128 semitone |
 | Vibrato depth | Non-negative 1/128-semitone magnitude |
@@ -603,6 +676,10 @@ The present backend intentionally has these limits:
 - one-bar repeating rhythm sources;
 - square tone and SN76489 noise realizations only; and
 - no runtime voice stealing—the allocation is completed at compile time.
+
+Portamento, retrigger commands, notation-level panning, speed changes, and an
+additional effect-style vibrato are not part of the present notation. The
+instrument `vibrato()` effect remains available as documented above.
 
 For a larger working example, read
 [`songs/RunawayCircuit.csm`](../songs/RunawayCircuit.csm) and compile it with

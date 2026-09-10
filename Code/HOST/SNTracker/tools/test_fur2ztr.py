@@ -109,6 +109,22 @@ class ConverterTests(unittest.TestCase):
         self.assertTrue(release.patterns[(0, 0)][0].release)
         self.assertFalse(release.patterns[(0, 0)][0].note_off)
 
+    def test_notation_payload_round_trip(self) -> None:
+        song = self.parse_text(small_export())
+        event = song.patterns[(0, 0)][0]
+        event.legato = True
+        event.mode_reset = True
+        event.arpeggio = 0x47
+        event.hairpin = -2
+        event.hairpin_ceiling = 12
+        decoded = fur2ztr.decode_ztr(fur2ztr.encode_ztr(song)).song
+        fur2ztr.validate_round_trip(song, decoded)
+        result = decoded.patterns[(0, 0)][0]
+        self.assertTrue(result.legato)
+        self.assertTrue(result.mode_reset)
+        self.assertEqual(result.arpeggio, 0x47)
+        self.assertEqual((result.hairpin, result.hairpin_ceiling), (-2, 12))
+
     def test_unsupported_effect_is_reported(self) -> None:
         song = self.parse_text(small_export(effect="E312"))
         self.assertEqual(len(song.warnings), 1)

@@ -663,8 +663,8 @@ song RunawayCircuit {
 	// =====================================================================
 	// FORM
 	//
-	// Uneven sections total 128 bars:
-	//   8 + 16 + 12 + 16 + 10 + 12 + 16 + 12 + 10 + 16 = 128
+	// Uneven sections plus the closing intro reprise total 136 bars:
+	//   8 + 16 + 12 + 16 + 10 + 12 + 16 + 12 + 10 + 16 + 8 = 136
 	// =====================================================================
 
 	form main {
@@ -681,6 +681,7 @@ song RunawayCircuit {
 			play(B,     thick),
 			play(E,     lifted_wide),
 			play(OUT,   wide),
+			play(INTRO, intro),
 		];
 
 		loop	=	0; // play once; the compiler drains delayed events before stopping.

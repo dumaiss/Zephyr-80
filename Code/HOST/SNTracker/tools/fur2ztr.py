@@ -37,6 +37,15 @@ MASK_VOLUME = 0x20
 MASK_EFFECT = 0x10
 MASK_OFF = 0x08
 MASK_RELEASE = 0x04
+MASK_LEGATO = 0x02
+MASK_MODIFIERS = 0x01
+
+MOD_RESET = 0x80
+MOD_ARP_SET = 0x40
+MOD_ARP_CLEAR = 0x20
+MOD_HAIRPIN_SET = 0x10
+MOD_HAIRPIN_CLEAR = 0x08
+MOD_VALID_MASK = MOD_RESET | MOD_ARP_SET | MOD_ARP_CLEAR | MOD_HAIRPIN_SET | MOD_HAIRPIN_CLEAR
 
 MACRO_TYPES = {
     "vol": 1,
@@ -105,6 +114,11 @@ class Event:
     effect: tuple[int, int] | None = None
     note_off: bool = False
     release: bool = False
+    legato: bool = False
+    mode_reset: bool = False
+    arpeggio: int | None = None
+    hairpin: int | None = None
+    hairpin_ceiling: int | None = None
 
 
 @dataclass
@@ -715,7 +729,40 @@ def event_mask(event: Event) -> int:
         mask |= MASK_OFF
     if event.release:
         mask |= MASK_RELEASE
+    if event.legato:
+        mask |= MASK_LEGATO
+    if event.mode_reset or event.arpeggio is not None or event.hairpin is not None:
+        mask |= MASK_MODIFIERS
     return mask
+
+
+def modifier_bytes(event: Event) -> bytes:
+    flags = MOD_RESET if event.mode_reset else 0
+    payload = bytearray()
+    if event.arpeggio is not None:
+        if event.arpeggio == -1:
+            flags |= MOD_ARP_CLEAR
+        elif 0 <= event.arpeggio <= 0xFF:
+            flags |= MOD_ARP_SET
+            payload.append(event.arpeggio)
+        else:
+            raise ConversionError("event arpeggio must be packed nibbles or -1")
+    if event.hairpin is not None:
+        if event.hairpin == 0:
+            flags |= MOD_HAIRPIN_CLEAR
+        elif -15 <= event.hairpin <= 15:
+            if event.hairpin_ceiling is None or not 0 <= event.hairpin_ceiling <= 15:
+                raise ConversionError("active hairpin requires a level ceiling in 0..15")
+            flags |= MOD_HAIRPIN_SET
+            payload.append(event.hairpin & 0xFF)
+            payload.append(event.hairpin_ceiling)
+        else:
+            raise ConversionError("event hairpin rate is outside -15..15")
+    if flags & MOD_ARP_SET and flags & MOD_ARP_CLEAR:
+        raise ConversionError("event cannot set and clear arpeggio together")
+    if flags & MOD_HAIRPIN_SET and flags & MOD_HAIRPIN_CLEAR:
+        raise ConversionError("event cannot set and clear hairpin together")
+    return bytes((flags,)) + bytes(payload)
 
 
 def encode_pattern(events: Iterable[Event]) -> bytes:
@@ -733,6 +780,12 @@ def encode_pattern(events: Iterable[Event]) -> bytes:
             output.append(event.volume)
         if event.effect is not None:
             output += bytes(event.effect)
+        if event.legato and event.note is None:
+            raise ConversionError("legato flag requires a note")
+        if event.legato and (event.note_off or event.release):
+            raise ConversionError("legato note cannot also be OFF/release")
+        if mask & MASK_MODIFIERS:
+            output += modifier_bytes(event)
     return bytes(output)
 
 
@@ -945,12 +998,14 @@ def decode_pattern(data: bytes, offset: int, length: int, count: int, pattern_le
         cursor += 2
         if row >= pattern_length or row <= previous_row:
             raise ConversionError("pattern rows are out of range or not increasing")
-        if mask & 0x03 or not mask:
+        if not mask:
             raise ConversionError("pattern event has invalid presence mask")
         if (mask & MASK_NOTE) and (mask & (MASK_OFF | MASK_RELEASE)):
             raise ConversionError("pattern event combines a note with OFF/release")
         if (mask & MASK_OFF) and (mask & MASK_RELEASE):
             raise ConversionError("pattern event combines OFF and release")
+        if (mask & MASK_LEGATO) and not (mask & MASK_NOTE):
+            raise ConversionError("pattern legato flag has no note")
 
         def byte(label: str) -> int:
             nonlocal cursor
@@ -968,23 +1023,53 @@ def decode_pattern(data: bytes, offset: int, length: int, count: int, pattern_le
             effect = (byte("effect"), byte("effect parameter"))
             if effect[0] not in EFFECT_NAMES:
                 raise ConversionError(f"unsupported ZTR effect id {effect[0]}")
+        mode_reset = False
+        arpeggio = None
+        hairpin = None
+        hairpin_ceiling = None
+        if mask & MASK_MODIFIERS:
+            modifier_flags = byte("modifier flags")
+            if modifier_flags & ~MOD_VALID_MASK:
+                raise ConversionError("pattern modifier has reserved flags set")
+            if modifier_flags & MOD_ARP_SET and modifier_flags & MOD_ARP_CLEAR:
+                raise ConversionError("pattern modifier sets and clears arpeggio")
+            if modifier_flags & MOD_HAIRPIN_SET and modifier_flags & MOD_HAIRPIN_CLEAR:
+                raise ConversionError("pattern modifier sets and clears hairpin")
+            mode_reset = bool(modifier_flags & MOD_RESET)
+            if modifier_flags & MOD_ARP_SET:
+                arpeggio = byte("arpeggio offsets")
+            elif modifier_flags & MOD_ARP_CLEAR:
+                arpeggio = -1
+            if modifier_flags & MOD_HAIRPIN_SET:
+                encoded_rate = byte("hairpin rate")
+                hairpin = encoded_rate - 256 if encoded_rate >= 128 else encoded_rate
+                hairpin_ceiling = byte("hairpin ceiling")
+                if hairpin == 0 or not -15 <= hairpin <= 15:
+                    raise ConversionError("pattern hairpin rate is outside -15..15")
+                if hairpin_ceiling > 15:
+                    raise ConversionError("pattern hairpin ceiling exceeds 0F")
+            elif modifier_flags & MOD_HAIRPIN_CLEAR:
+                hairpin = 0
         if note is not None and note >= NOTE_COUNT:
             raise ConversionError("pattern note is outside table")
         if instrument is not None and instrument >= MAX_INSTRUMENTS:
             raise ConversionError("pattern instrument exceeds 0F")
         if volume is not None and volume > 15:
             raise ConversionError("pattern volume exceeds 0F")
-        events.append(
-            Event(
-                row,
-                note,
-                instrument,
-                volume,
-                effect,
-                bool(mask & MASK_OFF),
-                bool(mask & MASK_RELEASE),
-            )
-        )
+        events.append(Event(
+            row=row,
+            note=note,
+            instrument=instrument,
+            volume=volume,
+            effect=effect,
+            note_off=bool(mask & MASK_OFF),
+            release=bool(mask & MASK_RELEASE),
+            legato=bool(mask & MASK_LEGATO),
+            mode_reset=mode_reset,
+            arpeggio=arpeggio,
+            hairpin=hairpin,
+            hairpin_ceiling=hairpin_ceiling,
+        ))
         previous_row = row
     if cursor != len(stream):
         raise ConversionError("pattern stream length does not match event count")
@@ -1161,7 +1246,21 @@ def format_event(event: Event) -> str:
         effect = "...."
     else:
         effect = f"Z{event.effect[0]:X}{event.effect[1]:02X}"
-    return f"{note} {instrument} {volume} {effect}"
+    modifiers = []
+    if event.legato:
+        modifiers.append("legato")
+    if event.mode_reset:
+        modifiers.append("reset")
+    if event.arpeggio == -1:
+        modifiers.append("arp=off")
+    elif event.arpeggio is not None:
+        modifiers.append(f"arp={event.arpeggio >> 4},{event.arpeggio & 15}")
+    if event.hairpin == 0:
+        modifiers.append("hairpin=hold")
+    elif event.hairpin is not None:
+        modifiers.append(f"hairpin={event.hairpin:+d}/{event.hairpin_ceiling}")
+    suffix = " [" + " ".join(modifiers) + "]" if modifiers else ""
+    return f"{note} {instrument} {volume} {effect}{suffix}"
 
 
 def print_summary(song: Song, size: int | None = None) -> None:

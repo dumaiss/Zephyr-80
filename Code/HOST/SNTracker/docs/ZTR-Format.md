@@ -164,10 +164,34 @@ The row is absolute within the pattern. For a 256-row pattern it spans
 | `10h` | `effect:u8, parameter:u8` | native effect and parameter |
 | `08h` | none | note OFF: silence and end macros |
 | `04h` | none | note release (`===`): enter macro release stage |
+| `02h` | none | legato note: update pitch without restarting macros; requires `80h` |
+| `01h` | variable | persistent notation-modifier payload described below |
 
-Bits 1-0 are reserved. Normal note, OFF, and release are mutually exclusive.
-An empty pattern therefore needs only its directory entry; empty rows consume
-no bytes.
+Normal note, OFF, and release are mutually exclusive. A legato event is a note
+event and therefore cannot also be OFF or release. An empty pattern needs only
+its directory entry; empty rows consume no bytes.
+
+### Persistent notation modifiers
+
+When mask bit `01h` is present, the payload begins with one flags byte. Any
+additional values follow in the order shown here:
+
+| Flag | Following payload | Meaning |
+| ---: | --- | --- |
+| `80h` | none | clear all persistent notation state before applying this event |
+| `40h` | `offsets:u8` | set arpeggio; high/low nibbles are `x`/`y` semitone offsets |
+| `20h` | none | clear arpeggio |
+| `10h` | `rate:i8, ceiling:u8` | set hairpin; rate is -15..-1 or 1..15, ceiling is 0..15 |
+| `08h` | none | stop the hairpin and retain its current accumulated level offset |
+
+Flags `04h`-`01h` are reserved. Set and clear flags for the same modifier
+family are mutually exclusive. Arpeggio offsets are unsigned nibbles. The
+hairpin is evaluated once per playback tick after the instrument volume macro,
+then clamped between silence and the supplied instrument ceiling.
+
+Arpeggio and hairpin modes persist across rows and ordinary note onsets. Note
+OFF clears both. The compiler uses the reset flag when an allocated physical
+voice changes musical-layer ownership while persistent state remains active.
 
 Native effects in v1 are:
 

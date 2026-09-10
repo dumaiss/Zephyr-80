@@ -275,6 +275,30 @@ sn_loudness_divide:
 	inc c
 	jr sn_loudness_divide
 sn_loudness_done:
+	ld a,CH_HAIRPIN_OFFSET(ix)
+	or a
+	jr z,sn_loudness_unmodified
+	jp m,sn_loudness_hairpin_down
+	ld b,a
+	ld a,c
+	add a,b
+	jr c,sn_loudness_hairpin_ceiling
+	ld b,CH_HAIRPIN_CEILING(ix)
+	cp b
+	ret c
+	ret z
+sn_loudness_hairpin_ceiling:
+	ld a,CH_HAIRPIN_CEILING(ix)
+	ret
+sn_loudness_hairpin_down:
+	neg
+	ld b,a
+	ld a,c
+	sub b
+	ret nc
+	xor a
+	ret
+sn_loudness_unmodified:
 	ld a,c
 	ret
 sn_loudness_silent:

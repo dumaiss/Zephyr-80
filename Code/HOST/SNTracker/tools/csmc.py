@@ -33,6 +33,7 @@ class CompiledInstrument:
     number: int
     release_ticks: int
     active_release: bool
+    level_ceiling: int
 
 
 @dataclass
@@ -224,6 +225,38 @@ def endpoint_channel(endpoint: str) -> int:
     return int(match.group(1)) * 4 + (3 if match.group(2) == "noise" else int(match.group(3)))
 
 
+def compile_event_modifiers(
+    event: dict[str, Any],
+    level_ceiling: int,
+) -> tuple[int | None, int | None, int | None]:
+    arpeggio = None
+    hairpin = None
+    hairpin_ceiling = None
+    for modifier in event.get("modifiers", []):
+        kind = modifier.get("kind")
+        modifier_value = modifier.get("value")
+        if kind == "arpeggio":
+            if modifier_value is None:
+                arpeggio = -1
+            elif (
+                isinstance(modifier_value, list)
+                and len(modifier_value) == 2
+                and all(isinstance(item, int) and 0 <= item <= 15 for item in modifier_value)
+            ):
+                arpeggio = (modifier_value[0] << 4) | modifier_value[1]
+            else:
+                raise CsmCompileError("invalid arpeggio modifier")
+        elif kind == "hairpin":
+            if not isinstance(modifier_value, int) or not -15 <= modifier_value <= 15:
+                raise CsmCompileError("invalid hairpin modifier")
+            hairpin = modifier_value
+            if hairpin:
+                hairpin_ceiling = level_ceiling
+        else:
+            raise CsmCompileError(f"unsupported event modifier {kind!r}")
+    return arpeggio, hairpin, hairpin_ceiling
+
+
 class Compiler:
     def __init__(self, ir: dict[str, Any]):
         self.ir = ir
@@ -284,6 +317,7 @@ class Compiler:
             self.plan.extend((section, scene) for _ in range(self.song_ir["sections"][section]["bar_count"]))
         self.form_bars = len(self.plan)
         self.events: list[dict[int, fur2ztr.Event]] = [dict() for _ in range(fur2ztr.CHANNEL_COUNT)]
+        self.event_owners: list[dict[int, str]] = [dict() for _ in range(fur2ztr.CHANNEL_COUNT)]
         self.layer_instruments: dict[str, CompiledInstrument] = {}
         self.ztr_instruments: list[fur2ztr.Instrument] = []
         self.allocations: dict[str, int | None] = {}
@@ -420,7 +454,10 @@ class Compiler:
             suffix = f" ({detune:+d}/128)" if detune else ""
             if not any(item.number == number for item in self.ztr_instruments):
                 self.ztr_instruments.append(fur2ztr.Instrument(number, instrument_name + suffix, macros=macros))
-            self.layer_instruments[layer_name] = CompiledInstrument(number, release_ticks, active_release)
+            level_ceiling = sn_loudness(require_integer(inst_props, "level", f"instrument {instrument_name}", 0, 255))
+            self.layer_instruments[layer_name] = CompiledInstrument(
+                number, release_ticks, active_release, level_ceiling
+            )
 
     def layer_units(self, layer_name: str, layer: dict[str, Any]) -> list[tuple[str, str]]:
         distribute = layer.get("distribute")
@@ -627,10 +664,45 @@ class Compiler:
     def allocated_layer_channels(self, layer_name: str, layer: dict[str, Any]) -> list[int | None]:
         return [self.allocations[key] for key, _route in self.layer_units(layer_name, layer)]
 
-    def put_note(self, channel: int, row: int, note: int, instrument: int) -> None:
+    def put_note(
+        self,
+        channel: int,
+        row: int,
+        note: int,
+        instrument: CompiledInstrument,
+        legato: bool,
+        source_event: dict[str, Any],
+    ) -> None:
         self.cancel_future_terminations(channel, row)
-        self.events[channel][row] = fur2ztr.Event(row % self.rows_per_bar, note=note,
-                                                  instrument=instrument, volume=15)
+        arpeggio, hairpin, ceiling = compile_event_modifiers(source_event, instrument.level_ceiling)
+        self.events[channel][row] = fur2ztr.Event(
+            row=row % self.rows_per_bar,
+            note=note,
+            instrument=instrument.number,
+            volume=15,
+            legato=legato,
+            arpeggio=arpeggio,
+            hairpin=hairpin,
+            hairpin_ceiling=ceiling,
+        )
+
+    def put_modifiers(
+        self,
+        channel: int,
+        row: int,
+        source_event: dict[str, Any],
+        level_ceiling: int,
+    ) -> None:
+        arpeggio, hairpin, ceiling = compile_event_modifiers(source_event, level_ceiling)
+        current = self.events[channel].get(row)
+        if current is None:
+            current = fur2ztr.Event(row % self.rows_per_bar)
+            self.events[channel][row] = current
+        if arpeggio is not None:
+            current.arpeggio = arpeggio
+        if hairpin is not None:
+            current.hairpin = hairpin
+            current.hairpin_ceiling = ceiling
 
     def put_release(self, channel: int, row: int) -> None:
         current = self.events[channel].get(row)
@@ -690,7 +762,14 @@ class Compiler:
             event_note = -1
 
         rr_index = 0
-        held_until = -1
+        chain_slot: int | None = None
+        chain_until = -1
+        audible_until = -1
+        protected_until = -1
+        release_rows = (
+            (instrument.release_ticks + self.ticks_per_row - 1) // self.ticks_per_row
+            if instrument.active_release else 0
+        )
         for bar_index, bar in enumerate(bars):
             section, scene = self.plan[bar_index]
             if bar is None or layer_name not in self.enabled_layers(scene):
@@ -710,20 +789,40 @@ class Compiler:
                     row += delay_rows
                     kind = event["kind"]
                     if kind == "continuation":
-                        if row >= held_until:
+                        if chain_slot is None or row >= chain_until:
                             raise CsmCompileError(f"{section}.{role}: continuation has no sustained note")
                         continue
+                    if kind == "modifier":
+                        if chain_slot is None or row >= audible_until:
+                            raise CsmCompileError(f"{section}.{role}: modifier has no sounding note")
+                        channel = channels[chain_slot]
+                        if channel is not None:
+                            self.put_modifiers(channel, row, event, instrument.level_ceiling)
+                        continue
                     if kind == "rest":
-                        if row < held_until:
-                            raise CsmCompileError(f"{section}.{role}: silent rest overlaps an explicit note duration")
+                        if row < protected_until:
+                            raise CsmCompileError(f"{section}.{role}: silent rest overlaps a timed or legato note")
                         for channel in channels:
                             if channel is not None:
                                 self.put_off(channel, row)
+                        chain_slot = None
+                        chain_until = row
+                        audible_until = row
+                        protected_until = row
                         continue
-                    if kind not in ("note", "hit"):
+                    if kind not in ("note", "legato", "hit"):
                         raise CsmCompileError(f"{section}.{role}: unsupported event {kind}")
-                    channel = channels[rr_index % len(channels)]
-                    rr_index += 1
+                    is_legato = kind == "legato"
+                    if is_legato:
+                        if role in self.song_ir["rhythms"]:
+                            raise CsmCompileError(f"{section}.{role}: rhythm trigger cannot use pitched legato")
+                        if chain_slot is None or row >= chain_until:
+                            raise CsmCompileError(f"{section}.{role}: legato pitch has no sustained note")
+                        selected_slot = chain_slot
+                    else:
+                        selected_slot = rr_index % len(channels)
+                        rr_index += 1
+                    channel = channels[selected_slot]
                     scene_transpose = self.scene_transpose(scene, role, layer_name)
                     note = event_note if kind == "hit" else note_number(
                         event["value"], transpose + scene_transpose, self.playback_transpose
@@ -736,14 +835,15 @@ class Compiler:
                             f"{section}.{role}: duration {duration} does not align to {self.ticks_per_row}-tick rows"
                         )
                     end_row = row + duration // self.ticks_per_row
-                    if event.get("duration_ticks") is not None:
-                        held_until = max(held_until, end_row)
+                    chain_slot = selected_slot
+                    chain_until = end_row
+                    audible_until = end_row + release_rows
+                    protected_until = end_row if is_legato or event.get("duration_ticks") is not None else row
                     if channel is None:
                         continue
-                    self.put_note(channel, row, note, instrument.number)
+                    self.put_note(channel, row, note, instrument, is_legato, event)
                     if instrument.active_release:
                         self.put_release(channel, end_row)
-                        release_rows = (instrument.release_ticks + self.ticks_per_row - 1) // self.ticks_per_row
                         self.put_off(channel, end_row + release_rows)
                     else:
                         self.put_off(channel, end_row)
@@ -778,6 +878,8 @@ class Compiler:
                 current = self.events[channel].get(row)
                 if current is None:
                     self.events[channel][row] = event
+                    if event.note is not None:
+                        self.event_owners[channel][row] = layer_name
                     continue
                 if current.note is not None and event.note is not None:
                     raise CsmCompileError(
@@ -785,12 +887,46 @@ class Compiler:
                     )
                 if event.note is not None:
                     self.events[channel][row] = event
+                    self.event_owners[channel][row] = layer_name
                 elif current.note is not None:
                     continue
                 elif event.note_off or current.note_off:
                     self.events[channel][row] = fur2ztr.Event(row % self.rows_per_bar, note_off=True)
                 elif event.release and not current.release:
                     self.events[channel][row] = event
+
+    def mark_voice_handovers(self) -> None:
+        """Reset only notation state that could leak to a new layer owner."""
+        for channel, events in enumerate(self.events):
+            active_owner: str | None = None
+            arpeggio_active = False
+            hairpin_active = False
+            for row, event in sorted(events.items()):
+                if event.note is not None:
+                    owner = self.event_owners[channel].get(row)
+                    if (
+                        active_owner is not None
+                        and owner is not None
+                        and owner != active_owner
+                        and (arpeggio_active or hairpin_active)
+                    ):
+                        event.mode_reset = True
+                        arpeggio_active = False
+                        hairpin_active = False
+                    active_owner = owner
+
+                if event.mode_reset:
+                    arpeggio_active = False
+                    hairpin_active = False
+                if event.arpeggio is not None:
+                    arpeggio_active = event.arpeggio >= 0
+                if event.hairpin is not None and event.hairpin != 0:
+                    hairpin_active = True
+
+                if event.note_off:
+                    active_owner = None
+                    arpeggio_active = False
+                    hairpin_active = False
 
     def build_song(self) -> fur2ztr.Song:
         self.compile_instruments()
@@ -800,6 +936,7 @@ class Compiler:
             layer_events = self.compile_layer_events(layer_name, layer, channels, True)
             self.merge_layer_events(layer_name, layer_events)
         self.remove_redundant_state_events()
+        self.mark_voice_handovers()
 
         form_rows = self.form_bars * self.rows_per_bar
         last_event_row = max((max(events, default=-1) for events in self.events), default=-1)
@@ -825,7 +962,20 @@ class Compiler:
                     item = self.events[channel][global_row]
                     bar_events.append(item)
                 key = tuple(
-                    (item.row, item.note, item.instrument, item.volume, item.effect, item.note_off, item.release)
+                    (
+                        item.row,
+                        item.note,
+                        item.instrument,
+                        item.volume,
+                        item.effect,
+                        item.note_off,
+                        item.release,
+                        item.legato,
+                        item.mode_reset,
+                        item.arpeggio,
+                        item.hairpin,
+                        item.hairpin_ceiling,
+                    )
                     for item in bar_events
                 )
                 pattern = seen.get(key)

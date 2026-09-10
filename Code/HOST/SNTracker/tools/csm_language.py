@@ -110,6 +110,9 @@ PUNCTUATION = {
     "-": "MINUS",
     "/": "SLASH",
     "@": "AT",
+    "^": "CARET",
+    "<": "LT",
+    ">": "GT",
 }
 
 NOTE_RE = re.compile(r"[a-g](?:b|#)?[0-9]+(?![A-Za-z0-9_])")
@@ -356,9 +359,13 @@ class StructuralParser:
         parts = [initial]
         while True:
             if self.match("DOT"):
-                ident = self.expect("IDENT", "expected identifier after '.'")
-                if ident is None:
+                ident = self.peek()
+                # A component such as b00 is lexically note-shaped, but after
+                # a dot it is unambiguously part of a qualified identifier.
+                if ident.kind not in {"IDENT", "NOTE"}:
+                    self.diagnostics.error("SYN001", "expected identifier after '.'", ident.pos)
                     break
+                self.advance()
                 parts.extend([".", ident.text])
                 continue
             if allow_index and self.match("LBRACKET"):
@@ -617,7 +624,7 @@ class ExpressionParser:
         while True:
             if self.match("DOT"):
                 token = self.peek()
-                if token.kind != "IDENT":
+                if token.kind not in {"IDENT", "NOTE"}:
                     self.diagnostics.error("EXP009", "expected identifier after '.'", token.pos, self.context)
                     break
                 self.advance()
@@ -643,16 +650,29 @@ class ExpressionParser:
 
 
 @dataclass
+class PatternModifier:
+    kind: str
+    value: Any
+    pos: SourcePos
+
+    def to_json(self) -> dict[str, Any]:
+        return {"kind": self.kind, "value": self.value, "location": self.pos.to_json()}
+
+
+@dataclass
 class PatternEvent:
     kind: str
     value: str
     pos: SourcePos
     duration_ticks: Optional[int] = None
+    modifiers: list[PatternModifier] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         result = {"kind": self.kind, "value": self.value, "location": self.pos.to_json()}
         if self.duration_ticks is not None:
             result["duration_ticks"] = self.duration_ticks
+        if self.modifiers:
+            result["modifiers"] = [modifier.to_json() for modifier in self.modifiers]
         return result
 
 
@@ -715,6 +735,9 @@ class PatternParser:
 
     def peek(self) -> Token:
         return self.tokens[min(self.index, len(self.tokens) - 1)]
+
+    def peek_ahead(self, distance: int) -> Token:
+        return self.tokens[min(self.index + distance, len(self.tokens) - 1)]
 
     def advance(self) -> Token:
         token = self.peek()
@@ -803,15 +826,23 @@ class PatternParser:
         token = self.peek()
         if token.kind == "NOTE":
             self.advance()
-            duration_ticks = None
-            if self.match("AT"):
-                duration = self.peek()
-                if duration.kind != "INT" or int(duration.text) <= 0:
-                    self.diagnostics.error("PAT013", "note duration must be a positive tick count", duration.pos, self.context)
-                else:
-                    self.advance()
-                    duration_ticks = int(duration.text)
-            return PatternEvent("note", token.text, token.pos, duration_ticks)
+            duration_ticks = self.parse_event_duration()
+            return PatternEvent(
+                "note", token.text, token.pos, duration_ticks,
+                self.parse_modifiers(self.tokens[self.index - 1].end_offset),
+            )
+        if token.kind == "MINUS":
+            self.advance()
+            pitch = self.peek()
+            if pitch.kind != "NOTE":
+                self.diagnostics.error("PAT013", "'-' in a pattern must be followed by a pitch", pitch.pos, self.context)
+                return None
+            self.advance()
+            duration_ticks = self.parse_event_duration()
+            return PatternEvent(
+                "legato", pitch.text, token.pos, duration_ticks,
+                self.parse_modifiers(self.tokens[self.index - 1].end_offset),
+            )
         if token.kind == "REST":
             self.advance()
             return PatternEvent("rest", "~", token.pos)
@@ -821,6 +852,8 @@ class PatternParser:
         if token.kind == "IDENT" and token.text == "_":
             self.advance()
             return PatternEvent("continuation", "_", token.pos)
+        if token.kind in {"CARET", "LT", "GT", "EQUAL"}:
+            return PatternEvent("modifier", "", token.pos, modifiers=self.parse_modifiers())
         if token.kind == "IDENT" and token.text == "r":
             self.diagnostics.error("PAT009", "'r' is not a rest; use '~'", token.pos, self.context)
             self.advance()
@@ -832,11 +865,78 @@ class PatternParser:
         self.advance()
         return None
 
+    def parse_event_duration(self) -> Optional[int]:
+        if not self.match("AT"):
+            return None
+        duration = self.peek()
+        if duration.kind != "INT" or int(duration.text) <= 0:
+            self.diagnostics.error("PAT014", "note duration must be a positive tick count", duration.pos, self.context)
+            return None
+        self.advance()
+        return int(duration.text)
+
+    def parse_modifiers(self, adjacent_to: Optional[int] = None) -> list[PatternModifier]:
+        modifiers: list[PatternModifier] = []
+        seen: set[str] = set()
+        while (
+            self.peek().kind in {"CARET", "LT", "GT", "EQUAL"}
+            and (adjacent_to is None or self.peek().pos.offset == adjacent_to)
+        ):
+            token = self.advance()
+            if token.kind == "CARET":
+                if self.peek().kind != "INT" or self.peek().pos.offset != token.end_offset:
+                    modifier = PatternModifier("arpeggio", None, token.pos)
+                else:
+                    first_token = self.advance()
+                    first = int(first_token.text)
+                    second = first
+                    if (
+                        self.peek().kind == "CARET"
+                        and self.peek().pos.offset == first_token.end_offset
+                        and self.peek_ahead(1).kind == "INT"
+                        and self.peek_ahead(1).pos.offset == self.peek().end_offset
+                    ):
+                        self.advance()
+                        second = int(self.advance().text)
+                    if first > 15 or second > 15:
+                        self.diagnostics.error(
+                            "PAT015", "arpeggio offsets must be in 0..15 semitones", token.pos, self.context
+                        )
+                    modifier = PatternModifier("arpeggio", [first, second], token.pos)
+            elif token.kind in {"LT", "GT"}:
+                rate = self.peek()
+                if (
+                    rate.kind != "INT"
+                    or rate.pos.offset != token.end_offset
+                    or not 1 <= int(rate.text) <= 15
+                ):
+                    self.diagnostics.error(
+                        "PAT016", "hairpin rate must be an integer in 1..15", rate.pos, self.context
+                    )
+                    modifier = PatternModifier("hairpin", 0, token.pos)
+                else:
+                    self.advance()
+                    amount = int(rate.text)
+                    modifier = PatternModifier("hairpin", amount if token.kind == "LT" else -amount, token.pos)
+            else:
+                modifier = PatternModifier("hairpin", 0, token.pos)
+
+            adjacent_to = self.tokens[self.index - 1].end_offset
+
+            if modifier.kind in seen:
+                self.diagnostics.error(
+                    "PAT017", f"an event may contain only one {modifier.kind} modifier", modifier.pos, self.context
+                )
+            else:
+                seen.add(modifier.kind)
+                modifiers.append(modifier)
+        return modifiers
+
     def parse_qualified_name(self, initial: str) -> str:
         parts = [initial]
         while self.match("DOT"):
             token = self.peek()
-            if token.kind != "IDENT":
+            if token.kind not in {"IDENT", "NOTE"}:
                 self.diagnostics.error("PAT012", "expected identifier after '.'", token.pos, self.context)
                 break
             self.advance()

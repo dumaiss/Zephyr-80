@@ -202,6 +202,10 @@ player_event_cursor_active:
 	xor a
 	ld (event_effect),a
 	ld (event_parameter),a
+	ld (event_modifier_flags),a
+	ld (event_arpeggio),a
+	ld (event_hairpin_rate),a
+	ld (event_hairpin_ceiling),a
 
 	ld a,(event_mask)
 	and #EVENT_NOTE
@@ -234,8 +238,34 @@ player_event_no_volume:
 	inc hl
 	ld (event_parameter),a
 player_event_no_effect:
+	ld a,(event_mask)
+	and #EVENT_MODIFIERS
+	jr z,player_event_no_modifiers
+	ld a,(hl)
+	inc hl
+	ld (event_modifier_flags),a
+	and #MOD_ARP_SET
+	jr z,player_event_no_arp_payload
+	ld a,(hl)
+	inc hl
+	ld (event_arpeggio),a
+player_event_no_arp_payload:
+	ld a,(event_modifier_flags)
+	and #MOD_HAIRPIN_SET
+	jr z,player_event_no_modifiers
+	ld a,(hl)
+	inc hl
+	ld (event_hairpin_rate),a
+	ld a,(hl)
+	inc hl
+	ld (event_hairpin_ceiling),a
+player_event_no_modifiers:
 	ld CH_PATTERN_CURSOR(ix),l
 	ld CH_PATTERN_CURSOR+1(ix),h
+
+	ld a,(event_mask)
+	and #EVENT_MODIFIERS
+	call nz,player_process_notation_modifiers
 
 	ld a,(event_instrument)
 	cp #0xff
@@ -276,7 +306,82 @@ player_event_not_release:
 	ld a,(event_note)
 	cp #0xff
 	ret z
+	ld b,a
+	ld a,(event_mask)
+	and #EVENT_LEGATO
+	ld a,b
+	jp nz,player_note_legato
 	jp player_note_on
+
+; Apply persistent CSM notation modes. These are independent of the legacy
+; Furnace effect column so a note can carry articulation and dynamics together.
+;   Input: IX points at the current channel; event_* contains decoded payload.
+;   Output: persistent mode state updated. Clobbers AF.
+;   Foreground-only; does not block or emit PSG/Virtual Drip traffic.
+player_process_notation_modifiers:
+	ld a,(event_modifier_flags)
+	and #MOD_RESET
+	call nz,player_clear_notation_modes
+
+	ld a,(event_modifier_flags)
+	and #MOD_ARP_CLEAR
+	jr z,player_notation_arp_set_check
+	ld a,CH_FLAGS(ix)
+	and #0xf7
+	ld CH_FLAGS(ix),a
+	xor a
+	ld CH_NOTATION_ARP_PHASE(ix),a
+	ld a,CH_DIRTY(ix)
+	or #(DIRTY_PITCH | DIRTY_NOISE)
+	ld CH_DIRTY(ix),a
+player_notation_arp_set_check:
+	ld a,(event_modifier_flags)
+	and #MOD_ARP_SET
+	jr z,player_notation_hairpin_clear_check
+	ld a,(event_arpeggio)
+	ld CH_NOTATION_ARP_PARAM(ix),a
+	ld a,#2			; tick advance below makes the starting phase root
+	ld CH_NOTATION_ARP_PHASE(ix),a
+	ld a,CH_FLAGS(ix)
+	or #CHANNEL_NOTATION_ARP
+	ld CH_FLAGS(ix),a
+	ld a,CH_DIRTY(ix)
+	or #(DIRTY_PITCH | DIRTY_NOISE)
+	ld CH_DIRTY(ix),a
+player_notation_hairpin_clear_check:
+	ld a,(event_modifier_flags)
+	and #MOD_HAIRPIN_CLEAR
+	jr z,player_notation_hairpin_set_check
+	xor a
+	ld CH_HAIRPIN_RATE(ix),a
+player_notation_hairpin_set_check:
+	ld a,(event_modifier_flags)
+	and #MOD_HAIRPIN_SET
+	ret z
+	ld a,(event_hairpin_rate)
+	ld CH_HAIRPIN_RATE(ix),a
+	ld a,(event_hairpin_ceiling)
+	ld CH_HAIRPIN_CEILING(ix),a
+	ret
+
+; Clear only persistent notation state. Legacy tracker effect state retains its
+; existing row-local behavior.
+;   Input: IX points at a channel. Output: notation modes cleared.
+;   Clobbers AF. Foreground-only; does not block or emit traffic.
+player_clear_notation_modes:
+	ld a,CH_FLAGS(ix)
+	and #0xf7
+	ld CH_FLAGS(ix),a
+	xor a
+	ld CH_NOTATION_ARP_PARAM(ix),a
+	ld CH_NOTATION_ARP_PHASE(ix),a
+	ld CH_HAIRPIN_RATE(ix),a
+	ld CH_HAIRPIN_OFFSET(ix),a
+	ld CH_HAIRPIN_CEILING(ix),a
+	ld a,CH_DIRTY(ix)
+	or #(DIRTY_PITCH | DIRTY_VOLUME | DIRTY_NOISE)
+	ld CH_DIRTY(ix),a
+	ret
 
 player_process_effect:
 	ld a,(event_effect)
@@ -335,6 +440,23 @@ player_effect_store_volume:
 	ld CH_DIRTY(ix),a
 	ret
 
+; player_note_legato -- change pitch without restarting any macro.
+;   Input: A is a ZTR note number; IX points at the current channel.
+;   Output: pitch/noise marked dirty. Clobbers AF, B and onset-path registers.
+;   A malformed inactive-channel event becomes a normal onset. Foreground-only;
+;   does not block or directly emit PSG/Virtual Drip traffic.
+player_note_legato:
+	ld b,a
+	ld a,CH_FLAGS(ix)
+	and #CHANNEL_ACTIVE
+	ld a,b
+	jr z,player_note_on
+	ld CH_NOTE(ix),a
+	ld a,CH_DIRTY(ix)
+	or #(DIRTY_PITCH | DIRTY_NOISE)
+	ld CH_DIRTY(ix),a
+	ret
+
 ; A contains a ZTR note number.
 player_note_on:
 	ld b,a
@@ -370,6 +492,7 @@ player_note_retrigger:
 	ret
 
 player_note_off:
+	call player_clear_notation_modes
 	ld a,CH_FLAGS(ix)
 	and #CHANNEL_LEGATO
 	ld CH_FLAGS(ix),a
@@ -468,11 +591,63 @@ player_effect_tick_volume_store:
 	or #DIRTY_VOLUME
 	ld CH_DIRTY(ix),a
 player_effect_tick_next:
+	call player_advance_notation_modes
 	ld a,(current_channel)
 	inc a
 	ld (current_channel),a
 	cp #ZTR_CHANNELS
 	jp nz,player_effect_tick_loop
+	ret
+
+; Advance persistent CSM arpeggio and hairpin state once per playback tick.
+;   Input: IX points at a channel. Output: mode phase/offset advanced.
+;   Clobbers AF, BC. Foreground-only; does not block or emit traffic.
+player_advance_notation_modes:
+	ld a,CH_FLAGS(ix)
+	and #CHANNEL_NOTATION_ARP
+	jr z,player_notation_tick_hairpin
+	ld a,CH_NOTATION_ARP_PHASE(ix)
+	inc a
+	cp #3
+	jr c,player_notation_tick_arp_store
+	xor a
+player_notation_tick_arp_store:
+	ld CH_NOTATION_ARP_PHASE(ix),a
+	ld a,CH_DIRTY(ix)
+	or #(DIRTY_PITCH | DIRTY_NOISE)
+	ld CH_DIRTY(ix),a
+
+player_notation_tick_hairpin:
+	ld a,CH_HAIRPIN_RATE(ix)
+	or a
+	ret z
+	ld b,a
+	ld c,CH_HAIRPIN_OFFSET(ix)
+	bit 7,b
+	jr nz,player_notation_tick_hairpin_down
+	ld a,c
+	add a,b
+	bit 7,a
+	jr nz,player_notation_tick_hairpin_store
+	cp #16
+	jr c,player_notation_tick_hairpin_store
+	ld a,#15
+	jr player_notation_tick_hairpin_store
+player_notation_tick_hairpin_down:
+	ld a,c
+	add a,b
+	bit 7,a
+	jr z,player_notation_tick_hairpin_store
+	cp #0xf1			; -15 in two's complement
+	jr nc,player_notation_tick_hairpin_store
+	ld a,#0xf1
+player_notation_tick_hairpin_store:
+	cp c
+	ret z
+	ld CH_HAIRPIN_OFFSET(ix),a
+	ld a,CH_DIRTY(ix)
+	or #DIRTY_VOLUME
+	ld CH_DIRTY(ix),a
 	ret
 
 player_advance_macros:
@@ -1082,14 +1257,14 @@ player_effective_tracker_arp:
 	ld a,CH_EFFECT(ix)
 	cp #EFFECT_ARPEGGIO
 	ld a,b
-	jr nz,player_effective_clamp
+	jr nz,player_effective_notation_arp
 	ld b,a
 	ld a,CH_EFFECT_PHASE(ix)
 	cp #1
 	jr z,player_effective_arp_high
 	cp #2
 	ld a,b
-	jr nz,player_effective_clamp
+	jr nz,player_effective_notation_arp
 	ld a,CH_EFFECT_PARAM(ix)
 	and #0x0f
 	jr player_effective_add
@@ -1101,6 +1276,31 @@ player_effective_arp_high:
 	rrca
 	rrca
 player_effective_add:
+	add a,b
+player_effective_notation_arp:
+	ld b,a
+	ld a,CH_FLAGS(ix)
+	and #CHANNEL_NOTATION_ARP
+	ld a,b
+	jr z,player_effective_clamp
+	ld b,a
+	ld a,CH_NOTATION_ARP_PHASE(ix)
+	cp #1
+	jr z,player_effective_notation_arp_high
+	cp #2
+	ld a,b
+	jr nz,player_effective_clamp
+	ld a,CH_NOTATION_ARP_PARAM(ix)
+	and #0x0f
+	jr player_effective_notation_add
+player_effective_notation_arp_high:
+	ld a,CH_NOTATION_ARP_PARAM(ix)
+	and #0xf0
+	rrca
+	rrca
+	rrca
+	rrca
+player_effective_notation_add:
 	add a,b
 player_effective_clamp:
 	cp #ZTR_NOTE_COUNT

@@ -76,6 +76,11 @@ layer-unit assignment or optional spill. `make csm-song` builds the supplied CSM
 The integer-only language and current backend contract are documented in
 `docs/CSM-Language.md`.
 
+CSM patterns support exact-tick note durations, ties, envelope-preserving
+legato pitch changes, persistent per-tick arpeggios/trills, and persistent
+crescendo/diminuendo hairpins. These are compiled directly into compact ZTR
+events; they do not depend on Furnace effect syntax.
+
 The project Makefile passes `--transpose 24` for the supplied TI-99 song. Set
 `TRANSPOSE=0` when building a source whose note periods already match the
 Afternoon Blend clock, or pass a different `--transpose` value directly.

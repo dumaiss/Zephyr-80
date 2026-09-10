@@ -16,6 +16,74 @@ import fur2ztr
 PROJECT = Path(__file__).resolve().parent.parent
 RUNAWAY = PROJECT / "songs/RunawayCircuit.csm"
 
+ARTICULATION_SOURCE = r"""
+song ArticulationTest {
+    tick_rate = 60;
+    ticks_per_row = 3;
+    rows_per_quarter = 2;
+    tuning = 440;
+    meter = meter(4, 4);
+    roles = [role(lead, 8)];
+    play = main;
+    pattern phrase = | c4@6^4^7 -d4@15>1 = ^2 ^ _ ~ e4<2 |;
+    section only { lead = phrase; }
+    instrument Voice {
+        priority = required;
+        level = 255;
+        gate = 6;
+        envelope = adsr(0, 0, 255, 3);
+    }
+    orchestra Basic {
+        layer lead.main {
+            source = lead;
+            instrument = Voice;
+            route = C;
+        }
+    }
+    scene normal { enables = [lead.main]; }
+    form main {
+        using = Basic;
+        sequence = [play(only, normal)];
+        loop = 0;
+    }
+}
+target Zephyr {
+    backend = sn76489x4;
+    clock = 3579545;
+    transpose = 0;
+    routes { C = psg0; }
+    realize Voice { waveform = square; }
+}
+"""
+
+HANDOVER_SOURCE = ARTICULATION_SOURCE.replace(
+    "roles = [role(lead, 8)];",
+    "roles = [role(lead, 8), role(next, 8)];",
+).replace(
+    "pattern phrase = | c4@6^4^7 -d4@15>1 = ^2 ^ _ ~ e4<2 |;\n    section only { lead = phrase; }",
+    "pattern phrase = | c4@24^4^7 _ _ _ _ _ _ _ |;\n"
+    "    pattern answer = | d4@24 _ _ _ _ _ _ _ |;\n"
+    "    section first { lead = phrase; }\n"
+    "    section second { next = answer; }",
+).replace(
+    "gate = 6;",
+    "gate = 24;",
+).replace(
+    "envelope = adsr(0, 0, 255, 3);",
+    "envelope = adsr(0, 0, 255, 0);",
+).replace(
+    "layer lead.main {\n            source = lead;\n            instrument = Voice;\n            route = C;\n        }",
+    "layer lead.main {\n            source = lead;\n            instrument = Voice;\n            route = C;\n        }\n"
+    "        layer next.main {\n            source = next;\n            instrument = Voice;\n            route = C;\n        }",
+).replace(
+    "scene normal { enables = [lead.main]; }",
+    "scene first_scene { enables = [lead.main]; }\n"
+    "    scene second_scene { enables = [next.main]; }",
+).replace(
+    "sequence = [play(only, normal)];",
+    "sequence = [play(first, first_scene), play(second, second_scene)];",
+)
+
 
 def compiler_for_text(source: str) -> csmc.Compiler:
     with tempfile.TemporaryDirectory() as directory:
@@ -37,7 +105,7 @@ class DirectCompilerTests(unittest.TestCase):
         fur2ztr.validate_round_trip(self.song, decoded.song)
         self.assertEqual(self.song.name, "RunawayCircuit")
         self.assertEqual((self.song.tick_rate, self.song.speed), (62, 3))
-        self.assertEqual((self.song.pattern_length, len(self.song.orders)), (32, 129))
+        self.assertEqual((self.song.pattern_length, len(self.song.orders)), (32, 136))
         self.assertEqual(len(self.song.instruments), 11)
         self.assertLessEqual(len(self.data), 20 * 1024)
 
@@ -58,7 +126,64 @@ class DirectCompilerTests(unittest.TestCase):
             for event in events
             if event.effect is not None
         ]
-        self.assertEqual(effects, [(fur2ztr.EFFECTS[0xFF][0], 0)])
+        self.assertTrue(all(effect == (fur2ztr.EFFECTS[0xFF][0], 0) for effect in effects))
+        self.assertFalse(any(
+            event.mode_reset
+            for events in self.song.patterns.values()
+            for event in events
+        ))
+
+    def test_articulation_and_dynamics_notation_compiles(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "articulation.csm"
+            path.write_text(ARTICULATION_SOURCE, encoding="utf-8")
+            song, data = csmc.compile_path(path)
+        fur2ztr.validate_round_trip(song, fur2ztr.decode_ztr(data).song)
+        events = [event for stream in song.patterns.values() for event in stream]
+        self.assertTrue(any(event.legato and event.note is not None for event in events))
+        self.assertTrue(any(event.arpeggio == 0x47 for event in events))
+        self.assertTrue(any(event.arpeggio == 0x22 for event in events))
+        self.assertTrue(any(event.arpeggio == -1 for event in events))
+        self.assertTrue(any(event.hairpin == -1 and event.hairpin_ceiling == 15 for event in events))
+        self.assertTrue(any(event.hairpin == 0 for event in events))
+        self.assertTrue(any(event.hairpin == 2 for event in events))
+        self.assertFalse(any(event.release and event.row == 2 for event in events))
+
+    def test_voice_handover_resets_persistent_modes(self) -> None:
+        compiler = compiler_for_text(HANDOVER_SOURCE)
+        song = compiler.build_song()
+        self.assertEqual(compiler.allocations["lead.main"], compiler.allocations["next.main"])
+        self.assertTrue(any(
+            event.note is not None and event.mode_reset
+            for stream in song.patterns.values()
+            for event in stream
+        ))
+
+    def test_legato_and_standalone_modifiers_require_a_sounding_note(self) -> None:
+        for original, replacement, message in (
+            ("c4@6^4^7 -d4@15>1", "~ -d4@15>1", "legato pitch has no sustained note"),
+            ("c4@6^4^7 -d4@15>1", "~ >1", "modifier has no sounding note"),
+        ):
+            source = ARTICULATION_SOURCE.replace(original, replacement, 1)
+            compiler = compiler_for_text(source)
+            with self.assertRaisesRegex(csmc.CsmCompileError, message):
+                compiler.build_song()
+
+    def test_notation_ranges_and_alignment_are_checked(self) -> None:
+        for original, replacement, code in (
+            ("c4@6^4^7", "c4@6^4^16", "PAT015"),
+            ("-d4@15>1", "-d4@15>16", "PAT016"),
+        ):
+            source = ARTICULATION_SOURCE.replace(original, replacement, 1)
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "invalid.csm"
+                path.write_text(source, encoding="utf-8")
+                _ir, diagnostics = csm_language.compile_source(path)
+            self.assertTrue(any(item.code == code for item in diagnostics.items))
+
+        compiler = compiler_for_text(ARTICULATION_SOURCE.replace("-d4@15>1", "-d4@5>1", 1))
+        with self.assertRaisesRegex(csmc.CsmCompileError, "does not align"):
+            compiler.build_song()
 
     def test_allocator_respects_routes_and_reuses_idle_voice(self) -> None:
         compiler = compiler_for_text(RUNAWAY.read_text(encoding="utf-8"))
@@ -118,6 +243,20 @@ class DirectCompilerTests(unittest.TestCase):
         self.assertEqual(diagnostics.error_count, 0)
         first = ir["song"]["patterns"]["bass.C"]["expression"]["terms"][0]["slots"][0]["events"][0]
         self.assertEqual(first["duration_ticks"], 9)
+
+    def test_note_shaped_qualified_name_component_is_an_identifier(self) -> None:
+        source = ARTICULATION_SOURCE.replace(
+            "pattern phrase = |",
+            "pattern lead.b00 = |",
+            1,
+        ).replace(
+            "section only { lead = phrase; }",
+            "section only { lead = lead.b00; }",
+            1,
+        )
+        compiler = compiler_for_text(source)
+        song = compiler.build_song()
+        self.assertTrue(song.orders)
 
     def test_explicit_duration_with_continuations_compiles(self) -> None:
         source = RUNAWAY.read_text(encoding="utf-8").replace(
