@@ -145,11 +145,15 @@ ROM_DISK_CHUNKS := $(foreach n,$(shell seq 1 $(ROM_DISK_PAGES)),$(BUILD_DIR)/rom
 # here is only for change detection: build_rom_disk.py owns the real manifest and
 # reports precisely which file is missing if one has not been built yet.
 UTILITIES_BUILD ?= ../Utilities/build
+# Prebuilt third-party ZCPR2 / Z-System binaries.  Checked in, not built: there
+# is no source for them in this tree.
+UTILITIES_ZSYS ?= ../Utilities/zsys
 MONITOR_BUILD ?= ../Monitor/build
 # Stock DRI tools (PIP, STAT, ZSID, DUMP) come from the software volumes, which
 # is where the machine's third-party CP/M software now lives.
 SOFTWARE_DIR ?= ../Software
 ROM_DISK_INPUTS := $(wildcard $(UTILITIES_BUILD)/*.com) \
+	$(wildcard $(UTILITIES_ZSYS)/*.COM) \
 	$(wildcard $(MONITOR_BUILD)/zephyr80_monitor.bin) \
 	$(wildcard $(SOFTWARE_DIR)/disk1/0/*) $(wildcard $(SOFTWARE_DIR)/disk1/1/*)
 
@@ -319,6 +323,7 @@ $(ROM_DISK_IMAGE): $(ROM_DISK_TOOL) $(CPMTOOLS_DISKDEF) $(ROM_DISK_INPUTS) | $(B
 		--diskdef "$(CPMTOOLS_DISKDEF)" \
 		--staging-dir "$(ROM_DISK_STAGE)" \
 		--utils-dir "$(UTILITIES_BUILD)" \
+		--zsys-dir "$(UTILITIES_ZSYS)" \
 		--monitor-dir "$(MONITOR_BUILD)" \
 		--stock-dir0 "$(SOFTWARE_DIR)/disk1/0" \
 		--stock-dir1 "$(SOFTWARE_DIR)/disk1/1" \

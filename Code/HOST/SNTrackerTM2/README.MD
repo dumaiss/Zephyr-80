@@ -14,7 +14,7 @@ SRC/SNTRACK.MOD   application and rate-limited key polling
 SRC/ZTR.DEF       bounded ZTR v1 reader interface
 SRC/ZTR.MOD       binary loading and structural validation
 SRC/PLAYER.DEF    tracker playback interface
-SRC/PLAYER.MOD    typed channel state, events, effects and macros
+SRC/PLAYER.MOD    typed channel state, sequencing, effects and rendering
 SRC/SOUND.DEF     logical 16-channel sound interface
 SRC/SOUND.MOD     Afternoon Blend/SN76489 implementation
 SRC/TIMER.DEF     pending-tick timer interface
@@ -25,9 +25,40 @@ SRC/TRKUI.DEF     compact status interface
 SRC/TRKUI.MOD     order-boundary CP/M console updates
 ```
 
-`PLAYER.MOD` implements the current ZTR v1 behavior, including instrument
-sequences, release points, legacy Furnace effects, envelope-preserving legato,
-persistent notation arpeggios, hairpins and notation reset events.
+`PLAYER.MOD` implements the current ZTR v1 behavior, including typed channel
+state, instrument sequences, release points, legacy Furnace effects,
+envelope-preserving legato, persistent notation arpeggios, hairpins and
+notation reset events.
+
+## Building on the PC
+
+The complete build runs the original CP/M tools under RunCPM, avoiding the
+physical Zephyr's smaller TPA.  From this directory run:
+
+```text
+make
+```
+
+The Makefile creates an isolated temporary CP/M drive, stages uppercase CRLF
+copies of all sources, and then:
+
+1. assembles `CTCLOW.Z80` with ZMAC;
+2. compiles all definition modules;
+3. runs the TM2 REL converter in a fresh IDE session;
+4. compiles all implementation and main modules;
+5. builds `TLINK.COM` and links outside the IDE;
+6. runs the ZTR and complete-song regression tests; and
+7. publishes five executables in `BUILD`.
+
+The default uses the verified x86-64 Linux `TOOLS/RUNCPM` executable and the
+TM2 distribution already under `Code/HOST/Software`.  All inputs can be
+overridden, for example on a different host:
+
+```text
+make RUNCPM=/opt/runcpm/RunCPM
+```
+
+See `TOOLS/README.MD` and `make help` for the complete list.
 
 ## Building on the Zephyr
 
@@ -73,9 +104,10 @@ TRKUI.MOD
 SNTRACK.MOD
 ```
 
-The full IDE may run out of memory while linking the complete application.
-This is linker workspace pressure, not an oversized final program.  Build a
-standalone linker once from the TM2 Link menu:
+The physical Zephyr may run out of memory while compiling `PLAYER.MOD`, running
+`REL CTCLOW CTCLOW`, or performing the final link.  This is tool workspace
+pressure, not necessarily an oversized final program.  When memory permits,
+build a standalone linker from the TM2 Link menu:
 
 ```text
 main module: LINK
@@ -84,12 +116,12 @@ include all needed modules: Y
 ```
 
 Run `TLINK.COM`, select `SNTRACK` as the main module, `SNTRACK.COM` as the
-output, and include all needed modules.  The current native executable is
-33,792 bytes and links without unresolved references using this method.
+output, and include all needed modules.  The PC build links the original
+single-module player without relying on the physical Zephyr's available TPA.
 
-Verified executables are also retained in `BUILD`.  They are conveniences for
-hardware acceptance; the source and on-host procedure above remain the
-authoritative build path.
+The PC Makefile is the reproducible full build when either operation exceeds
+the Zephyr's TPA.  The resulting COM files can then be copied to the SD card for
+hardware acceptance.
 
 ## RunCPM during the port
 

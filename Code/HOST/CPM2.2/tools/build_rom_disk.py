@@ -122,6 +122,67 @@ MANIFEST = (
     ("utils", "sdput.com", "SDPUT.COM", PROFILE_NORMAL),
     ("utils", "sddel.com", "SDDEL.COM", PROFILE_NORMAL),
 
+    # --- Z-System general-purpose tools ----------------------------------
+    # Richard Conn's ZCPR2 utility set, plus NSWEEP.  Prebuilt binaries, not
+    # built from source here: they are third-party CP/M software, carried in
+    # ../Utilities/zsys.
+    #
+    # These ship UNINSTALLED -- GENINS has never been run on them, so every
+    # external address in their configuration block is 0000h.  That is the
+    # correct state for this machine: ../CPM2.2/zcpr2 is built with
+    # MULTCMD=FALSE, INTPATH=TRUE, INTSTACK=TRUE and WHEEL=FALSE precisely so
+    # the CCP needs nothing outside its 2 KiB slot, which means there is no
+    # external path buffer, no named-directory buffer and no wheel byte for
+    # GENINS to point at.  Each tool here works from plain DU: forms and needs
+    # none of them.
+    #
+    # Most of the ZCPR2 set is therefore deliberately NOT carried:
+    #   PATH, LD, CD, PWD, MKDIR   need the external path / NDR buffer
+    #   WHEEL                      needs the wheel byte
+    #   STARTUP                    needs the multiple-command buffer
+    #   SUB, ZEX                   $$$.SUB is hard-coded to drive A, which is
+    #                              this read-only ROM; ZEX also recognises the
+    #                              CCP by the high bit on CPRMPT, which zcpr2
+    #                              deliberately clears for this 8-bit console
+    #   DEVICE, IOLOADER, RECORD   need CHBIOSZ's SYSIO redirectable drivers
+    #   CONFIG, TINIT              program a TVI 950 terminal
+    #   MENU, MCHECK, GENINS,
+    #   LDIRZ, LRUNZ,
+    #   CCPLOC, ECHO               no role on a rescue disk, or redundant with
+    #                              something already carried (CCPLOC vs SYSID)
+    #   XDIR, ERASE, RENAME,
+    #   PROTECT, COMPARE, DIFF     work, but NSWP does erase/rename/attributes
+    #                              and lists sizes and free space, CRC answers
+    #                              "is this the same file", and ZCPR2 has a
+    #                              resident DIR.  They are out on SPACE, not on
+    #                              function -- see the budget note below.
+    #
+    # Full-screen file manager: copy, erase, rename, view, tag, set attributes,
+    # across every user area.  The one tool that makes this volume self
+    # sufficient for file work without PIP command syntax.
+    ("zsys", "NSWP.COM", "NSWP.COM", PROFILE_NORMAL),
+    # Command-line multi-file copy with automatic verify, and an interactive
+    # mode.  This is the machine's working copy tool, not a convenience: the
+    # stock DRI PIP carried above does not run under ZCPR2/ZSDOS, so under that
+    # configuration MCOPY and NSWP are the only two things on this volume that
+    # can move a file.  PIP stays because it still works -- and is still the
+    # documented way to populate the card -- under the stock CCP and BDOS,
+    # which this same ROM manifest also builds.
+    #
+    # Unlike most of Conn's set, MCOPY needs nothing installed: it has no
+    # external-address abort path, and `dir:` accepts the plain DU: form.
+    ("zsys", "MCOPY.COM", "MCOPY.COM", PROFILE_NORMAL),
+    # Sector-level disk editor.  The classic repair tool for a CP/M directory
+    # that has been damaged, and the only thing here that can put one back by
+    # hand.  Works through the standard BIOS jump table, so it reaches whatever
+    # drive is selected -- it writes, so it is as sharp as the user makes it.
+    ("zsys", "DU2.COM", "DU2.COM", PROFILE_NORMAL),
+    # File CRC.  Directly relevant on this machine: every file that arrives
+    # crosses the IO Controller link and the SD path, and this is how you find
+    # out whether it arrived intact rather than inferring it from whether the
+    # program runs.
+    ("zsys", "CRC.COM", "CRC.COM", PROFILE_NORMAL),
+
     # --- Diagnostic profile only -----------------------------------------
     # Synthetic ramp throughput/integrity test for the Bulk lane.
     ("utils", "ioc_bulk.com", "BULK.COM", PROFILE_DIAGNOSTIC),
@@ -146,6 +207,15 @@ MANIFEST = (
     ("utils", "v9958tst.com", "V9958TST.COM", PROFILE_DIAGNOSTIC),
 )
 
+# The volume is 144 KiB in 1 KiB blocks (DSM=143 in cbios_storage_rom.asm), of
+# which 4 blocks are the 128-entry directory -- 140 blocks of content, and that
+# is a BIOS-side constant, not something this script can grow.
+#
+# Both profiles have to fit, so the diagnostic profile is the real ceiling: it
+# is the normal set plus 16 blocks.  Anything added to PROFILE_NORMAL is paid
+# for twice.  That budget, not usefulness, is why the ZCPR2 set above is four
+# tools and not ten.
+#
 # Unallocated space is filled with E5h, the conventional "formatted but empty"
 # byte.  CP/M never reads a block the directory does not reference, so this is
 # cosmetic -- but it makes a hex dump of the ROM obviously a CP/M volume.
@@ -175,6 +245,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile", choices=PROFILES, default=PROFILE_NORMAL,
                         help="which utility set to place on the volume")
     parser.add_argument("--utils-dir", type=Path, default=Path("../Utilities/build"))
+    parser.add_argument("--zsys-dir", type=Path, default=Path("../Utilities/zsys"))
     parser.add_argument("--monitor-dir", type=Path, default=Path("../Monitor/build"))
     parser.add_argument("--stock-dir0", type=Path, default=Path("../Software/disk1/0"))
     parser.add_argument("--stock-dir1", type=Path, default=Path("../Software/disk1/1"))
@@ -222,6 +293,7 @@ def _find(root: Path, name: str) -> Path | None:
 def collect_sources(args: argparse.Namespace) -> list[tuple[Path, str]]:
     roots = {
         "utils": args.utils_dir,
+        "zsys": args.zsys_dir,
         "monitor": args.monitor_dir,
         "stock0": args.stock_dir0,
         "stock1": args.stock_dir1,
@@ -240,7 +312,9 @@ def collect_sources(args: argparse.Namespace) -> list[tuple[Path, str]]:
         raise SystemExit(
             "missing ROM disk input:\n  " + "\n  ".join(missing)
             + "\n\nBuild the contributing projects first "
-              "(Utilities: `make`, Monitor: `make`)."
+              "(Utilities: `make`, Monitor: `make`).  The zsys entries are\n"
+              "prebuilt third-party binaries -- they are not built, they are "
+              "checked in."
         )
     return resolved
 

@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 54623 bytes |
+| Firmware symbol map | `build/firmware.map` | 54620 bytes |
 | Burnable image | `build/zephyr80.bin` | 262144 bytes |
 | Layout manifest | `build/layout.manifest` | 903 bytes |
 
@@ -158,17 +158,17 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `IOC_BULK_CODE_START` | `ED00h` | Common-packet Bulk-write helper code start. |
 | `IOC_BULK_CODE_END` | `EF3Dh` | Common-packet Bulk-write helper code end. |
 | `HID_INPUT_CODE_START` | `EF3Eh` | USB keyboard IOC polling helper code start. |
-| `HID_INPUT_CODE_END` | `EFFFh` | USB keyboard IOC polling helper code end. |
+| `HID_INPUT_CODE_END` | `EFF8h` | USB keyboard IOC polling helper code end. |
 | `HID_INPUT_STATE_START` | `F642h` | USB keyboard IOC mailbox and queue state start. |
-| `HID_INPUT_STATE_END` | `F67Ch` | USB keyboard IOC mailbox and queue state end. |
+| `HID_INPUT_STATE_END` | `F67Bh` | USB keyboard IOC mailbox and queue state end. |
 | `SD_STORAGE_CODE_START` | `F430h` | SD-card BIOS backend code start. |
 | `SD_STORAGE_CODE_END` | `F61Bh` | SD-card BIOS backend code end. |
 | `sd_probe_store_result` | `F68Dh` | Stores the SD select result in the protected caller frame. |
-| `ccp_read_up_sequence` | `EC83h` | Consumes the `ESC [ A` suffix for CCP one-line recall. |
+| `ccp_read_up_sequence` | `EC8Bh` | Consumes the `ESC [ A` suffix for CCP one-line recall. |
 | `V9958_CONSOLE_CODE_START` | `E000h` | Direct LunchCrema V9958 console driver code start. |
 | `v9958_console_driver` | `E000h` | Direct V9958 console driver dispatch table. |
 | `v9958_console_init` | `E014h` | Direct V9958 warm initialization and HID setup. |
-| `V9958_CONSOLE_CODE_END` | `ECA6h` | Direct LunchCrema V9958 console driver code end. |
+| `V9958_CONSOLE_CODE_END` | `ECAEh` | Direct LunchCrema V9958 console driver code end. |
 | `BANKING_CODE_START` | `DC03h` | Banking extension implementation start. |
 | `SELMEM` | `DC03h` | Select RAM bank. |
 | `SETBNK` | `DC0Dh` | Record future DMA bank. |
@@ -176,8 +176,8 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `MOVE` | `DC25h` | Same-bank or cross-bank memory move. |
 | `BANKING_CODE_END` | `DCB1h` | Banking extension implementation end. |
 | `VIDEO_SEND` | `DF50h` | Extended BIOS call: selected-backend raw video request. |
-| `IOCBULK` | `ECA6h` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
-| `IOCBULKW` | `ECB5h` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
+| `IOCBULK` | `ECAEh` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
+| `IOCBULKW` | `ECBDh` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
 | `BIOS_EXT_CODE_START` | `DF50h` | BIOS extension code start. |
 | `BIOS_EXT_CODE_END` | `DF78h` | BIOS extension code end. |
 | `BIOS_CODE_END` | `DF78h` | End of core BIOS code. |
