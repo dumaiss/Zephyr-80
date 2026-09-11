@@ -390,7 +390,7 @@ CBIOS_IOC_COMMAND_CODE_BASE     = 0xf000
 ; ends at ECB9h, leaving ED00h-EFFFh unused inside its reserved slot-3
 ; headroom.  IOCBULKW and the small link helpers live here so the SD backend
 ; remains contiguous and no scratch/TPA allocation is consumed.
-CBIOS_IOC_BULK_CODE_BASE        = 0xed00
+CBIOS_IOC_BULK_CODE_BASE        = 0xec40
 
 ; ------------------------------------------------------------------------------
 ; CP/M Page Zero & Environment Setup
@@ -421,7 +421,7 @@ PROTECTED_TPA_END               = 0xc3ff
 ; ------------------------------------------------------------------------------
 ; CBIOS Memory Layout
 ; ------------------------------------------------------------------------------
-CBIOS_BASE                      = 0xda00
+CBIOS_BASE                      = 0xe200
 
 ; ------------------------------------------------------------------------------
 ; Core BIOS Region
@@ -440,7 +440,7 @@ CBIOS_BASE                      = 0xda00
 ;   DD10h  SIO core
 
 CBIOS_CORE_BASE                 = CBIOS_BASE
-CBIOS_CORE_LIMIT                = 0xe000
+CBIOS_CORE_LIMIT                = 0xe800
 CBIOS_CORE_END                  = CBIOS_CORE_LIMIT - 1
 CBIOS_CORE_SIZE                 = CBIOS_CORE_LIMIT - CBIOS_CORE_BASE
 
@@ -478,38 +478,43 @@ CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x0203      ; DC03h
 ;   6. update validation expectations,
 ;   7. regenerate the memory documentation.
 
+; Slots are no longer five equal kilobytes.  The CC00h rebase shrank the driver
+; region from E000h-FA7Fh to E800h-FA7Fh, and the console -- which used to span
+; slots 0 through 3 -- now needs 592 bytes because its implementation is on ROM
+; page 4.  Each slot therefore carries its own limit, sized to what lives in it
+; with deliberate slack, rather than a shared CBIOS_DRIVER_SLOT_SIZE.
+;
+;   0  E800h-EBFFh  console driver                 592 of 1024
+;   1  EC00h-EEFFh  transport shims and Bulk lane  607 of  768
+;   2  EF00h-EFFFh  USB keyboard polling           186 of  256
+;   3  F000h-F43Fh  IOC Command transport         1045 of 1088
+;   4  F440h-F67Fh  SD backend and HID state       267 of  576
+;   5  F680h-FA7Fh  drive A, sercon, gate, SD tail  -- unchanged
 CBIOS_DRIVER_SLOT_SIZE          = 0x0400
 
-CBIOS_DRIVER_SLOT0_BASE         = 0xe000
-CBIOS_DRIVER_SLOT0_LIMIT        = CBIOS_DRIVER_SLOT0_BASE + CBIOS_DRIVER_SLOT_SIZE
+CBIOS_DRIVER_SLOT0_BASE         = 0xe800
+CBIOS_DRIVER_SLOT0_LIMIT        = 0xec00
 CBIOS_DRIVER_SLOT0_END          = CBIOS_DRIVER_SLOT0_LIMIT - 1
 
-CBIOS_DRIVER_SLOT1_BASE         = 0xe400
-CBIOS_DRIVER_SLOT1_LIMIT        = CBIOS_DRIVER_SLOT1_BASE + CBIOS_DRIVER_SLOT_SIZE
+CBIOS_DRIVER_SLOT1_BASE         = 0xec00
+CBIOS_DRIVER_SLOT1_LIMIT        = 0xef00
 CBIOS_DRIVER_SLOT1_END          = CBIOS_DRIVER_SLOT1_LIMIT - 1
 
-CBIOS_DRIVER_SLOT2_BASE         = 0xe800
-CBIOS_DRIVER_SLOT2_LIMIT        = CBIOS_DRIVER_SLOT2_BASE + CBIOS_DRIVER_SLOT_SIZE
+CBIOS_DRIVER_SLOT2_BASE         = 0xef00
+CBIOS_DRIVER_SLOT2_LIMIT        = 0xf000
 CBIOS_DRIVER_SLOT2_END          = CBIOS_DRIVER_SLOT2_LIMIT - 1
 
-CBIOS_DRIVER_SLOT3_BASE         = 0xec00
-CBIOS_DRIVER_SLOT3_LIMIT        = CBIOS_DRIVER_SLOT3_BASE + CBIOS_DRIVER_SLOT_SIZE
+CBIOS_DRIVER_SLOT3_BASE         = 0xf000
+CBIOS_DRIVER_SLOT3_LIMIT        = 0xf440
 CBIOS_DRIVER_SLOT3_END          = CBIOS_DRIVER_SLOT3_LIMIT - 1
 
-; Stack-switch shims for the two published bulk entry points, in the slack
-; between the console driver's code end and the Bulk lane's base at ED00h.
-; They live here rather than beside their bodies because the Bulk region runs
-; solid from ED00h to the EFFFh slot ceiling; this is the nearest free run.
-; 34 bytes used of 82.  See CBIOS_XPORT_STACK_TOP for why they exist.
-;
-; This base is the V9958 console's code end, not a fixed boundary: it was ECA6h
-; until the console's idle-spin delay grew the driver by eight bytes.  Growing
-; the console again means moving this up again, and the slack is what pays for
-; it -- check_overlap.py names this symbol when the two collide.
-CBIOS_XPORT_SHIM_CODE_BASE      = 0xecae
+; Stack-switch shims for the two published bulk entry points, at the base of
+; slot 1 with the Bulk lane following.  See CBIOS_XPORT_STACK_TOP for why they
+; exist; check_overlap.py names this symbol if the two ever collide.
+CBIOS_XPORT_SHIM_CODE_BASE      = 0xec00
 
-CBIOS_DRIVER_SLOT4_BASE         = 0xf000
-CBIOS_DRIVER_SLOT4_LIMIT        = CBIOS_DRIVER_SLOT4_BASE + CBIOS_DRIVER_SLOT_SIZE
+CBIOS_DRIVER_SLOT4_BASE         = 0xf440
+CBIOS_DRIVER_SLOT4_LIMIT        = 0xf680
 CBIOS_DRIVER_SLOT4_END          = CBIOS_DRIVER_SLOT4_LIMIT - 1
 
 CBIOS_DRIVER_SLOT5_BASE         = 0xf680
@@ -742,7 +747,7 @@ IOC_BULK_REASON_CRC             = 0x07
 ; IOCALL, and the pre-storage gap at F41Bh is only 21 bytes before
 ; CBIOS_STORAGE_SD_CODE_BASE.  This fills slot 3; check_overlap.py enforces the
 ; EFFFh ceiling.
-CBIOS_HID_INPUT_CODE_BASE       = 0xef3e
+CBIOS_HID_INPUT_CODE_BASE       = 0xef00
 ; HID mailbox/queue state occupies the otherwise-unused gap immediately after
 ; the SD backend.  It must not live in MOVE_BUFFER because CONST can fire from
 ; BDOS OUTCHAR while a storage request is staged, and it must not live at FD00h:
@@ -752,11 +757,21 @@ CBIOS_HID_INPUT_CODE_BASE       = 0xef3e
 ; full 32-byte mailbox.  Together with the 32-byte reply, 16-byte queue and four
 ; queue-control bytes, the state occupies 57 bytes: F642h-F67Ah.  The VDrip
 ; transport begins at F680h, leaving five guard bytes.
-CBIOS_HID_INPUT_STATE_BASE      = 0xf642
+CBIOS_HID_INPUT_STATE_BASE      = 0xf5c0
 
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_V9958_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
+; Cold-boot stack probe.  A named region in the 36-byte gap between the SIO
+; core and the BIOS extension, not an incidental hole: check_overlap.py
+; enforces both ends, so growing it fails the build rather than the machine.
+;
+; It is here rather than inline in the boot path because that region is full --
+; adding thirteen bytes there pushed cold boot into the console facade.
+CBIOS_STACK_PROBE_CODE_BASE     = CBIOS_BASE + 0x052c                  ; DF2Ch
+CBIOS_STACK_PROBE_CODE_SIZE     = 0x0024
+CBIOS_STACK_PROBE_CODE_END      = CBIOS_STACK_PROBE_CODE_BASE + CBIOS_STACK_PROBE_CODE_SIZE - 1
+
 CBIOS_BIOS_EXT_CODE_BASE        = CBIOS_BASE + 0x0550                  ; DF50h
 CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x057B                  ; DF7Bh — immediately after VIDEO_SEND
 
@@ -940,6 +955,9 @@ CBIOS_WORK_AREA_LIMIT           = CBIOS_WORK_AREA + 0x0080          ; FE80h
 CBIOS_WORK_AREA_END             = CBIOS_WORK_AREA_LIMIT - 1
 
 CBIOS_CONSOLE_WORK_AREA         = CBIOS_WORK_AREA + 0x0004
+; ROM service gate state: caller SP, saved latch, saved interrupt-enable, and
+; the service number parked across the latch write.  In the FE08h-FE1Fh gap.
+CBIOS_ROM_GATE_WORK_AREA        = CBIOS_WORK_AREA + 0x0008          ; FE08h
 CBIOS_BANK_WORK_AREA            = CBIOS_WORK_AREA + 0x0020
 CBIOS_STORAGE_WORK_AREA         = CBIOS_WORK_AREA + 0x0040
 CBIOS_VDRIP_TRANSPORT_WORK_AREA = CBIOS_WORK_AREA + 0x004b
@@ -962,7 +980,8 @@ CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 ;
 ;   FFF0h  CBIOS_STACK_TOP          boot/warm-boot, grows down toward FF80h
 ;   FF80h  CBIOS_CONSOLE_STACK_TOP  console dispatch and storage dispatch
-;   FF00h  CBIOS_XPORT_STACK_TOP    IOCALL / IOCBULK / IOCBULKW
+;   FF00h  CBIOS_XPORT_STACK_TOP    IOCALL / IOCBULK / IOCBULKW, down to FEC0h
+;   FEC0h  CBIOS_ROM_GATE_STACK_TOP ROM services, down to the guard at FE80h
 ;
 ; Console backend calls use a lower private top so boot-time BIOS stack frames
 ; near FFF0h stay intact when CONOUT is called during BOOT.
@@ -983,7 +1002,28 @@ CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 ;
 ; Stack grows downward and should not cross FE80h.
 
+; The ROM service gate runs on its own stack, carved from the transport run
+; rather than added to the window.  A caller's stack is normally in the TPA,
+; which shadow mode hides: a PUSH there would still reach SRAM, but the matching
+; POP would read ROM.  So the gate switches SP into the common window before it
+; touches the latch, and every ROM service runs on this stack.
+;
+; The split is safe on measurement, not on hope.  STKCHK reported the transport
+; stack using 16 bytes of 128 at rest and 22 after exercising the IOC lanes, so
+; 64 bytes each leaves both roughly three times their observed depth.
+CBIOS_ROM_GATE_STACK_TOP        = 0xfec0
+
 CBIOS_STACK_GUARD               = CBIOS_WORK_AREA_LIMIT            ; FE80h
+; Cold boot paints the whole stack window with this byte before any stack is
+; used, so STKCHK.COM can report the high-water mark of each private stack by
+; finding the lowest address that no longer holds it.  The measurement exists
+; because the executable-ROM plan leaves roughly 300 bytes of resident margin,
+; and a stack window that turns out to be short would consume all of it.
+;
+; A5h rather than 00h or FFh: both of those occur naturally in stack frames as
+; null pointers and as -1, which would make a used byte look unused and
+; understate the depth.
+CBIOS_STACK_FILL_BYTE           = 0xa5
 CBIOS_STACK_TOP                 = 0xfff0
 CBIOS_CONSOLE_STACK_TOP         = 0xff80
 CBIOS_XPORT_STACK_TOP           = 0xff00
@@ -1035,8 +1075,8 @@ VDRIP_STORAGE_PROTO_DRIVE             = 0x00
 ; below ends around F611h with roughly 110 spare bytes before FA80h, so the
 ; cheapest space is on this side of the boundary.  check_overlap.py enforces
 ; both ends, so a mistake here fails the build rather than the machine.
-CBIOS_STORAGE_SD_CODE_BASE            = 0xf430
-CBIOS_STORAGE_SD_CODE_LIMIT           = 0xf680
+CBIOS_STORAGE_SD_CODE_BASE            = 0xf440
+CBIOS_STORAGE_SD_CODE_LIMIT           = 0xf5c0
 ; The select probe is split across exact, otherwise-unused fixed-layout gaps.
 ; The generated memory-layout checks validate every fragment independently.
 ; The probe was split across four gaps -- DFEDh in the core BIOS tail, F41Bh in
@@ -1078,6 +1118,18 @@ SD_STORAGE_DPH2                       = CBIOS_SCRATCH_BASE - 0x0110   ; F970h
 ; beyond adjacency.  This is a named region with a declared size, not an
 ; incidental hole -- which is the distinction docs/memory-map.md's headroom
 ; table exists to preserve.
+; ROM service gate code.  A named region in driver slot 5's free tail, with a
+; declared size that check_overlap.py enforces at both ends.
+;
+; It is here because the core BIOS has no room: the largest free fragment there
+; is 17 bytes.  That is itself a symptom of what this architecture is for -- the
+; resident image is full, which is why driver code has to leave it.  When the
+; console moves to ROM and the resident base is rebased to DC00h, the gate moves
+; into core BIOS with the rest of the resident infrastructure.
+CBIOS_ROM_GATE_CODE_BASE              = 0xf883
+CBIOS_ROM_GATE_CODE_SIZE              = 0x004d
+CBIOS_ROM_GATE_CODE_END               = CBIOS_ROM_GATE_CODE_BASE + CBIOS_ROM_GATE_CODE_SIZE - 1
+
 CBIOS_SD_PROBE2_CODE_BASE             = SD_STORAGE_DPH2 - 0x00a0      ; F8D0h
 CBIOS_SD_PROBE2_CODE_SIZE             = 0x00a0
 CBIOS_SD_PROBE2_CODE_END              = CBIOS_SD_PROBE2_CODE_BASE + CBIOS_SD_PROBE2_CODE_SIZE - 1

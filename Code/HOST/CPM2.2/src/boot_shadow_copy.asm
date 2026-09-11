@@ -71,5 +71,7 @@ shadow_copy_rom_to_ram_done:
 	jp cbios_boot_after_rom_copy
 
 cbios_boot_after_rom_copy:
-	ld sp,#CBIOS_STACK_TOP
-	jp boot
+	; The stack probe paints the stack window and then starts the BIOS.  It
+	; lives in the core-BIOS tail rather than here because this region is
+	; full: adding it inline pushed the boot path into the console facade.
+	jp cbios_stack_probe_start

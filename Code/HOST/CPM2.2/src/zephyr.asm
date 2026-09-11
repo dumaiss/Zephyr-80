@@ -122,6 +122,7 @@ ZBIOS_EXT_BASE:
 	.include "cbios_hid_input.asm"
 	.ifeq VDRIP_TRANSPORT_LINKED
 	.include "cbios_sercon.asm"
+	.include "cbios_rom_gate.asm"
 	.endif
 	.include "cbios_console_vdrip.asm"
 	.include "cbios_storage.asm"

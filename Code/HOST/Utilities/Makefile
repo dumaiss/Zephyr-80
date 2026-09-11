@@ -43,6 +43,15 @@ NORMAL += volinfo sddir sdget sdput sddel
 # Reports which CCP and BDOS are actually executing, read out of RAM.  Uses no
 # IO Controller traffic, so it answers when the link is dead.
 NORMAL += sysid
+# Reports the high-water mark of the three BIOS private stacks, measured against
+# the fill cold boot paints across FE80h-FFEFh.  Reads memory and prints; it
+# belongs on the rescue disk because the question it answers comes up when the
+# machine is already behaving strangely.
+NORMAL += stkchk
+# Proves the executable-ROM service gate on hardware: that the gate reaches ROM
+# page 4, that arguments cross, that a service can write low RAM it cannot read,
+# and that the banking latch comes back byte-identical.
+NORMAL += romtest
 
 # --- diagnostic profile ------------------------------------------------------
 # DESTRUCTIVE: these write to whatever card is inserted.

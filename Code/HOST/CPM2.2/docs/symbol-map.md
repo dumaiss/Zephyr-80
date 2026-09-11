@@ -9,19 +9,19 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 54620 bytes |
-| Burnable image | `build/zephyr80.bin` | 262144 bytes |
-| Layout manifest | `build/layout.manifest` | 903 bytes |
+| Firmware symbol map | `build/firmware.map` | 50725 bytes |
+| Burnable image | `build/zephyr80.bin` | 327680 bytes |
+| Layout manifest | `build/layout.manifest` | 1112 bytes |
 
 ## Reset And CP/M Common Symbols
 
 | Symbol | Address | Notes |
 |---|---:|---|
 | `reset_vector` | `0000h` | ROM reset entry. |
-| `CBASE` | `C400h` | CP/M CCP base for the configured memory size. |
-| `FBASE` | `CC06h` | CP/M BDOS entry in this assembled image. |
-| `CCP_ENTRY` | `C400h` | CCP command processor entry alias for `CBASE`. |
-| `CCP_CLEARBUF_ENTRY` | `C403h` | CCP warm-entry target after clearing the command buffer. |
+| `CBASE` | `CC00h` | CP/M CCP base for the configured memory size. |
+| `FBASE` | `D406h` | CP/M BDOS entry in this assembled image. |
+| `CCP_ENTRY` | `CC00h` | CCP command processor entry alias for `CBASE`. |
+| `CCP_CLEARBUF_ENTRY` | `CC03h` | CCP warm-entry target after clearing the command buffer. |
 | `PROTECTED_TPA_START` | `C000h` | Start marker for the non-banked protected TPA window. |
 | `PROTECTED_TPA_END` | `C3FFh` | End marker for the non-banked protected TPA window. |
 
@@ -40,81 +40,81 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 
 | Entry | Address | Target |
 |---|---:|---|
-| `BOOT` | `DA00h` | `boot` |
-| `WBOOT` | `DA03h` | `wboot` |
-| `CONST` | `DA06h` | `const` |
-| `CONIN` | `DA09h` | `conin` |
-| `CONOUT` | `DA0Ch` | `conout` |
-| `LIST` | `DA0Fh` | `list` |
-| `PUNCH` | `DA12h` | `punch` |
-| `READER` | `DA15h` | `reader` |
-| `HOME` | `DA18h` | `home` |
-| `SELDSK` | `DA1Bh` | `seldsk` |
-| `SETTRK` | `DA1Eh` | `settrk` |
-| `SETSEC` | `DA21h` | `setsec` |
-| `SETDMA` | `DA24h` | `setdma` |
-| `READ` | `DA27h` | `read` |
-| `WRITE` | `DA2Ah` | `write` |
-| `LISTST` | `DA2Dh` | `listst` |
-| `SECTRAN` | `DA30h` | `sectran` |
-| `ZBIOS_EXT_BASE` | `DA33h` | Extended BIOS jump table base. |
-| `ZBIOS_EXT_BASE + 00h` | `DA33h` | `MOVE` |
-| `ZBIOS_EXT_BASE + 03h` | `DA36h` | `XMOVE` |
-| `ZBIOS_EXT_BASE + 06h` | `DA39h` | `SELMEM` |
-| `ZBIOS_EXT_BASE + 09h` | `DA3Ch` | `SETBNK` |
-| `ZBIOS_EXT_BASE + 0Ch` | `DA3Fh` | `IOCALL` |
-| `ZBIOS_EXT_BASE + 0Fh` | `DA42h` | `VIDEO_SEND` |
-| `ZBIOS_EXT_BASE + 12h` | `DA45h` | `IOCBULK` |
-| `ZBIOS_EXT_BASE + 15h` | `DA48h` | `IOCBULKW` |
+| `BOOT` | `E200h` | `boot` |
+| `WBOOT` | `E203h` | `wboot` |
+| `CONST` | `E206h` | `const` |
+| `CONIN` | `E209h` | `conin` |
+| `CONOUT` | `E20Ch` | `conout` |
+| `LIST` | `E20Fh` | `list` |
+| `PUNCH` | `E212h` | `punch` |
+| `READER` | `E215h` | `reader` |
+| `HOME` | `E218h` | `home` |
+| `SELDSK` | `E21Bh` | `seldsk` |
+| `SETTRK` | `E21Eh` | `settrk` |
+| `SETSEC` | `E221h` | `setsec` |
+| `SETDMA` | `E224h` | `setdma` |
+| `READ` | `E227h` | `read` |
+| `WRITE` | `E22Ah` | `write` |
+| `LISTST` | `E22Dh` | `listst` |
+| `SECTRAN` | `E230h` | `sectran` |
+| `ZBIOS_EXT_BASE` | `E233h` | Extended BIOS jump table base. |
+| `ZBIOS_EXT_BASE + 00h` | `E233h` | `MOVE` |
+| `ZBIOS_EXT_BASE + 03h` | `E236h` | `XMOVE` |
+| `ZBIOS_EXT_BASE + 06h` | `E239h` | `SELMEM` |
+| `ZBIOS_EXT_BASE + 09h` | `E23Ch` | `SETBNK` |
+| `ZBIOS_EXT_BASE + 0Ch` | `E23Fh` | `IOCALL` |
+| `ZBIOS_EXT_BASE + 0Fh` | `E242h` | `VIDEO_SEND` |
+| `ZBIOS_EXT_BASE + 12h` | `E245h` | `IOCBULK` |
+| `ZBIOS_EXT_BASE + 15h` | `E248h` | `IOCBULKW` |
 
 ## BIOS Implementation Symbols
 
 | Symbol | Address | Notes |
 |---|---:|---|
-| `cpm_rom_entry_high` / `shadow_copy_rom_to_ram` | `DA4Bh` | Reset copy routine in high firmware memory. |
-| `shadow_copy_rom_to_ram_done` | `DA96h` | Shadow-copy completion branch point. |
-| `cbios_boot_after_rom_copy` | `DA99h` | Stack setup and cold boot handoff. |
-| `BANK_HELPERS_START` | `DA9Fh` | Low-level bank helper code start. |
-| `bank_select_internal` | `DA9Fh` | Selects RAM bank and records current bank. |
-| `select_ram_bank0` | `DAA9h` | Selects RAM bank 0. |
-| `BANK_HELPERS_END` | `DAADh` | Low-level bank helper code end. |
-| `sio_init` | `DD12h` | Compatibility entry that jumps to `sio_core_init`. |
-| `boot` | `DAADh` | Cold boot implementation; starts the CP/M CCP. |
-| `wboot` | `DAE8h` | Warm boot trampoline. |
-| `wboot_resident` | `DAEBh` | Protected warm boot implementation; returns to the CP/M CCP. |
-| `WBOOT_RESIDENT_START` | `DAEBh` | Resident warm boot body start. |
-| `WBOOT_RESIDENT_END` | `DB1Ch` | Resident warm boot body end. |
-| `restore_ccp_from_rom` | `DB1Ch` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
-| `ctc_disable_interrupts` | `DCB1h` | CTC interrupt disable helper. |
-| `prepare_runnable_bank` | `DB34h` | Page-zero and DMA preparation helper. |
-| `init_page_zero` | `DB3Eh` | Installs `JP WBOOT` and `JP FBASE`. |
-| `runtime_set_default_dma` | `DB53h` | Sets default DMA to `0080h`. |
-| `runtime_clear_default_dma` | `DB61h` | Clears command tail/default DMA area. |
-| `DSKERROR` | `CCA1h` | BDOS disk-error recovery; reports the failing drive and warm-boots on A:. |
-| `CONSOLE_CODE_START` | `DB7Ch` | Console BIOS facade start. |
-| `console_init` | `DB7Ch` | Installs and initializes the default console driver. |
-| `console_set_driver` | `DB85h` | Installs an alternate console driver table. |
-| `const` | `DB89h` | Console status facade. |
-| `conin` | `DB8Dh` | Blocking console input facade. |
-| `conout` | `DB91h` | Blocking console output facade. |
-| `list` | `DB95h` | No-op list implementation. |
-| `punch` | `DB99h` | No-op punch implementation. |
-| `reader` | `DB9Dh` | EOF reader implementation. |
-| `listst` | `DBA1h` | Ready list-status implementation. |
-| `CONSOLE_CODE_END` | `DBC3h` | Console BIOS facade end. |
-| `STORAGE_STUB_CODE_START` | `DBC3h` | Storage BIOS facade start. |
-| `home` | `DBC3h` | Storage HOME facade; routes to the selected drive-A backend. |
-| `settrk` | `DBC6h` | Storage SETTRK facade; records selected track. |
-| `setsec` | `DBC9h` | Storage SETSEC facade; records selected sector. |
-| `seldsk` | `DBCCh` | Storage SELDSK facade; returns a drive DPH or no disk. |
-| `setdma` | `DBD8h` | Records DMA address. |
-| `read` | `DBCFh` | Storage READ facade; transfers from the selected drive-A backend. |
-| `write` | `DBD2h` | Storage WRITE facade; transfers to the selected drive-A backend. |
-| `sectran` | `DBD5h` | Returns untranslated 0-based logical sector for no-skew media. |
-| `STORAGE_STUB_CODE_END` | `DBDDh` | Storage BIOS facade end. |
-| `CCP_QOL_CODE_START` | `DBDDh` | CCP clear-screen prompt-redraw helper start. |
-| `ccp_clear_redraw` | `DBDDh` | Clears the console and redraws the CCP prompt. |
-| `CCP_QOL_CODE_END` | `DC02h` | CCP clear-screen prompt-redraw helper end. |
+| `cpm_rom_entry_high` / `shadow_copy_rom_to_ram` | `E24Bh` | Reset copy routine in high firmware memory. |
+| `shadow_copy_rom_to_ram_done` | `E296h` | Shadow-copy completion branch point. |
+| `cbios_boot_after_rom_copy` | `E299h` | Stack setup and cold boot handoff. |
+| `BANK_HELPERS_START` | `E29Ch` | Low-level bank helper code start. |
+| `bank_select_internal` | `E29Ch` | Selects RAM bank and records current bank. |
+| `select_ram_bank0` | `E2A6h` | Selects RAM bank 0. |
+| `BANK_HELPERS_END` | `E2AAh` | Low-level bank helper code end. |
+| `sio_init` | `E512h` | Compatibility entry that jumps to `sio_core_init`. |
+| `boot` | `E2AAh` | Cold boot implementation; starts the CP/M CCP. |
+| `wboot` | `E2E5h` | Warm boot trampoline. |
+| `wboot_resident` | `E2E8h` | Protected warm boot implementation; returns to the CP/M CCP. |
+| `WBOOT_RESIDENT_START` | `E2E8h` | Resident warm boot body start. |
+| `WBOOT_RESIDENT_END` | `E319h` | Resident warm boot body end. |
+| `restore_ccp_from_rom` | `E319h` | Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0. |
+| `ctc_disable_interrupts` | `E4B1h` | CTC interrupt disable helper. |
+| `prepare_runnable_bank` | `E331h` | Page-zero and DMA preparation helper. |
+| `init_page_zero` | `E33Bh` | Installs `JP WBOOT` and `JP FBASE`. |
+| `runtime_set_default_dma` | `E350h` | Sets default DMA to `0080h`. |
+| `runtime_clear_default_dma` | `E35Eh` | Clears command tail/default DMA area. |
+| `DSKERROR` | `D4A1h` | BDOS disk-error recovery; reports the failing drive and warm-boots on A:. |
+| `CONSOLE_CODE_START` | `E37Ch` | Console BIOS facade start. |
+| `console_init` | `E37Ch` | Installs and initializes the default console driver. |
+| `console_set_driver` | `E385h` | Installs an alternate console driver table. |
+| `const` | `E389h` | Console status facade. |
+| `conin` | `E38Dh` | Blocking console input facade. |
+| `conout` | `E391h` | Blocking console output facade. |
+| `list` | `E395h` | No-op list implementation. |
+| `punch` | `E399h` | No-op punch implementation. |
+| `reader` | `E39Dh` | EOF reader implementation. |
+| `listst` | `E3A1h` | Ready list-status implementation. |
+| `CONSOLE_CODE_END` | `E3C3h` | Console BIOS facade end. |
+| `STORAGE_STUB_CODE_START` | `E3C3h` | Storage BIOS facade start. |
+| `home` | `E3C3h` | Storage HOME facade; routes to the selected drive-A backend. |
+| `settrk` | `E3C6h` | Storage SETTRK facade; records selected track. |
+| `setsec` | `E3C9h` | Storage SETSEC facade; records selected sector. |
+| `seldsk` | `E3CCh` | Storage SELDSK facade; returns a drive DPH or no disk. |
+| `setdma` | `E3D8h` | Records DMA address. |
+| `read` | `E3CFh` | Storage READ facade; transfers from the selected drive-A backend. |
+| `write` | `E3D2h` | Storage WRITE facade; transfers to the selected drive-A backend. |
+| `sectran` | `E3D5h` | Returns untranslated 0-based logical sector for no-skew media. |
+| `STORAGE_STUB_CODE_END` | `E3DDh` | Storage BIOS facade end. |
+| `CCP_QOL_CODE_START` | `E3DDh` | CCP clear-screen prompt-redraw helper start. |
+| `ccp_clear_redraw` | `E3DDh` | Clears the console and redraws the CCP prompt. |
+| `CCP_QOL_CODE_END` | `E402h` | CCP clear-screen prompt-redraw helper end. |
 | `STORAGE_A_CODE_START` | `F6B0h` | Drive A: storage backend code start. |
 | `stg_a_seldsk` | `F6C1h` | Selects CP/M drive A and returns its DPH. |
 | `stg_a_read` | `F6D5h` | Reads one 128-byte record from the drive A: backend. |
@@ -122,65 +122,64 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `STORAGE_A_DPH` | `FB40h` | Drive A disk parameter header. |
 | `STORAGE_A_DPB` | `FB50h` | Drive A disk parameter block. |
 | `STORAGE_A_CODE_END` | `F752h` | Drive A: storage backend code end. |
-| `SIO_CORE_CODE_START` | `DD10h` | BIOS-owned SIO core code start in core BIOS. |
-| `CONSOLE_IM2_VECTOR_ENTRY` | `DD10h` | SIO core exact IM2 vector table entry address. |
-| `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |
-| `CONSOLE_IM2_VECTOR_TABLE_END` | `DD12h` | SIO core exact IM2 vector table end. |
-| `sio_core_init` | `DD15h` | Initializes BIOS-owned SIO services, SIO0/B async mode, and SIO1/A sync mode. |
-| `sio1_ioc_init` | `DD44h` | Initializes SIO1/A synchronous external-clock/external-sync IO Controller mode. |
-| `sio_core_enable_interrupts` | `DD88h` | Enables BIOS-owned SIO/IM2 interrupts. |
-| `sio_core_disable_interrupts` | `DDBAh` | Disables BIOS-owned SIO interrupts. |
-| `sio_register_rx_sink` | `DDDBh` | Registers one RX byte sink for a BIOS-owned SIO channel. |
-| `sio_send_byte` | `DDF0h` | Blocking send-byte API for BIOS-owned SIO channels. |
-| `sio_recv_byte` | `DE29h` | Polling receive-byte API for BIOS-owned SIO channels. |
-| `sio0b_rts_assert` | `DEC8h` | Asserts SIO0/B RTS for software-managed console RX flow control. |
-| `sio0b_rts_release` | `DED2h` | Releases SIO0/B RTS for software-managed console RX flow control. |
-| `sio1_ioc_rts_assert` | `DE46h` | Asserts SIO1/A RTS as an IO Controller service request. |
-| `sio1_ioc_rts_release` | `DE50h` | Releases SIO1/A RTS after an IO Controller transaction. |
-| `sio1_ioc_put_byte` | `DE5Ah` | SIO1/A IO Controller byte transmit helper. |
-| `sio1_ioc_get_byte` | `DE5Fh` | SIO1/A IO Controller byte receive helper. |
-| `sio_rx_kick` | `DE64h` | Foreground RX poll/dispatch helper. |
-| `sio_core_isr` | `DE9Fh` | BIOS-owned SIO interrupt service routine. |
-| `sio_console_isr` | `DF29h` | Compatibility label that jumps to `sio_core_isr`. |
-| `SIO_CORE_CODE_END` | `DF2Ch` | BIOS-owned SIO core code end. |
-| `IOCTRL_CODE_START` | `DF7Bh` | IOCALL transaction code start in core BIOS. |
-| `IOCALL` | `DFEDh` | Zephyr extended BIOS IO Controller transaction call. |
-| `IOCTRL_CODE_END` | `DFFEh` | IOCALL transaction code end. |
-| `SD_PROBE_CODE_START` | `F680h` | SD selection probe code start. |
-| `sd_probe_store_result` | `F68Dh` | Returns the selected DPH, or zero for an unavailable drive. |
-| `SD_PROBE_CODE_END` | `F694h` | SD selection probe code end. |
+| `SIO_CORE_CODE_START` | `E510h` | BIOS-owned SIO core code start in core BIOS. |
+| `CONSOLE_IM2_VECTOR_ENTRY` | `E510h` | SIO core exact IM2 vector table entry address. |
+| `CONSOLE_IM2_VECTOR_TABLE_START` | `E510h` | SIO core exact IM2 vector table start. |
+| `CONSOLE_IM2_VECTOR_TABLE_END` | `E512h` | SIO core exact IM2 vector table end. |
+| `sio_core_init` | `E515h` | Initializes BIOS-owned SIO services, SIO0/B async mode, and SIO1/A sync mode. |
+| `sio1_ioc_init` | `E544h` | Initializes SIO1/A synchronous external-clock/external-sync IO Controller mode. |
+| `sio_core_enable_interrupts` | `E588h` | Enables BIOS-owned SIO/IM2 interrupts. |
+| `sio_core_disable_interrupts` | `E5BAh` | Disables BIOS-owned SIO interrupts. |
+| `sio_register_rx_sink` | `E5DBh` | Registers one RX byte sink for a BIOS-owned SIO channel. |
+| `sio_send_byte` | `E5F0h` | Blocking send-byte API for BIOS-owned SIO channels. |
+| `sio_recv_byte` | `E629h` | Polling receive-byte API for BIOS-owned SIO channels. |
+| `sio0b_rts_assert` | `E6C8h` | Asserts SIO0/B RTS for software-managed console RX flow control. |
+| `sio0b_rts_release` | `E6D2h` | Releases SIO0/B RTS for software-managed console RX flow control. |
+| `sio1_ioc_rts_assert` | `E646h` | Asserts SIO1/A RTS as an IO Controller service request. |
+| `sio1_ioc_rts_release` | `E650h` | Releases SIO1/A RTS after an IO Controller transaction. |
+| `sio1_ioc_put_byte` | `E65Ah` | SIO1/A IO Controller byte transmit helper. |
+| `sio1_ioc_get_byte` | `E65Fh` | SIO1/A IO Controller byte receive helper. |
+| `sio_rx_kick` | `E664h` | Foreground RX poll/dispatch helper. |
+| `sio_core_isr` | `E69Fh` | BIOS-owned SIO interrupt service routine. |
+| `sio_console_isr` | `E729h` | Compatibility label that jumps to `sio_core_isr`. |
+| `SIO_CORE_CODE_END` | `E72Ch` | BIOS-owned SIO core code end. |
+| `IOCTRL_CODE_START` | `E77Bh` | IOCALL transaction code start in core BIOS. |
+| `IOCALL` | `E7EDh` | Zephyr extended BIOS IO Controller transaction call. |
+| `IOCTRL_CODE_END` | `E7FEh` | IOCALL transaction code end. |
+| `ROM_GATE_CODE_START` | `F883h` | ROM service gate code start. |
+| `ROM_GATE` | `F883h` | Enters shadow/copy mode on ROM page 4 and calls a ROM service. |
+| `ROM_GATE_CODE_END` | `F8CFh` | ROM service gate code end. |
+| `SD_PROBE_CODE_START` | `F8D0h` | Drive dispatcher region start (the B:/C: probes are on ROM page 4). |
+| `stg_seldsk` | `F8D0h` | Drive dispatcher: A: to the ROM backend, B:/C: to volume units 0/1. |
+| `SD_PROBE_CODE_END` | `F918h` | Drive dispatcher region end. |
 | `IOC_CMD_CODE_START` | `F000h` | Common-packet Command-lane helper code start. |
 | `IOC_CMD_CODE_END` | `F415h` | Common-packet Command-lane helper code end. |
-| `sd_storage_probe` | `F680h` | B: select probe: card availability, then the B: DPH. |
-| `sd_storage_probe_card` | `F918h` | Non-destructive SD block-zero probe shared by B: and C:. |
-| `sd_storage_probe2` | `F930h` | C: select probe: card availability, then CMD_VOL_INFO for a mounted unit 1. |
 | `stg_seldsk` | `F8D0h` | Drive dispatcher: A: to the ROM backend, B:/C: to volume units 0/1. |
-| `IOC_BULK_CODE_START` | `ED00h` | Common-packet Bulk-write helper code start. |
-| `IOC_BULK_CODE_END` | `EF3Dh` | Common-packet Bulk-write helper code end. |
-| `HID_INPUT_CODE_START` | `EF3Eh` | USB keyboard IOC polling helper code start. |
-| `HID_INPUT_CODE_END` | `EFF8h` | USB keyboard IOC polling helper code end. |
-| `HID_INPUT_STATE_START` | `F642h` | USB keyboard IOC mailbox and queue state start. |
-| `HID_INPUT_STATE_END` | `F67Bh` | USB keyboard IOC mailbox and queue state end. |
-| `SD_STORAGE_CODE_START` | `F430h` | SD-card BIOS backend code start. |
-| `SD_STORAGE_CODE_END` | `F61Bh` | SD-card BIOS backend code end. |
-| `sd_probe_store_result` | `F68Dh` | Stores the SD select result in the protected caller frame. |
-| `ccp_read_up_sequence` | `EC8Bh` | Consumes the `ESC [ A` suffix for CCP one-line recall. |
-| `V9958_CONSOLE_CODE_START` | `E000h` | Direct LunchCrema V9958 console driver code start. |
-| `v9958_console_driver` | `E000h` | Direct V9958 console driver dispatch table. |
-| `v9958_console_init` | `E014h` | Direct V9958 warm initialization and HID setup. |
-| `V9958_CONSOLE_CODE_END` | `ECAEh` | Direct LunchCrema V9958 console driver code end. |
-| `BANKING_CODE_START` | `DC03h` | Banking extension implementation start. |
-| `SELMEM` | `DC03h` | Select RAM bank. |
-| `SETBNK` | `DC0Dh` | Record future DMA bank. |
-| `XMOVE` | `DC13h` | Set source/destination banks for next `MOVE`. |
-| `MOVE` | `DC25h` | Same-bank or cross-bank memory move. |
-| `BANKING_CODE_END` | `DCB1h` | Banking extension implementation end. |
-| `VIDEO_SEND` | `DF50h` | Extended BIOS call: selected-backend raw video request. |
-| `IOCBULK` | `ECAEh` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
-| `IOCBULKW` | `ECBDh` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
-| `BIOS_EXT_CODE_START` | `DF50h` | BIOS extension code start. |
-| `BIOS_EXT_CODE_END` | `DF78h` | BIOS extension code end. |
-| `BIOS_CODE_END` | `DF78h` | End of core BIOS code. |
+| `IOC_BULK_CODE_START` | `EC40h` | Common-packet Bulk-write helper code start. |
+| `IOC_BULK_CODE_END` | `EE7Dh` | Common-packet Bulk-write helper code end. |
+| `HID_INPUT_CODE_START` | `EF00h` | USB keyboard IOC polling helper code start. |
+| `HID_INPUT_CODE_END` | `EFBAh` | USB keyboard IOC polling helper code end. |
+| `HID_INPUT_STATE_START` | `F5C0h` | USB keyboard IOC mailbox and queue state start. |
+| `HID_INPUT_STATE_END` | `F5F9h` | USB keyboard IOC mailbox and queue state end. |
+| `SD_STORAGE_CODE_START` | `F440h` | SD-card BIOS backend code start. |
+| `SD_STORAGE_CODE_END` | `F514h` | SD-card BIOS backend code end. |
+| `ccp_read_up_sequence` | `EA2Ch` | Consumes the `ESC [ A` suffix for CCP one-line recall. |
+| `V9958_CONSOLE_CODE_START` | `E800h` | Direct LunchCrema V9958 console driver code start. |
+| `v9958_console_driver` | `E800h` | Direct V9958 console driver dispatch table. |
+| `v9958_console_init` | `E814h` | Direct V9958 warm initialization and HID setup. |
+| `V9958_CONSOLE_CODE_END` | `EA4Fh` | Direct LunchCrema V9958 console driver code end. |
+| `BANKING_CODE_START` | `E403h` | Banking extension implementation start. |
+| `SELMEM` | `E403h` | Select RAM bank. |
+| `SETBNK` | `E40Dh` | Record future DMA bank. |
+| `XMOVE` | `E413h` | Set source/destination banks for next `MOVE`. |
+| `MOVE` | `E425h` | Same-bank or cross-bank memory move. |
+| `BANKING_CODE_END` | `E4B1h` | Banking extension implementation end. |
+| `VIDEO_SEND` | `E750h` | Extended BIOS call: selected-backend raw video request. |
+| `IOCBULK` | `EC00h` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
+| `IOCBULKW` | `EC0Fh` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
+| `BIOS_EXT_CODE_START` | `E750h` | BIOS extension code start. |
+| `BIOS_EXT_CODE_END` | `E778h` | BIOS extension code end. |
+| `BIOS_CODE_END` | `E778h` | End of core BIOS code. |
 
 ## Runtime State Symbols
 

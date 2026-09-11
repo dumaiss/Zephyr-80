@@ -42,7 +42,7 @@ SOUND_PSG_COUNT             = 4
 SOUND_PSG_MUTE_TONE0        = 0x9f
 
 ; --- Memory & Bank Configuration ---
-MEM                         = 56
+MEM                         = 58
 RAM_BANK_MASK               = 0x07
 ROM_PAGE_SHIFT              = 5
 ROM_VISIBLE_BANK0           = 0x00

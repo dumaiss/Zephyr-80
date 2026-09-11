@@ -77,6 +77,19 @@ MANIFEST = (
     ("utils", "ioc_sdfmt.com", "SDFMT.COM", PROFILE_NORMAL),
     # Separates IOC HID translation and queueing from BIOS CONST/CONIN.
     ("utils", "hidkey.com", "HIDKEY.COM", PROFILE_NORMAL),
+    # Reports how deep the three BIOS private stacks in FE80h-FFFFh have gone,
+    # read against the fill cold boot paints across the window.  Normal rather
+    # than diagnostic: it only reads memory and prints, and "is a BIOS stack
+    # about to run into its neighbour" is a question asked when the machine is
+    # already behaving strangely -- which is when A: is what you have.
+    ("utils", "stkchk.com", "STKCHK.COM", PROFILE_NORMAL),
+    # Proves the executable-ROM service gate on hardware: that it reaches ROM
+    # page 4 and returns, that arguments survive the memory-map change, that a
+    # service can write low RAM it cannot read, and that the banking latch comes
+    # back byte-identical.  Non-destructive, and it verifies the gate prologue
+    # before calling an absolute address, so a stale build reports rather than
+    # jumps into whatever occupies F883h.
+    ("utils", "romtest.com", "ROMTEST.COM", PROFILE_NORMAL),
     # Passive normal-firmware USB/F310 enumeration and report status.
     ("utils", "padstat.com", "PADSTAT.COM", PROFILE_NORMAL),
     # Arms or disarms the serial console tee.  Rescue tool by definition: it is
@@ -202,6 +215,7 @@ MANIFEST = (
     # Verifies the BIOS failure record by provoking a rejection that never
     # reaches the wire.  Harmless, but it is a test tool, not a rescue tool.
     ("utils", "ioc_diagchk.com", "DIAGCHK.COM", PROFILE_DIAGNOSTIC),
+
     # V9958 console bring-up test.  The console it tests is now the production
     # console, so this is a display bring-up aid rather than a rescue tool.
     ("utils", "v9958tst.com", "V9958TST.COM", PROFILE_DIAGNOSTIC),

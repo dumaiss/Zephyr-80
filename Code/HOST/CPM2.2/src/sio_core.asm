@@ -94,6 +94,8 @@
 	.globl sio_core_rx_lock,sio_core_rx_unlock,sio_core_isr,sio_console_isr
 	.globl CONIRQ,sio_console_enable_interrupts,sio_console_disable_interrupts
 	.globl SIO_CORE_CODE_START,SIO_CORE_CODE_END
+	.globl cbios_stack_probe_start
+	.globl STACK_PROBE_CODE_START,STACK_PROBE_CODE_END
 	.globl SIO_CORE_STATE_START,SIO_CORE_STATE_END
 	.globl SIO0B_RX_SINK,SIO1_RX_SINK
 	.if VDRIP_TRANSPORT_LINKED
@@ -814,3 +816,38 @@ SIO0B_LAST_RX_ERROR:
 SIO_CORE_STATE_END:
 
 	.area CODE (ABS)
+	.org CBIOS_STACK_PROBE_CODE_BASE
+STACK_PROBE_CODE_START:
+
+; ---------------------------------------------------------------------------
+; cbios_stack_probe_start
+;
+; Paint the BIOS stack window with a known byte, then establish the boot stack
+; and enter cold boot.  STKCHK.COM later reports, for each of the three private
+; stacks, the lowest address that no longer holds the fill -- that stack's
+; high-water mark.
+;
+; Cold boot only.  Warm boot must never repaint: the marks accumulate across
+; every program run since power-on, and repainting would reduce the report to
+; whatever the last transient happened to use.
+;
+; Runs with no valid stack, so no CALL, RET, PUSH or POP -- the same constraint
+; as the shadow copy that precedes it.  LDIR needs none of those.
+;
+; Inputs:  None.  Entered by JP from cbios_boot_after_rom_copy.
+; Outputs: FE80h-FFEFh filled; SP set to CBIOS_STACK_TOP; falls into cold boot.
+; Clobbers: AF, BC, DE, HL, SP.
+; Interrupts: Still disabled from reset; cold boot enables them later.
+; Virtual Drip traffic: None.
+; ---------------------------------------------------------------------------
+cbios_stack_probe_start:
+	ld hl,#CBIOS_STACK_GUARD
+	ld de,#CBIOS_STACK_GUARD + 1
+	ld bc,#CBIOS_STACK_TOP - 1 - CBIOS_STACK_GUARD
+	ld (hl),#CBIOS_STACK_FILL_BYTE
+	ldir
+
+	ld sp,#CBIOS_STACK_TOP
+	jp boot
+
+STACK_PROBE_CODE_END:

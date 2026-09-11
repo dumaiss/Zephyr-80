@@ -157,9 +157,174 @@ ROM_DISK_INPUTS := $(wildcard $(UTILITIES_BUILD)/*.com) \
 	$(wildcard $(MONITOR_BUILD)/zephyr80_monitor.bin) \
 	$(wildcard $(SOFTWARE_DIR)/disk1/0/*) $(wildcard $(SOFTWARE_DIR)/disk1/1/*)
 
+# ROM page 4: the executable-ROM service image.  Assembled standalone, not
+# linked into the firmware -- it is executed in place from ROM while the gate
+# holds the machine in shadow/copy mode, so it has its own origin and its own
+# binary.  src/romsvc_abi.inc is the only thing keeping the two sides agreeing.
+ROMSVC_SRC  := $(SRC_DIR)/romsvc_page4.asm
+ROMSVC_INC  := $(SRC_DIR)/romsvc_abi.inc
+ROMSVC_BIN  := $(BUILD_DIR)/romservices.bin
+ROMSVC_PAGE_BYTES := 49152
+
+# Resident addresses the page calls back into.  Generated from the firmware
+# listing, never written down: the console is common RAM and stays mapped during
+# a service, so migrated code keeps calling what it left behind -- at addresses
+# that move on every BIOS rebuild.
+ROMSVC_BIOS_INC  := $(BUILD_DIR)/romsvc_bios.inc
+ROMSVC_BIOS_TOOL := $(TOOLS_DIR)/gen_romsvc_bios.py
+ROMSVC_BIOS_SYMS := \
+	--symbol ATLAS_ROW_BYTES \
+	--symbol BIOS_ERR \
+	--symbol BIOS_ERR_BAD_REPLY \
+	--symbol BIOS_ERR_IO \
+	--symbol BIOS_ERR_TIMEOUT \
+	--symbol CSI_CHA \
+	--symbol CSI_CUB \
+	--symbol CSI_CUD \
+	--symbol CSI_CUF \
+	--symbol CSI_CUP \
+	--symbol CSI_CUP_ALT \
+	--symbol CSI_CUU \
+	--symbol CSI_DECRST \
+	--symbol CSI_DECSET \
+	--symbol CSI_DL \
+	--symbol CSI_ED \
+	--symbol CSI_EL \
+	--symbol CSI_IL \
+	--symbol CSI_MAX_PARAMS \
+	--symbol CSI_RESTORE \
+	--symbol CSI_SAVE \
+	--symbol CSI_SGR \
+	--symbol CSI_VPA \
+	--symbol IOCALL \
+	--symbol IOCBULK \
+	--symbol IOCBULKW \
+	--symbol IOC_OFF_LEN \
+	--symbol IOC_OFF_PAYLOAD \
+	--symbol IOC_OFF_STATUS \
+	--symbol MOVE_BUFFER \
+	--symbol PRINT_RUN_SIZE \
+	--symbol SD_CMD_FLUSH \
+	--symbol SD_CMD_PROBE \
+	--symbol SD_CMD_READ_REC \
+	--symbol SD_CMD_VOL_INFO \
+	--symbol SD_CMD_WRITE_REC \
+	--symbol SD_CMD_XFER_STATUS \
+	--symbol SD_RSP_FLUSH \
+	--symbol SD_RSP_READ_REC \
+	--symbol SD_RSP_WRITE_REC \
+	--symbol SD_RSP_XFER_STATUS \
+	--symbol SD_STORAGE_DATA_OFF \
+	--symbol SD_STORAGE_DPH \
+	--symbol SD_STORAGE_DPH2 \
+	--symbol SD_STORAGE_RECORD_BYTES \
+	--symbol SD_STORAGE_RX_OFF \
+	--symbol SD_STORAGE_TX_OFF \
+	--symbol SD_VOL_INFO_MODE_OFF \
+	--symbol SD_VOL_MODE_NONE \
+	--symbol TERM_STATE_CHARSET \
+	--symbol TERM_STATE_CSI \
+	--symbol TERM_STATE_ESC \
+	--symbol TERM_STATE_ESC_HASH \
+	--symbol TEXT_CELL_HEIGHT \
+	--symbol TEXT_CELL_WIDTH \
+	--symbol TEXT_DISPLAY_OFFSET \
+	--symbol TEXT_LOG_COLUMNS \
+	--symbol TEXT_ROWS \
+	--symbol TEXT_SCROLL_BOTTOM \
+	--symbol V9958_ARGUMENT_DIY \
+	--symbol V9958_ATLAS_COLS \
+	--symbol V9958_ATLAS_ROWS \
+	--symbol V9958_BOOT_DELAY_COUNT \
+	--symbol V9958_COMMAND_HMMM \
+	--symbol V9958_COMMAND_HMMV \
+	--symbol V9958_CURSOR_COLOR \
+	--symbol V9958_CURSOR_HIDE_Y \
+	--symbol V9958_R1_DISPLAY_OFF \
+	--symbol V9958_R1_DISPLAY_ON \
+	--symbol V9958_R23_TEXT_BASE \
+	--symbol V9958_R25_WAIT_OFF \
+	--symbol V9958_R25_WAIT_ON \
+	--symbol V9958_R8_64K_DRAM \
+	--symbol VDP_CMD_CODE \
+	--symbol VDP_CMD_COLOR \
+	--symbol VDP_CMD_DX_HI \
+	--symbol VDP_CMD_DX_LO \
+	--symbol VDP_CMD_DY_LO \
+	--symbol VDP_CMD_NX_HI \
+	--symbol VDP_CMD_NX_LO \
+	--symbol VDP_CMD_NY_HI \
+	--symbol VDP_CMD_NY_LO \
+	--symbol VDP_CMD_SX_HI \
+	--symbol VDP_CMD_SX_LO \
+	--symbol VDP_CMD_SY_HI \
+	--symbol VDP_CMD_SY_LO \
+	--symbol ansi_tmp_col \
+	--symbol ansi_tmp_row \
+	--symbol atlas_dest \
+	--symbol atlas_reverse_flag \
+	--symbol atlas_scanline \
+	--symbol command_buffer \
+	--symbol copy_argument \
+	--symbol copy_dst_row \
+	--symbol copy_row_count \
+	--symbol copy_src_row \
+	--symbol csi_accum \
+	--symbol csi_have_digit \
+	--symbol csi_param0 \
+	--symbol csi_param1 \
+	--symbol csi_param_count \
+	--symbol csi_private_flag \
+	--symbol current_attr \
+	--symbol cursor_sat \
+	--symbol cursor_visible \
+	--symbol esc_press_count \
+	--symbol fill_col \
+	--symbol fill_height \
+	--symbol fill_row \
+	--symbol fill_width \
+	--symbol il_dl_n \
+	--symbol il_dl_row \
+	--symbol il_dl_shift \
+	--symbol print_run_buffer \
+	--symbol print_run_col \
+	--symbol print_run_count \
+	--symbol print_run_row \
+	--symbol render_char \
+	--symbol render_col \
+	--symbol render_row \
+	--symbol sd_storage_expect \
+	--symbol sd_storage_record \
+	--symbol sd_storage_sector \
+	--symbol sd_storage_track \
+	--symbol sd_storage_unit \
+	--symbol storage_caller_sp \
+	--symbol term_auto_wrap \
+	--symbol term_state \
+	--symbol text_attr_saved \
+	--symbol text_col \
+	--symbol text_cursor_saved_col \
+	--symbol text_cursor_saved_row \
+	--symbol text_row \
+	--symbol v9958_clear_command_buffer \
+	--symbol v9958_config_shadow \
+	--symbol v9958_present \
+	--symbol v9958_scroll_origin \
+	--symbol v9958_start_command \
+	--symbol v9958_wait_command \
+	--symbol v9958_write_register
+
+$(ROMSVC_BIOS_INC): $(FIRMWARE_LST) $(ROMSVC_BIOS_TOOL) | $(BUILD_DIR)
+	$(PYTHON) $(ROMSVC_BIOS_TOOL) --listing $(FIRMWARE_LST) --output $@ $(ROMSVC_BIOS_SYMS)
+
+$(ROMSVC_BIN): $(ROMSVC_SRC) $(ROMSVC_INC) $(ROMSVC_BIOS_INC) | $(BUILD_DIR)
+	$(SDASZ80) -I$(SRC_DIR) -I$(BUILD_DIR) -o -l -s $(BUILD_DIR)/romsvc_page4.rel $(ROMSVC_SRC)
+	$(SDLDZ80) -i $(BUILD_DIR)/romsvc_page4.ihx $(BUILD_DIR)/romsvc_page4.rel
+	$(MAKEBIN) -s $(ROMSVC_PAGE_BYTES) $(BUILD_DIR)/romsvc_page4.ihx $@
+
 ifeq ($(STORAGE_A),rom)
 PAYLOAD_ARGS := --payload-config "$(PAYLOAD_CONFIG)"
-IMAGE_PREREQS := $(ROM_DISK_CHUNKS)
+IMAGE_PREREQS := $(ROM_DISK_CHUNKS) $(ROMSVC_BIN)
 else
 PAYLOAD_ARGS :=
 IMAGE_PREREQS :=
@@ -264,7 +429,13 @@ $(FIRMWARE_IHX): $(FIRMWARE_REL)
 CCP  ?= stock
 BDOS ?= stock
 
-CBASE_ADDR ?= 0xC400
+# Derived from MEM, never written twice.  cpm22.asm does ORG (MEM-7)*1024, and
+# this is the address patch_cpm.py installs the CCP and BDOS at.  They were two
+# independent literals until the CC00h rebase moved MEM to 58 and left this at
+# C400h: the firmware expected CP/M 2 KiB higher than the patcher put it, the
+# banner printed from the BIOS and the machine then ran into nothing.
+MEM_K      := $(shell sed -n 's/^MEM[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' $(SRC_DIR)/platform_zephyr80.inc)
+CBASE_ADDR ?= $(shell printf '0x%04X' $$(( ($(MEM_K) - 7) * 1024 )) )
 ZCPR2_BIN  ?= $(BUILD_DIR)/ccp-zcpr2.bin
 ZSDOS_BIN  ?= $(BUILD_DIR)/bdos-zsdos.bin
 PATCH_CPM  := $(TOOLS_DIR)/patch_cpm.py
@@ -272,19 +443,41 @@ PATCH_CPM  := $(TOOLS_DIR)/patch_cpm.py
 ZCPR2_SRCS := $(wildcard zcpr2/src/*) zcpr2/build-zcpr2.sh $(TOOLS_DIR)/hex_to_ccp.py
 ZSDOS_SRCS := $(wildcard zsdos/src/*) zsdos/build-zsdos.sh $(TOOLS_DIR)/l80_slice.py
 
+# ZCPR2 and ZSDOS are assembled by CP/M-hosted assemblers running under an
+# emulator.  Every CP/M-side tool they need is carried in this tree; the
+# emulator is too, in tools/runcpm, rather than resolved from PATH or from an
+# RUNCPM= pointing at a checkout somewhere on the developer's disk.  It is
+# patched to select CCP_ZCPR3 -- the build has never worked against an
+# unmodified RunCPM -- so it must be built from the vendored copy for the CCP
+# probe in both scripts to find a matching binary.  See tools/runcpm/README.md.
+#
+# RunCPM is a single translation unit: main.c includes the rest.
+RUNCPM_DIR  := $(TOOLS_DIR)/runcpm
+RUNCPM_SRCS := $(wildcard $(RUNCPM_DIR)/src/*.c) $(wildcard $(RUNCPM_DIR)/src/*.h)
+RUNCPM_BIN  := $(BUILD_DIR)/tools/RunCPM
+HOSTCC      ?= cc
+RUNCPM_CFLAGS ?= -Wall -O2 -Wno-unused-variable
+
+# Overridable, so a different emulator build can still be tested against.
+RUNCPM ?= $(abspath $(RUNCPM_BIN))
+
+$(RUNCPM_BIN): $(RUNCPM_SRCS)
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(RUNCPM_CFLAGS) -o $@ $(RUNCPM_DIR)/src/main.c
+
 .PHONY: zcpr2 zsdos
 zcpr2: $(ZCPR2_BIN)
 zsdos: $(ZSDOS_BIN)
 
-$(ZCPR2_BIN): $(ZCPR2_SRCS) | $(BUILD_DIR)
-	./zcpr2/build-zcpr2.sh $(BUILD_DIR)/zcpr2-build $@
+$(ZCPR2_BIN): $(ZCPR2_SRCS) $(RUNCPM_BIN) | $(BUILD_DIR)
+	RUNCPM="$(RUNCPM)" ./zcpr2/build-zcpr2.sh $(BUILD_DIR)/zcpr2-build $@
 
 # Depends on the symbol map: ZSDOS calls two BIOS helpers by absolute address,
 # and both move when the BIOS is rebuilt.  The addresses are generated, never
 # written down -- a stale one would assemble cleanly and jump into the middle of
 # something at run time.
-$(ZSDOS_BIN): $(ZSDOS_SRCS) $(SYMBOLS_FILE) $(TOOLS_DIR)/gen_zsdos_bios.py | $(BUILD_DIR)
-	./zsdos/build-zsdos.sh $(BUILD_DIR)/zsdos-build $@ $(SYMBOLS_FILE)
+$(ZSDOS_BIN): $(ZSDOS_SRCS) $(SYMBOLS_FILE) $(TOOLS_DIR)/gen_zsdos_bios.py $(RUNCPM_BIN) | $(BUILD_DIR)
+	RUNCPM="$(RUNCPM)" ./zsdos/build-zsdos.sh $(BUILD_DIR)/zsdos-build $@ $(SYMBOLS_FILE)
 
 CPM_PATCH_ARGS :=
 CPM_PATCH_DEPS :=
@@ -317,7 +510,22 @@ $(SYMBOLS_FILE): $(FIRMWARE_REL)
 # images/zephyr80-vdrip2.cpm, which is a separate user-owned volume.
 rom-disk: $(ROM_DISK_IMAGE)
 
-$(ROM_DISK_IMAGE): $(ROM_DISK_TOOL) $(CPMTOOLS_DISKDEF) $(ROM_DISK_INPUTS) | $(BUILD_DIR)
+# The profile selects which tools go on the volume, but it is a recipe argument,
+# so make cannot see it change.  Without this stamp, `make ROM_DISK_PROFILE=
+# diagnostic` followed by a plain `make` leaves the diagnostic volume in place,
+# and the reverse silently discards it -- the disk then reflects invocation
+# history rather than the command just typed.  Rewritten only when the value
+# actually changes, so it does not force a rebuild on every run.
+ROM_DISK_PROFILE_STAMP := $(BUILD_DIR)/.romdisk-profile
+
+$(ROM_DISK_PROFILE_STAMP): FORCE | $(BUILD_DIR)
+	@printf '%s\n' '$(ROM_DISK_PROFILE)' | cmp -s - $@ \
+	    || printf '%s\n' '$(ROM_DISK_PROFILE)' > $@
+
+FORCE:
+.PHONY: FORCE
+
+$(ROM_DISK_IMAGE): $(ROM_DISK_TOOL) $(CPMTOOLS_DISKDEF) $(ROM_DISK_INPUTS) $(ROM_DISK_PROFILE_STAMP) | $(BUILD_DIR)
 	$(PYTHON) $(ROM_DISK_TOOL) \
 		--profile "$(ROM_DISK_PROFILE)" \
 		--diskdef "$(CPMTOOLS_DISKDEF)" \

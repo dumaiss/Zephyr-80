@@ -9,7 +9,7 @@
 #
 #   * DRI's LINK.COM aborts on ZMAC's output.  Microsoft's LINK-80 (L80.COM)
 #     reads it fine, so that is what is used.  L80 writes a .COM-style image
-#     that begins at 0100h whatever the link origin, so linking at CC00h gives a
+#     that begins at 0100h whatever the link origin, so linking high gives a
 #     55 KiB file that is mostly zeros; l80_slice.py cuts out the real 3.5 KiB.
 #
 #   * ZMAC consumes whatever console input follows it, so EXIT.COM never runs in
@@ -26,14 +26,20 @@ here=$(cd "$(dirname "$0")" && pwd)
 work=${1:?usage: build-zsdos.sh <work-dir> <output.bin> <firmware.sym>}
 out=${2:?usage: build-zsdos.sh <work-dir> <output.bin> <firmware.sym>}
 sym=${3:?usage: build-zsdos.sh <work-dir> <output.bin> <firmware.sym>}
-RUNCPM=${RUNCPM:-runcpm}
-ORG=0xCC00
+# The emulator is carried in this tree and built by the parent Makefile, which
+# passes it in.  Falling back to the in-tree path keeps the script runnable on
+# its own; falling back to PATH would silently pick up an unpatched RunCPM,
+# whose internal CCP has no matching binary in tools/runcpm-ccp.
+RUNCPM=${RUNCPM:-$here/../build/tools/RunCPM}
+ORG=0xD400
 SIZE=0xE00
 
 command -v "$RUNCPM" >/dev/null 2>&1 || {
     echo "build-zsdos: '$RUNCPM' not found." >&2
-    echo "  ZSDOS is assembled by ZMAC under a CP/M emulator.  Set" >&2
-    echo "  RUNCPM=/path/to/RunCPM (note: the executable is RunCPM/RunCPM)." >&2
+    echo "  ZSDOS is assembled by ZMAC under a CP/M emulator.  The emulator is" >&2
+    echo "  carried in this tree and built by the parent Makefile:" >&2
+    echo "    make -C .. build/tools/RunCPM" >&2
+    echo "  See ../tools/runcpm/README.md.  RUNCPM= overrides." >&2
     exit 1
 }
 
@@ -96,8 +102,14 @@ if ! grep -q "assembled with[[:space:]]*NO ERRORS" "$work/asm.log"; then
 fi
 sed 's/\r//g' "$work/asm.log" | grep -E "Total Code Size" | head -1
 
-# --- link at CC00h ---------------------------------------------------------
-( cd "$work" && printf 'L80 /P:CC00,ZSDOS,ZSDOS.BIN/N/E\r\nEXIT\r\n' \
+# --- link at $ORG ----------------------------------------------------------
+# The link origin comes from $ORG rather than being written twice.  They were
+# two separate literals until the CC00h rebase moved the BDOS to D400h and only
+# the slicer's copy was updated: L80 happily linked at the old address and
+# l80_slice.py caught the mismatch, but a build that did not slice would have
+# produced a BDOS that ran at the wrong addresses.
+L80ORG=$(printf '%04X' $(( ORG )))
+( cd "$work" && printf "L80 /P:${L80ORG},ZSDOS,ZSDOS.BIN/N/E\r\nEXIT\r\n" \
     | timeout 120 "$RUNCPM" >link.log 2>&1 ) || true
 
 [ -f "$work/A/0/ZSDOS.BIN" ] || {

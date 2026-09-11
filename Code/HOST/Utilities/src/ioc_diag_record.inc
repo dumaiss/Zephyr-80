@@ -20,7 +20,7 @@
 ; decoding these offsets, and say so plainly rather than printing fields it
 ; cannot vouch for.  The record carries no version byte of its own.
 
-IOC_DIAG_BASE			= 0xDCC0
+IOC_DIAG_BASE			= 0xE4C0
 IOC_DIAG_SIZE			= 0x10
 
 ; The transport level at which this record layout became current.  A BIOS

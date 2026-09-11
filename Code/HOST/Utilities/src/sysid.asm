@@ -40,10 +40,25 @@ BDOS		= 0x0005
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
 
-CBASE		= 0xC400		; CCP
 CCP_SIZE	= 0x0800
-BDOS_SERIAL	= 0xCC00		; CBASE + 800h
-XPORT_LEVEL	= 0xDF7A		; one byte below IOCALL
+EXT_IOCALL	= 0x003f		; ZBIOS_EXT_BASE + 0Ch, from the BIOS base
+
+; Nothing here is a fixed address any more.  This program used to carry
+; CBASE = C400h and BDOS_SERIAL = CC00h, which were correct for a MEM=56
+; system and became wrong the moment the resident base moved: it then read the
+; BDOS stamp out of the CCP's first bytes and reported a DRI BDOS on a machine
+; running ZSDOS -- an answer produced entirely by the tool.
+;
+; A program that reports what is EXECUTING must not assume where that is.  CP/M
+; publishes both anchors in page zero, so they are read rather than assumed:
+;
+;   0006h  JP FBASE operand -> BDOS entry.  CBASE is FBASE - 806h, and the
+;          six-byte serial sits at CBASE + 800h, i.e. FBASE - 6.
+;   0001h  JP WBOOT operand -> WBOOT, which is the BIOS base + 3.
+;
+; The transport level is one byte below the IOCALL implementation, which is
+; found by following the JP in the extended jump table rather than by knowing
+; where it landed.
 
 start:
 	ld (entry_sp),sp
@@ -55,6 +70,31 @@ start:
 main:
 	ld de,#msg_banner
 	call puts
+
+	; Locate CP/M from page zero before probing anything.
+	ld hl,(0x0006)			; FBASE
+	ld de,#0x0006
+	or a
+	sbc hl,de
+	ld (bdos_serial),hl		; FBASE - 6 = CBASE + 800h
+	ld de,#CCP_SIZE
+	or a
+	sbc hl,de
+	ld (cbase),hl			; CBASE
+
+	; BIOS base = WBOOT - 3, then follow the extended table's IOCALL JP.
+	ld hl,(0x0001)			; WBOOT
+	ld de,#0x0003
+	or a
+	sbc hl,de			; BIOS base
+	ld de,#(EXT_IOCALL + 1)		; operand of JP IOCALL
+	add hl,de
+	ld a,(hl)
+	inc hl
+	ld h,(hl)
+	ld l,a				; IOCALL implementation
+	dec hl				; transport level byte
+	ld (xport_level),hl
 
 	; ---- CCP ----
 	ld de,#msg_ccp
@@ -84,7 +124,7 @@ ccp_done:
 	call serial_is_text
 	jr nz,bdos_stock
 	; Printable: the BDOS names itself.  Print the six bytes as they are.
-	ld hl,#BDOS_SERIAL
+	ld hl,(bdos_serial)
 	ld b,#6
 bdos_name:
 	ld a,(hl)
@@ -101,7 +141,8 @@ bdos_done:
 	; ---- BIOS transport level ----
 	ld de,#msg_xport
 	call puts
-	ld a,(XPORT_LEVEL)
+	ld hl,(xport_level)
+	ld a,(hl)
 	call print_hex_byte
 	call crlf
 
@@ -116,7 +157,7 @@ bdos_done:
 ; ---------------------------------------------------------------------------
 find_in_ccp:
 	ld (pat_ptr),hl
-	ld hl,#CBASE
+	ld hl,(cbase)
 	ld bc,#CCP_SIZE - 4
 fic_next:
 	push bc
@@ -152,7 +193,7 @@ fic_miss:
 ; name here" from "this is a serial number" without knowing either in advance.
 ; ---------------------------------------------------------------------------
 serial_is_text:
-	ld hl,#BDOS_SERIAL
+	ld hl,(bdos_serial)
 	ld b,#6
 sit_loop:
 	ld a,(hl)
@@ -216,6 +257,10 @@ msg_zcpr2:	.ascii "ZCPR2$"
 msg_dri:	.ascii "CP/M 2.2 (DRI)$"
 msg_unknown:	.ascii "unrecognised$"
 msg_crlf:	.db 13,10,'$'
+
+cbase:		.ds 2
+bdos_serial:	.ds 2
+xport_level:	.ds 2
 
 pat_ptr:	.ds 2
 

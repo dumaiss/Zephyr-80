@@ -42,6 +42,8 @@
 	.globl v9958_console_conin,v9958_console_conout
 	.globl v9958_reset_display,v9958_data_write_block
 	.globl hid_input_init,hid_input_status,hid_input_get
+	.include "romsvc_abi.inc"
+	.globl ROM_GATE
 	.globl restore_font_from_rom
 	.globl V9958_CONSOLE_CODE_START,V9958_CONSOLE_CODE_END
 	.globl console_backend_driver,console_backend_cold_init,console_backend_init
@@ -275,16 +277,13 @@ v9958_console_init_common:
 	ld (term_auto_wrap),a
 	ld (cursor_visible),a
 
-	; Keep the display off through initialization. These calls implement the
-	; exact porch/WTE/VR ordering from the hardware bring-up notes.
-	call v9958_init_g6
-	call v9958_enable_hardware_wait
-	call v9958_init_palette_paced
-	call v9958_upload_font_atlas
-	call v9958_clear_screen
-	call v9958_cursor_init
-	call v9958_present
-	jp v9958_enable_display
+	; The display bring-up moved to ROM page 4 as one service.  It is one
+	; sequence with an exact porch/WTE/VR ordering from the hardware notes,
+	; so it crosses the gate once rather than eight times -- and the pieces
+	; call each other directly on the far side, which they must: the gate is
+	; not reentrant.
+	ld a,#ROMSVC_DISPLAY_INIT
+	jp ROM_GATE
 
 ; ---------------------------------------------------------------------------
 ; v9958_console_const
@@ -317,12 +316,15 @@ v9958_console_const:
 	; CONST between echoed characters without necessarily entering CONIN, so a
 	; flush without OP_PRESENT would leave each character invisible until the
 	; next keypress. Idle CONST polling emits no traffic.
+	; The guard stays resident on purpose.  BDOS calls CONST once per printed
+	; character, so a program polling with nothing pending must not pay a
+	; gate crossing; with something pending, the flush, the cursor publish and
+	; the present are one service rather than three crossings.
 	ld a,(print_run_count)
 	or a
 	jr z,v9958_console_const_output_done
-	call v9958_flush_print_run
-	call v9958_cursor_write_sat
-	call v9958_present
+	ld a,#ROMSVC_FLUSH_SYNC
+	call ROM_GATE
 v9958_console_const_output_done:
 
 	; hid_input_status reads the /CTSB doorbell and issues an IOCALL only when
@@ -365,9 +367,8 @@ v9958_console_conin:
 	; Commit the completed output burst before blocking for input. Printable
 	; runs deliberately defer cursor traffic, so publish the final SAT
 	; coordinates and present the completed frame here.
-	call v9958_flush_print_run
-	call v9958_cursor_write_sat
-	call v9958_present
+	ld a,#ROMSVC_FLUSH_SYNC
+	call ROM_GATE
 
 v9958_console_conin_wait:
 	; Spin without touching the bus, then look at the doorbell once.
@@ -469,6 +470,85 @@ v9958_console_reader:
 v9958_console_listst:
 	ld a,#CONSOLE_READY
 	ret
+; ---------------------------------------------------------------------------
+; term_process_byte -- resident fast path for console output.
+;
+; The terminal layer moved to ROM page 4 in Phase 3 slice 3.  This did not: a
+; gate crossing is about 381 T-states, 38us at 10 MHz, which is roughly what the
+; full parser cost per byte and would add 84ms to a full 85x26 repaint.  So the
+; common case stays here and the gate is entered only when something has to
+; happen that is not "put this character in the run buffer".
+;
+; Four conditions, all of which must hold:
+;
+;   normal state          mid-escape, every byte belongs to the parser
+;   printable byte        20h..FFh except 7Fh; CP850 high bytes are printable
+;   room in the run       a full buffer has to flush, and flush is in ROM
+;   not the last column   the last column wraps, which can scroll
+;
+; The cursor advance is inlined rather than called because of the last
+; condition: while text_col < TEXT_LOG_COLUMNS - 1, text_advance_cursor is an
+; increment and a store.  Every case that can wrap, scroll or flush is punted
+; across the gate to the unchanged code on the far side.
+;
+; In:  A = byte.
+; Out: nothing.  BC, DE and HL are the console facade's to preserve.
+; ---------------------------------------------------------------------------
+term_process_byte:
+	ld c,a
+
+	ld a,(term_state)
+	cp #TERM_STATE_NORMAL
+	jr nz,term_byte_slow
+
+	ld a,c
+	cp #0x20
+	jr c,term_byte_slow
+	cp #0x7f
+	jr z,term_byte_slow
+
+	ld a,(print_run_count)
+	cp #PRINT_RUN_SIZE
+	jr nc,term_byte_slow
+
+	ld a,(text_col)
+	cp #(TEXT_LOG_COLUMNS - 1)
+	jr nc,term_byte_slow
+
+	; A non-Esc byte clears the triple-Esc counter, exactly as the full
+	; parser does; the serial console's takeover gesture depends on it.
+	xor a
+	ld (esc_press_count),a
+
+	; The first byte of a run records where the run starts on screen.
+	ld a,(print_run_count)
+	or a
+	jr nz,term_byte_append
+	ld a,(text_col)
+	ld (print_run_col),a
+	ld a,(text_row)
+	ld (print_run_row),a
+
+term_byte_append:
+	ld a,(print_run_count)
+	ld e,a
+	ld d,#0x00
+	ld hl,#print_run_buffer
+	add hl,de
+	ld (hl),c
+	inc a
+	ld (print_run_count),a
+
+	ld a,(text_col)
+	inc a
+	ld (text_col),a
+	ret
+
+term_byte_slow:
+	; C already holds the byte; the gate passes BC through untouched.
+	ld a,#ROMSVC_CONSOLE_BYTE
+	jp ROM_GATE
+
 
 
 ; ===========================================================================
@@ -561,1028 +641,6 @@ v9958_console_listst:
 ;   csi_private_flag = nonzero after a DEC private '?' prefix.
 ;   esc_press_count = triple-Esc display reset counter.
 
-term_process_byte:
-	ld c,a
-
-	ld a,(term_state)
-	cp #TERM_STATE_ESC
-	jp z,term_process_esc
-
-	cp #TERM_STATE_CSI
-	jp z,term_process_csi
-	cp #TERM_STATE_ESC_HASH
-	jp z,term_consume_one
-	cp #TERM_STATE_CHARSET
-	jp z,term_consume_one
-
-	; ---- NORMAL state ----
-	ld a,c
-	cp #0x1b
-	jr z,term_enter_esc
-
-	; Non-Esc byte resets the triple-Esc counter.
-	push af
-	xor a
-	ld (esc_press_count),a
-	pop af
-
-	cp #0x08
-	jp z,term_backspace
-
-	cp #0x09
-	jp z,term_tab
-
-	cp #0x0d
-	jp z,term_cr
-
-	cp #0x0a
-	jp z,term_lf
-	cp #0x0b
-	jp z,term_lf
-	cp #0x0c
-	jp z,text_clear_screen_runtime
-
-	cp #0x20
-	jp nc,text_put_printable
-	call v9958_flush_print_run
-	ret
-
-
-; ---------------------------------------------------------------------------
-; ESC state
-; ---------------------------------------------------------------------------
-
-term_enter_esc:
-	call v9958_flush_print_run
-	; Increment the triple-Esc counter.
-	ld a,(esc_press_count)
-	inc a
-	ld (esc_press_count),a
-	cp #3
-	jp z,v9958_reset_display
-
-	ld a,#TERM_STATE_ESC
-	ld (term_state),a
-	ret
-
-term_process_esc:
-	xor a
-	ld (term_state),a
-
-	; Another Esc while in ESC state — count it.
-	ld a,c
-	cp #0x1b
-	jr z,term_enter_esc
-
-	; Non-ESC byte — reset triple-Esc counter.
-	push af
-	xor a
-	ld (esc_press_count),a
-	pop af
-
-	cp #'[
-	jr nz,term_esc_not_csi
-
-	; Enter CSI — reset parser variables.
-	ld a,#TERM_STATE_CSI
-	ld (term_state),a
-
-	xor a
-	ld (csi_param0),a
-	ld (csi_param1),a
-	ld (csi_param_count),a
-	ld (csi_accum),a
-	ld (csi_have_digit),a
-	ld (csi_private_flag),a
-	ret
-
-term_esc_not_csi:
-	; ESC # x — consume one character-set/screen-control final byte.
-	cp #'#
-	jr z,term_enter_esc_hash
-	; ESC ( x / ESC ) x — consume G0/G1 character-set designation.
-	cp #'(
-	jr z,term_enter_charset
-	cp #')
-	jr z,term_enter_charset
-	; ESC O x — SS3, the application keypad / function-key introducer.  It is
-	; an input sequence, so nothing here acts on it, but it must still be
-	; consumed as two bytes: without this the 'O' falls through unmatched and
-	; the final byte reaches the parser in NORMAL state and prints as text.
-	; F1 typed a literal 'P'.
-	cp #'O
-	jr z,term_enter_charset
-	; ESC D — IND, index down within the current terminal model.
-	cp #'D
-	jp z,term_lf
-	; ESC E — NEL, carriage return plus line feed.
-	cp #'E
-	jp z,term_nel
-	; ESC M — RI, reverse index. Scroll-down-at-top is deferred.
-	cp #'M
-	jp z,term_reverse_index
-	; ESC H — HTS, dynamic tab stops deferred; consume safely.
-	cp #'H
-	ret z
-	; ESC 7 — save cursor and attributes.
-	cp #'7
-	jp z,ansi_save_cursor
-	; ESC 8 — restore cursor and attributes.
-	cp #'8
-	jp z,ansi_restore_cursor
-	; ESC Z — DECID. Response is deferred; input mapping remains unchanged.
-	cp #'Z
-	ret z
-	; ESC = / ESC > — keypad modes. Input mapping is unchanged; consume.
-	cp #'=
-	ret z
-	cp #'>
-	ret z
-	; ESC c — RIS (reset terminal), already handled by triple-Esc.
-	cp #'c
-	jp z,v9958_reset_display
-term_esc_done:
-	ret
-
-term_enter_esc_hash:
-	ld a,#TERM_STATE_ESC_HASH
-	ld (term_state),a
-	ret
-
-term_enter_charset:
-	ld a,#TERM_STATE_CHARSET
-	ld (term_state),a
-	ret
-
-term_consume_one:
-	xor a
-	ld (term_state),a
-	ld (esc_press_count),a
-	ret
-
-
-; ---------------------------------------------------------------------------
-; CSI parser state
-; ---------------------------------------------------------------------------
-
-term_process_csi:
-	ld a,c
-
-	; Digit '0'..'9' — accumulate.
-	cp #'0
-	jr c,term_csi_not_digit
-	cp #'9+1
-	jr nc,term_csi_not_digit
-
-	sub #'0
-	ld e,a
-
-	ld a,(csi_accum)
-	add a,a		; *2
-	ld d,a
-	add a,a		; *4
-	add a,a		; *8
-	add a,d		; *10
-	add a,e
-	ld (csi_accum),a
-
-	ld a,#1
-	ld (csi_have_digit),a
-	ret
-
-term_csi_not_digit:
-	; Question mark — DEC private sequence prefix.
-	cp #'?
-	jr nz,term_csi_not_qmark
-	ld a,(csi_param_count)
-	or a
-	jr nz,term_csi_not_qmark	; ? only valid as first char
-	ld a,#0x01
-	ld (csi_private_flag),a
-	ret
-
-term_csi_not_qmark:
-	; Semicolon — advance to next param slot.
-	cp #';
-	jr nz,term_csi_final
-
-	jp ansi_store_param
-
-term_csi_final:
-	; Final command byte — store any pending param, then dispatch.
-	push af		; save command byte across ansi_store_param
-	call ansi_store_param
-
-	; Reset state and triple-Esc counter.
-	xor a
-	ld (term_state),a
-	ld (esc_press_count),a
-
-	pop af
-
-	jp ansi_dispatch_csi
-
-
-; ---------------------------------------------------------------------------
-; ANSI helpers
-; ---------------------------------------------------------------------------
-
-; Store csi_accum into the current param slot (0-based index in
-; csi_param_count).  Advance csi_param_count, capped at CSI_MAX_PARAMS.
-; Clears csi_accum and csi_have_digit.
-ansi_store_param:
-	ld a,(csi_param_count)
-	cp #CSI_MAX_PARAMS
-	jr nc,ansi_store_param_reset
-
-	; Select slot: 0 -> csi_param0, 1 -> csi_param1.  If no digits were
-	; seen, csi_accum is zero; later default helpers treat zero as one for
-	; VT100-style cursor counts and coordinates.
-	ld a,(csi_accum)
-	push af
-	ld a,(csi_param_count)
-	or a
-	jr nz,ansi_store_slot1
-
-	pop af
-	ld (csi_param0),a
-	jr ansi_store_inc
-
-ansi_store_slot1:
-	pop af
-	ld (csi_param1),a
-
-ansi_store_inc:
-	ld a,(csi_param_count)
-	inc a
-	ld (csi_param_count),a
-
-ansi_store_param_reset:
-	xor a
-	ld (csi_accum),a
-	ld (csi_have_digit),a
-	ret
-
-
-; Return param0, default 1 if count == 0.
-; Output: A = param value (at least 1).
-ansi_param0_default_1:
-	ld a,(csi_param_count)
-	or a
-	jr z,ansi_pd1_ret1
-	ld a,(csi_param0)
-	or a
-	jr z,ansi_pd1_ret1
-	ret
-ansi_pd1_ret1:
-	ld a,#1
-	ret
-
-; Return param1, default 1 if count < 2.
-; Output: A = param value (at least 1).
-ansi_param1_default_1:
-	ld a,(csi_param_count)
-	cp #2
-	jr c,ansi_pd1_ret1
-	ld a,(csi_param1)
-	or a
-	jr z,ansi_pd1_ret1
-	ret
-
-
-; ---------------------------------------------------------------------------
-; CSI dispatch
-; ---------------------------------------------------------------------------
-
-ansi_dispatch_csi:
-	ld c,a		; C = final command byte
-
-	; DEC private mode (ESC [ ? ... h/l).
-	ld a,(csi_private_flag)
-	or a
-	jr z,ansi_dispatch_public
-
-	ld a,c
-	cp #CSI_DECSET
-	jp z,ansi_decset
-	cp #CSI_DECRST
-	jp z,ansi_decrst
-	ret		; unsupported DEC private — consume
-
-ansi_dispatch_public:
-	ld a,c
-	cp #CSI_CHA
-	jp z,ansi_cha
-	cp #CSI_CUU
-	jp z,ansi_cuu
-	cp #CSI_CUD
-	jp z,ansi_cud
-	cp #CSI_CUF
-	jp z,ansi_cuf
-	cp #CSI_CUB
-	jp z,ansi_cub
-	cp #CSI_CUP
-	jp z,ansi_cup
-	cp #CSI_CUP_ALT
-	jp z,ansi_cup
-	cp #CSI_VPA
-	jp z,ansi_vpa
-	cp #CSI_ED
-	jp z,ansi_ed
-	cp #CSI_EL
-	jp z,ansi_el
-	cp #'X
-	jp z,ansi_ech
-	cp #CSI_SGR
-	jp z,ansi_sgr
-	cp #'c
-	ret z
-	cp #'n
-	ret z
-	cp #CSI_SAVE
-	jp z,ansi_save_cursor
-	cp #CSI_RESTORE
-	jp z,ansi_restore_cursor
-	cp #CSI_IL
-	jp z,ansi_insert_lines
-	cp #CSI_DL
-	jp z,ansi_delete_lines
-	; Unsupported CSI / DEC private fallthrough — consume.
-	ret
-
-
-; ---- CSI CUP / CUF / CUB / CUU / CUD ----
-
-ansi_cuu:
-	call ansi_param0_default_1	; A = n
-	ld b,a
-ansi_cuu_loop:
-	push bc
-	call term_cursor_up
-	pop bc
-	djnz ansi_cuu_loop
-	ret
-
-ansi_cud:
-	call ansi_param0_default_1
-	ld b,a
-ansi_cud_loop:
-	push bc
-	call term_cursor_down
-	pop bc
-	djnz ansi_cud_loop
-	ret
-
-ansi_cuf:
-	call ansi_param0_default_1
-	ld b,a
-ansi_cuf_loop:
-	push bc
-	call term_cursor_right
-	pop bc
-	djnz ansi_cuf_loop
-	ret
-
-ansi_cub:
-	call ansi_param0_default_1
-	ld b,a
-ansi_cub_loop:
-	push bc
-	call term_cursor_left
-	pop bc
-	djnz ansi_cub_loop
-	ret
-
-; ---- CSI CHA/VPA: absolute column / row ----
-
-ansi_cha:
-	call ansi_param0_default_1	; A = col (1-based)
-	dec a
-	cp #TEXT_LOG_COLUMNS
-	jr c,ansi_cha_clamped
-	ld a,#(TEXT_LOG_COLUMNS - 1)
-ansi_cha_clamped:
-	ld (text_col),a
-	call text_ensure_cursor_visible
-	call v9958_cursor_set_position_current
-	ret
-
-ansi_vpa:
-	call ansi_param0_default_1	; A = row (1-based)
-	dec a
-	cp #TEXT_ROWS
-	jr c,ansi_vpa_clamped
-	ld a,#(TEXT_ROWS - 1)
-ansi_vpa_clamped:
-	ld (text_row),a
-	call v9958_cursor_set_position_current
-	ret
-
-
-; ---- CSI CUP: cursor position (row;col H  or  row;col f) ----
-
-ansi_cup:
-	call ansi_param0_default_1	; A = row (1-based)
-	dec a
-	cp #TEXT_ROWS
-	jr c,ansi_cup_row_clamped
-	ld a,#(TEXT_ROWS - 1)
-ansi_cup_row_clamped:
-	ld (text_row),a
-
-	call ansi_param1_default_1	; A = col (1-based)
-	dec a
-	cp #TEXT_LOG_COLUMNS
-	jr c,ansi_cup_col_clamped
-	ld a,#(TEXT_LOG_COLUMNS - 1)
-ansi_cup_col_clamped:
-	ld (text_col),a
-
-	call text_ensure_cursor_visible
-	call v9958_cursor_set_position_current
-	ret
-
-
-; ---- CSI ED: erase in display ----
-
-ansi_ed:
-	; param0 == 0 or missing: clear from cursor to end of screen.
-	; param0 == 1: clear from start of screen through cursor.
-	; param0 == 2: clear whole screen. This implementation homes the cursor
-	; for CP/M full-screen program compatibility.
-	ld a,(csi_param_count)
-	or a
-	jr z,ansi_ed_to_eos
-
-	ld a,(csi_param0)
-	or a
-	jr z,ansi_ed_to_eos
-	dec a
-	jr z,ansi_ed_from_start
-	dec a
-	ret nz
-
-	call text_clear_screen_runtime
-	ret
-
-ansi_ed_to_eos:
-	jp text_clear_from_cursor_to_eos
-
-ansi_ed_from_start:
-	jp text_clear_from_start_to_cursor
-
-
-; ---- CSI EL: erase in line ----
-
-ansi_el:
-	; param0 == 0 or missing: clear to end of line.
-	; param0 == 1: clear from start of line through cursor.
-	; param0 == 2: clear whole line.
-	ld a,(csi_param_count)
-	or a
-	jr z,ansi_el_to_eol		; default: clear to EOL
-
-	ld a,(csi_param0)
-	or a
-	jr z,ansi_el_to_eol		; ESC [ 0 K
-	dec a
-	jr z,ansi_el_from_start		; ESC [ 1 K
-
-ansi_el_whole_line:
-	jp text_clear_line
-
-ansi_el_to_eol:
-	jp text_clear_to_eol
-
-ansi_el_from_start:
-	jp text_clear_from_sol_to_cursor
-
-
-; ---- CSI ECH: erase n characters from cursor to the right ----
-
-ansi_ech:
-	call ansi_param0_default_1
-	ld e,a
-	ld a,(text_col)
-	ld d,a
-	ld a,#TEXT_LOG_COLUMNS
-	sub d
-	ret z
-	cp e
-	jr nc,ansi_ech_count_ok
-	ld e,a
-ansi_ech_count_ok:
-	call v9958_flush_print_run
-	ld b,e				; width in cells
-	ld c,#0x01			; one row
-	ld a,(text_col)
-	ld d,a
-	ld a,(text_row)
-	ld e,a
-	jp v9958_fill_cells
-
-
-; ---- CSI SGR: select graphic rendition ----
-
-ansi_sgr:
-	call v9958_flush_print_run
-	; Consume SGR.  Track reverse video in current_attr.
-	; 0=reset, 7=reverse on, 27=reverse off. Other font/color
-	; parameters are consumed unless they affect the currently supported state.
-	ld a,(csi_param_count)
-	or a
-	jr z,ansi_sgr_reset
-	ld a,(csi_param0)
-	call ansi_sgr_apply_param
-	ld a,(csi_param_count)
-	cp #2
-	ret c
-	ld a,(csi_param1)
-	call ansi_sgr_apply_param
-	ret
-
-ansi_sgr_apply_param:
-	or a
-	jr z,ansi_sgr_reset
-	cp #7
-	jr z,ansi_sgr_rev_on
-	cp #27
-	jr z,ansi_sgr_rev_off
-	ret		; 1,4,5,22,24,25,30-47,etc — consume
-ansi_sgr_reset:
-	xor a
-	ld (current_attr),a
-	ret
-ansi_sgr_rev_on:
-	ld a,#0x01
-	ld (current_attr),a
-	ret
-ansi_sgr_rev_off:
-	xor a
-	ld (current_attr),a
-	ret
-
-
-; ---- ANSI save/restore cursor (ESC 7/8 and CSI s/u) ----
-
-ansi_save_cursor:
-	ld a,(text_col)
-	ld (text_cursor_saved_col),a
-	ld a,(text_row)
-	ld (text_cursor_saved_row),a
-	ld a,(current_attr)
-	ld (text_attr_saved),a
-	ret
-
-ansi_restore_cursor:
-	ld a,(text_cursor_saved_col)
-	ld (text_col),a
-	ld a,(text_cursor_saved_row)
-	ld (text_row),a
-	ld a,(text_attr_saved)
-	ld (current_attr),a
-	call text_ensure_cursor_visible
-	call v9958_cursor_set_position_current
-	ret
-
-
-; ---- DEC private modes (ESC [ ? ... h/l) ----
-
-ansi_decset:
-	ld a,(csi_param_count)
-	or a
-	ret z
-	ld a,(csi_param0)
-	cp #7
-	jr z,ansi_decawm_on
-	cp #25
-	jr z,ansi_show_cursor
-	ret		; other DEC private — consume
-
-ansi_show_cursor:
-	jp v9958_cursor_show
-
-ansi_decrst:
-	ld a,(csi_param_count)
-	or a
-	ret z
-	ld a,(csi_param0)
-	cp #7
-	jr z,ansi_decawm_off
-	cp #25
-	jr z,ansi_hide_cursor
-	ret		; other DEC private — consume
-
-ansi_hide_cursor:
-	jp v9958_cursor_hide
-
-; ---- DECAWM auto-wrap mode (ESC [ ? 7 h/l) ----
-
-ansi_decawm_on:
-	ld a,#0x01
-	jr ansi_decawm_set
-ansi_decawm_off:
-	xor a
-ansi_decawm_set:
-	ld (term_auto_wrap),a
-	ret
-
-
-; ---- CSI IL: insert n blank lines (ESC [ n L) ----
-;
-; Inputs:
-;   CSI param0 = n (default/0 -> 1)
-;   text_row = current cursor row
-; Outputs:
-;   Shadow buffer and VDP updated; n blank lines inserted at cursor row.
-; Clobbers:
-;   AF, BC, DE, HL.
-; Preserved registers:
-;   none (caller saves BC/DE/HL around CONOUT dispatch)
-; VDP traffic:
-;   One overlap-safe HMMM command followed by an HMMV fill.
-; Cursor position:
-;   Unchanged.
-; Scroll region:
-;   Full screen (rows 0..TEXT_ROWS-1); no per-command scroll region yet.
-
-ansi_insert_lines:
-	call ansi_param0_default_1
-	ld e,a
-	ld a,#TEXT_ROWS
-	ld d,a
-	ld a,(text_row)
-	ld c,a
-	ld a,d
-	sub c
-	cp e
-	jr nc,ansi_il_v9958_count_ok
-	ld e,a
-ansi_il_v9958_count_ok:
-	call v9958_flush_print_run
-	ld a,e
-	jp v9958_insert_lines
-
-ansi_delete_lines:
-	call ansi_param0_default_1
-	ld e,a
-	ld a,#TEXT_ROWS
-	ld d,a
-	ld a,(text_row)
-	ld c,a
-	ld a,d
-	sub c
-	cp e
-	jr nc,ansi_dl_v9958_count_ok
-	ld e,a
-ansi_dl_v9958_count_ok:
-	call v9958_flush_print_run
-	ld a,e
-	jp v9958_delete_lines
-
-
-
-; ===========================================================================
-; Terminal action helpers
-; ===========================================================================
-
-text_put_printable:
-	; Input: A = printable CP850 byte. Accumulate same-row text into one
-	; buffered run; the direct backend emits one HMMM per character on flush.
-	call v9958_append_printable
-	ld a,(text_col)
-	cp #(TEXT_LOG_COLUMNS - 1)
-	jr nz,text_put_printable_advance
-	call v9958_flush_print_run
-	call text_advance_cursor
-	call v9958_cursor_write_sat
-	jp v9958_present
-text_put_printable_advance:
-	call text_advance_cursor
-	ret
-
-text_put_newline:
-	call text_newline
-	call v9958_cursor_set_position_current
-	ret
-
-term_cr:
-	; Carriage return — column 0, row unchanged.
-	xor a
-	ld (text_col),a
-	call text_ensure_cursor_visible
-	call v9958_cursor_set_position_current
-	ret
-
-term_lf:
-	; Line feed — move down one row, preserving column.
-	ld a,(text_col)
-	push af
-	call text_newline
-	pop af
-	ld (text_col),a
-	call text_ensure_cursor_visible
-	call v9958_cursor_set_position_current
-	ret
-
-term_nel:
-	; Next line — CR + LF.
-	xor a
-	ld (text_col),a
-	call text_newline
-	call v9958_cursor_set_position_current
-	ret
-
-term_reverse_index:
-	; Reverse index — move up one row. Region scroll-down is deferred.
-	ld a,(text_row)
-	or a
-	ret z
-	dec a
-	ld (text_row),a
-	call v9958_cursor_set_position_current
-	ret
-
-term_backspace:
-	ld a,(text_col)
-	or a
-	ret z
-
-	dec a
-	ld (text_col),a
-
-	call text_ensure_cursor_visible
-	call v9958_cursor_set_position_current
-	ret
-
-term_tab:
-	; Advance to next 8-column tab stop (VT100 standard).
-	call text_advance_cursor
-	ld a,(text_col)
-	and #0x07
-	jr nz,term_tab
-
-	call text_ensure_cursor_visible
-	call v9958_cursor_set_position_current
-	ret
-
-term_cursor_up:
-	ld a,(text_row)
-	or a
-	ret z
-
-	dec a
-	ld (text_row),a
-	call v9958_cursor_set_position_current
-	ret
-
-term_cursor_down:
-	ld a,(text_row)
-	cp #(TEXT_ROWS - 1)
-	ret nc
-
-	inc a
-	ld (text_row),a
-	call v9958_cursor_set_position_current
-	ret
-
-term_cursor_left:
-	ld a,(text_col)
-	or a
-	ret z
-
-	dec a
-	ld (text_col),a
-	call text_ensure_cursor_visible
-	call v9958_cursor_set_position_current
-	ret
-
-term_cursor_right:
-	ld a,(text_col)
-	cp #(TEXT_LOG_COLUMNS - 1)
-	ret nc
-
-	inc a
-	ld (text_col),a
-	call text_ensure_cursor_visible
-	call v9958_cursor_set_position_current
-	ret
-
-term_cursor_home:
-	xor a
-	ld (text_col),a
-	ld (text_row),a
-	call text_ensure_cursor_visible
-	call v9958_cursor_set_position_current
-	ret
-
-term_cursor_end:
-	ld a,#(TEXT_LOG_COLUMNS - 1)
-	ld (text_col),a
-	call text_ensure_cursor_visible
-	call v9958_cursor_set_position_current
-	ret
-
-
-; ---------------------------------------------------------------------------
-; text_clear_screen_runtime — clear screen at runtime (for ESC [ 2 J)
-;
-; Clears the G6 bitmap and resets the cursor to 0,0.
-; ---------------------------------------------------------------------------
-
-text_clear_screen_runtime:
-	call v9958_clear_screen
-	xor a
-	ld (text_col),a
-	ld (text_row),a
-	jp v9958_cursor_set_position_current
-
-; ---------------------------------------------------------------------------
-; text_clear_from_cursor_to_eos — ED 0: cursor through end of screen.
-; Cursor position is restored after the erase.
-; ---------------------------------------------------------------------------
-text_clear_from_cursor_to_eos:
-	ld a,(text_col)
-	ld (ansi_tmp_col),a
-	ld a,(text_row)
-	ld (ansi_tmp_row),a
-
-	call text_clear_to_eol
-
-	ld a,(ansi_tmp_row)
-	inc a
-	cp #TEXT_ROWS
-	jr nc,text_clear_eos_restore
-
-text_clear_eos_row_loop:
-	ld (text_row),a
-	xor a
-	ld (text_col),a
-	call text_clear_to_eol
-	ld a,(text_row)
-	inc a
-	cp #TEXT_ROWS
-	jr c,text_clear_eos_row_loop
-
-text_clear_eos_restore:
-	ld a,(ansi_tmp_col)
-	ld (text_col),a
-	ld a,(ansi_tmp_row)
-	ld (text_row),a
-	call v9958_cursor_set_position_current
-	ret
-
-
-; ---------------------------------------------------------------------------
-; text_clear_from_start_to_cursor — ED 1: screen start through cursor.
-; Cursor position is restored after the erase.
-; ---------------------------------------------------------------------------
-text_clear_from_start_to_cursor:
-	ld a,(text_col)
-	ld (ansi_tmp_col),a
-	ld a,(text_row)
-	ld (ansi_tmp_row),a
-	or a
-	jr z,text_clear_stc_current_row
-
-	ld b,a
-	xor a
-	ld (text_row),a
-
-text_clear_stc_row_loop:
-	xor a
-	ld (text_col),a
-	push bc
-	call text_clear_line
-	pop bc
-	ld a,(text_row)
-	inc a
-	ld (text_row),a
-	djnz text_clear_stc_row_loop
-
-text_clear_stc_current_row:
-	ld a,(ansi_tmp_row)
-	ld (text_row),a
-	ld a,(ansi_tmp_col)
-	ld (text_col),a
-	call text_clear_from_sol_to_cursor
-	call v9958_cursor_set_position_current
-	ret
-
-
-; ---------------------------------------------------------------------------
-; text_clear_to_eol — clear from cursor to end of logical line (ESC [ K)
-; ---------------------------------------------------------------------------
-
-text_clear_to_eol:
-	call v9958_flush_print_run
-	ld a,(text_col)
-	ld d,a
-	ld b,#TEXT_LOG_COLUMNS
-	sub b				; A = col - columns
-	neg				; A = columns - col
-	ld b,a
-	ld a,(text_row)
-	ld e,a
-	ld c,#0x01
-	jp v9958_fill_cells
-
-
-
-; ---------------------------------------------------------------------------
-; text_clear_line — clear entire current logical line (ESC [ 2 K)
-; ---------------------------------------------------------------------------
-
-text_clear_line:
-	; Save current cursor column.
-	ld a,(text_col)
-	push af
-
-	; Move to column 0 on same row and clear to EOL.
-	xor a
-	ld (text_col),a
-	call text_clear_to_eol
-
-	; Restore cursor column.
-	pop af
-	ld (text_col),a
-	ret
-
-
-; ---------------------------------------------------------------------------
-; text_clear_from_sol_to_cursor — EL 1: start of line through cursor.
-; Cursor position unchanged.  Uses block write.
-; ---------------------------------------------------------------------------
-text_clear_from_sol_to_cursor:
-	call v9958_flush_print_run
-	ld d,#0x00
-	ld a,(text_row)
-	ld e,a
-	ld a,(text_col)
-	inc a
-	ld b,a
-	ld c,#0x01
-	jp v9958_fill_cells
-
-; ---------------------------------------------------------------------------
-; text_newline — move cursor to column 0 of the next row
-;
-; Full-screen scrolling: rows 0..23, scrolls up when at bottom.
-; ---------------------------------------------------------------------------
-
-text_advance_cursor:
-	ld a,(text_col)
-	inc a
-	cp #TEXT_LOG_COLUMNS
-	jr c,text_advance_store_col
-
-	ld a,(term_auto_wrap)
-	or a
-	ld a,#TEXT_LOG_COLUMNS
-	jr nz,text_advance_do_wrap
-	dec a
-	jr text_advance_store_col
-
-text_advance_do_wrap:
-	xor a
-	ld (text_col),a
-	jr text_newline_from_wrap
-
-
-text_newline:
-	call v9958_flush_print_run
-	xor a
-	ld (text_col),a
-
-text_newline_from_wrap:
-	ld a,(text_row)
-	inc a
-	cp #TEXT_ROWS
-	jr c,text_newline_store_row
-
-	; Bottom of screen — scroll up.
-	call text_scroll_up
-	ret
-
-text_newline_store_row:
-	ld (text_row),a
-	ret
-
-text_advance_store_col:
-	ld (text_col),a
-	ret
-
-text_ensure_cursor_visible:
-	ret
-
-text_scroll_up:
-	call v9958_flush_print_run
-	call v9958_scroll_up_one
-	xor a
-	ld (text_col),a
-	ld a,#TEXT_SCROLL_BOTTOM
-	ld (text_row),a
-	jp v9958_cursor_set_position_current
 
 
 
@@ -1595,66 +653,12 @@ text_scroll_up:
 
 console_backend_reset_display:
 v9958_reset_display:
-	xor a
-	ld (esc_press_count),a
-	ld (term_state),a
-	ld (csi_param0),a
-	ld (csi_param1),a
-	ld (csi_param_count),a
-	ld (csi_accum),a
-	ld (csi_have_digit),a
-	ld (csi_private_flag),a
-	ld (current_attr),a
-	ld (text_attr_saved),a
+	; Moved to ROM page 4 (ROMSVC_RESET_DISPLAY), together with the whole
+	; init/reset cluster it drives.  Reached from the ESC handler and from
+	; VIDEO_SEND's reset, so the resident entry point stays.
+	ld a,#ROMSVC_RESET_DISPLAY
+	jp ROM_GATE
 
-	ld a,#0x01
-	ld (term_auto_wrap),a		; auto-wrap re-enabled on RIS
-
-	call v9958_init_g6
-	call v9958_enable_hardware_wait
-	call v9958_init_palette_paced
-	call v9958_upload_font_atlas
-	call v9958_clear_screen
-
-	xor a
-	ld (text_col),a
-	ld (text_row),a
-	ld (print_run_count),a
-	ld a,#0x01
-	ld (cursor_visible),a
-	call v9958_cursor_init
-	call v9958_present
-	jp v9958_enable_display
-
-
-; ===========================================================================
-; V9958 G6 command backend
-; ===========================================================================
-
-; ---------------------------------------------------------------------------
-; LunchCrema bootstrap and direct V9958 access
-; ---------------------------------------------------------------------------
-
-; Delay after a bootstrap access while R#25.WTE is disabled. Preserves all
-; caller-visible registers and does not rely on incidental instruction timing.
-v9958_bootstrap_delay:
-	push bc
-	ld b,#V9958_BOOT_DELAY_COUNT
-v9958_bootstrap_delay_loop:
-	djnz v9958_bootstrap_delay_loop
-	pop bc
-	ret
-
-; Input: A=value, B=register. Software paced; use only with the porch disabled.
-; Clobbers: AF. May block for the fixed bootstrap delay.
-v9958_write_register_paced:
-	out (V9958_COMMAND_PORT),a
-	call v9958_bootstrap_delay
-	ld a,b
-	or #0x80
-	out (V9958_COMMAND_PORT),a
-	call v9958_bootstrap_delay
-	ret
 
 ; Input: A=value, B=register. Native WAIT and the LunchCrema porch must be on.
 ; Clobbers: AF. May block in the active VDP I/O cycle.
@@ -1666,135 +670,6 @@ v9958_write_register:
 	ret
 
 ; Input: HL=values, B=first register, C=count. Software paced.
-v9958_write_register_block_paced:
-	ld a,(hl)
-	call v9958_write_register_paced
-	inc hl
-	inc b
-	dec c
-	jr nz,v9958_write_register_block_paced
-	ret
-
-; Change only /WS_EN (D1). D0 remains the selected interrupt route held in the
-; software shadow because the LunchCrema latch captures both bits together.
-v9958_porch_off:
-	ld a,(v9958_config_shadow)
-	and #V9958_CONFIG_INT_ROUTE
-	or #V9958_CONFIG_PORCH_OFF
-	ld (v9958_config_shadow),a
-	out (V9958_CONFIG_PORT),a
-	jp v9958_bootstrap_delay
-
-v9958_porch_on:
-	ld a,(v9958_config_shadow)
-	and #V9958_CONFIG_INT_ROUTE
-	ld (v9958_config_shadow),a
-	out (V9958_CONFIG_PORT),a
-	ret
-
-; Establish the non-negotiable hardware state before any accelerated access.
-; The display stays off until the bitmap, atlases, and cursor are initialized.
-v9958_init_g6:
-	call v9958_porch_off
-	xor a
-	ld (v9958_scroll_origin),a	; physical start of logical row zero
-
-	ld a,#V9958_R25_WAIT_OFF	; WTE=0, VDS=0
-	ld b,#25
-	call v9958_write_register_paced
-
-	ld a,#V9958_R8_64K_DRAM	; VR=1 for installed 64Kx4 DRAMs
-	ld b,#8
-	call v9958_write_register_paced
-
-	; A warm boot may follow a transient program that left a VDP command active.
-	; STOP it before reprogramming display state or uploading console VRAM.
-	xor a
-	ld b,#46
-	call v9958_write_register_paced
-
-	ld hl,#v9958_g6_registers
-	ld b,#0
-	ld c,#12
-	call v9958_write_register_block_paced
-
-	; Explicitly establish every selector/latch used by later helpers.
-	xor a
-	ld b,#14
-	call v9958_write_register_paced
-	ld a,#2				; command-engine status register
-	ld b,#15
-	call v9958_write_register_paced
-	xor a
-	ld b,#16
-	call v9958_write_register_paced
-	xor a
-	ld b,#17
-	call v9958_write_register_paced
-	xor a
-	ld b,#18
-	call v9958_write_register_paced
-	ld a,#V9958_R23_TEXT_BASE
-	ld b,#23
-	call v9958_write_register_paced
-	; R#26/R#27 are V9958 horizontal-scroll state and survive warm boot.
-	xor a
-	ld b,#26
-	call v9958_write_register_paced
-	xor a
-	ld b,#27
-	jp v9958_write_register_paced
-
-; Restore palette entries 0..15. Select every entry explicitly, matching the
-; real-card MANDELV5 bring-up path instead of depending on palette
-; auto-increment state.
-;
-; This runs *after* R#25.WTE=1 and the U11 porch are enabled, exactly as
-; MANDELV5 does. MANDELV5 never bypasses the porch, so every palette byte it
-; writes is held by a real hardware WAIT. Programming the palette in the
-; bootstrap regime instead (WTE=0, porch bypassed, software pacing only)
-; produced white text that displayed as yellow on the physical card: the
-; software delay spaces successive accesses but does not widen the /CSW pulse
-; or extend data-valid time, so palette bytes could be latched with the low
-; (blue) bits corrupted. Software pacing is retained here because it is
-; harmless during one-time initialization.
-v9958_init_palette_paced:
-	ld hl,#v9958_console_palette
-	ld c,#0x00
-	ld d,#0x10
-v9958_init_palette_paced_loop:
-	push de
-	push hl
-	ld a,c
-	ld b,#16
-	call v9958_write_register_paced
-	pop hl
-	pop de
-	ld a,(hl)
-	inc hl
-	out (V9958_PALETTE_PORT),a
-	call v9958_bootstrap_delay
-	ld a,(hl)
-	inc hl
-	out (V9958_PALETTE_PORT),a
-	call v9958_bootstrap_delay
-	inc c
-	dec d
-	jr nz,v9958_init_palette_paced_loop
-	ret
-
-; Enable native WAIT first, then enable the U11 front porch. R#25.VDS remains
-; clear so pin 8 continues to provide CPUCLK to the porch state machine.
-v9958_enable_hardware_wait:
-	ld a,#V9958_R25_WAIT_ON
-	ld b,#25
-	call v9958_write_register_paced
-	jp v9958_porch_on
-
-v9958_enable_display:
-	ld a,#V9958_R1_DISPLAY_ON
-	ld b,#1
-	jp v9958_write_register
 
 ; Status register 2 remains selected while the console owns the VDP. CE=1 means
 ; a command is active. This routine may block; it is never called from an ISR.
@@ -1843,619 +718,23 @@ v9958_present:
 ; it directly to VRAM. The second pass swaps foreground/background so SGR
 ; reverse video remains a single HMMM glyph copy.
 v9958_upload_font_atlas:
-	xor a
-	ld (atlas_reverse_flag),a
-	call v9958_upload_font_atlas_pass
-	ld a,#0x01
-	ld (atlas_reverse_flag),a
-	jp v9958_upload_font_atlas_pass
+	; Moved to ROM page 4 (ROMSVC_UPLOAD_ATLAS).  What used to be ~170 bytes
+	; of resident builder is six bytes here.
+	;
+	; The font moved with it, because the glyph fetch reads 8000h and while
+	; the service runs 8000h is ROM page 4 rather than bank 0.
+	;
+	; That removes a staging step rather than fixing a fault.  The font was
+	; in the TPA by design: ROM to 8000h at boot, 8000h to VRAM, and from
+	; then on the glyphs live in VRAM and the RAM copy is disposable -- a
+	; transient overwriting it costs nothing, because the next boot re-copies
+	; before the next upload.  The builder can now read the font straight out
+	; of ROM, so the intermediate copy and the boot-time refresh that fed it
+	; are both unnecessary.
+	ld a,#ROMSVC_UPLOAD_ATLAS
+	jp ROM_GATE
 
-v9958_upload_font_atlas_pass:
-	xor a
-	ld (atlas_scanline),a
-v9958_atlas_scanline_loop:
-	ld hl,#command_buffer
-	ld (atlas_dest),hl
 
-	; font address = 8000h + (glyph_group * 100h) + glyph_scanline
-	ld a,(atlas_scanline)
-	ld c,a
-	and #0x07
-	ld l,a
-	ld a,c
-	srl a
-	srl a
-	srl a
-	add a,#0x80
-	ld h,a
-
-	ld b,#V9958_ATLAS_COLS
-v9958_atlas_glyph_loop:
-	ld a,(hl)
-	push hl
-	call v9958_expand_font_row
-	pop hl
-	ld de,#0x0008
-	add hl,de
-	djnz v9958_atlas_glyph_loop
-
-	; normal atlas = 10000h; reverse atlas = 14000h. Each scanline is one
-	; 256-byte G6 pitch apart and only the first 96 bytes contain glyph data.
-	ld a,(atlas_scanline)
-	ld d,a
-	ld a,(atlas_reverse_flag)
-	or a
-	jr z,v9958_atlas_have_address
-	ld a,d
-	add a,#0x40
-	ld d,a
-v9958_atlas_have_address:
-	ld e,#0x00
-	ld c,#0x01
-	ld b,#ATLAS_ROW_BYTES
-	ld hl,#command_buffer
-	call v9958_write_vram_small
-
-	ld a,(atlas_scanline)
-	inc a
-	ld (atlas_scanline),a
-	cp #(V9958_ATLAS_ROWS * 8)
-	jr nz,v9958_atlas_scanline_loop
-	ret
-
-v9958_expand_font_row:
-	ld c,a
-	ld hl,(atlas_dest)
-	ld a,c
-	rrca
-	rrca
-	rrca
-	rrca
-	rrca
-	rrca
-	and #0x03
-	call v9958_pair_to_color
-	ld (hl),a
-	inc hl
-	ld a,c
-	rrca
-	rrca
-	rrca
-	rrca
-	and #0x03
-	call v9958_pair_to_color
-	ld (hl),a
-	inc hl
-	ld a,c
-	rrca
-	rrca
-	and #0x03
-	call v9958_pair_to_color
-	ld (hl),a
-	inc hl
-	ld (atlas_dest),hl
-	ret
-
-v9958_pair_to_color:
-	push de
-	push hl
-	ld e,a
-	ld d,#0x00
-	ld a,(atlas_reverse_flag)
-	or a
-	jr z,v9958_pair_table_selected
-	ld a,e
-	add a,#0x04
-	ld e,a
-v9958_pair_table_selected:
-	ld hl,#v9958_pair_color_table
-	add hl,de
-	ld a,(hl)
-	pop hl
-	pop de
-	ret
-
-; Pair values 00, 01, 10, 11 for normal and reverse white/blue cells.
-v9958_pair_color_table:
-	.db 0x44,0x4f,0xf4,0xff
-	.db 0xff,0xf4,0x4f,0x44
-
-v9958_append_printable:
-	ld c,a
-	ld a,(print_run_count)
-	cp #PRINT_RUN_SIZE
-	jr nz,v9958_append_have_space
-	push bc
-	call v9958_flush_print_run
-	call v9958_cursor_write_sat
-	call v9958_present
-	pop bc
-v9958_append_have_space:
-	ld a,(print_run_count)
-	or a
-	jr nz,v9958_append_have_start
-	ld a,(text_col)
-	ld (print_run_col),a
-	ld a,(text_row)
-	ld (print_run_row),a
-v9958_append_have_start:
-	ld hl,#print_run_buffer
-	ld a,(print_run_count)
-	ld e,a
-	ld d,#0x00
-	add hl,de
-	ld (hl),c
-	ld a,(print_run_count)
-	inc a
-	ld (print_run_count),a
-	ret
-
-v9958_flush_print_run:
-	ld a,(print_run_count)
-	or a
-	ret z
-	ld b,a
-	ld hl,#print_run_buffer
-	ld a,(print_run_col)
-	ld d,a
-	ld a,(print_run_row)
-	ld e,a
-v9958_flush_print_run_loop:
-	ld a,(hl)
-	push bc
-	push de
-	push hl
-	call v9958_render_character
-	pop hl
-	pop de
-	pop bc
-	inc hl
-	inc d
-	djnz v9958_flush_print_run_loop
-	xor a
-	ld (print_run_count),a
-	ret
-
-; Input: A=CP850 character, D=column, E=row. Starts one HMMM command and
-; returns; the next VDP operation waits for it.
-v9958_render_character:
-	ld (render_char),a
-	ld a,d
-	ld (render_col),a
-	ld a,e
-	ld (render_row),a
-	call v9958_clear_command_buffer
-
-	ld a,(render_char)
-	and #0x1f
-	call v9958_multiply_by_six
-	ld a,l
-	ld (command_buffer + VDP_CMD_SX_LO),a
-	ld a,h
-	ld (command_buffer + VDP_CMD_SX_HI),a
-
-	ld a,(render_char)
-	srl a
-	srl a
-	srl a
-	srl a
-	srl a
-	add a,a
-	add a,a
-	add a,a
-	ld c,a
-	ld a,(current_attr)
-	and #0x01
-	jr z,v9958_render_normal_atlas
-	ld a,c
-	add a,#0x40
-	ld c,a
-v9958_render_normal_atlas:
-	ld a,c
-	ld (command_buffer + VDP_CMD_SY_LO),a
-	ld a,#0x01
-	ld (command_buffer + VDP_CMD_SY_HI),a
-
-	ld a,(render_col)
-	call v9958_multiply_by_six
-	ld a,l
-	ld (command_buffer + VDP_CMD_DX_LO),a
-	ld a,h
-	ld (command_buffer + VDP_CMD_DX_HI),a
-
-	ld a,(render_row)
-	call v9958_logical_row_to_vram_y
-	ld (command_buffer + VDP_CMD_DY_LO),a
-
-	ld a,#TEXT_CELL_WIDTH
-	ld (command_buffer + VDP_CMD_NX_LO),a
-	ld a,#TEXT_CELL_HEIGHT
-	ld (command_buffer + VDP_CMD_NY_LO),a
-	ld a,#V9958_COMMAND_HMMM
-	ld (command_buffer + VDP_CMD_CODE),a
-	jp v9958_start_command
-
-; Input: D=column, E=row, B=width in cells, C=height in cells.
-; Uses the current SGR background (blue normally, white in reverse).
-v9958_fill_cells:
-	ld a,d
-	ld (fill_col),a
-	ld a,e
-	ld (fill_row),a
-	ld a,b
-	ld (fill_width),a
-	ld a,c
-	ld (fill_height),a
-	call v9958_clear_command_buffer
-
-	ld a,(fill_col)
-	call v9958_multiply_by_six
-	ld a,l
-	ld (command_buffer + VDP_CMD_DX_LO),a
-	ld a,h
-	ld (command_buffer + VDP_CMD_DX_HI),a
-
-	ld a,(fill_row)
-	call v9958_logical_row_to_vram_y
-	ld (command_buffer + VDP_CMD_DY_LO),a
-
-	ld a,(fill_width)
-	call v9958_multiply_by_six
-	ld a,l
-	ld (command_buffer + VDP_CMD_NX_LO),a
-	ld a,h
-	ld (command_buffer + VDP_CMD_NX_HI),a
-
-	ld a,(current_attr)
-	and #0x01
-	ld a,#0x44
-	jr z,v9958_fill_have_color
-	ld a,#0xff
-v9958_fill_have_color:
-	ld (command_buffer + VDP_CMD_COLOR),a
-	ld a,#V9958_COMMAND_HMMV
-	ld (command_buffer + VDP_CMD_CODE),a
-
-	; A multi-row erase may cross the circular page-zero boundary. Split it
-	; there so the command engine does not continue into the font page.
-	ld a,(fill_height)
-	add a,a
-	add a,a
-	add a,a
-	ld b,a
-	ld (command_buffer + VDP_CMD_NY_LO),a
-	ld a,(command_buffer + VDP_CMD_DY_LO)
-	add a,b
-	jr nc,v9958_fill_start
-	ld (fill_height),a		; wrapped height after physical line 255
-	ld a,(command_buffer + VDP_CMD_DY_LO)
-	neg
-	ld (command_buffer + VDP_CMD_NY_LO),a
-	call v9958_start_command
-	ld a,(fill_height)
-	or a
-	ret z
-	xor a
-	ld (command_buffer + VDP_CMD_DY_LO),a
-	ld a,(fill_height)
-	ld (command_buffer + VDP_CMD_NY_LO),a
-v9958_fill_start:
-	jp v9958_start_command
-
-; Input: A=source logical row, D=destination row, B=row count, C=ARG.
-; Each eight-line cell row is copied separately so page-zero wrap is safe.
-; DIY selects bottom-to-top order for overlapping insert-line moves.
-v9958_copy_rows:
-	ld (copy_src_row),a
-	ld a,d
-	ld (copy_dst_row),a
-	ld a,b
-	or a
-	ret z
-	ld (copy_row_count),a
-	ld a,c
-	ld (copy_argument),a
-	ld a,(copy_argument)
-	and #V9958_ARGUMENT_DIY
-	jr z,v9958_copy_rows_loop
-	ld a,(copy_row_count)
-	dec a
-	ld b,a
-	ld a,(copy_src_row)
-	add a,b
-	ld (copy_src_row),a
-	ld a,(copy_dst_row)
-	add a,b
-	ld (copy_dst_row),a
-
-v9958_copy_rows_loop:
-	call v9958_clear_command_buffer
-	ld a,(copy_src_row)
-	call v9958_logical_row_to_vram_y
-	ld (command_buffer + VDP_CMD_SY_LO),a
-	ld a,(copy_dst_row)
-	call v9958_logical_row_to_vram_y
-	ld (command_buffer + VDP_CMD_DY_LO),a
-	ld a,#0xfe			; 85 cells * 6 pixels = 510
-	ld (command_buffer + VDP_CMD_NX_LO),a
-	ld a,#0x01
-	ld (command_buffer + VDP_CMD_NX_HI),a
-	ld a,#TEXT_CELL_HEIGHT
-	ld (command_buffer + VDP_CMD_NY_LO),a
-	ld a,#V9958_COMMAND_HMMM
-	ld (command_buffer + VDP_CMD_CODE),a
-	call v9958_start_command
-
-	ld a,(copy_argument)
-	and #V9958_ARGUMENT_DIY
-	ld a,(copy_src_row)
-	jr z,v9958_copy_rows_advance
-	dec a
-	ld (copy_src_row),a
-	ld a,(copy_dst_row)
-	dec a
-	jr v9958_copy_rows_store_dst
-v9958_copy_rows_advance:
-	inc a
-	ld (copy_src_row),a
-	ld a,(copy_dst_row)
-	inc a
-v9958_copy_rows_store_dst:
-	ld (copy_dst_row),a
-	ld a,(copy_row_count)
-	dec a
-	ld (copy_row_count),a
-	jr nz,v9958_copy_rows_loop
-	ret
-
-v9958_scroll_up_one:
-	; Advance logical row zero by one eight-line cell. R#23 then makes the VDP
-	; fetch the existing rows from their new screen positions without a bitmap
-	; copy. Only the discarded half-row margin and new last row need clearing.
-	ld a,(v9958_scroll_origin)
-	add a,#TEXT_CELL_HEIGHT
-	ld (v9958_scroll_origin),a
-
-	; The fixed four-line margin immediately precedes logical row zero.
-	call v9958_clear_command_buffer
-	ld a,(v9958_scroll_origin)
-	sub #TEXT_DISPLAY_OFFSET
-	ld (command_buffer + VDP_CMD_DY_LO),a
-	xor a
-	ld (command_buffer + VDP_CMD_NX_LO),a
-	ld a,#0x02
-	ld (command_buffer + VDP_CMD_NX_HI),a
-	ld a,#TEXT_DISPLAY_OFFSET
-	ld (command_buffer + VDP_CMD_NY_LO),a
-	ld a,#0x44
-	ld (command_buffer + VDP_CMD_COLOR),a
-	ld a,#V9958_COMMAND_HMMV
-	ld (command_buffer + VDP_CMD_CODE),a
-	call v9958_start_command
-
-	; Clear the newly exposed logical bottom row using the current background.
-	ld d,#0x00
-	ld e,#(TEXT_ROWS - 1)
-	ld b,#TEXT_LOG_COLUMNS
-	ld c,#0x01
-	call v9958_fill_cells
-	call v9958_wait_command
-
-	; Commit the new circular origin immediately. An earlier revision waited
-	; for S#2.VR here so the origin changed only during vertical retrace. That
-	; wait costs up to a full field (16.7 ms NTSC / 20 ms PAL, ~8 ms average)
-	; on *every* scrolled line, which caps scrolling output at the field rate
-	; and made this driver slower than the VDrip console. The two fills above
-	; are ~0.3 ms of command-engine time, so the retrace wait was more than
-	; twenty times the cost of the work it protected. Writing R#23 mid-field
-	; can tear one field; during continuous output that is not visible, and it
-	; is the only artifact this trades away.
-	ld a,(v9958_scroll_origin)
-	sub #TEXT_DISPLAY_OFFSET
-	ld b,#23
-	jp v9958_write_register
-
-; Input: A=line count, already clamped to the available region.
-v9958_insert_lines:
-	ld (il_dl_n),a
-	ld a,(text_row)
-	ld (il_dl_row),a
-	ld b,a
-	ld a,#TEXT_ROWS
-	sub b
-	ld b,a
-	ld a,(il_dl_n)
-	ld c,a
-	ld a,b
-	sub c
-	ld (il_dl_shift),a
-	jr z,v9958_insert_fill
-	ld b,a
-	ld a,(il_dl_row)
-	ld d,a
-	ld a,(il_dl_n)
-	add a,d
-	ld d,a
-	ld a,(il_dl_row)
-	ld c,#V9958_ARGUMENT_DIY
-	call v9958_copy_rows
-v9958_insert_fill:
-	ld d,#0x00
-	ld a,(il_dl_row)
-	ld e,a
-	ld b,#TEXT_LOG_COLUMNS
-	ld a,(il_dl_n)
-	ld c,a
-	jp v9958_fill_cells
-
-; Input: A=line count, already clamped to the available region.
-v9958_delete_lines:
-	ld (il_dl_n),a
-	ld a,(text_row)
-	ld (il_dl_row),a
-	ld b,a
-	ld a,#TEXT_ROWS
-	sub b
-	ld b,a
-	ld a,(il_dl_n)
-	ld c,a
-	ld a,b
-	sub c
-	ld (il_dl_shift),a
-	jr z,v9958_delete_fill
-	ld b,a
-	ld a,(il_dl_row)
-	ld d,a
-	add a,c
-	ld c,#0x00
-	call v9958_copy_rows
-v9958_delete_fill:
-	ld d,#0x00
-	ld a,#TEXT_ROWS
-	ld b,a
-	ld a,(il_dl_n)
-	ld c,a
-	ld a,b
-	sub c
-	ld e,a
-	ld b,#TEXT_LOG_COLUMNS
-	jp v9958_fill_cells
-
-; Clear all 256 lines of the circular page-zero bitmap and restore its origin.
-v9958_clear_screen:
-	call v9958_flush_print_run
-	xor a
-	ld (v9958_scroll_origin),a
-	ld a,#V9958_R23_TEXT_BASE
-	ld b,#23
-	call v9958_write_register
-	call v9958_clear_command_buffer
-	xor a
-	ld (command_buffer + VDP_CMD_NX_LO),a
-	ld a,#0x02
-	ld (command_buffer + VDP_CMD_NX_HI),a
-	xor a
-	ld (command_buffer + VDP_CMD_NY_LO),a
-	ld a,#0x01
-	ld (command_buffer + VDP_CMD_NY_HI),a
-	ld a,(current_attr)
-	and #0x01
-	ld a,#0x44
-	jr z,v9958_clear_have_color
-	ld a,#0xff
-v9958_clear_have_color:
-	ld (command_buffer + VDP_CMD_COLOR),a
-	ld a,#V9958_COMMAND_HMMV
-	ld (command_buffer + VDP_CMD_CODE),a
-	call v9958_start_command
-	jp v9958_present
-
-; Input: A=logical text row. Output: A=page-zero physical scanline. The origin
-; and row height are both multiples of eight, so an eight-line cell never
-; crosses from command page zero into the atlas page.
-v9958_logical_row_to_vram_y:
-	add a,a
-	add a,a
-	add a,a
-	ld c,a
-	ld a,(v9958_scroll_origin)
-	add a,c
-	ret
-
-; A * 6 -> HL. Clobbers DE.
-v9958_multiply_by_six:
-	ld l,a
-	ld h,#0x00
-	add hl,hl
-	ld e,l
-	ld d,h
-	add hl,hl
-	add hl,de
-	ret
-
-; ---------------------------------------------------------------------------
-; Direct VRAM and cursor helpers
-; ---------------------------------------------------------------------------
-
-; Input: DE=low 16 address, C=A16, B=count, HL=source.
-; May block waiting for a command, then relies on native WAIT for each data byte.
-v9958_write_vram_small:
-	call v9958_wait_command
-	push bc
-	ld a,c
-	and #0x01
-	rlca
-	rlca
-	ld c,a
-	ld a,d
-	rlca
-	rlca
-	and #0x03
-	or c
-	ld b,#14
-	call v9958_write_register
-	pop bc
-	ld a,e
-	out (V9958_COMMAND_PORT),a
-	ld a,d
-	and #0x3f
-	or #0x40
-	out (V9958_COMMAND_PORT),a
-	ld c,#V9958_DATA_PORT
-	otir
-	ret
-
-v9958_cursor_init:
-	ld hl,#cursor_pattern
-	ld de,#0xf800
-	ld c,#0x01
-	ld b,#0x08
-	call v9958_write_vram_small
-	ld hl,#cursor_colors
-	ld de,#0xf000
-	ld c,#0x01
-	ld b,#0x10
-	call v9958_write_vram_small
-	jp v9958_cursor_write_sat
-
-v9958_cursor_write_sat:
-	ld hl,#cursor_sat
-	ld a,(cursor_visible)
-	or a
-	jr z,v9958_cursor_hidden
-	ld a,(text_row)
-	call v9958_logical_row_to_vram_y
-	dec a
-	jr v9958_cursor_store_y
-v9958_cursor_hidden:
-	ld a,#V9958_CURSOR_HIDE_Y
-v9958_cursor_store_y:
-	ld (hl),a
-	inc hl
-	ld a,(text_col)
-	ld e,a
-	add a,a
-	add a,e
-	ld (hl),a
-	inc hl
-	xor a
-	ld (hl),a
-	inc hl
-	ld (hl),a
-	inc hl
-	ld (hl),#V9958_CURSOR_HIDE_Y
-	inc hl
-	xor a
-	ld (hl),a
-	inc hl
-	ld (hl),a
-	inc hl
-	ld (hl),a
-	ld hl,#cursor_sat
-	ld de,#0xf200
-	ld c,#0x01
-	ld b,#0x08
-	jp v9958_write_vram_small
 
 ; ---------------------------------------------------------------------------
 ; restore_font_from_rom
@@ -2478,14 +757,13 @@ v9958_cursor_store_y:
 
 console_backend_restore_font_from_rom:
 restore_font_from_rom:
-	ld a,#COPY_LATCH0		; ROM bank 0 low area visible, writes to SRAM
-	out (BANK_PORT),a
-	ld hl,#CONSOLE_FONT_ROM_BASE	; ROM bank 0 source (0x8000)
-	ld de,#CONSOLE_FONT_ROM_BASE	; SRAM bank 0 destination (0x8000)
-	ld bc,#FONT_BYTES
-	ldir
-	ld a,#RAM_ONLY_BANK0
-	out (BANK_PORT),a
+	; Nothing to restore.  This backend's atlas builder reads the font from
+	; ROM page 4 directly, so there is no RAM staging copy to refresh.
+	;
+	; The entry point stays because cold and warm boot call it
+	; unconditionally, and the VDrip console still uses the original design --
+	; font copied from ROM to 8000h, then uploaded to VRAM -- which needs the
+	; refresh to remain in the boot path.
 	ret
 
 
@@ -2562,40 +840,6 @@ v9958_video_send_error:
 
 ; BIOS-owned V9958 sprite cursor facade helpers.
 
-v9958_cursor_enable:
-	ret
-
-
-v9958_cursor_show:
-	call v9958_flush_print_run
-	ld a,#0x01
-	ld (cursor_visible),a
-	jp v9958_cursor_write_sat
-
-
-v9958_cursor_hide:
-	call v9958_flush_print_run
-	xor a
-	ld (cursor_visible),a
-	jp v9958_cursor_write_sat
-
-
-v9958_cursor_set_position_current:
-	call v9958_flush_print_run
-	call v9958_cursor_write_sat
-	jp v9958_present
-
-
-v9958_cursor_set_style_underline:
-	ret
-
-
-v9958_cursor_set_blink_default:
-	ret
-
-
-v9958_cursor_set_color_yellow:
-	ret
 
 
 ; ===========================================================================
@@ -2640,37 +884,15 @@ cursor_visible:
 	.db 0x01
 cursor_sat:
 	.ds 0x08
-cursor_pattern:
-	.db 0xe0,0xe0,0xe0,0xe0,0xe0,0xe0,0xe0,0xe0
-cursor_colors:
-	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
-	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
-	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
-	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
 
 ; Real-card G6 baseline from the verified LunchCrema bring-up sequence.
 ; R#1 deliberately keeps the display disabled until VRAM initialization ends.
-v9958_g6_registers:
-	.db 0x0a			; R#0: G6 mode select
-	.db V9958_R1_DISPLAY_OFF	; R#1: display disabled during initialization
-	.db 0x1f			; R#2: physical G6 page-zero baseline
-	.db 0x00			; R#3
-	.db 0x00			; R#4
-	.db 0xe4			; R#5/R#11 -> color 1F000h, SAT 1F200h
-	.db 0x3f			; R#6: sprite pattern table
-	.db 0x04			; R#7: text/background color baseline
-	.db V9958_R8_64K_DRAM	; R#8: VR=1, 64Kx4 DRAMs
-	.db 0x88			; R#9: PAL + 212-line mode
-	.db 0x00			; R#10
-	.db 0x03			; R#11
+; The G6 register table, the console palette and the cursor sprite pattern and
+; colours moved to ROM page 4 with the code that reads them; nothing resident
+; touches them.
 
 ; V9958 palette entries 0..15, encoded as RB then G.
 ; Console text uses index 0 for black, 4 for blue, and 15 for white.
-v9958_console_palette:
-	.db 0x00,0x00, 0x11,0x01, 0x00,0x06, 0x00,0x07
-	.db 0x05,0x00, 0x07,0x03, 0x50,0x00, 0x06,0x06
-	.db 0x70,0x00, 0x73,0x03, 0x70,0x07, 0x74,0x07
-	.db 0x00,0x05, 0x67,0x00, 0x55,0x05, 0x77,0x07
 
 atlas_scanline:
 	.db 0x00
@@ -2822,6 +1044,7 @@ V9958_CONSOLE_CODE_END:
 ; ---------------------------------------------------------------------------
 
 	.area FONT_DATA (ABS)
-	.org CONSOLE_FONT_ROM_BASE
-
-	.include "font_cp850_6x8.inc"
+; The font used to be assembled here, at CONSOLE_FONT_ROM_BASE (8000h), so that
+; boot could copy it into the TPA and upload it to VRAM from there.  This
+; backend reads it from ROM page 4 instead -- see romsvc_page4.asm -- so the
+; staging copy is gone and page 0 no longer carries 2 KiB at 8000h.

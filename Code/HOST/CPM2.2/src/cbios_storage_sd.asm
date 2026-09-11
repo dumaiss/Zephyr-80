@@ -23,8 +23,10 @@
 ; during a storage transaction -- CP/M does not re-enter the BIOS.
 
 	.globl sd_storage_home,sd_storage_settrk
-	.globl sd_storage_setsec,sd_storage_read,sd_storage_write
-	.globl sd_storage_sectran,sd_storage_flush
+	.globl sd_storage_setsec,sd_storage_sectran
+	.globl sd_flush_thunk
+	.include "romsvc_abi.inc"
+	.globl ROM_GATE
 	.globl stg_home,stg_seldsk,stg_settrk,stg_setsec
 	.globl stg_read,stg_write,stg_sectran
 	.globl stg_a_home,stg_a_seldsk,stg_a_seldsk_unsupported
@@ -32,7 +34,6 @@
 	.globl stg_a_read,stg_a_write,stg_a_sectran
 	.globl storage_caller_sp
 	.globl SD_STORAGE_CODE_START,SD_STORAGE_CODE_END
-	.globl SD_PROBE_CODE_START,SD_PROBE_CODE_END
 	.globl SD_PROBE2_CODE_END
 	.globl cbios_dma_addr
 
@@ -64,123 +65,60 @@ sd_storage_sectran:
 	ret
 
 ; ---------------------------------------------------------------------------
+; ROM-service thunks.
+;
+; The SD transaction layer moved to ROM page 4.  These four stand in its place
+; in the dispatcher, and they exist to keep the two operations a ROM service
+; cannot perform on this side of the gate: touching the bank latch, and reading
+; the caller's DMA buffer.
+;
+; sd_copy_to_dma and sd_copy_from_dma do both -- they select the caller's DMA
+; bank and stage a 128-byte record through MOVE_BUFFER.  Writing the latch
+; inside a service would unmap the ROM the service is running from, so the
+; staging brackets the gate instead of living inside it.
+; ---------------------------------------------------------------------------
+sd_read_thunk:
+	ld a,#ROMSVC_SD_READ
+	call ROM_GATE
+	or a
+	ret nz
+	call sd_copy_to_dma
+	; A must be zero here.  sd_copy_to_dma tail-calls sd_select_bank, which
+	; returns the BANK NUMBER in A, so falling out through it reports a
+	; nonzero status and BDOS calls a good sector bad.  The original
+	; sd_storage_read ended `call sd_copy_to_dma` / `xor a` / `ret` for this
+	; reason; splitting the staging out of the service moved the copy to the
+	; end, and the `xor a` has to move with it.
+	xor a
+	ret
+
+sd_write_thunk:
+	; Stage first: the service cannot read the caller's buffer once ROM is
+	; mapped over it.
+	call sd_copy_from_dma
+	ld a,#ROMSVC_SD_WRITE
+	jp ROM_GATE
+
+sd_flush_thunk:
+	ld a,#ROMSVC_SD_FLUSH
+	jp ROM_GATE
+
+sd_probe_thunk:
+	ld a,#ROMSVC_SD_PROBE
+	jp ROM_GATE
+
+sd_probe2_thunk:
+	ld a,#ROMSVC_SD_PROBE2
+	jp ROM_GATE
+
+
+; ---------------------------------------------------------------------------
 ; record = track * 4 + sector
 ;
 ; Output: A = BIOS_OK and sd_storage_record set, or BIOS_ERR.
 ; The bounds check is not decoration: a wrapped record is a write to the wrong
 ; sector, which is the one failure that destroys data while reporting success.
 ; ---------------------------------------------------------------------------
-sd_compute_record:
-	ld hl,(sd_storage_track)
-	ld a,h
-	cp #0x40			; 16384 tracks
-	jr nc,sd_record_bad
-	ld de,(sd_storage_sector)
-	ld a,d
-	or a
-	jr nz,sd_record_bad
-	ld a,e
-	cp #4				; 4 records per track
-	jr nc,sd_record_bad
-	add hl,hl
-	add hl,hl
-	ld d,#0
-	add hl,de
-	ld (sd_storage_record),hl
-	xor a
-	ret
-sd_record_bad:
-	ld a,#BIOS_ERR
-	ret
-
-; ---------------------------------------------------------------------------
-; Frame helpers
-; ---------------------------------------------------------------------------
-
-; Zero both frames.
-sd_zero_frames:
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
-	ld b,#64			; tx and rx are adjacent
-	xor a
-sd_zf_loop:
-	ld (hl),a
-	inc hl
-	djnz sd_zf_loop
-	ret
-
-; Build a record-addressed request.  In: A = command class.
-sd_build_request:
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
-	ld (hl),a			; class
-	inc hl
-	ld (hl),#0x01			; seq placeholder; IOCALL stamps the real one
-	inc hl
-	ld (hl),#0x00			; status
-	inc hl
-	ld (hl),#0x05			; payload: 32-bit record, then the unit
-	inc hl
-	ld de,(sd_storage_record)
-	ld (hl),e
-	inc hl
-	ld (hl),d
-	inc hl
-	ld (hl),#0x00
-	inc hl
-	ld (hl),#0x00
-	inc hl
-	; The unit is sent EXPLICITLY, including B:'s zero.
-	;
-	; The controller reads this byte only when LEN is 5 or more and defaults
-	; to unit 0 otherwise, so a length of 4 would still work -- but it would
-	; mean B: relied on a compatibility fallback to address the right volume,
-	; and a request whose meaning depends on what it omits is one edit away
-	; from addressing the wrong disk.
-	ld a,(sd_storage_unit)
-	ld (hl),a
-	ret
-
-; Send the staged request and check the reply.
-; In:  A = expected response class.
-; Out: A = BIOS_OK, or BIOS_ERR / BIOS_ERR_BAD_REPLY.
-sd_exchange:
-	ld (sd_storage_expect),a
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
-	ld de,#(MOVE_BUFFER + SD_STORAGE_RX_OFF)
-	call IOCALL
-	or a
-	jr nz,sd_exchange_xport
-	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF)
-	ld hl,#sd_storage_expect
-	cp (hl)
-	jr nz,sd_exchange_reply
-	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + 2)
-	or a
-	jr nz,sd_exchange_status
-	; The MCU echoes the record it decoded.  The frame CRC proves the frame
-	; arrived intact; this proves both ends agree on what it MEANT, which a
-	; decode bug on either side would survive.
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_RX_OFF + 8)
-	ld a,(sd_storage_record)
-	cp (hl)
-	jr nz,sd_exchange_echo
-	inc hl
-	ld a,(sd_storage_record + 1)
-	cp (hl)
-	jr nz,sd_exchange_echo
-	xor a
-	ret
-sd_exchange_xport:
-	ld a,#BIOS_ERR_TIMEOUT
-	ret
-sd_exchange_reply:
-	ld a,#BIOS_ERR_BAD_REPLY
-	ret
-sd_exchange_status:
-	ld a,#BIOS_ERR_IO
-	ret
-sd_exchange_echo:
-	ld a,#BIOS_ERR_BAD_REPLY
-	ret
 
 ; ---------------------------------------------------------------------------
 ; Bank-aware record copies.  The caller's DMA buffer can be in another bank, so
@@ -221,126 +159,6 @@ sd_select_bank:
 ; ---------------------------------------------------------------------------
 ; READ one record
 ; ---------------------------------------------------------------------------
-sd_storage_read:
-	call sd_compute_record
-	or a
-	ret nz
-
-	call sd_zero_frames
-	ld a,#SD_CMD_READ_REC
-	call sd_build_request
-	ld a,#SD_RSP_READ_REC
-	call sd_exchange
-	or a
-	ret nz
-
-	; Length comes from READY rather than being assumed: a short transfer is
-	; the MCU's to declare, and IOCBULK verifies the CRC trailer itself.
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_DATA_OFF)
-	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + 6)
-	ld e,a
-	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + 7)
-	ld d,a
-	call IOCBULK
-	or a
-	jr nz,sd_read_bulk_failed
-
-	call sd_copy_to_dma
-	xor a
-	ret
-sd_read_bulk_failed:
-	ld a,#BIOS_ERR_IO
-	ret
-
-; ---------------------------------------------------------------------------
-; WRITE one record
-;
-; C holds CP/M's write type on entry and is deliberately ignored.  The deferral
-; policy lives on the MCU and is an address rule there -- the block holding the
-; directory head is write-through, everything else rides the flush timer -- so
-; the controller never has to know what a directory is.
-; ---------------------------------------------------------------------------
-sd_storage_write:
-	call sd_compute_record
-	or a
-	ret nz
-
-	call sd_copy_from_dma
-
-	call sd_zero_frames
-	ld a,#SD_CMD_WRITE_REC
-	call sd_build_request
-	ld a,#SD_RSP_WRITE_REC
-	call sd_exchange
-	or a
-	ret nz
-
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_DATA_OFF)
-	ld de,#SD_STORAGE_RECORD_BYTES
-	call IOCBULKW
-	or a
-	jr nz,sd_write_bulk_failed
-
-	; DONE is mandatory and has no fast path.
-	call sd_zero_frames
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
-	ld (hl),#SD_CMD_XFER_STATUS
-	inc hl
-	ld (hl),#0x01
-	ld a,#SD_RSP_XFER_STATUS
-	ld (sd_storage_expect),a
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
-	ld de,#(MOVE_BUFFER + SD_STORAGE_RX_OFF)
-	call IOCALL
-	or a
-	jr nz,sd_write_xport_failed
-	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF)
-	cp #SD_RSP_XFER_STATUS
-	jr nz,sd_write_reply_failed
-	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + 5)
-	or a
-	jr nz,sd_write_done_failed
-	xor a
-	ret
-sd_write_bulk_failed:
-	ld a,#BIOS_ERR_IO
-	ret
-sd_write_xport_failed:
-	ld a,#BIOS_ERR_TIMEOUT
-	ret
-sd_write_reply_failed:
-	ld a,#BIOS_ERR_BAD_REPLY
-	ret
-sd_write_done_failed:
-	ld a,#BIOS_ERR_IO
-	ret
-
-; ---------------------------------------------------------------------------
-; Commit every dirty cache slot.  No bulk phase: the reply status IS the answer,
-; which makes this the one storage command whose result needs no DONE query.
-; ---------------------------------------------------------------------------
-sd_storage_flush:
-	call sd_zero_frames
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
-	ld (hl),#SD_CMD_FLUSH
-	inc hl
-	ld (hl),#0x01
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
-	ld de,#(MOVE_BUFFER + SD_STORAGE_RX_OFF)
-	call IOCALL
-	or a
-	jr nz,sd_flush_failed
-	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF)
-	cp #SD_RSP_FLUSH
-	jr nz,sd_flush_failed
-	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + 2)
-	or a
-	jr nz,sd_flush_failed
-	xor a
-	ret
-sd_flush_failed:
-	ld a,#BIOS_ERR_IO
-	ret
 
 ; ---------------------------------------------------------------------------
 ; Drive dispatcher
@@ -389,7 +207,7 @@ stg_read:
 	push de
 	push hl
 	call stg_is_sd
-	ld hl,#sd_storage_read
+	ld hl,#sd_read_thunk
 	jr z,stg_run
 	ld hl,#stg_a_read
 	jr stg_run
@@ -399,7 +217,7 @@ stg_write:
 	push de
 	push hl
 	call stg_is_sd
-	ld hl,#sd_storage_write
+	ld hl,#sd_write_thunk
 	jr z,stg_run
 	ld hl,#stg_a_write
 
@@ -516,33 +334,13 @@ SD_STORAGE_ALV2:
 ; initialization and IOCALL; emits IOC Command traffic, no Virtual Drip traffic.
 ; Foreground only: uses MOVE_BUFFER and is not ISR-safe.
 ; ---------------------------------------------------------------------------
-	.area CODE (ABS)
-	.org CBIOS_SD_PROBE_CODE_BASE
-
-SD_PROBE_CODE_START:
-sd_storage_probe:
-	call sd_storage_probe_card
-	jr nz,sd_probe_failed
-	ld de,#SD_STORAGE_DPH
-	jr sd_probe_store_result
-
-sd_probe_failed:
-	ld de,#0x0000			; no DPH: drive unavailable
-; In: DE = DPH to return, or zero for an unavailable drive.
-; Out: saved SELDSK HL replaced with DE.  Clobbers HL; foreground only.
-sd_probe_store_result:
-	ld hl,(storage_caller_sp)
-	ld (hl),e
-	inc hl
-	ld (hl),d
-	ret
-SD_PROBE_CODE_END:
-
-; ---------------------------------------------------------------------------
-; C: selection probe, in its own region.
-; ---------------------------------------------------------------------------
+; The B: and C: select probes moved to ROM page 4; the probe region now carries
+; the drive dispatcher, which cannot move -- stg_sel_a routes A: to the ROM-disk
+; backend, and that backend drives the bank latch to read ROM pages 1-3.
 	.area CODE (ABS)
 	.org CBIOS_SD_PROBE2_CODE_BASE
+SD_PROBE_CODE_START:
+
 stg_seldsk:
 	ld a,c
 	cp #STORAGE_A_DRIVE
@@ -563,10 +361,10 @@ stg_seldsk:
 	push hl
 	or a				; unit 0 is B:
 	jr z,stg_sel_unit0
-	ld hl,#sd_storage_probe2
+	ld hl,#sd_probe2_thunk
 	jp stg_run
 stg_sel_unit0:
-	ld hl,#sd_storage_probe
+	ld hl,#sd_probe_thunk
 	jp stg_run
 stg_sel_bad:
 	ld a,#0xff
@@ -598,61 +396,6 @@ stg_not_sd:
 	ret
 
 ; Card-level probe, shared by B: and C:.  Out: Z when the card answered.
-sd_storage_probe_card:
-	call sd_zero_frames
-	ld a,#SD_CMD_PROBE
-	ld (MOVE_BUFFER + SD_STORAGE_TX_OFF),a
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
-	ld de,#(MOVE_BUFFER + SD_STORAGE_RX_OFF)
-	call IOCALL
-	or a				; transport status
-	ret nz
-	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + IOC_OFF_STATUS)
-	or a
-	ret
-
-; ---------------------------------------------------------------------------
-; C: selection probe.
-;
-; Two transactions, and the order matters.
-;
-; The card probe runs first because it is what INITIALISES the card.  Only once
-; the card is up does the controller's idle loop resolve /CPM/CPM_1.DRV and
-; CPM_2.DRV into volume units -- so asking about unit 1 before that would
-; truthfully answer "nothing mounted" on a perfectly good card.  The two IOCALLs
-; are separate transactions, so the controller's main loop runs between them and
-; the mount has happened by the time the second one is answered.
-;
-; CMD_VOL_INFO is then a pure query: no card I/O, no state change.  A mode of
-; zero means unit 1 has no volume -- an unformatted card, or one with no
-; CPM_2.DRV on it -- and C: reports itself unavailable, which is a clean select
-; error rather than reads that fail one at a time later.
-; ---------------------------------------------------------------------------
-sd_storage_probe2:
-	call sd_storage_probe_card
-	jp nz,sd_probe_failed
-	call sd_zero_frames
-	ld a,#SD_CMD_VOL_INFO
-	ld (MOVE_BUFFER + SD_STORAGE_TX_OFF),a
-	ld a,#0x01
-	ld (MOVE_BUFFER + SD_STORAGE_TX_OFF + IOC_OFF_LEN),a
-	ld a,(sd_storage_unit)
-	ld (MOVE_BUFFER + SD_STORAGE_TX_OFF + IOC_OFF_PAYLOAD),a
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
-	ld de,#(MOVE_BUFFER + SD_STORAGE_RX_OFF)
-	call IOCALL
-	or a
-	jp nz,sd_probe_failed
-	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + IOC_OFF_STATUS)
-	or a
-	jp nz,sd_probe_failed
-	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + SD_VOL_INFO_MODE_OFF)
-	cp #SD_VOL_MODE_NONE
-	jp z,sd_probe_failed		; unit exists, but nothing is mounted on it
-	ld de,#SD_STORAGE_DPH2
-	jp sd_probe_store_result
-
-; The region ends at CBIOS_SD_PROBE2_CODE_END (F96Fh); SD_STORAGE_DPH2 is
-; org'd immediately after it, so overrunning this block collides with C:'s own
-; DPH and tools/check_overlap.py reports it by name.
 SD_PROBE2_CODE_END:
+SD_PROBE_CODE_END:
+

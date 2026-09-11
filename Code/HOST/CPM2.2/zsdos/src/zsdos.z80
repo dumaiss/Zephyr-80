@@ -643,9 +643,9 @@ CCPLN0:	LD	A,'>'
 CCPBUF:	PUSH	HL
 	LD	HL,(ARWORD)	; Caller's buffer base
 	LD	A,H
-	CP	0C4H		; Below the CCP slot?
+	CP	CCPLO		; Below the CCP slot?
 	JR	C,CCPBNO
-	CP	0CCH		; At or above the BDOS?
+	CP	CCPHI		; At or above the BDOS?
 	JR	NC,CCPBNO
 	POP	HL
 	XOR	A		; Z: a command processor is asking

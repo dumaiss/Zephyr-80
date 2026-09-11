@@ -24,12 +24,19 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 work=${1:?usage: build-zcpr2.sh <work-dir> <output.bin>}
 out=${2:?usage: build-zcpr2.sh <work-dir> <output.bin>}
-RUNCPM=${RUNCPM:-runcpm}
+# The emulator is carried in this tree and built by the parent Makefile, which
+# passes it in.  Falling back to the in-tree path keeps the script runnable on
+# its own; falling back to PATH would silently pick up an unpatched RunCPM,
+# whose internal CCP has no matching binary in tools/runcpm-ccp.
+RUNCPM=${RUNCPM:-$here/../build/tools/RunCPM}
 
 command -v "$RUNCPM" >/dev/null 2>&1 || {
     echo "build-zcpr2: '$RUNCPM' not found." >&2
     echo "  ZCPR2 is assembled by MAC.COM under a CP/M emulator; no host" >&2
-    echo "  assembler reads its dialect.  Set RUNCPM=/path/to/RunCPM." >&2
+    echo "  assembler reads its dialect.  The emulator is carried in this tree" >&2
+    echo "  and built by the parent Makefile:" >&2
+    echo "    make -C .. build/tools/RunCPM" >&2
+    echo "  See ../tools/runcpm/README.md.  RUNCPM= overrides." >&2
     exit 1
 }
 
@@ -66,4 +73,4 @@ if sed 's/\r$//' "$work/A/0/ZCPR2.PRN" | grep -qE '^[A-Z] '; then
 fi
 
 python3 "$here/../tools/hex_to_ccp.py" --hex "$hex" \
-    --base 0xC400 --size 0x800 --output "$out"
+    --base 0xCC00 --size 0x800 --output "$out"

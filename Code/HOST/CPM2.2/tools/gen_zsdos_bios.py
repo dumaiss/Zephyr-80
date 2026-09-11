@@ -49,6 +49,17 @@ def main() -> None:
         addr = find(symbols, prefix, full)
         lines.append(f"{name}\tEQU\t0{addr:04X}H\t; {full}")
         print(f"  {name} = {addr:04X}h  ({full})")
+
+    # The CCP slot's page range, for CCPBUF's "is a command processor asking?"
+    # test.  ZSDOS carried 0C4H and 0CCH inline, which were the MEM=56 answers
+    # and became wrong the moment the resident base moved -- the test then said
+    # "somebody else" for every CCP call, and empty-line ^R recall silently
+    # stopped working.  A range test should ask where the CCP actually is.
+    cbase = find(symbols, "CBASE", "CP/M CCP base")
+    lines.append("")
+    lines.append(f"CCPLO\tEQU\t0{cbase >> 8:02X}H\t; CCP slot, first page")
+    lines.append(f"CCPHI\tEQU\t0{(cbase + 0x800) >> 8:02X}H\t; first page at or above the BDOS")
+    print(f"  CCPLO = {cbase >> 8:02X}h, CCPHI = {(cbase + 0x800) >> 8:02X}h  (CCP slot pages)")
     args.output.write_bytes(("\r\n".join(lines) + "\r\n").encode("ascii"))
 
 
