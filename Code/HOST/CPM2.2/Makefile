@@ -272,19 +272,41 @@ PATCH_CPM  := $(TOOLS_DIR)/patch_cpm.py
 ZCPR2_SRCS := $(wildcard zcpr2/src/*) zcpr2/build-zcpr2.sh $(TOOLS_DIR)/hex_to_ccp.py
 ZSDOS_SRCS := $(wildcard zsdos/src/*) zsdos/build-zsdos.sh $(TOOLS_DIR)/l80_slice.py
 
+# ZCPR2 and ZSDOS are assembled by CP/M-hosted assemblers running under an
+# emulator.  Every CP/M-side tool they need is carried in this tree; the
+# emulator is too, in tools/runcpm, rather than resolved from PATH or from an
+# RUNCPM= pointing at a checkout somewhere on the developer's disk.  It is
+# patched to select CCP_ZCPR3 -- the build has never worked against an
+# unmodified RunCPM -- so it must be built from the vendored copy for the CCP
+# probe in both scripts to find a matching binary.  See tools/runcpm/README.md.
+#
+# RunCPM is a single translation unit: main.c includes the rest.
+RUNCPM_DIR  := $(TOOLS_DIR)/runcpm
+RUNCPM_SRCS := $(wildcard $(RUNCPM_DIR)/src/*.c) $(wildcard $(RUNCPM_DIR)/src/*.h)
+RUNCPM_BIN  := $(BUILD_DIR)/tools/RunCPM
+HOSTCC      ?= cc
+RUNCPM_CFLAGS ?= -Wall -O2 -Wno-unused-variable
+
+# Overridable, so a different emulator build can still be tested against.
+RUNCPM ?= $(abspath $(RUNCPM_BIN))
+
+$(RUNCPM_BIN): $(RUNCPM_SRCS)
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(RUNCPM_CFLAGS) -o $@ $(RUNCPM_DIR)/src/main.c
+
 .PHONY: zcpr2 zsdos
 zcpr2: $(ZCPR2_BIN)
 zsdos: $(ZSDOS_BIN)
 
-$(ZCPR2_BIN): $(ZCPR2_SRCS) | $(BUILD_DIR)
-	./zcpr2/build-zcpr2.sh $(BUILD_DIR)/zcpr2-build $@
+$(ZCPR2_BIN): $(ZCPR2_SRCS) $(RUNCPM_BIN) | $(BUILD_DIR)
+	RUNCPM="$(RUNCPM)" ./zcpr2/build-zcpr2.sh $(BUILD_DIR)/zcpr2-build $@
 
 # Depends on the symbol map: ZSDOS calls two BIOS helpers by absolute address,
 # and both move when the BIOS is rebuilt.  The addresses are generated, never
 # written down -- a stale one would assemble cleanly and jump into the middle of
 # something at run time.
-$(ZSDOS_BIN): $(ZSDOS_SRCS) $(SYMBOLS_FILE) $(TOOLS_DIR)/gen_zsdos_bios.py | $(BUILD_DIR)
-	./zsdos/build-zsdos.sh $(BUILD_DIR)/zsdos-build $@ $(SYMBOLS_FILE)
+$(ZSDOS_BIN): $(ZSDOS_SRCS) $(SYMBOLS_FILE) $(TOOLS_DIR)/gen_zsdos_bios.py $(RUNCPM_BIN) | $(BUILD_DIR)
+	RUNCPM="$(RUNCPM)" ./zsdos/build-zsdos.sh $(BUILD_DIR)/zsdos-build $@ $(SYMBOLS_FILE)
 
 CPM_PATCH_ARGS :=
 CPM_PATCH_DEPS :=
