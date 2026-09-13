@@ -3,7 +3,20 @@
 ; The monitor keeps its historical sio_* routine names so command, line-editing,
 ; and Intel HEX code stay unchanged. These wrappers call the resident
 ; CP/M-style BIOS console ABI; the BIOS owns SIO initialization and hardware
-; polling.
+; polling.  The jump table is found through page zero (bios_console), because the
+; banked OS publishes no fixed addresses.
+
+; Call the CP/M BIOS table entry at offset E.  0001h holds the WBOOT entry, three
+; bytes into the table.
+; Clobbers: DE, HL, and whatever the entry clobbers.
+bios_console:
+	ld hl,(0x0001)
+	dec hl
+	dec hl
+	dec hl
+	ld d,#0
+	add hl,de
+	jp (hl)
 
 ; Write A through BIOS CONOUT.
 ; Input: A = byte to transmit.
@@ -14,7 +27,8 @@ sio_putc:
 	push de
 	push hl
 	ld c,a
-	call BCOUT
+	ld e,#BIOS_CONOUT_OFFSET
+	call bios_console
 	pop hl
 	pop de
 	pop bc
@@ -28,7 +42,8 @@ sio_getc:
 	push bc
 	push de
 	push hl
-	call BCIN
+	ld e,#BIOS_CONIN_OFFSET
+	call bios_console
 	pop hl
 	pop de
 	pop bc
@@ -42,7 +57,8 @@ sio_const:
 	push bc
 	push de
 	push hl
-	call BCNST
+	ld e,#BIOS_CONST_OFFSET
+	call bios_console
 	pop hl
 	pop de
 	pop bc

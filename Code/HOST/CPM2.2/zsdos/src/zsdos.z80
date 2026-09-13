@@ -81,9 +81,10 @@
 ;* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
 	MACLIB	ZSDOS.LIB	; Get initialization code
-	MACLIB	ZSDOSBIO	; [Zephyr-80] Common-memory addresses, generated from
-				;   build/firmware.map: WBTRAP, the warm-boot trap
-				;   that restores latch mode 10 before 0000h.
+	MACLIB	ZSDOSBIO	; [Zephyr-80] Addresses generated from build/firmware.map
+				;   WBTRAP, the warm-boot trap that restores latch
+				;   mode 10 before 0000h, and CCPLO/CCPHI, the CCP
+				;   slot's pages for CCPBUF.
 
 RAMLOW	EQU	0000H		; Start address memory
 
@@ -647,9 +648,9 @@ CCPLN0:	LD	A,'>'
 CCPBUF:	PUSH	HL
 	LD	HL,(ARWORD)	; Caller's buffer base
 	LD	A,H
-	CP	0C4H		; Below the CCP slot?
+	CP	CCPLO		; Below the CCP slot?
 	JR	C,CCPBNO
-	CP	0CCH		; At or above the BDOS?
+	CP	CCPHI		; At or above the BDOS?
 	JR	NC,CCPBNO
 	POP	HL
 	XOR	A		; Z: a command processor is asking

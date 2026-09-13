@@ -17,7 +17,6 @@ BDOS		= 0x0005
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
 BDOS_CONSTAT	= 0x0B
-IOCALL		= 0xDA3F
 
 	.include "ioc_levels.inc"
 
@@ -260,3 +259,5 @@ rx_frame:
 entry_sp:	.ds 2
 	.ds 128				; BDOS nesting plus an interrupt frame
 stack_top:
+
+	.include "zbdos.inc"

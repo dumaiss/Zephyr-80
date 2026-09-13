@@ -1,9 +1,11 @@
 ; Shared layout of the BIOS IOC link failure record.
 ;
-; The BIOS fills a compact record at a fixed address describing the last
-; transport failure on either lane.  It sits at a fixed address so a .COM can
-; read it when the link is too broken to answer a PING -- that is the whole
-; reason it is not simply a field in a reply.
+; The BIOS fills a compact record describing the last transport failure on
+; either lane, in common memory, so a .COM can read it when the link is too
+; broken to answer a PING -- that is the whole reason it is not simply a field
+; in a reply.  Its address comes from Zephyr BDOS function 203, which works
+; with the link dead: call zb_diag_iy (zbdos.inc) and read each field as
+; IOC_DIAG_xxx(iy).  The names below are OFFSETS, not addresses.
 ;
 ; Track this against its authority:
 ;   Code/HOST/CPM2.2/src/cbios_defs.inc  -- FROZEN: IOC link failure record
@@ -14,13 +16,13 @@
 ; the DCCEh-DCE3h range.  Three private copies of one layout is how a field
 ; moves and two of the three keep printing the old meaning.
 ;
-; VERSION GATE.  This layout is governed by ZBIOS_XPORT_LEVEL, read from
-; ZBIOS_XPORT_LEVEL_ADDR (see ioc_levels.inc).  A tool MUST check that the
+; VERSION GATE.  This layout is governed by ZBIOS_XPORT_LEVEL, read with
+; zb_xport_level (see ioc_levels.inc).  A tool MUST check that the
 ; running BIOS reports at least IOC_DIAG_RECORD_MIN_XPORT_LEVEL before
 ; decoding these offsets, and say so plainly rather than printing fields it
 ; cannot vouch for.  The record carries no version byte of its own.
 
-IOC_DIAG_BASE			= 0xDCC0
+IOC_DIAG_BASE			= 0x0000		; offsets: index from zb_diag_iy's IY
 IOC_DIAG_SIZE			= 0x10
 
 ; The transport level at which this record layout became current.  A BIOS

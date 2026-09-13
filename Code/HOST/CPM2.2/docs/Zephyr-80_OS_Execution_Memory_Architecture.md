@@ -844,13 +844,27 @@ At the end of Phase 1 the OS is out of the application's body.
 
 ### Phase 2 — Common window to `E000h-FFFFh` (required)
 
-1. Decoder: common is `E000h-FFFFh` in modes 10 and 11, and the OS body is `2000h-DFFFh`.
-2. Confirm modes 00 and 01 are untouched and still load bank 7: the image must still fit `2000h-BFFFh` (section 7).
-3. Review the boot sequence. It runs with bank 0 selected, so code it executes in `C000h-DFFFh` stays mapped when the common boundary moves; confirm that, and that nothing switching banks with another bank selected runs below `E000h`.
-4. Use `C000h-DFFFh` of bank 7 for zero-initialised runtime state.
-5. Move `CBASE` and `FBASE` to the measured boundary and regenerate.
-6. Hardware validation, Phase 2 (section 26).
-7. Recost from the binary.
+1. **Done.** `MEM_DECODER.pld` revision 11: common is `E000h-FFFFh` in modes 10 and 11, and the OS body is `2000h-DFFFh`. The WinCUPL product terms match this map for all 2,048 inputs; the chip selects are unchanged from revision 10. Each address line uses 8 of its 10 terms.
+2. **Done.** Modes 00 and 01 decode exactly as in revision 10: shadow/copy still forces `C000h-FFFFh` to bank 0. The bank 7 image ends at `883Fh`, and `tools/split_banked_image.py` refuses any byte assembled into `C000h-DFFFh`.
+3. **Done.** Boot review. Boot and `WBOOT` set mode 11 before loading the bank-7 stack, and switch to a common stack before the final switch to mode 10. `restore_ccp_from_rom` does no stack operation between its two latch writes.
+   - **Found:** drive A:'s shadow/copy window popped its saved latch from the stack while the window was open. With the storage stack in `C000h-DFFFh`, mode 01 maps that stack to bank 0, so `xing_rom_copy_record` now keeps the saved latch and interrupt state in common variables.
+   - **Found:** a DMA in `C000h-DFFFh` cannot take a shadow/copy write, so the ROM-disk read refuses one. Nothing the OS reads into lives there.
+4. **Done.** Bank 7's `C000h-DFFFh` holds the BIOS private stacks (`C100h`, `C200h`, `C300h`) and the SD scratch buffer. Nothing there is loaded or initialised.
+   - The ISR, gate and facade stacks stay common, at `FE80h-FF5Fh`.
+   - Cross-bank `MOVE` uses the common staging buffer.
+5. **Done.** `CBASE` is `E400h`, `FBASE` is `EC06h` and `CBIOS_BASE` is `F000h`; `TPA` is `0100h-EC05h`. Common memory holds 3,491 bytes plus the CCP in `E000h-FFFFh`, with `E000h-E3FFh` left for program interrupt callbacks.
+   - **Common layout:** the facade is at `EC00h`; boot, banking, the diag record, the SIO core, the crossing layer, gates, interrupt dispatch and the serial console are at `F000h-F94Ah`. The staging buffer and pointer copies are at `F950h-FC8Fh`, and the IM2 page is at `FD00h`.
+   - **Staging buffers:** the facade's short-lived staging shares one 512-byte buffer.
+   - **Generated addresses:** ZCPR2's `CPRLOC` and `BIOS EQU` are generated from `CBASE` and `CBIOS_BASE` (`zcpr2/build-zcpr2.sh`), and ZSDOS's `CCPBUF` range comes from `CBASE` (`CCPLO`/`CCPHI`, `tools/gen_zsdos_bios.py`). This closes Phase 1's deviations for steps 6 and 9.
+   - **Build fix:** the generated ZSDOS `MACLIB` now ends in Ctrl-Z. Without it, ZMAC read the padding in the file's last record as source once the file grew.
+   - **Retrofit:** nothing is published at a fixed address any more.
+     - Zephyr BDOS function 203 returns a system information block: transport level, IOC diag record, serial console flags, BIOS table and extension table.
+     - `../Utilities/src/zbdos.inc` gives tools `IOCALL`, `IOCBULK`, `IOCBULKW` and `VIDEO_SEND` under their old names through functions 214-217, plus `MOVE`, `XMOVE`, `SELMEM` and pointers from function 203.
+     - Retrofitted: every utility, including `SYSID`, `SERCON` and `SDSOAK`; the Monitor, whose `APP` command is retired; and the four HelloWorld video demos. `SDSOAK` now registers its interrupt load as a callback.
+     - This closes Phase 1's step 10 deviation.
+6. **Done.** On hardware, with decoder revision 11: cold and warm boot, `DIR` on A:-C:, `^R`/`^L`, `SYSID`, `MAP11` (PASS), `BANKOS.COM` from B: (PASS), SD utilities, SERCON, the Monitor, SC2, WordStar, PIP and STAT all pass. TM2 was run as a memory-pressure check only, against an unmaintained source tree on the SD card: linking inside the TM2 environment still runs out of memory, and the standalone `TLINK` gets further and stops at the linker's own "Internal 2" check. Neither is taken as an OS result; the PC build links the maintained sources at the same `EC06h` BDOS entry (RunCPM 60K).
+   - Section 26, with `MAP11.COM` rewritten for this map. It checks mode 10's `C800h`/`DFFFh` as application memory, mode 11's `2000h-DFFFh` as bank 7, and `E000h` as common, and it saves and restores every byte it probes in the running OS's bank. `BANKOS.COM` now works in the `E000h` reservation, and uses a DMA at `C800h` to exercise the newly hidden range.
+7. **Done, from the binary:** 3,491 bytes of common memory besides the CCP. The facade region has 110 bytes free, the gates 11, interrupt dispatch 15, and the SIO core 7. `FC90h-FCFFh` and `FF60h-FFFFh` are unallocated.
 
 ---
 

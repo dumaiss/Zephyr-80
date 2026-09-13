@@ -33,7 +33,6 @@
 BDOS		= 0x0005
 BDOS_CONOUT	= 0x02		; output char in E; no useful return
 BDOS_PRINT	= 0x09		; print '$'-terminated string at DE
-IOCALL		= 0xDA3F	; BIOS extended entry: IOC compatibility transport
 
 CMD_SD_READ	= 0x03
 RSP_SD_READ	= 0x83
@@ -332,3 +331,5 @@ rx_frame:
 entry_sp:	.ds 2
 	.ds 128				; BDOS nesting plus an interrupt frame
 stack_top:
+
+	.include "zbdos.inc"

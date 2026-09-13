@@ -11,7 +11,6 @@
 BDOS		= 0x0005
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
-IOCALL		= 0xDA3F
 
 	.include "ioc_levels.inc"
 
@@ -33,7 +32,7 @@ main:
 	call BDOS
 
 	; A stale BIOS has a different IOCALL address/contract.
-	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
+	call zb_xport_level
 	cp #ZBIOS_XPORT_LEVEL
 	jp nz,stale_bios
 
@@ -361,3 +360,5 @@ tx_frame:	.ds 32
 rx_frame:	.ds 32
 	.ds 160
 stack_top:
+
+	.include "zbdos.inc"

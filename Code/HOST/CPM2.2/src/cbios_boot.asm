@@ -41,13 +41,14 @@
 ;   only after console state, banking state, and page zero are coherent.
 boot:
 	di
-	ld sp,#CBIOS_STACK_TOP
-	call select_ram_bank0
-	; The rest of boot runs in mode 11: the drivers it initialises are in bank
-	; 7, and everything boot itself touches -- this code, its stack, page zero
-	; in the caller window -- is visible there too.
+	; Boot runs in mode 11: the drivers it initialises are in bank 7, and so
+	; is the BIOS stack.  This code is common and page zero is in the caller
+	; window, so both are visible there too.  Latch first, then stack.
 	ld a,#OS_EXEC_LATCH
 	out (BANK_PORT),a
+	ld sp,#CBIOS_STACK_TOP
+	xor a
+	ld (CURRENT_BANK),a
 	call ctc_disable_interrupts
 	call irq_reset
 	call sound_silence_psgs
@@ -89,7 +90,10 @@ boot:
 	ld (DMA_BANK), a
 	call sio_core_enable_interrupts
 
-	; Back to application execution for the CCP.
+	; Back to application execution for the CCP.  The BIOS stack is in bank 7,
+	; so move to a common stack first: an interrupt between the switch and the
+	; CCP setting its own would otherwise push onto bank 0's C000h-DFFFh.
+	ld sp,#FAC_STACK_TOP
 	ld a,#RAM_ONLY_BANK0
 	out (BANK_PORT),a
 	ld sp,#APP_STACK_TOP
@@ -165,7 +169,10 @@ wboot_resident:
 	.endif
 	call sio_core_enable_interrupts
 
-	; Back to application execution for the CCP.
+	; Back to application execution for the CCP.  The BIOS stack is in bank 7,
+	; so move to a common stack first: an interrupt between the switch and the
+	; CCP setting its own would otherwise push onto bank 0's C000h-DFFFh.
+	ld sp,#FAC_STACK_TOP
 	ld a,#RAM_ONLY_BANK0
 	out (BANK_PORT),a
 	ld a,(TDRIVE)
@@ -178,15 +185,15 @@ WBOOT_RESIDENT_END:
 ; WBOOT therefore reloads only CBASE..FBASE-1 from ROM before returning to the
 ; CCP clear-buffer entry; BDOS and BIOS remain untouched.
 ;
-; For MEM=56, CBASE is C400h. C000h-C3FFh is protected/common TPA that remains
-; application-owned, so the CCP restore starts at C400h and does not treat the
-; lower common window as BIOS storage.
+; CBASE is E400h, just above the program interrupt reservation E000h-E3FFh,
+; which the restore leaves alone.
 ;
 ; This routine runs from protected high/common BIOS RAM after WBOOT has selected
 ; bank 0 and installed CBIOS_STACK_TOP, so CALL/RET and LDIR are safe here.
-; CBASE is in the C000h-FFFFh common window for MEM=56. In shadow/copy mode
-; that window reads SRAM bank 0, not ROM, so use normal ROM-visible bank 0 for
-; this high-common copy. Reads then come from ROM page 0 while writes update the
+; The BIOS stack is in bank 7's C000h-DFFFh, which ROM-visible mode maps to ROM,
+; so nothing here touches it between the two latch writes.  In shadow/copy mode
+; C000h-FFFFh reads SRAM bank 0, not ROM, so use normal ROM-visible bank 0 for
+; this copy. Reads then come from ROM page 0 while writes update the
 ; SRAM underneath; after LDIR, immediately return to RAM-only bank 0.
 restore_ccp_from_rom:
 	ld a,#ROM_VISIBLE_BANK0

@@ -30,9 +30,6 @@ BDOS_CONIN	= 0x01
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
 
-IOCALL		= 0xDA3F
-IOCBULK		= 0xDA45
-IOCBULKW	= 0xDA48
 
 	.include "ioc_levels.inc"
 
@@ -522,7 +519,7 @@ zf_rx:
 
 ; E0 BIOS, E1 command transport/class, E2 controller firmware level.
 check_level:
-	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
+	call zb_xport_level
 	cp #ZBIOS_XPORT_LEVEL
 	jr nz,cl_bios
 	call zero_frames
@@ -871,3 +868,5 @@ ref_buf:	.ds 512
 io_buf:		.ds 512
 stack_space:	.ds 128
 stack_top:
+
+	.include "zbdos.inc"

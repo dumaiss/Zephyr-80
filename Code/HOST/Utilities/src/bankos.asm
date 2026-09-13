@@ -2,8 +2,8 @@
 ;
 ; ../CPM2.2/docs/Zephyr-80_OS_Execution_Memory_Architecture.md, section 27.  An
 ; ordinary transient: everything it checks goes through CALL 5 and the BDOS
-; facade, with arguments deliberately placed in 8000h-A0FFh, the range bank 7
-; hides while ZSDOS runs.
+; facade, with arguments deliberately placed in 8000h-A0FFh and C800h, inside
+; 2000h-DFFFh, the range bank 7 hides while ZSDOS runs.
 ;
 ;   1  IX survives BDOS calls (F2: ZSDOS restores IX from IXSAVE by address)
 ;   2  functions 27 and 31 return pointers the program can read (F7)
@@ -52,21 +52,21 @@ CTC3_PORT	= 0x43
 CTC_TICK_CONTROL = 0xa7			; interrupt, timer, /256, constant follows, reset
 CTC_TICK_TC	= 0x00			; 256: about 150 Hz at 10 MHz
 
-DMA_H		= 0x8000		; hidden while ZSDOS runs
+DMA_H		= 0xc800		; hidden while ZSDOS runs
 FCB_H		= 0x9000
 STR_H		= 0x9800
 READ_H		= 0xa000
 CB_ADDR		= 0xe000		; program interrupt reservation
 CB_COUNT	= 0xe010
-CORE_ADDR	= 0xc000		; common memory
-REGBLK		= 0xc300
-RES_SEL5	= 0xc340
-RES_SEARCH	= 0xc341
-RES_SEL0	= 0xc342
-RES_ENTRY	= 0xc350
-ENTRY5		= 0xc390
-SAVE0080	= 0xc3a0
-CSTACK		= 0xc3f0
+CORE_ADDR	= 0xe080		; the reservation: common memory
+REGBLK		= 0xe300
+RES_SEL5	= 0xe340
+RES_SEARCH	= 0xe341
+RES_SEL0	= 0xe342
+RES_ENTRY	= 0xe350
+ENTRY5		= 0xe390
+SAVE0080	= 0xe3a0
+CSTACK		= 0xe3f0
 NRECORDS	= 4
 
 start:
@@ -496,12 +496,12 @@ bdos_ix:
 	ld hl,#lbl_ix
 	jp fail
 
-; HL = returned pointer, DE = label.  Fail if it points into 2000h-BFFFh.
+; HL = returned pointer, DE = label.  Fail if it points into 2000h-DFFFh.
 check_not_body:
 	ld a,h
 	cp #0x20
 	ret c
-	cp #0xc0
+	cp #0xe0
 	ret nc
 	ex de,hl
 	jp fail
@@ -629,8 +629,8 @@ callback_start:
 callback_end:
 
 ; ---------------------------------------------------------------------------
-; Copied to C000h and run there on a common stack: SELMEM 5 replaces the low
-; 48 KiB, this program included.  Relative jumps only; calls into the facade
+; Copied to E080h, in the program interrupt reservation, and run there on a
+; common stack: SELMEM 5 replaces the low 56 KiB, this program included.  Relative jumps only; calls into the facade
 ; build their return address from CORE_ADDR.
 core_start:
 	ld a,#5
@@ -718,9 +718,9 @@ file_name:	.ascii "BANKOS  TMP"
 all_name:	.ascii "???????????"
 
 lbl_ix:			.ascii "IX changed across a BDOS call$"
-lbl_dpb_body:		.ascii "function 31 pointer is in 2000h-BFFFh$"
+lbl_dpb_body:		.ascii "function 31 pointer is in 2000h-DFFFh$"
 lbl_dpb_spt:		.ascii "function 31 DPB has SPT 0$"
-lbl_alv_body:		.ascii "function 27 pointer is in 2000h-BFFFh$"
+lbl_alv_body:		.ascii "function 27 pointer is in 2000h-DFFFh$"
 lbl_getdma:		.ascii "function 47 is not the program's DMA$"
 lbl_make:		.ascii "make BANKOS.TMP failed$"
 lbl_write:		.ascii "write with hidden FCB/DMA failed$"

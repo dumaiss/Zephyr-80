@@ -1,6 +1,6 @@
 ; IOC_RESET.COM — Send a RESET command to the IO Controller.
 ;
-; Uses the IOCALL BIOS extension at DA3Fh (ZBIOS_EXT_BASE + 0Ch).
+; Uses IOCALL, now Zephyr BDOS function 214 (zbdos.inc).
 ; CMD_RESET (02h) causes the MCU to assert the host reset lines (~10 ms)
 ; and then self-reset.  The machine is expected to reboot before IOCALL
 ; receives a reply, so a timeout or non-return from IOCALL is the normal
@@ -23,7 +23,6 @@
 
 BDOS		= 0x0005
 BDOS_PRINT	= 0x09		; print '$'-terminated string at DE
-IOCALL		= 0xDA3F	; BIOS extended entry: IOC compatibility transport
 
 CMD_RESET	= 0x02
 
@@ -116,3 +115,5 @@ rx_frame:
 entry_sp:	.ds 2
 	.ds 128				; BDOS nesting plus an interrupt frame
 stack_top:
+
+	.include "zbdos.inc"

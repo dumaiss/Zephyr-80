@@ -67,7 +67,7 @@ CPRLOC	EQU	0	;MOVCPM IMAGE
 ; to that value as as in the following line:
 ;
 ;CPRLOC	EQU	0CF00H	;FILL IN WITH BDOSLOC SUPPLIED VALUE
-CPRLOC	EQU	0C400H	; Zephyr-80: CBASE, a 56K system
+CPRLOC	EQU	0E400H	; Zephyr-80: CBASE; build-zcpr2.sh sets it from zephyr.asm
 ;CPRLOC	EQU	0F400H	; for RunCPM 64K
 ;
 ; Note that you should only use one method or the other.
@@ -93,7 +93,7 @@ CPRR	EQU	0A00H-CPRLOC	;DDT LOAD OFFSET FOR Heath systems
 ; the user is running a standard CP/M configuration.
 ;
 ;BIOS	EQU	CPRLOC+800H+0E00H	;ADDRESS OF BIOS
-BIOS	EQU	0DA00H	; Zephyr-80: CBIOS_BASE
+BIOS	EQU	0F000H	; Zephyr-80: CBIOS_BASE; build-zcpr2.sh sets it
 
 ;
 ;   The following macros define the file types of the command object files

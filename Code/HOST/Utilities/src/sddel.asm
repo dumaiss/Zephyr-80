@@ -61,3 +61,4 @@ msg_done:	.ascii "deleted"
 		.db 13,10,'$'
 
 	.include "sdfs.inc"
+	.include "zbdos.inc"		; IOCALL/IOCBULK/IOCBULKW, which sdfs.inc calls

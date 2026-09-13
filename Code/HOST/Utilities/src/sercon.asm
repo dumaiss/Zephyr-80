@@ -29,10 +29,8 @@
 BDOS		= 0x0005
 BDOS_PRINT	= 0x09
 
-; Published BIOS addresses.  SERCON_FLAGS sits above the SIO core state in
-; every build, so it does not move between console backends.  See
-; CPM2.2/src/cbios_defs.inc.
-SERCON_FLAGS		= 0xFE78
+; The flags byte lives in the BIOS's common state; its address comes from
+; Zephyr BDOS function 203 (zb_sercon_iy), and it is read as 0(iy).
 SERCON_FLAG_TEE		= 0x01
 SERCON_FLAG_INPUT	= 0x02
 
@@ -41,6 +39,7 @@ CMDTAIL		= 0x0080
 CMDTAIL_TEXT	= 0x0081
 
 start:
+	call zb_sercon_iy		; IY = SERCON flags
 	ld de,#msg_banner
 	ld c,#BDOS_PRINT
 	call BDOS
@@ -79,17 +78,17 @@ have_arg:
 	jr do_off
 
 do_on:
-	ld a,(SERCON_FLAGS)
+	ld a,0(iy)
 	or #SERCON_FLAG_TEE
-	ld (SERCON_FLAGS),a
+	ld 0(iy),a
 	ld de,#msg_on
 	jr say_and_exit
 
 do_off:
 	; Clear input ownership with the tee: see the header.
-	ld a,(SERCON_FLAGS)
+	ld a,0(iy)
 	and #0xfc			; clear SERCON_FLAG_TEE and SERCON_FLAG_INPUT
-	ld (SERCON_FLAGS),a
+	ld 0(iy),a
 	ld de,#msg_off
 	jr say_and_exit
 
@@ -98,7 +97,7 @@ bad_arg:
 	jr say_and_exit
 
 report:
-	ld a,(SERCON_FLAGS)
+	ld a,0(iy)
 	and #SERCON_FLAG_TEE
 	ld de,#msg_is_off
 	jr z,report_input
@@ -106,7 +105,7 @@ report:
 report_input:
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(SERCON_FLAGS)
+	ld a,0(iy)
 	and #SERCON_FLAG_INPUT
 	ld de,#msg_in_kbd
 	jr z,say_and_exit
@@ -140,3 +139,5 @@ msg_in_ser:
 msg_usage:
 	.ascii "  usage: SERCON [ON|OFF]"
 	.db 13,10,'$'
+
+	.include "zbdos.inc"

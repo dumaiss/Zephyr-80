@@ -1,7 +1,7 @@
 Name     Z80_MEM_DECODE;
 Partno   008;
 Date     2026-09-12;
-Revision 10;
+Revision 11;
 Designer Kitamura;
 Company  Z80 Project;
 Assembly Memory Board;
@@ -56,23 +56,28 @@ ALL_RAM_MODE = ROM_DIS;
 /* Shadow/copy mode only applies while ROM is enabled */
 EFFECTIVE_SHADOW = RAM_SHADOW & !ROM_DIS;
 
-/* Force RAM bank 0 for the high 16K when RAM-only or shadow/copy mode */
-FORCE_BANK0 = SAFE_RAM & (ROM_DIS # RAM_SHADOW);
+/* Common memory (banked OS, Phase 2).
+   RAM-only mode 10 and OS mode 11 share only the top 8K, $E000-$FFFF; every
+   application bank keeps $C000-$DFFF as its own memory.  Shadow/copy mode 01
+   still forces the top 16K, because it loads ROM pages into 0000h-BFFFh and
+   runs from common memory while it does.  Boot mode 00 forces nothing.
+   Revisions 10 and earlier forced the top 16K in all three modes. */
+COMMON_8K   = A15 & A14 & A13;               /* $E000 - $FFFF */
+FORCE_BANK0 = (SAFE_RAM & RAM_SHADOW & !ROM_DIS)
+            # (COMMON_8K & ROM_DIS);
 
 /* OS execution mode (ROM_DIS & RAM_SHADOW, latch D4:D3 = 11).
-   Until revision 10 this mode decoded exactly like RAM-only mode.
      $0000-$1FFF  latch bank    (caller window: the running program's page zero)
-     $2000-$BFFF  RAM bank 7    (OS body)
-     $C000-$FFFF  RAM bank 0    (common, via FORCE_BANK0)
+     $2000-$DFFF  RAM bank 7    (OS body)
+     $E000-$FFFF  RAM bank 0    (common, via FORCE_BANK0)
    The latch bank bits keep the application bank while the OS runs.
-   FORCE_BANK7 and FORCE_BANK0 never overlap (OS_BODY excludes SAFE_RAM).
+   FORCE_BANK7 and FORCE_BANK0 never overlap (OS_BODY excludes COMMON_8K).
    Chip selects are unchanged: ROM_DIS already selects SRAM for every access. */
 OS_MODE     = ROM_DIS & RAM_SHADOW;
 
-/* $2000-$BFFF: neither the low 8K nor SAFE_RAM, written as three product
-   terms.  The address lines are 10-term outputs; this form leaves room for
-   the mode-dependent common term Phase 2 adds. */
-OS_BODY     = (A13 & !A14) # (A14 & !A15) # (A15 & !A14);
+/* $2000-$DFFF: neither the low 8K nor COMMON_8K -- the three address bits are
+   not all equal -- written as three product terms. */
+OS_BODY     = (A13 & !A14) # (A14 & !A15) # (A15 & !A13);
 FORCE_BANK7 = OS_MODE & OS_BODY;
 
 

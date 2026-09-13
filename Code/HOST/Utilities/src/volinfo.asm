@@ -196,3 +196,4 @@ unit:		.ds 1
 guard_shown:	.ds 1
 
 	.include "sdfs.inc"
+	.include "zbdos.inc"		; IOCALL/IOCBULK/IOCBULKW, which sdfs.inc calls

@@ -250,7 +250,7 @@ $(FIRMWARE_IHX): $(FIRMWARE_REL)
 # behind the BDOS facade, and ZCPR2, whose program-exit call the interrupt
 # registrations rely on; the stock CP/M CCP and BDOS are not assembled.
 #
-#   CCP  = zcpr2    C400h-CBFFh, common memory
+#   CCP  = zcpr2    CBASE (E400h-EBFFh), common memory
 #   BDOS = zsdos    2000h-2FFFh, bank 7
 #
 # Both need a CP/M emulator to run their period assemblers; the vendored RunCPM
@@ -261,7 +261,10 @@ ifneq ($(CCP)-$(BDOS),zcpr2-zsdos)
 $(error The banked OS needs CCP=zcpr2 BDOS=zsdos; the stock CP/M CCP and BDOS are no longer supported)
 endif
 
-CBASE_ADDR ?= 0xC400
+# The CCP and BIOS table addresses ZCPR2 is assembled against, read from the
+# firmware sources so they cannot drift from the layout.
+CBASE_ADDR := $(shell sed -n 's/^CBASE[[:space:]]*=[[:space:]]*\(0x[0-9a-fA-F]*\).*/\1/p' $(SRC_DIR)/zephyr.asm)
+CBIOS_BASE_ADDR := $(shell sed -n 's/^CBIOS_BASE[[:space:]]*=[[:space:]]*\(0x[0-9a-fA-F]*\).*/\1/p' $(SRC_DIR)/cbios_defs.inc)
 ZCPR2_BIN  ?= $(BUILD_DIR)/ccp-zcpr2.bin
 ZSDOS_BIN  ?= $(BUILD_DIR)/bdos-zsdos.bin
 PATCH_CPM  := $(TOOLS_DIR)/patch_cpm.py
@@ -295,8 +298,8 @@ $(RUNCPM_BIN): $(RUNCPM_SRCS)
 zcpr2: $(ZCPR2_BIN)
 zsdos: $(ZSDOS_BIN)
 
-$(ZCPR2_BIN): $(ZCPR2_SRCS) $(RUNCPM_BIN) | $(BUILD_DIR)
-	RUNCPM="$(RUNCPM)" ./zcpr2/build-zcpr2.sh $(BUILD_DIR)/zcpr2-build $@
+$(ZCPR2_BIN): $(ZCPR2_SRCS) $(RUNCPM_BIN) $(SRC_DIR)/zephyr.asm $(SRC_DIR)/cbios_defs.inc | $(BUILD_DIR)
+	RUNCPM="$(RUNCPM)" ./zcpr2/build-zcpr2.sh $(BUILD_DIR)/zcpr2-build $@ $(CBASE_ADDR) $(CBIOS_BASE_ADDR)
 
 # Depends on the symbol map: ZSDOS jumps to WBTRAP, the common warm-boot trap,
 # by absolute address, and it moves when the BIOS is rebuilt.  The address is

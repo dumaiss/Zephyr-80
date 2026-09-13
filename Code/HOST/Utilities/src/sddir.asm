@@ -146,3 +146,4 @@ msg_files:	.ascii " file(s)"
 file_count:	.ds 2
 
 	.include "sdfs.inc"
+	.include "zbdos.inc"		; IOCALL/IOCBULK/IOCBULKW, which sdfs.inc calls

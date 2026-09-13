@@ -49,8 +49,6 @@
 BDOS		= 0x0005
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
-IOCALL		= 0xDA3F	; BIOS extended entry: IOC compatibility transport
-IOCBULK		= 0xDA45	; BIOS extended entry: common-packet bulk receive
 
 	.include "ioc_diag_record.inc"
 
@@ -100,6 +98,7 @@ start:
 	; the CCP's stack pointer is put back exactly once.
 	ld (entry_sp),sp
 	ld sp,#stack_top
+	call zb_diag_iy			; IY = IOC link failure record
 	call main
 	ld sp,(entry_sp)
 	ret
@@ -574,37 +573,37 @@ report_bulk_diag:
 	ld de,#msg_diag_reason
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_REASON)
+	ld a,IOC_DIAG_BULK_REASON(iy)
 	call print_hex_byte
 	ld de,#msg_diag_rr
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_DIAG_RR0)
+	ld a,IOC_DIAG_RR0(iy)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_DIAG_RR1)
+	ld a,IOC_DIAG_RR1(iy)
 	call print_hex_byte
 	ld de,#msg_diag_sync
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_SYNCED)
+	ld a,IOC_DIAG_BULK_SYNCED(iy)
 	call print_hex_byte
 	ld de,#msg_diag_xfer
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_TYPE)
+	ld a,IOC_DIAG_BULK_TYPE(iy)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_SEQ)
+	ld a,IOC_DIAG_BULK_SEQ(iy)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_STATUS)
+	ld a,IOC_DIAG_BULK_STATUS(iy)
 	call print_hex_byte
 	ld de,#msg_crlf
 	ld c,#BDOS_PRINT
@@ -812,3 +811,5 @@ bulk_buf:
 entry_sp:	.ds 2
 	.ds 128				; BDOS nesting plus an interrupt frame
 stack_top:
+
+	.include "zbdos.inc"

@@ -159,8 +159,10 @@ stg_a_read:
 	; The window unmaps bank 7, so the copy itself runs from common memory, in
 	; xing_rom_copy_record.  Inside it SRAM writes to 0000h-BFFFh go to the
 	; latch's bank, so that bank is the one the DMA address means in mode 11:
-	; the caller window's bank below 2000h, bank 7 in the OS body.  At C000h
-	; and above the write is forced to bank 0 whatever the bits say.
+	; the caller window's bank below 2000h, bank 7 for 2000h-BFFFh.  At C000h
+	; and above the write is forced to bank 0 whatever the bits say, which is
+	; right for common memory and wrong for bank 7's runtime range, so a DMA
+	; in C000h-DFFFh is refused.  Nothing the OS reads into lives there.
 	ld a,c
 	add a,a
 	add a,a
@@ -173,7 +175,12 @@ stg_a_read:
 	cp #0x20
 	jr c,stg_a_read_caller
 	cp #0xc0
+	jr c,stg_a_read_os
+	cp #0xe0
 	jr nc,stg_a_read_common
+	ld a,#BIOS_ERR
+	ret
+stg_a_read_os:
 	ld a,#OS_BANK
 	jr stg_a_read_bank
 stg_a_read_caller:

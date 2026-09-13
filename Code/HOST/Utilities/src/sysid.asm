@@ -11,7 +11,8 @@
 ;
 ; The three probes:
 ;
-;   BDOS   The six bytes at CBASE+800h are CP/M's serial-number field, and a
+;   BDOS   The six bytes ahead of FBASE, the BDOS entry page zero's 0005h jump
+;          names, are CP/M's serial-number field, and a
 ;          replacement BDOS stamps its identity there -- ZSDOS writes 'ZSDOS '
 ;          and ZDDOS writes 'ZDDOS '.  Stock CP/M leaves a binary serial, so
 ;          "all six printable" is a reliable discriminator.  This prints them
@@ -24,9 +25,11 @@
 ;          without depending on a build-specific entry address -- which would
 ;          change whenever ZCPR2 is reassembled with different options.
 ;
-;   BIOS   ZBIOS_XPORT_LEVEL_ADDR holds the transport level, one byte below
-;          IOCALL.  Printed raw; comparing it is IOC_LEVELS' job, not this
-;          program's.
+;   BIOS   The transport level, from Zephyr BDOS function 203.  Printed raw;
+;          comparing it is IOC_LEVELS' job, not this program's.
+;
+; The CCP slot is the 800h bytes below the serial.  Nothing is at a fixed
+; address: the banked OS publishes none.
 ;
 ; Reads memory and calls only BDOS console output.  Nothing here touches the IO
 ; Controller, so it works when the link is dead -- which is when the question
@@ -40,14 +43,18 @@ BDOS		= 0x0005
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
 
-CBASE		= 0xC400		; CCP
 CCP_SIZE	= 0x0800
-BDOS_SERIAL	= 0xCC00		; CBASE + 800h
-XPORT_LEVEL	= 0xDF7A		; one byte below IOCALL
 
 start:
 	ld (entry_sp),sp
 	ld sp,#stack_top
+	ld hl,(BDOS + 1)		; FBASE
+	ld de,#-6
+	add hl,de
+	ld (bdos_serial),hl
+	ld de,#-CCP_SIZE
+	add hl,de
+	ld (ccp_base),hl
 	call main
 	ld sp,(entry_sp)
 	ret
@@ -84,7 +91,7 @@ ccp_done:
 	call serial_is_text
 	jr nz,bdos_stock
 	; Printable: the BDOS names itself.  Print the six bytes as they are.
-	ld hl,#BDOS_SERIAL
+	ld hl,(bdos_serial)
 	ld b,#6
 bdos_name:
 	ld a,(hl)
@@ -101,7 +108,7 @@ bdos_done:
 	; ---- BIOS transport level ----
 	ld de,#msg_xport
 	call puts
-	ld a,(XPORT_LEVEL)
+	call zb_xport_level
 	call print_hex_byte
 	call crlf
 
@@ -116,7 +123,7 @@ bdos_done:
 ; ---------------------------------------------------------------------------
 find_in_ccp:
 	ld (pat_ptr),hl
-	ld hl,#CBASE
+	ld hl,(ccp_base)
 	ld bc,#CCP_SIZE - 4
 fic_next:
 	push bc
@@ -152,7 +159,7 @@ fic_miss:
 ; name here" from "this is a serial number" without knowing either in advance.
 ; ---------------------------------------------------------------------------
 serial_is_text:
-	ld hl,#BDOS_SERIAL
+	ld hl,(bdos_serial)
 	ld b,#6
 sit_loop:
 	ld a,(hl)
@@ -218,7 +225,11 @@ msg_unknown:	.ascii "unrecognised$"
 msg_crlf:	.db 13,10,'$'
 
 pat_ptr:	.ds 2
+bdos_serial:	.ds 2
+ccp_base:	.ds 2
 
 entry_sp:	.ds 2
 	.ds 64
 stack_top:
+
+	.include "zbdos.inc"

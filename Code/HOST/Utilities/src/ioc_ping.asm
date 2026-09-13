@@ -1,6 +1,6 @@
 ; IOC_PING.COM — Send a PING command to the IO Controller and report the result.
 ;
-; Uses the IOCALL BIOS extension at DA3Fh (ZBIOS_EXT_BASE + 0Ch).
+; Uses IOCALL, now Zephyr BDOS function 214 (zbdos.inc).
 ; Builds a 32-byte compatibility mailbox with CMD_PING (01h), issues it via
 ; IOCALL, and verifies that the MCU replies with RSP_PING (81h).  IOCALL maps
 ; the mailbox to the common A5/5A variable-length packet on the wire.
@@ -29,7 +29,6 @@ BDOS_CONOUT	= 0x02		; output char in E; no useful return
 BDOS_PRINT	= 0x09
 CMD_PROFILE	= 0x0B
 RSP_PROFILE	= 0x8B		; print '$'-terminated string at DE
-IOCALL		= 0xDA3F	; BIOS extended entry: IOC compatibility transport
 
 CMD_PING	= 0x01
 RSP_PING	= 0x81
@@ -57,6 +56,7 @@ start:
 	; the CCP's stack pointer is put back exactly once.
 	ld (entry_sp),sp
 	ld sp,#stack_top
+	call zb_diag_iy			; IY = IOC link failure record
 	call main
 	ld sp,(entry_sp)
 	ret
@@ -65,7 +65,7 @@ main:
 	ld de,#msg_banner
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
+	call zb_xport_level
 	cp #ZBIOS_XPORT_LEVEL
 	jp nz,stale_bios
 
@@ -282,7 +282,7 @@ prof_bad:
 ; wrote.  They read as zeros, which said "the line was silent" no matter what
 ; had actually happened on the wire.
 say_link_diag:
-	ld a,(IOC_DIAG_STATUS)
+	ld a,IOC_DIAG_STATUS(iy)
 	or a
 	jr nz,sld_have
 	ld de,#msg_diag_none
@@ -291,43 +291,43 @@ say_link_diag:
 sld_have:
 	ld de,#msg_diag_status
 	call say_byte
-	ld a,(IOC_DIAG_LANE)
+	ld a,IOC_DIAG_LANE(iy)
 	ld de,#msg_diag_lane
 	call say_byte
-	ld a,(IOC_DIAG_RR0)
+	ld a,IOC_DIAG_RR0(iy)
 	ld de,#msg_diag_rr0
 	call say_byte
-	ld a,(IOC_DIAG_RR1)
+	ld a,IOC_DIAG_RR1(iy)
 	ld de,#msg_diag_rr1
 	call say_byte
-	ld a,(IOC_DIAG_READY)
+	ld a,IOC_DIAG_READY(iy)
 	ld de,#msg_diag_ready
 	call say_byte
-	ld a,(IOC_DIAG_SYNCED)
+	ld a,IOC_DIAG_SYNCED(iy)
 	ld de,#msg_diag_synced
 	call say_byte
-	ld a,(IOC_DIAG_BULK_SYNCED)
+	ld a,IOC_DIAG_BULK_SYNCED(iy)
 	ld de,#msg_diag_bsync
 	call say_byte
-	ld a,(IOC_DIAG_SEQ)
+	ld a,IOC_DIAG_SEQ(iy)
 	ld de,#msg_diag_seq
 	call say_byte
 
 	; The Bulk fields describe a Bulk packet rejection.  A reason of zero says
 	; this failure was not one, so printing the rest would attribute an older
 	; transfer's identity to it.
-	ld a,(IOC_DIAG_BULK_REASON)
+	ld a,IOC_DIAG_BULK_REASON(iy)
 	or a
 	ret z
 	ld de,#msg_diag_breason
 	call say_byte
-	ld a,(IOC_DIAG_BULK_TYPE)
+	ld a,IOC_DIAG_BULK_TYPE(iy)
 	ld de,#msg_diag_btype
 	call say_byte
-	ld a,(IOC_DIAG_BULK_SEQ)
+	ld a,IOC_DIAG_BULK_SEQ(iy)
 	ld de,#msg_diag_bseq
 	call say_byte
-	ld a,(IOC_DIAG_BULK_STATUS)
+	ld a,IOC_DIAG_BULK_STATUS(iy)
 	ld de,#msg_diag_bstatus
 	call say_byte
 	ret
@@ -601,3 +601,5 @@ pwr_bits:	.ds 1
 entry_sp:	.ds 2
 	.ds 128				; BDOS nesting plus an interrupt frame
 stack_top:
+
+	.include "zbdos.inc"

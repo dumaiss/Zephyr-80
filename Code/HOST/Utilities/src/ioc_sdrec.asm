@@ -42,9 +42,6 @@
 BDOS		= 0x0005
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
-IOCALL		= 0xDA3F	; ZBIOS_EXT_BASE + 0Ch
-IOCBULK		= 0xDA45	; ZBIOS_EXT_BASE + 12h: bulk receive
-IOCBULKW	= 0xDA48	; ZBIOS_EXT_BASE + 15h: bulk transmit
 
 
 CMD_PING	 = 0x01
@@ -83,6 +80,7 @@ start:
 	; the CCP's stack pointer is put back exactly once.
 	ld (entry_sp),sp
 	ld sp,#stack_top
+	call zb_diag_iy			; IY = IOC link failure record
 	call main
 	ld sp,(entry_sp)
 	ret
@@ -301,9 +299,9 @@ check_level:
 	ld de,#msg_bios
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
+	call zb_xport_level
 	call print_hex_byte
-	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
+	call zb_xport_level
 	cp #ZBIOS_XPORT_LEVEL
 	jr z,cl_bios_ok
 	ld (fail_info),a
@@ -533,7 +531,7 @@ wr_rec:
 	; IOCBULKW uses reason 40h for an RR1 Tx underrun.  A zero left here means
 	; its other HW_ERROR exit: /CTSA did not release after the transfer.
 	xor a
-	ld (IOC_DIAG_BULK_REASON),a
+	ld IOC_DIAG_BULK_REASON(iy),a
 	ld hl,#wr_buf
 	ld de,#REC_SIZE
 	call IOCBULKW
@@ -814,37 +812,37 @@ report_bulk_transport_diag:
 	ld de,#msg_bulk_diag_reason
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_REASON)
+	ld a,IOC_DIAG_BULK_REASON(iy)
 	call print_hex_byte
 	ld de,#msg_bulk_diag_rr
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_DIAG_RR0)
+	ld a,IOC_DIAG_RR0(iy)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_DIAG_RR1)
+	ld a,IOC_DIAG_RR1(iy)
 	call print_hex_byte
 	ld de,#msg_bulk_diag_sync
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_SYNCED)
+	ld a,IOC_DIAG_BULK_SYNCED(iy)
 	call print_hex_byte
 	ld de,#msg_bulk_diag_xfer
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_TYPE)
+	ld a,IOC_DIAG_BULK_TYPE(iy)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_SEQ)
+	ld a,IOC_DIAG_BULK_SEQ(iy)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_STATUS)
+	ld a,IOC_DIAG_BULK_STATUS(iy)
 	call print_hex_byte
 	ret
 
@@ -1088,3 +1086,5 @@ rd_buf:		.ds 128
 entry_sp:	.ds 2
 	.ds 128				; BDOS nesting plus an interrupt frame
 stack_top:
+
+	.include "zbdos.inc"

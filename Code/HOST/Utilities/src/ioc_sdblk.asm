@@ -38,8 +38,6 @@
 BDOS		= 0x0005
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
-IOCALL		= 0xDA3F	; ZBIOS_EXT_BASE + 0Ch: compatibility mailbox transport
-IOCBULK		= 0xDA45	; ZBIOS_EXT_BASE + 12h: bulk-lane receive
 
 CMD_SD_READ_BULK = 0x05
 RSP_SD_READ_BULK = 0x85
@@ -384,3 +382,5 @@ sector_buf:
 entry_sp:	.ds 2
 	.ds 128				; BDOS nesting plus an interrupt frame
 stack_top:
+
+	.include "zbdos.inc"

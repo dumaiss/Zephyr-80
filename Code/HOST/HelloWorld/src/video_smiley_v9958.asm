@@ -39,7 +39,7 @@ KEY_ESC			= 0x1B
 ; Zephyr-80 extended BIOS jump table.
 ; Keep in sync with CPM2.2 build/firmware.map (ZBIOS_EXT_BASE = DA33h).
 ; ---------------------------------------------------------------------------
-VIDEO_SEND		= 0xDA42	; ZBIOS_EXT_BASE + 0x0F
+; VIDEO_SEND comes from ../../Utilities/src/zbdos.inc (Zephyr BDOS 215).
 
 ; VIDEO_SEND calling convention:
 ;   A  = VDrip packet type  (00h or FFh = display reset/reinit)
@@ -574,3 +574,5 @@ bg_scanline:
 ; Filled at runtime by fill_background_buffers.
 bg_erase_row:
 	.ds SMILEY_BYTES_PER_ROW
+
+	.include "../../Utilities/src/zbdos.inc"

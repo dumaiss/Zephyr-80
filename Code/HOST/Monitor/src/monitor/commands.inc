@@ -150,9 +150,10 @@ cmd_port_out:
 	jp monitor_loop
 
 ; APP n
-; Launch an application page/bank through the resident BIOS LAUNCH entry. The
-; BIOS selects the bank, prepares page zero, and jumps to 0100h. This command
-; accepts bank numbers 0-7.
+; Retired.  It called a resident BIOS LAUNCH entry that no longer exists: that
+; slot of the extended table has been IOCALL for a long time, and the banked OS
+; publishes no fixed BIOS addresses at all.  The syntax is still parsed so the
+; command reports an error rather than being mistaken for another.
 cmd_app:
 	ld a,(hl)
 	call to_upper_a
@@ -169,9 +170,7 @@ cmd_app:
 	ld (TEMP_BYTE),a
 	and #0xf8
 	jp nz,cmd_error_args
-	ld a,(TEMP_BYTE)
-	call BLAUNCH
-	jp monitor_loop
+	jp cmd_error_command
 
 ; G addr
 ; Parse a 16-bit address and transfer control to it. The monitor pushes

@@ -45,8 +45,6 @@
 BDOS		= 0x0005
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
-IOCALL		= 0xDA3F
-IOCBULKW	= 0xDA48
 
 ; Transport status, from cbios_defs.inc
 IOC_XPORT_HW_ERROR = 0x03
@@ -460,3 +458,5 @@ sector_buf:
 entry_sp:	.ds 2
 	.ds 128				; BDOS nesting plus an interrupt frame
 stack_top:
+
+	.include "zbdos.inc"

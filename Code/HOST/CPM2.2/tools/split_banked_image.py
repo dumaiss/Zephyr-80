@@ -5,11 +5,13 @@ The BIOS is one assembly, and addresses decide which half of the system each
 byte belongs to (banked OS, Phase 1):
 
   0000h-0002h  reset vector                      ROM page 0
-  2000h-BFFFh  OS body: ZSDOS, BIOS, drivers     bank 7 payload (ROM page 7)
-  C000h-FFFFh  common memory                     ROM page 0
+  2000h-BFFFh  OS image: ZSDOS, BIOS, drivers    bank 7 payload (ROM page 7)
+  C000h-DFFFh  nothing: bank 7's runtime range, and programs' memory in mode 10
+  E000h-FFFFh  common memory                     ROM page 0
 
 The cold-boot shadow copy loads ROM page N into SRAM bank N, so page 7 becomes
-bank 7 with no loader of its own.  Page 0's 2000h-BFFFh is TPA and is zeroed.
+bank 7 with no loader of its own.  It copies only 0000h-BFFFh, so the bank 7
+image has to end there.  Page 0's 2000h-DFFFh is TPA and is zeroed.
 
 This also installs the two separately built parts: ZCPR2 at CBASE in page 0,
 and ZSDOS at ZSDOS_ORG in bank 7.  Everything is checked rather than assumed,
@@ -28,7 +30,8 @@ import re
 from pathlib import Path
 
 BODY_LO = 0x2000
-BODY_HI = 0xC000
+BODY_HI = 0xC000      # end of the bank 7 image (shadow/copy loads below it)
+COMMON_LO = 0xE000
 CCP_SLOT = 0x800
 
 
@@ -118,6 +121,10 @@ def main() -> None:
     if low:
         raise SystemExit("bytes assembled into the caller window, which belongs to the "
                          f"running program: {spans(low)}")
+    runtime = sorted(a for a in used if BODY_HI <= a < COMMON_LO)
+    if runtime:
+        raise SystemExit("bytes assembled into C000h-DFFFh, which no ROM page loads "
+                         f"into bank 7 and programs own in mode 10: {spans(runtime)}")
     zs = sorted(a for a in used if zsdos_org <= a < zsdos_org + zsdos_size)
     if zs:
         raise SystemExit(f"bytes assembled where ZSDOS goes: {spans(zs)}")
@@ -126,7 +133,7 @@ def main() -> None:
                          "computes its BIOS as ZSDOS+1000h")
 
     page0 = bytearray(flat)
-    page0[BODY_LO:BODY_HI] = bytes(BODY_HI - BODY_LO)
+    page0[BODY_LO:COMMON_LO] = bytes(COMMON_LO - BODY_LO)
     bank7 = bytearray(flat[:BODY_HI])
     bank7[:BODY_LO] = bytes(BODY_LO)
 
@@ -149,7 +156,7 @@ def main() -> None:
     args.page0.write_bytes(bytes(page0))
     args.bank7.write_bytes(bytes(bank7))
     body = sorted(a for a in used if BODY_LO <= a < BODY_HI)
-    common = sorted(a for a in used if a >= BODY_HI)
+    common = sorted(a for a in used if a >= COMMON_LO)
     print(f"  bank 7: ZSDOS {zsdos_org:04X}h, BIOS {bios7:04X}h; "
           f"{len(body)} BIOS bytes in {spans(body)}")
     print(f"  common: {len(common)} bytes; CCP at {cbase:04X}h, FBASE {fbase:04X}h")

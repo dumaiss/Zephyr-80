@@ -7,6 +7,9 @@ addresses therefore have to be handed to it, and they cannot be hardcoded: they
 move whenever the BIOS is rebuilt, and a stale address would assemble cleanly
 and jump into the middle of something at run time.
 
+CCPLO and CCPHI are the CCP slot's first page and the first page past it, for
+CCPBUF's "is a command processor asking?" test.
+
 WBTRAP is the warm-boot trap ZSDOS's exits jump to instead of RST 0.  ZSDOS runs
 in bank 7, in latch mode 11, and the trap restores mode 10 before jumping to
 0000h (banked OS plan, F1).
@@ -51,7 +54,19 @@ def main() -> None:
         addr = find(symbols, prefix, full)
         lines.append(f"{name}\tEQU\t0{addr:04X}H\t; {full}")
         print(f"  {name} = {addr:04X}h  ({full})")
-    args.output.write_bytes(("\r\n".join(lines) + "\r\n").encode("ascii"))
+    # CBASE is an equate, listed as "CBASE   =   0000E400".
+    hits = set(re.findall(r"\bCBASE\s*=\s*([0-9A-Fa-f]{8})", symbols))
+    if len(hits) != 1:
+        raise SystemExit(f"CBASE: expected one equate in the map, found {sorted(hits)}")
+    cbase = int(hits.pop(), 16)
+    lines.append("")
+    lines.append(f"CCPLO\tEQU\t0{cbase >> 8:02X}H\t; CCP slot, first page")
+    lines.append(f"CCPHI\tEQU\t0{(cbase + 0x800) >> 8:02X}H\t; first page at or above the BDOS")
+    print(f"  CCPLO = {cbase >> 8:02X}h, CCPHI = {(cbase + 0x800) >> 8:02X}h")
+    # A CP/M text file ends with Ctrl-Z.  Without it ZMAC reads the padding in
+    # the file's last 128-byte record as more source lines -- harmless while
+    # that padding happened to parse, "O" errors on phantom lines once it did not.
+    args.output.write_bytes(("\r\n".join(lines) + "\r\n").encode("ascii") + b"\x1a")
 
 
 if __name__ == "__main__":

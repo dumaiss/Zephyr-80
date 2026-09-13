@@ -43,8 +43,6 @@ BDOS		= 0x0005
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09
 BDOS_CONIN	= 0x01
-IOCALL		= 0xDA3F
-IOCBULKW	= 0xDA48
 
 ; This program switches to its own stack, so it CANNOT exit with ret: the
 ; return address the CCP pushed is on the stack it abandoned, and ret pops
@@ -85,7 +83,7 @@ start:
 	ld c,#BDOS_PRINT
 	call BDOS
 
-	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
+	call zb_xport_level
 	cp #ZBIOS_XPORT_LEVEL
 	jr z,level_ok
 	ld de,#msg_stale
@@ -385,3 +383,5 @@ rx_frame:	.ds 32
 rec_buf:	.ds 128
 		.ds 64
 stack_top:
+
+	.include "zbdos.inc"

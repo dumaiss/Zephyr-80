@@ -134,13 +134,13 @@ dbank_count_set:
 	ld a,(DBANK_NUM)
 	ld c,a
 	ld b,#0x00
-	call BXMOVE
+	call zb_xmove
 	ld de,(DUMP_LINE_ADDR)
 	ld hl,#DBUF
 	ld a,(DUMP_LINE_COUNT)
 	ld c,a
 	ld b,#0x00
-	call BMOVE
+	call zb_move
 
 	ld hl,(DUMP_LINE_ADDR)
 	call print_hex_word

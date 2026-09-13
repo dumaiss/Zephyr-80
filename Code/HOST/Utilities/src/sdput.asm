@@ -277,3 +277,4 @@ text_mode:	.ds 1
 trim_pos:	.ds 4
 
 	.include "sdfs.inc"
+	.include "zbdos.inc"		; IOCALL/IOCBULK/IOCBULKW, which sdfs.inc calls

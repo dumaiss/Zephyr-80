@@ -19,7 +19,7 @@
 	.globl BANKING_STATE_START,BANKING_STATE_END
 	.globl SAVED_BANK,DMA_BANK,XMOVE_SRC_BANK,XMOVE_DST_BANK,XMOVE_PENDING
 	.globl SAVED_LATCH
-	.globl MOVE_BUFFER
+	.globl MOVE_XBUF
 	.globl CURRENT_BANK,cbios_dma_addr
 	.globl WBOOT,FBASE
 	
@@ -119,7 +119,7 @@ XMOVE:
 ; Purpose:
 ;   Copy BC bytes from DE to HL. With no pending XMOVE, this is a same-bank
 ;   LDIR. With XMOVE_PENDING set, bytes are copied between two banks via the
-;   common MOVE_BUFFER scratch area.
+;   common MOVE_XBUF scratch area.
 ; Inputs:
 ;   BC = byte count, DE = source address, HL = destination address.
 ; Outputs:
@@ -128,7 +128,7 @@ XMOVE:
 ; Clobbers:
 ;   AF, BC, DE, HL. Preserves IX, IY.
 ; Important invariants:
-;   MOVE_BUFFER is scratch, not persistent state. C000h-C3FFh is protected
+;   MOVE_XBUF is scratch, not persistent state. C000h-C3FFh is protected
 ;   common TPA and remains application-owned; this routine does not reserve it.
 MOVE:
 	ld a,(XMOVE_PENDING)
@@ -182,7 +182,7 @@ MOVE_CROSS_HAVE_CHUNK:
 	or #ROMDIS_BIT
 	out (BANK_PORT),a
 	ld hl,(MOVE_SRC_PTR)
-	ld de,#MOVE_BUFFER
+	ld de,#MOVE_XBUF
 	ld bc,(MOVE_CHUNK_LEN)
 	ldir
 	ld (MOVE_SRC_PTR),hl
@@ -192,7 +192,7 @@ MOVE_CROSS_HAVE_CHUNK:
 	ld (CURRENT_BANK),a
 	or #ROMDIS_BIT
 	out (BANK_PORT),a
-	ld hl,#MOVE_BUFFER
+	ld hl,#MOVE_XBUF
 	ld de,(MOVE_DST_PTR)
 	ld bc,(MOVE_CHUNK_LEN)
 	ldir

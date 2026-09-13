@@ -22,8 +22,13 @@
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
-work=${1:?usage: build-zcpr2.sh <work-dir> <output.bin>}
-out=${2:?usage: build-zcpr2.sh <work-dir> <output.bin>}
+work=${1:?usage: build-zcpr2.sh <work-dir> <output.bin> <cbase> <bios>}
+out=${2:?usage: build-zcpr2.sh <work-dir> <output.bin> <cbase> <bios>}
+# Where the CCP runs and where the CP/M BIOS jump table is.  Both come from the
+# firmware sources (the Makefile reads them); Z2HDR.LIB's CPRLOC and BIOS are
+# rewritten in the work copy, so the source file never has to match a layout.
+cbase=${3:?usage: build-zcpr2.sh <work-dir> <output.bin> <cbase> <bios>}
+bios=${4:?usage: build-zcpr2.sh <work-dir> <output.bin> <cbase> <bios>}
 RUNCPM=${RUNCPM:-runcpm}
 
 command -v "$RUNCPM" >/dev/null 2>&1 || {
@@ -36,6 +41,17 @@ command -v "$RUNCPM" >/dev/null 2>&1 || {
 rm -rf "$work"
 mkdir -p "$work/A/0"
 cp "$here/src/ZCPR2.ASM" "$here/src/Z2HDR.LIB" "$work/A/0/"
+python3 - "$work/A/0/Z2HDR.LIB" "$cbase" "$bios" <<'PY' || exit 1
+import re, sys
+path, cbase, bios = sys.argv[1], int(sys.argv[2], 0), int(sys.argv[3], 0)
+text = open(path, 'rb').read()
+for name, value in ((b'CPRLOC', cbase), (b'BIOS', bios)):
+    text, n = re.subn(rb'^(' + name + rb'\tEQU\t)0[0-9A-Fa-f]{4}H', lambda m: m.group(1) + b'0%04XH' % value, text, flags=re.M)
+    if n != 1:
+        sys.exit(f"build-zcpr2: expected one {name.decode()} EQU line in Z2HDR.LIB, found {n}")
+open(path, 'wb').write(text)
+print(f"  Z2HDR.LIB: CPRLOC {cbase:04X}h, BIOS {bios:04X}h")
+PY
 cp "$here/tools/MAC.COM" "$here/tools/MLOAD.COM" "$work/A/0/"
 
 # Ask the binary which bootstrap CCP it wants, then supply it.
@@ -66,4 +82,4 @@ if sed 's/\r$//' "$work/A/0/ZCPR2.PRN" | grep -qE '^[A-Z] '; then
 fi
 
 python3 "$here/../tools/hex_to_ccp.py" --hex "$hex" \
-    --base 0xC400 --size 0x800 --output "$out"
+    --base "$cbase" --size 0x800 --output "$out"

@@ -289,3 +289,4 @@ handle:		.ds 1
 remaining:	.ds 4
 
 	.include "sdfs.inc"
+	.include "zbdos.inc"		; IOCALL/IOCBULK/IOCBULKW, which sdfs.inc calls

@@ -38,7 +38,6 @@
 BDOS		= 0x0005
 BDOS_CONOUT	= 0x02
 BDOS_PRINT	= 0x09		; print '$'-terminated string at DE
-IOCBULK		= 0xDA45	; BIOS extended entry: common-packet bulk receive
 
 	.include "ioc_levels.inc"
 	.include "ioc_diag_record.inc"
@@ -69,6 +68,7 @@ start:
 	; the CCP's stack pointer is put back exactly once.
 	ld (entry_sp),sp
 	ld sp,#stack_top
+	call zb_diag_iy			; IY = IOC link failure record
 	call main
 	ld sp,(entry_sp)
 	ret
@@ -81,7 +81,7 @@ main:
 	; The record's layout is published by the transport level, not by a
 	; version byte inside the record.  A tool that decodes it without
 	; checking is reading whatever the old layout left at those offsets.
-	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
+	call zb_xport_level
 	cp #IOC_DIAG_RECORD_MIN_XPORT_LEVEL
 	jp c,stale_bios
 
@@ -97,31 +97,31 @@ main:
 	call say_byte
 
 	ld de,#msg_status
-	ld a,(IOC_DIAG_STATUS)
+	ld a,IOC_DIAG_STATUS(iy)
 	call say_byte
 	ld de,#msg_lane
-	ld a,(IOC_DIAG_LANE)
+	ld a,IOC_DIAG_LANE(iy)
 	call say_byte
 	ld de,#msg_stage
-	ld a,(IOC_DIAG_BULK_REASON)
+	ld a,IOC_DIAG_BULK_REASON(iy)
 	call say_byte
 	ld de,#msg_rr0
-	ld a,(IOC_DIAG_RR0)
+	ld a,IOC_DIAG_RR0(iy)
 	call say_byte
 	ld de,#msg_rr1
-	ld a,(IOC_DIAG_RR1)
+	ld a,IOC_DIAG_RR1(iy)
 	call say_byte
 	ld de,#msg_ready
-	ld a,(IOC_DIAG_READY)
+	ld a,IOC_DIAG_READY(iy)
 	call say_byte
 	ld de,#msg_synced
-	ld a,(IOC_DIAG_SYNCED)
+	ld a,IOC_DIAG_SYNCED(iy)
 	call say_byte
 	ld de,#msg_bsync
-	ld a,(IOC_DIAG_BULK_SYNCED)
+	ld a,IOC_DIAG_BULK_SYNCED(iy)
 	call say_byte
 	ld de,#msg_seq
-	ld a,(IOC_DIAG_SEQ)
+	ld a,IOC_DIAG_SEQ(iy)
 	call say_byte
 
 	; Reserved bytes are published as reading zero.  They are .db 0 in the
@@ -141,13 +141,13 @@ chk_reserved:
 	ld a,(iocbulk_rc)
 	cp #EXPECT_STATUS
 	jr nz,fail_rc
-	ld a,(IOC_DIAG_STATUS)
+	ld a,IOC_DIAG_STATUS(iy)
 	cp #EXPECT_STATUS
 	jr nz,fail_status
-	ld a,(IOC_DIAG_LANE)
+	ld a,IOC_DIAG_LANE(iy)
 	cp #EXPECT_LANE
 	jr nz,fail_lane
-	ld a,(IOC_DIAG_BULK_REASON)
+	ld a,IOC_DIAG_BULK_REASON(iy)
 	cp #EXPECT_STAGE
 	jr nz,fail_stage
 
@@ -273,3 +273,5 @@ rx_buf:		.ds 8
 entry_sp:	.ds 2
 	.ds 128				; BDOS nesting plus an interrupt frame
 stack_top:
+
+	.include "zbdos.inc"

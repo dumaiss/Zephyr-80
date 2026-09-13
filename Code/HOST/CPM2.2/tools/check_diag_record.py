@@ -109,18 +109,12 @@ def main() -> int:
 
     errors: list[str] = []
 
-    # Record base and size.
-    base_match = re.search(rf"^CBIOS_IOC_DIAG_BASE\s*=\s*CBIOS_BASE\s*\+\s*{NUMBER}",
-                           defs_text, re.MULTILINE)
-    cbios_base = defs.get("CBIOS_BASE")
-    if base_match and cbios_base is not None:
-        bios_base = cbios_base + int(base_match.group(1), 0)
-        mirror_base = mirror_consts.get("IOC_DIAG_BASE")
-        if mirror_base is None:
-            errors.append("mirror does not define IOC_DIAG_BASE")
-        elif mirror_base != bios_base:
-            errors.append(
-                f"record base differs: BIOS {bios_base:#06x}, mirror {mirror_base:#06x}")
+    # Record base.  Tools no longer read the record at a fixed address: they get
+    # its address from Zephyr BDOS function 203 and index from it, so the mirror
+    # names offsets and its IOC_DIAG_BASE is zero.
+    if mirror_consts.get("IOC_DIAG_BASE") != 0:
+        errors.append("mirror IOC_DIAG_BASE must be 0: its fields are offsets "
+                      "from the pointer BDOS function 203 returns")
 
     bios_size = defs.get("CBIOS_IOC_DIAG_SIZE")
     mirror_size = mirror_consts.get("IOC_DIAG_SIZE")

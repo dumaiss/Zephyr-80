@@ -46,9 +46,6 @@ BDOS_CONST	= 0x0b		; console status: A != 0 if a key is waiting
 BDOS_CONIN	= 0x01
 CMD_TAIL	= 0x0080	; CP/M command tail: length byte then text
 
-IOCALL		= 0xDA3F
-IOCBULK		= 0xDA45
-IOCBULKW	= 0xDA48
 	.include "ioc_levels.inc"
 	.include "ioc_diag_record.inc"
 
@@ -79,10 +76,10 @@ MAX_DETAIL	= 8		; detailed mismatch reports before counting only
 ; scale accordingly; the rate is reported at startup so it can be checked
 ; against a stopwatch over a long run.
 ;
-; The vector goes at DD00h.  With I = DDh the CPU reads its vector word from
-; page DDh, and DD00h-DD0Fh is free space below the BIOS's own SIO entry at
-; DD10h -- verified against the built image, not assumed.  A CTC base vector of
-; 00h puts channel 0 at DD00h.
+; The BIOS owns IM2 (banked OS), so the handler is a callback registered with
+; Zephyr BDOS function 200 for CTC channel 0.  It is copied into the program
+; interrupt reservation at E000h with its counter, because it runs in whichever
+; memory mode the machine is in when the tick arrives.
 ;
 ; ISR_PAD_LOOPS lengthens the ISR to emulate a real driver's.  Each iteration
 ; is 16 T-states.  Default 0 = the shortest useful ISR, about 60 T (6 us at
@@ -92,8 +89,8 @@ MAX_DETAIL	= 8		; detailed mismatch reports before counting only
 ; before storage moves behind this.
 ; ---------------------------------------------------------------------------
 CTC0_CTRL	= 0x40
-CTC_VECTOR_BASE	= 0x00
-CTC_VECTOR_ADDR	= 0xDD00
+SOAK_CB_ADDR	= 0xe000		; ZB_ISR_AREA
+SOAK_CB_COUNT	= 0xe020
 CTC_CONTROL	= 0xa7		; int on, timer, /256, TC follows, reset, control
 CTC_STOP	= 0x03		; software reset, no interrupt
 CTC_TC_DEFAULT	= 39		; ~1 ms at 10 MHz / 256
@@ -110,6 +107,7 @@ start:
 	; nests BDOS calls underneath an interrupt handler.
 	ld (entry_sp),sp
 	ld sp,#stack_top
+	call zb_diag_iy			; IY = IOC link failure record
 
 	ld de,#msg_banner
 	call puts
@@ -157,7 +155,7 @@ cfg_done:
 	ld (err_write),hl
 	ld (err_read),hl
 	ld (err_verify),hl
-	ld (int_count),hl
+	ld (SOAK_CB_COUNT),hl
 	xor a
 	ld (detail_count),a
 	ld (fail_code),a
@@ -299,47 +297,44 @@ pn_end:
 ; CTC channel 0 as a periodic interrupt source.
 ; ---------------------------------------------------------------------------
 ctc_setup:
-	di
-	; Install the ISR vector in the free part of the IM2 page.
-	ld hl,#ctc_isr
-	ld (CTC_VECTOR_ADDR),hl
-
-	ld a,#CTC_VECTOR_BASE		; bit 0 = 0 -> this is a vector write
-	out (CTC0_CTRL),a
+	ld hl,#soak_callback
+	ld de,#SOAK_CB_ADDR
+	ld bc,#soak_callback_end - soak_callback
+	ldir
+	ld b,#0				; CTC channel 0
+	ld de,#SOAK_CB_ADDR
+	ld c,#ZB_REGISTER_ISR
+	call BDOS
+	or a
+	ret nz				; refused: the run has no interrupt load
 	ld a,#CTC_CONTROL
 	out (CTC0_CTRL),a
 	ld a,(ctc_tc)
 	out (CTC0_CTRL),a		; time constant starts the timer
-	ei
 	ret
 
+; Unregistering resets the channel and clears the BIOS's slot.
 ctc_stop:
-	di
-	ld a,#CTC_STOP
-	out (CTC0_CTRL),a
-	ei
-	ret
+	ld b,#0
+	ld c,#ZB_UNREGISTER_ISR
+	jp BDOS
 
-; The interrupt itself.  Deliberately minimal by default: the point is the
-; latency it injects into the transfer loops, not what it computes.  Every
-; register it touches is saved -- the INI/OUTI loops own B, C, DE and HL, and
-; corrupting any of them would look like a transport fault.
-ctc_isr:
-	push af
-	push hl
-	ld hl,(int_count)
+; The interrupt callback, copied to SOAK_CB_ADDR.  Deliberately minimal by
+; default: the point is the latency it injects into the transfer loops, not what
+; it computes.  The BIOS dispatcher saves AF, BC, DE and HL around it and issues
+; EI and RETI; a callback ends with RET.  Relative jumps only: it runs at a copy.
+soak_callback:
+	ld hl,(SOAK_CB_COUNT)
 	inc hl
-	ld (int_count),hl
+	ld (SOAK_CB_COUNT),hl
 .if ISR_PAD_LOOPS
 	ld a,#ISR_PAD_LOOPS
-isr_pad:
+soak_isr_pad:
 	dec a				;  4
-	jr nz,isr_pad			; 12
+	jr nz,soak_isr_pad		; 12
 .endif
-	pop hl
-	pop af
-	ei
-	reti
+	ret
+soak_callback_end:
 
 ; ---------------------------------------------------------------------------
 ; load_lba — cur_lba <- lba_table[lba_index]
@@ -828,7 +823,7 @@ report_pass:
 	jr z,rp_done
 	ld de,#msg_ints
 	call puts
-	ld hl,(int_count)
+	ld hl,(SOAK_CB_COUNT)
 	call print_hex_word
 rp_done:
 	call crlf
@@ -839,37 +834,37 @@ report_bulk_transport_diag:
 	ld de,#msg_bulk_diag_reason
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_REASON)
+	ld a,IOC_DIAG_BULK_REASON(iy)
 	call print_hex_byte
 	ld de,#msg_bulk_diag_rr
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_DIAG_RR0)
+	ld a,IOC_DIAG_RR0(iy)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_DIAG_RR1)
+	ld a,IOC_DIAG_RR1(iy)
 	call print_hex_byte
 	ld de,#msg_bulk_diag_sync
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_SYNCED)
+	ld a,IOC_DIAG_BULK_SYNCED(iy)
 	call print_hex_byte
 	ld de,#msg_bulk_diag_xfer
 	ld c,#BDOS_PRINT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_TYPE)
+	ld a,IOC_DIAG_BULK_TYPE(iy)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_SEQ)
+	ld a,IOC_DIAG_BULK_SEQ(iy)
 	call print_hex_byte
 	ld e,#0x20
 	ld c,#BDOS_CONOUT
 	call BDOS
-	ld a,(IOC_DIAG_BULK_STATUS)
+	ld a,IOC_DIAG_BULK_STATUS(iy)
 	call print_hex_byte
 	ret
 
@@ -917,7 +912,7 @@ zf_rx:
 ; Refuse a long destructive soak unless both ends advertise this wire format.
 ; A = 0 on match; E0 BIOS, E1 PING transport/class, E2 controller level.
 check_level:
-	ld a,(ZBIOS_XPORT_LEVEL_ADDR)
+	call zb_xport_level
 	cp #ZBIOS_XPORT_LEVEL
 	jr nz,check_level_bios
 	call zero_frames
@@ -1124,3 +1119,5 @@ ref_buf:	.ds BLOCK_SIZE
 rd_buf:		.ds BLOCK_SIZE
 	.ds 192				; BDOS nesting plus an ISR frame
 stack_top:
+
+	.include "zbdos.inc"

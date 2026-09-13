@@ -27,7 +27,7 @@ VDRIP_TRANSPORT_LINKED = 1
 ; CP/M addresses the BIOS uses.  They came from the stock CP/M source, which is
 ; no longer assembled.  CBASE holds the CCP; FBASE, six bytes past the CCP slot,
 ; is the BDOS entry every program calls through page zero.
-CBASE			= 0xc400
+CBASE			= 0xe400
 FBASE			= CBASE + 0x0806
 IOBYTE			= 0x0003
 TDRIVE			= 0x0004
@@ -54,8 +54,9 @@ reset_vector:
 ; CP/M BIOS jump table, common memory.
 ;
 ; This table serves programs running in mode 10.  The order is the CP/M 2.2
-; ABI and the address is published: ZCPR2 calls BIOS+6 and BIOS+9 directly, and
-; page zero's JP WBOOT points into it.
+; ABI.  Programs find the table through page zero's JP WBOOT, and ZCPR2, which
+; calls BIOS+6 and BIOS+9 directly, is assembled against its address
+; (zcpr2/build-zcpr2.sh, from CBIOS_BASE).
 ;
 ; Only boot and the console are live (plan F6).  CONST, CONIN and CONOUT are
 ; gates into the bank 7 console.  The disk and auxiliary entries are inert: the
@@ -65,7 +66,8 @@ reset_vector:
 ;   MOVE / XMOVE / SELMEM / SETBNK   bank primitives, common code
 ;   IOCALL / VIDEO_SEND /            gates into bank 7 that stage the caller's
 ;   IOCBULK / IOCBULKW               buffers through common memory
-; The same eight are reachable as BDOS functions 210-217 (cbios_facade.asm).
+; It is not published: programs reach these eight as BDOS functions 210-217
+; (cbios_facade.asm), which call through it.
 	.area CODE (ABS)
 	.org CBIOS_BASE
 

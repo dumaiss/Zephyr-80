@@ -80,32 +80,40 @@ OS_BANK                         = 0x07
 BANK_REJECTED                   = 0xff
 
 ; ------------------------------------------------------------------------------
-; Banked OS layout (Phase 1)
+; Banked OS layout (Phase 2)
 ; ------------------------------------------------------------------------------
-; The OS runs in SRAM bank 7, visible at 2000h-BFFFh in latch mode 11; common
-; memory is C000h-FFFFh in both RAM modes.  docs/Zephyr-80_OS_Execution_Memory_
-; Architecture.md is the plan.  Every address a utility reads directly keeps its
-; value: the CP/M and extended jump tables at DA00h and DA33h, the IOC diag
-; record at DCC0h, the transport level at DF7Ah and SERCON_FLAGS at FE78h.
+; The OS runs in SRAM bank 7, visible at 2000h-DFFFh in latch mode 11.  Common
+; memory is E000h-FFFFh in modes 10 and 11; shadow/copy mode 01 still forces
+; C000h-FFFFh to bank 0.  docs/Zephyr-80_OS_Execution_Memory_Architecture.md is
+; the plan.
+;
+; Nothing here is published.  Programs reach the OS through CALL 5, and through
+; the CP/M BIOS table that page zero's JP WBOOT points into.  Everything else --
+; the IOC link failure record, the transport level, the serial console flags --
+; they find with Zephyr BDOS function 203 (zephyr_sysinfo, cbios_facade.asm).
 ;
 ; Bank 7 (tools/split_banked_image.py; loaded from ROM page 7 at cold boot):
 ;   2000h  ZSDOS, ZSDOS_SIZE bytes, linked there by zsdos/build-zsdos.sh
 ;   3000h  ZSDOS's BIOS jump table: ZSDOS computes its BIOS as ZSDOS+1000h
 ;   3040h  console dispatch, storage stubs, VIDEO_SEND, IOC transport, HID,
 ;          SD and ROM-disk backends, V9958 console; 6000h disk structures;
-;          8000h font; 8800h boot banner
+;          8000h font; 8800h boot banner.  The image must end below C000h:
+;          shadow/copy mode loads only 0000h-BFFFh.
+;   C000h  runtime only, never loaded: the BIOS private stacks and SD scratch.
+;          Nothing a drive A: read can target may live in C000h-DFFFh, because
+;          shadow/copy mode forces writes there to bank 0.
 ; Common:
-;   C400h  CCP (ZCPR2)
-;   CC00h  BDOS facade; D400h-D9FFh its staging buffers, gate and facade stacks
-;   DA00h  jump tables, boot, banking, SIO core, crossing layer
 ;   E000h  program interrupt callbacks (PROGRAM_ISR_AREA): nothing assembled
-;   E400h  crossing gates; E800h interrupt dispatch
-;   F760h  serial console; FA80h MOVE_BUFFER; FD00h IM2 vector page
-;   FE00h  runtime state; FE80h stacks
+;   E400h  CCP (ZCPR2)
+;   EC00h  BDOS facade, FBASE EC06h
+;   F000h  CP/M and Zephyr jump tables, boot, banking, IOC diag record, SIO
+;          core, crossing layer, gates, interrupt dispatch, serial console
+;   F950h  staging buffer and pointer copies; FD00h IM2 vector page
+;   FE00h  runtime state; FE80h ISR, gate and facade stacks
 ;
 ; Region comments further down were written for the fixed-slot common BIOS and
-; still give the old common addresses and slot numbers for regions that moved;
-; the values assigned here and below are authoritative.
+; still give old common addresses and slot numbers for regions that moved; the
+; values assigned here and below are authoritative.
 
 OS_EXEC_LATCH                   = ROMDIS_BIT | SHADOW_BIT       ; mode 11, bank 0
 ZSDOS_ORG                       = 0x2000
@@ -114,29 +122,43 @@ ZSDOS_ENTRY                     = ZSDOS_ORG + 0x0006
 BIOS7_BASE                      = ZSDOS_ORG + ZSDOS_SIZE        ; 3000h
 
 PROGRAM_ISR_AREA                = 0xe000                        ; E000h-E3FFh
-CBIOS_GATE_CODE_BASE            = 0xe400
-CBIOS_GATE_CODE_LIMIT           = 0xe800
-CBIOS_IRQ_CODE_BASE             = 0xe800
-CBIOS_IRQ_CODE_LIMIT            = 0xeb00
+CBIOS_FACADE_BASE               = 0xec00                        ; CBASE + 800h
+FACADE_CODE_LIMIT               = 0xf000                        ; CBIOS_BASE
+CBIOS_GATE_CODE_BASE            = 0xf538
+CBIOS_GATE_CODE_LIMIT           = 0xf730
+CBIOS_IRQ_CODE_BASE             = 0xf730
+CBIOS_IRQ_CODE_LIMIT            = 0xf830
 IRQ_SOURCE_COUNT                = 0x04                          ; CTC channels 0-3
 CTC_VECTOR_BASE                 = 0x00
 
-CBIOS_FACADE_BASE               = 0xcc00                        ; CBASE + 800h
-FACADE_DATA_BASE                = 0xd400
+; One 512-byte staging buffer serves every short-lived copy.  Its users never
+; overlap: a gate, a cross-bank MOVE and a facade call each run to completion,
+; and within one facade call a staged DMA and a staged FCB take separate parts.
 FAC_BULK_SIZE                   = 0x0200
-FAC_BULK_BUF                    = 0xd400        ; 512: IOCBULK/IOCBULKW/VIDEO_SEND
-FAC_DMA_BUF                     = 0xd600        ; 128
-FAC_FCB_BUF                     = 0xd680        ; 36
-FAC_SFCB_BUF                    = 0xd6a4        ; 36: search-first FCB
-FAC_DPB_COPY                    = 0xd6c8        ; 16: function 31
-FAC_TIME_BUF                    = 0xd6d8        ; 6
-FAC_REGBLK                      = 0xd6e0        ; 7: Zephyr function register block
-FAC_CONBUF                      = 0xd700        ; 258: function 10
-FAC_ALV_COPY                    = 0xd810        ; 256: function 27
-GATE_TX_BUF                     = 0xd910        ; 32
-GATE_RX_BUF                     = 0xd930        ; 32
-GATE_STACK_TOP                  = 0xd9a0        ; D950h-D99Fh
-FAC_STACK_TOP                   = 0xda00        ; D9A0h-D9FFh
+FAC_BULK_BUF                    = 0xf950        ; F950h-FB4Fh
+FAC_DMA_BUF                     = FAC_BULK_BUF                  ; 128
+FAC_FCB_BUF                     = FAC_BULK_BUF + 0x0080         ; 36
+FAC_TIME_BUF                    = FAC_BULK_BUF                  ; 6
+FAC_CONBUF                      = FAC_BULK_BUF                  ; up to 257
+GATE_TX_BUF                     = FAC_BULK_BUF                  ; 32
+GATE_RX_BUF                     = FAC_BULK_BUF + 0x0020         ; 32
+MOVE_XBUF                       = FAC_BULK_BUF                  ; MOVE chunks
+; These outlive the call that fills them.
+FAC_SFCB_BUF                    = 0xfb50        ; 36: search-first FCB, for search-next
+FAC_DPB_COPY                    = 0xfb74        ; 16: function 31 result
+FAC_REGBLK                      = 0xfb84        ; 7: Zephyr function register block
+FAC_ALV_COPY                    = 0xfb90        ; 256: function 27 result
+GATE_STACK_TOP                  = 0xff00        ; FEC0h-FEFFh
+FAC_STACK_TOP                   = 0xff60        ; FF00h-FF5Fh
+
+; Zephyr BDOS function 203 returns HL -> this layout (zephyr_sysinfo).
+ZSYSINFO_VERSION                = 0x01
+ZSYSINFO_OFF_VERSION            = 0x00          ; .db ZSYSINFO_VERSION
+ZSYSINFO_OFF_XPORT_LEVEL        = 0x01          ; .db ZBIOS_XPORT_LEVEL
+ZSYSINFO_OFF_DIAG               = 0x02          ; .dw IOC link failure record
+ZSYSINFO_OFF_SERCON             = 0x04          ; .dw SERCON_FLAGS
+ZSYSINFO_OFF_BIOS               = 0x06          ; .dw CP/M BIOS jump table
+ZSYSINFO_OFF_EXT                = 0x08          ; .dw Zephyr extension table
 CONST_NO_CHAR                   = 0x00
 CONST_HAS_CHAR                  = 0xff
 CR                              = 0x0d
@@ -485,7 +507,7 @@ PROTECTED_TPA_END               = 0xc3ff
 ; ------------------------------------------------------------------------------
 ; CBIOS Memory Layout
 ; ------------------------------------------------------------------------------
-CBIOS_BASE                      = 0xda00
+CBIOS_BASE                      = 0xf000
 
 ; ------------------------------------------------------------------------------
 ; Core BIOS Region
@@ -526,7 +548,7 @@ CBIOS_STORAGE_CODE_BASE         = BIOS7_BASE + 0x0100                  ; 3100h, 
 ; ccp_clear_redraw, which sat between the storage stubs and banking; that
 ; helper served only the stock BDOS and is gone.  The console and storage stubs
 ; that preceded banking are in bank 7 now.
-CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x01dd      ; DBDDh
+CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x01b0      ; F1B0h
 
 ; ------------------------------------------------------------------------------
 ; Fixed Driver Slots
@@ -668,7 +690,7 @@ CBIOS_STORAGE_VDRIP_CODE_BASE         = CBIOS_STORAGE_A_CODE_BASE
 ;
 ; The generated memory map's Headroom table is the authority on what is left
 ; here; do not assume this region is open.
-CBIOS_SPARE_CODE_BASE           = CBIOS_BASE + 0x02b1                  ; DCB1h
+CBIOS_SPARE_CODE_BASE           = CBIOS_BASE + 0x0288                  ; F288h
 
 ; Link diagnostic block, at a FIXED address so a .COM can read it directly when
 ; the link itself is too broken to answer a PING.  The command portion is
@@ -682,7 +704,7 @@ CBIOS_SPARE_CODE_BASE           = CBIOS_BASE + 0x02b1                  ; DCB1h
 ; saw.  Fabricated evidence in the one report consulted when the link is dead
 ; is why this is now a last-failure record with an explicit "nothing recorded"
 ; state rather than a set of always-printed slots.
-CBIOS_IOC_DIAG_BASE             = CBIOS_BASE + 0x02c0                  ; DCC0h
+CBIOS_IOC_DIAG_BASE             = CBIOS_BASE + 0x0298                  ; F298h
 
 ; ---------------------------------------------------------------------------
 ; FROZEN: IOC link failure record
@@ -825,7 +847,7 @@ CBIOS_HID_INPUT_CODE_BASE       = BIOS7_BASE + 0x0d00                  ; 3D00h, 
 ; transport begins at F680h, leaving five guard bytes.
 CBIOS_HID_INPUT_STATE_BASE      = BIOS7_BASE + 0x0e00                  ; 3E00h, bank 7
 
-CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
+CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x02f0                  ; F2F0h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_V9958_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_BIOS_EXT_CODE_BASE        = BIOS7_BASE + 0x0200                  ; 3200h, bank 7
@@ -834,8 +856,8 @@ CBIOS_IOCTRL_CODE_BASE          = BIOS7_BASE + 0x0280                  ; 3280h, 
 ; Common crossing layer (banked OS, Phase 1 step 3): the SIO interrupt entry
 ; with its stack switch, and the mode-preserving bank select.  The gap between
 ; the SIO core's end and the BIOS extensions.
-CBIOS_XING_CODE_BASE            = CBIOS_BASE + 0x052c                  ; DF2Ch
-CBIOS_XING_CODE_LIMIT           = CBIOS_BASE + 0x0550                  ; DF50h
+CBIOS_XING_CODE_BASE            = CBIOS_BASE + 0x0510                  ; F510h
+CBIOS_XING_CODE_LIMIT           = CBIOS_BASE + 0x0530                  ; F530h
 
 ; Transport level, readable directly from ROM at a fixed address.
 ;
@@ -859,7 +881,7 @@ CBIOS_XING_CODE_LIMIT           = CBIOS_BASE + 0x0550                  ; DF50h
 ;      protocol is unchanged at this level; only what a .COM may read out of
 ;      CBIOS_IOC_DIAG_BASE is.  Tools gate their decode on this value.
 ZBIOS_XPORT_LEVEL               = 0x08
-ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_BASE + 0x057a                  ; DF7Ah: published, stays common
+ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_BASE + 0x0530                  ; F530h; tools read it through function 203
 
 ; VDrip CP850 font placement in bank 0 TPA.
 ; Font data lives at VDRIP_FONT_ROM_BASE in the firmware binary (bank 0 ROM).
@@ -890,7 +912,7 @@ CBIOS_BOOT_BANNER_CODE_BASE     = CBIOS_IOC_DIAG_BASE + 0x11           ; DCD1h
 ; state in either build (v9958 ends at FE74h, vdrip at FE76h), so SERCON_FLAGS
 ; is at a FIXED address that a .COM can poke without knowing the build.
 	.ifeq VDRIP_TRANSPORT_LINKED
-CBIOS_SERCON_CODE_BASE          = 0xf760
+CBIOS_SERCON_CODE_BASE          = 0xf830
 	.endif
 
 SERCON_STATE_BASE               = CBIOS_WORK_AREA + 0x0078      ; FE78h
@@ -971,7 +993,7 @@ CBIOS_SCRATCH_BASE              = CBIOS_DRIVER_SLOT5_LIMIT             ; FA80h
 CBIOS_SCRATCH_LIMIT             = CBIOS_SCRATCH_BASE + 0x0380          ; FE00h
 CBIOS_SCRATCH_END               = CBIOS_SCRATCH_LIMIT - 1
 
-MOVE_BUFFER                     = CBIOS_SCRATCH_BASE                   ; FA80h
+MOVE_BUFFER                     = 0xc300                               ; bank 7 runtime: SD scratch
 MOVE_BUFFER_SIZE                = 0x00c0                               ; 192 bytes
 
 VDRIP_STORAGE_DPHDPB_BASE             = BIOS7_BASE + 0x3000            ; 6000h, bank 7
@@ -1034,48 +1056,34 @@ CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 ; ------------------------------------------------------------------------------
 ; FE80h-FFFFh = BIOS stack / reserve.
 ;
-; Four tops, each owning a disjoint run.  They are private stacks, not nested
-; frames on one stack, so their ranges must not overlap:
+; Two kinds of stack.  The BIOS's private stacks are used only by code in bank 7,
+; so they live in bank 7's runtime range, C000h-DFFFh, which is never loaded
+; from ROM:
 ;
-;   FFF0h  CBIOS_STACK_TOP          boot/warm-boot, grows down toward FF80h
-;   FF80h  CBIOS_CONSOLE_STACK_TOP  console dispatch and storage dispatch
-;   FF00h  CBIOS_XPORT_STACK_TOP    IOCALL / IOCBULK / IOCBULKW, down to FEC0h
-;   FEC0h  CBIOS_ISR_STACK_TOP      SIO interrupt (xing_isr), down to FE82h
+;   C100h  CBIOS_STACK_TOP          boot/warm-boot, down to C000h
+;   C200h  CBIOS_CONSOLE_STACK_TOP  console dispatch and storage dispatch
+;   C300h  CBIOS_XPORT_STACK_TOP    IOCALL / IOCBULK / IOCBULKW
+;
+; The stacks that must survive a mapping change are common:
+;
+;   FEC0h  CBIOS_ISR_STACK_TOP      SIO and CTC interrupts, down to FE82h
 ;   FE80h  CBIOS_ISR_SP_SAVE        the interrupted SP, two bytes
+;   FF00h  GATE_STACK_TOP           crossing gates, down to FEC0h
+;   FF60h  FAC_STACK_TOP            BDOS facade and the warm-boot trap
 ;
-; Console backend calls use a lower private top so boot-time BIOS stack frames
-; near FFF0h stay intact when CONOUT is called during BOOT.
+; Cold boot and WBOOT move to FAC_STACK_TOP before their final switch to mode
+; 10.  The drive A: shadow/copy window runs with the storage stack in
+; C000h-DFFFh, which that mode maps to bank 0, so it keeps its saved state in
+; common variables rather than on the stack.
 ;
-; The transport gets its own top for two reasons.  The first is the bug it was
-; added for: IOCALL, IOCBULK and IOCBULKW are published at ZBIOS_EXT_BASE and a
-; CP/M transient calls them on the CCP's stack, which is sixteen bytes total
-; (see CCPSTACK in cpm22.asm).  The transport nests roughly twenty-five bytes
-; deep and re-enables interrupts while it waits for the MCU's reply, so an ISR
-; can land on top of that -- comfortably enough to run off the bottom of the
-; CCP's stack and into the CCP's own code.  Because a transient exits through
-; RET rather than a warm boot, restore_ccp_from_rom never runs and the damage
-; survives until the next cold boot.
-;
-; The second is that it makes the 128-byte console/storage run sufficient: the
-; deepest thing that used to nest inside it was the transport, and that now
-; runs here instead.
-;
-; The ISR stack is the lower half of what was the transport's 128-byte run.
-; Interrupts used to push their frames onto whatever stack they interrupted,
-; including the transport's, which measured 16-22 bytes deep on rom-services
-; with those frames in it.  Later in Phase 1 ZSDOS runs in bank 7 on its own
-; small stack, so interrupt work switches to its own stack first (plan F2).
-; The deepest SIO interrupt path is about 16 bytes: the call from xing_isr,
-; four register pushes, the RX read and the SERCON sink.  Measure both runs
-; with STKCHK before relying on these sizes.
-;
-; Stack grows downward and should not cross FE80h; the ISR stack stops at
-; FE82h, above its saved SP.
+; Interrupts moved to their own stack in Phase 1 so their frames never land on
+; the interrupted stack (plan F2).  None of these runs is measured on this
+; layout: measure with STKCHK before relying on the sizes.
 
 CBIOS_STACK_GUARD               = CBIOS_WORK_AREA_LIMIT            ; FE80h
-CBIOS_STACK_TOP                 = 0xfff0
-CBIOS_CONSOLE_STACK_TOP         = 0xff80
-CBIOS_XPORT_STACK_TOP           = 0xff00
+CBIOS_STACK_TOP                 = 0xc100                           ; bank 7 runtime
+CBIOS_CONSOLE_STACK_TOP         = 0xc200                           ; bank 7 runtime
+CBIOS_XPORT_STACK_TOP           = 0xc300                           ; bank 7 runtime
 CBIOS_ISR_STACK_TOP             = 0xfec0
 CBIOS_ISR_SP_SAVE               = CBIOS_STACK_GUARD                ; FE80h
 

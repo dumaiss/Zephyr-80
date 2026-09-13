@@ -1,38 +1,30 @@
-; MAP11.COM -- prove the Phase 1 mode 11 decoder on hardware.
+; MAP11.COM -- prove the mode 11 decoder map on hardware.
 ;
-; Phase 1 of ../CPM2.2/docs/Zephyr-80_OS_Execution_Memory_Architecture.md.
-; MEM_DECODER.pld revision 10 gives latch mode 11 (ROM_DIS | RAM_SHADOW) its
-; own map:
+; ../CPM2.2/docs/Zephyr-80_OS_Execution_Memory_Architecture.md, section 26.
+; MEM_DECODER.pld revision 11 is the Phase 2 map:
 ;
-;   0000-1FFF   latch bank N     caller window
-;   2000-BFFF   RAM bank 7       OS body
-;   C000-FFFF   RAM bank 0       common
+;   mode 10   0000-DFFF  latch bank N                 E000-FFFF  bank 0
+;   mode 11   0000-1FFF  latch bank N   2000-DFFF  bank 7   E000-FFFF  bank 0
 ;
-; Until revision 10, mode 11 decoded exactly like mode 10.  This program tells
-; the two apart, and checks every boundary from both sides, before any OS code
-; depends on the new mode.
+; Revision 10 (Phase 1) put the common boundary at C000h in both modes.  This
+; checks the new boundary from both sides, and the caller window, before trusting
+; the OS that depends on them.
 ;
-; For each application bank N tested (0, then 5):
+; For each application bank N (0, then 5), from a core copied into the program
+; interrupt reservation at E000h -- common in both modes -- with interrupts off:
 ;
-;   1. mode 10, bank 7    sign 1FFF 2000 8000 BFFF with 71 72 73 74
-;   2. mode 10, bank N    sign the same addresses with N1 N2 N3 N4
-;   3. mode 11            read them back: 1FFF must be N1, the body 72-74,
-;                         C000 must match mode 10, and the latch 18h|N.
-;                         Then write 2000=A5, 1FFE=5A and a common byte.
-;   4. mode 10, bank N    the body is still N2-N4; the 1FFE and common
-;                         writes from mode 11 arrived
-;   5. mode 10, bank 7    the 2000 write from mode 11 arrived; 1FFF untouched
+;   1. mode 10, bank 7   save, then sign 1FFF 2000 9000 BFFF C800 DFFF: 71-76
+;   2. mode 10, bank N   save, then sign the same addresses: N1-N6
+;   3. mode 11           1FFF must read N1, 2000-DFFF bank 7's 72-76, E000 the
+;                        same as mode 10, the latch 18h|N.  Then write 2000=A5,
+;                        DFFF=A6, 1FFE=5A and a common byte.
+;   4. mode 10, bank N   N1-N6 untouched, 1FFE and the common byte arrived;
+;                        restore the saved bytes
+;   5. mode 10, bank 7   2000=A5 and DFFF=A6 arrived, 1FFF untouched; restore
 ;
-; Changing the latch replaces 0000-BFFF, including this program, so the mapping
-; walk is a linear core copied to C000h and run from there with its stack in
-; common memory and interrupts disabled.  The core contains no absolute control
-; transfers; its results go to a common buffer and are checked back here in
-; mode 10, bank 0.
-;
-; Bank 5 is used because nothing in the baseline OS touches banks 4-7 after
-; boot.  It borrows C000h-C3FFh of the TPA, which is below the CCP at C400h, so
-; it returns to the CCP -- after a key press, because the console's warm-boot
-; redraw would otherwise take the results off the screen.
+; Bank 7 is the running OS.  The probed bytes there -- ZSDOS's first serial
+; byte, unused image bytes, unused runtime stack space -- are all saved first
+; and put back, and nothing in the OS runs while interrupts are off.
 
 	.module map11
 	.area CODE (ABS)
@@ -47,13 +39,14 @@ BANK_PORT	= 0x00
 ROMDIS_BIT	= 0x10
 SHADOW_BIT	= 0x08
 
-CORE_ADDR	= 0xc000		; common in modes 10 and 11
-CTEST		= 0xc2ff		; common byte written from mode 11
-RES		= 0xc300		; core results
-CSTACK		= 0xc3f0
-CORE_LIMIT	= 0xc400		; the CCP starts here
+CORE_ADDR	= 0xe000		; common in modes 10 and 11
+SAVE7		= 0xe2c0		; bank 7's six probed bytes
+SAVEN		= 0xe2d0		; bank N's seven
+CTEST		= 0xe2ff		; common byte written from mode 11
+RES		= 0xe300		; core results
+CSTACK		= 0xe3f0
+TPA_NEEDED	= 0xe400		; the reservation must be TPA
 
-; Check kinds.  Each check entry: kind, value, label address.
 K_SKIP		= 0
 K_LIT		= 1			; want = value
 K_NPAT		= 2			; want = (N << 4) | value
@@ -63,20 +56,17 @@ K_SAME		= 4			; want = RES[value]
 start:
 	ld (entry_sp),sp
 	ld sp,#stack_top
-
 	ld de,#msg_banner
 	call puts
 
-	; The TPA must reach past the borrowed C000h-C3FFh.
 	ld hl,(BDOS + 1)
-	ld de,#CORE_LIMIT
+	ld de,#TPA_NEEDED
 	or a
 	sbc hl,de
 	jr nc,tpa_ok
 	ld de,#msg_tpa
 	call puts
 	jp finish
-
 tpa_ok:
 	in a,(BANK_PORT)
 	ld (entry_latch),a
@@ -97,14 +87,11 @@ latch_ok:
 	ld de,#CORE_ADDR
 	ld bc,#core_end - core_start
 	ldir
-
 	xor a
 	ld (total_fails),a
-	xor a
 	call test_bank
 	ld a,#5
 	call test_bank
-
 	ld a,(total_fails)
 	or a
 	ld de,#msg_pass
@@ -112,8 +99,6 @@ latch_ok:
 	ld de,#msg_fail_all
 done:
 	call puts
-	; fall through
-
 finish:
 	ld de,#msg_key
 	call puts
@@ -158,7 +143,6 @@ check_loop:
 	jr z,want_same
 	cp #K_LATCH
 	jr z,want_latch
-	; K_NPAT
 	ld a,(cur_n)
 	add a,a
 	add a,a
@@ -227,8 +211,8 @@ bank_failed:
 
 ; ---------------------------------------------------------------------------
 ; Copied to CORE_ADDR and run there.  Entry: C = application bank N,
-; interrupts disabled, SP in common memory.  Linear code, no absolute control
-; transfers; every data address is either a probe address or common memory.
+; interrupts disabled, SP in common memory.  Linear code; every data address is
+; a probe address or common memory.
 core_start:
 	ld a,c
 	add a,a
@@ -237,22 +221,52 @@ core_start:
 	add a,a
 	ld b,a				; B = N << 4
 
-	; 1. mode 10, bank 7: bank 7's own signatures
+	; 1. mode 10, bank 7: save, then sign
 	ld a,#ROMDIS_BIT | 7
 	out (BANK_PORT),a
+	ld a,(0x1fff)
+	ld (SAVE7 + 0),a
+	ld a,(0x2000)
+	ld (SAVE7 + 1),a
+	ld a,(0x9000)
+	ld (SAVE7 + 2),a
+	ld a,(0xbfff)
+	ld (SAVE7 + 3),a
+	ld a,(0xc800)
+	ld (SAVE7 + 4),a
+	ld a,(0xdfff)
+	ld (SAVE7 + 5),a
 	ld a,#0x71
 	ld (0x1fff),a
 	ld a,#0x72
 	ld (0x2000),a
 	ld a,#0x73
-	ld (0x8000),a
+	ld (0x9000),a
 	ld a,#0x74
 	ld (0xbfff),a
+	ld a,#0x75
+	ld (0xc800),a
+	ld a,#0x76
+	ld (0xdfff),a
 
-	; 2. mode 10, bank N: the application bank's signatures
+	; 2. mode 10, bank N: save, then sign
 	ld a,c
 	or #ROMDIS_BIT
 	out (BANK_PORT),a
+	ld a,(0x1ffe)
+	ld (SAVEN + 0),a
+	ld a,(0x1fff)
+	ld (SAVEN + 1),a
+	ld a,(0x2000)
+	ld (SAVEN + 2),a
+	ld a,(0x9000)
+	ld (SAVEN + 3),a
+	ld a,(0xbfff)
+	ld (SAVEN + 4),a
+	ld a,(0xc800)
+	ld (SAVEN + 5),a
+	ld a,(0xdfff)
+	ld (SAVEN + 6),a
 	ld a,b
 	or #1
 	ld (0x1fff),a
@@ -261,14 +275,20 @@ core_start:
 	ld (0x2000),a
 	ld a,b
 	or #3
-	ld (0x8000),a
+	ld (0x9000),a
 	ld a,b
 	or #4
 	ld (0xbfff),a
+	ld a,b
+	or #5
+	ld (0xc800),a
+	ld a,b
+	or #6
+	ld (0xdfff),a
 	xor a
 	ld (0x1ffe),a
 	ld (CTEST),a
-	ld a,(0xc000)
+	ld a,(0xe000)
 	ld (RES + 0),a
 
 	; 3. mode 11: read the map, then write through it
@@ -279,49 +299,85 @@ core_start:
 	ld (RES + 1),a
 	ld a,(0x2000)
 	ld (RES + 2),a
-	ld a,(0x8000)
+	ld a,(0x9000)
 	ld (RES + 3),a
 	ld a,(0xbfff)
 	ld (RES + 4),a
-	ld a,(0xc000)
+	ld a,(0xc800)
 	ld (RES + 5),a
-	in a,(BANK_PORT)
+	ld a,(0xdfff)
 	ld (RES + 6),a
+	ld a,(0xe000)
+	ld (RES + 7),a
+	in a,(BANK_PORT)
+	ld (RES + 8),a
 	ld a,#0xa5
 	ld (0x2000),a
+	ld a,#0xa6
+	ld (0xdfff),a
 	ld a,#0x5a
 	ld (0x1ffe),a
 	ld a,#0xc3
 	ld (CTEST),a
 
-	; 4. mode 10, bank N: what mode 11 did to the application bank
+	; 4. mode 10, bank N: what mode 11 did to it; restore
 	ld a,c
 	or #ROMDIS_BIT
 	out (BANK_PORT),a
 	ld a,(0x1fff)
-	ld (RES + 7),a
-	ld a,(0x2000)
-	ld (RES + 8),a
-	ld a,(0x8000)
 	ld (RES + 9),a
-	ld a,(0xbfff)
+	ld a,(0x2000)
 	ld (RES + 10),a
-	ld a,(0x1ffe)
+	ld a,(0x9000)
 	ld (RES + 11),a
-	ld a,(CTEST)
+	ld a,(0xbfff)
 	ld (RES + 12),a
-	in a,(BANK_PORT)
+	ld a,(0xc800)
 	ld (RES + 13),a
+	ld a,(0xdfff)
+	ld (RES + 14),a
+	ld a,(0x1ffe)
+	ld (RES + 15),a
+	ld a,(CTEST)
+	ld (RES + 16),a
+	in a,(BANK_PORT)
+	ld (RES + 17),a
+	ld a,(SAVEN + 0)
+	ld (0x1ffe),a
+	ld a,(SAVEN + 1)
+	ld (0x1fff),a
+	ld a,(SAVEN + 2)
+	ld (0x2000),a
+	ld a,(SAVEN + 3)
+	ld (0x9000),a
+	ld a,(SAVEN + 4)
+	ld (0xbfff),a
+	ld a,(SAVEN + 5)
+	ld (0xc800),a
+	ld a,(SAVEN + 6)
+	ld (0xdfff),a
 
-	; 5. mode 10, bank 7: what mode 11 did to bank 7
+	; 5. mode 10, bank 7: what mode 11 did to it; restore
 	ld a,#ROMDIS_BIT | 7
 	out (BANK_PORT),a
 	ld a,(0x2000)
-	ld (RES + 14),a
+	ld (RES + 18),a
+	ld a,(0xdfff)
+	ld (RES + 19),a
 	ld a,(0x1fff)
-	ld (RES + 15),a
-	ld a,(0xbfff)
-	ld (RES + 16),a
+	ld (RES + 20),a
+	ld a,(SAVE7 + 0)
+	ld (0x1fff),a
+	ld a,(SAVE7 + 1)
+	ld (0x2000),a
+	ld a,(SAVE7 + 2)
+	ld (0x9000),a
+	ld a,(SAVE7 + 3)
+	ld (0xbfff),a
+	ld a,(SAVE7 + 4)
+	ld (0xc800),a
+	ld a,(SAVE7 + 5)
+	ld (0xdfff),a
 
 	; back to CP/M: mode 10, bank 0
 	ld a,#ROMDIS_BIT
@@ -329,20 +385,28 @@ core_start:
 	ret
 core_end:
 
+	.ifgt (core_end - core_start) - (SAVE7 - CORE_ADDR)
+	.error 1			; the core runs into its save area
+	.endif
+
 ; ---------------------------------------------------------------------------
 checks:
 	.db K_SKIP, 0
-	.dw lbl_c000_m10
+	.dw lbl_e000_m10
 	.db K_NPAT, 1
 	.dw lbl_1fff_m11
 	.db K_LIT, 0x72
 	.dw lbl_2000_m11
 	.db K_LIT, 0x73
-	.dw lbl_8000_m11
+	.dw lbl_9000_m11
 	.db K_LIT, 0x74
 	.dw lbl_bfff_m11
+	.db K_LIT, 0x75
+	.dw lbl_c800_m11
+	.db K_LIT, 0x76
+	.dw lbl_dfff_m11
 	.db K_SAME, 0
-	.dw lbl_c000_m11
+	.dw lbl_e000_m11
 	.db K_LATCH, ROMDIS_BIT | SHADOW_BIT
 	.dw lbl_latch_m11
 	.db K_NPAT, 1
@@ -350,9 +414,13 @@ checks:
 	.db K_NPAT, 2
 	.dw lbl_2000_m10
 	.db K_NPAT, 3
-	.dw lbl_8000_m10
+	.dw lbl_9000_m10
 	.db K_NPAT, 4
 	.dw lbl_bfff_m10
+	.db K_NPAT, 5
+	.dw lbl_c800_m10
+	.db K_NPAT, 6
+	.dw lbl_dfff_m10
 	.db K_LIT, 0x5a
 	.dw lbl_1ffe_m10
 	.db K_LIT, 0xc3
@@ -361,34 +429,38 @@ checks:
 	.dw lbl_latch_m10
 	.db K_LIT, 0xa5
 	.dw lbl_2000_b7
+	.db K_LIT, 0xa6
+	.dw lbl_dfff_b7
 	.db K_LIT, 0x71
 	.dw lbl_1fff_b7
-	.db K_LIT, 0x74
-	.dw lbl_bfff_b7
 NCHECKS		= (. - checks) / 4
 
-lbl_c000_m10:	.ascii "C000 mode 10$"
+lbl_e000_m10:	.ascii "E000 mode 10$"
 lbl_1fff_m11:	.ascii "1FFF mode 11 = app bank$"
 lbl_2000_m11:	.ascii "2000 mode 11 = bank 7$"
-lbl_8000_m11:	.ascii "8000 mode 11 = bank 7$"
+lbl_9000_m11:	.ascii "9000 mode 11 = bank 7$"
 lbl_bfff_m11:	.ascii "BFFF mode 11 = bank 7$"
-lbl_c000_m11:	.ascii "C000 mode 11 = bank 0$"
+lbl_c800_m11:	.ascii "C800 mode 11 = bank 7$"
+lbl_dfff_m11:	.ascii "DFFF mode 11 = bank 7$"
+lbl_e000_m11:	.ascii "E000 mode 11 = common$"
 lbl_latch_m11:	.ascii "latch readback, mode 11$"
 lbl_1fff_m10:	.ascii "1FFF app bank after mode 11$"
 lbl_2000_m10:	.ascii "2000 app bank not hit by mode 11$"
-lbl_8000_m10:	.ascii "8000 app bank not hit by mode 11$"
+lbl_9000_m10:	.ascii "9000 app bank not hit by mode 11$"
 lbl_bfff_m10:	.ascii "BFFF app bank not hit by mode 11$"
+lbl_c800_m10:	.ascii "C800 mode 10 = app bank, not common$"
+lbl_dfff_m10:	.ascii "DFFF mode 10 = app bank, not common$"
 lbl_1ffe_m10:	.ascii "1FFE mode 11 write -> app bank$"
-lbl_common:	.ascii "C2FF mode 11 write -> common$"
+lbl_common:	.ascii "E2FF mode 11 write -> common$"
 lbl_latch_m10:	.ascii "latch readback, mode 10$"
 lbl_2000_b7:	.ascii "2000 mode 11 write -> bank 7$"
+lbl_dfff_b7:	.ascii "DFFF mode 11 write -> bank 7$"
 lbl_1fff_b7:	.ascii "1FFF bank 7 not hit by mode 11$"
-lbl_bfff_b7:	.ascii "BFFF bank 7$"
 
-msg_banner:	.ascii "MAP11 - mode 11 decoder test (MEM_DECODER rev 10)"
+msg_banner:	.ascii "MAP11 - mode 11 decoder test (MEM_DECODER rev 11)"
 		.db 13,10
 		.ascii "$"
-msg_tpa:	.ascii "TPA ends below C400h; cannot borrow C000h."
+msg_tpa:	.ascii "TPA ends below E400h; cannot use the E000h reservation."
 		.db 13,10
 		.ascii "$"
 msg_latch:	.ascii "latch at entry: $"
@@ -414,7 +486,6 @@ msg_fail_all:	.ascii "MAP11: FAIL"
 		.ascii "$"
 
 ; ---------------------------------------------------------------------------
-; DE = '$'-terminated string.  Preserves BC, HL, IX.
 puts:
 	push bc
 	push hl
@@ -432,7 +503,6 @@ crlf:
 	ld a,#10
 	jr conout
 
-; A = byte, printed as two hex digits.  Preserves BC, HL, IX.
 hex:
 	push af
 	rrca

@@ -302,34 +302,43 @@ wbtrap:
 ; ---------------------------------------------------------------------------
 ; xing_rom_copy_record -- drive A:'s shadow/copy window, for the bank 7 backend.
 ; Shadow/copy mode puts ROM at 0000h-BFFFh, which unmaps bank 7, so the window
-; runs from common memory.  Called on the storage stack, which is common.
+; runs from common memory.
 ; In:  B  = shadow/copy latch value: ROM page, SHADOW_BIT, destination bank
 ;      HL = ROM source, DE = destination, one 128-byte record
 ; Out: A = BIOS_OK.  Latch and interrupt state restored as found.
 ; Invariants:
-;   No stack use inside the window.  Interrupts are masked across it, because a
-;   handler fetching from below C000h would read flash; the caller's interrupt
-;   state is captured with LD A,I and retried once for the NMOS erratum (a read
-;   that coincides with an accepted interrupt reports IFF2 clear).
+;   The caller's stack is the storage stack, in bank 7's runtime range
+;   C000h-DFFFh, which shadow/copy mode maps to bank 0.  So the latch and
+;   interrupt state found are kept in common variables, and nothing touches the
+;   stack between the two latch writes.
+;   Interrupts are masked across the window, because a handler fetching from
+;   below C000h would read flash.  The caller's state is captured with LD A,I
+;   and retried once for the NMOS erratum (a read that coincides with an
+;   accepted interrupt reports IFF2 clear).
 ; ---------------------------------------------------------------------------
 xing_rom_copy_record:
 	ld a,i
 	jp pe,xing_rom_copy_iff
 	ld a,i
 xing_rom_copy_iff:
-	push af				; P/V set: interrupts were enabled
+	ld a,#0x00			; LD leaves P/V alone
+	jp po,xing_rom_copy_iff_known
+	inc a
+xing_rom_copy_iff_known:
+	ld (xing_rom_iff),a
 	in a,(BANK_PORT)
-	push af				; the latch as found
+	ld (xing_rom_latch),a
 	di
 	ld a,b
 	out (BANK_PORT),a
 	ld bc,#ROMDISK_RECORD_BYTES
 	ldir
-	pop af
+	ld a,(xing_rom_latch)
 	out (BANK_PORT),a
-	pop af
-	ld a,#BIOS_OK			; LD leaves P/V alone
-	ret po
+	ld a,(xing_rom_iff)
+	or a
+	ld a,#BIOS_OK			; LD leaves Z alone
+	ret z
 	ei
 	ret
 
@@ -377,6 +386,10 @@ bank7_fail_text:
 gate_caller_sp:
 	.dw 0
 xing_saved_latch:
+	.db 0
+xing_rom_latch:
+	.db 0
+xing_rom_iff:
 	.db 0
 
 GATE_CODE_END:

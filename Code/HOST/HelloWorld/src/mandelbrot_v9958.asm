@@ -37,7 +37,7 @@ KEY_ESC			= 0x1b
 
 ; Extended BIOS jump-table entry. Keep in sync with CPM2.2 symbol-map.md:
 ; ZBIOS_EXT_BASE + 0Fh = VIDEO_SEND.
-VIDEO_SEND		= 0xda42
+; VIDEO_SEND comes from ../../Utilities/src/zbdos.inc (Zephyr BDOS 215).
 
 ; VIDEO_SEND:
 ;   A  = VDrip packet type
@@ -586,3 +586,5 @@ scanline:
 
 command_buffer:
 	.ds COMMAND_BUFFER_BYTES
+
+	.include "../../Utilities/src/zbdos.inc"

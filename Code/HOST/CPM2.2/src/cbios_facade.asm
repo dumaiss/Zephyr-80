@@ -26,6 +26,7 @@
 ;   200  REGISTER_ISR     B = source (CTC channel 0-3), DE = callback
 ;   201  UNREGISTER_ISR   B = source
 ;   202  PROGRAM_EXIT     stop and clear every registration
+;   203  SYSINFO          HL -> system information block (zephyr_sysinfo)
 ;   210-217  ZBIOS_EXT_BASE entry 0-7 (MOVE, XMOVE, SELMEM, SETBNK, IOCALL,
 ;            VIDEO_SEND, IOCBULK, IOCBULKW) through a register block:
 ;            DE -> A, C, B, E, D, L, H in, the same seven bytes out
@@ -36,6 +37,7 @@
 	.globl facade_entry,facade_reset
 	.globl FACADE_CODE_START,FACADE_CODE_END
 	.globl irq_register,irq_unregister,irq_program_exit
+	.globl zephyr_sysinfo,IOC_DIAG_STATUS,BIOS_CODE_START
 
 FACADE_FORCE_STAGE	= 1
 
@@ -70,6 +72,7 @@ ZEXT_FIRST		= 200
 ZEXT_REGISTER_ISR	= 200
 ZEXT_UNREGISTER_ISR	= 201
 ZEXT_PROGRAM_EXIT	= 202
+ZEXT_SYSINFO		= 203
 ZEXT_BIOS_EXT_FIRST	= 210
 ZEXT_BIOS_EXT_COUNT	= 8
 ZEXT_LIMIT		= 240
@@ -148,7 +151,7 @@ fac_flags_none:
 
 ; ---------------------------------------------------------------------------
 ; fac_visible: Z if HL..HL+BC-1 lies wholly in 0000h-1FFFh or wholly in
-; C000h-FFFFh, so ZSDOS can use it in place; NZ if it touches the OS body.
+; E000h-FFFFh, so ZSDOS can use it in place; NZ if it touches the OS body.
 ; Forced staging answers NZ for every range.  fac_visible_nf never forces.
 ; Preserves BC, DE, HL.
 ; ---------------------------------------------------------------------------
@@ -160,7 +163,7 @@ fac_visible:
 fac_visible_nf:
 	push hl
 	ld a,h
-	cp #0xc0
+	cp #0xe0
 	jr nc,fac_visible_high
 	add hl,bc			; exclusive end
 	ld a,h
@@ -367,7 +370,7 @@ fac_pointer_copy:
 	ld a,h
 	cp #0x20
 	jr c,fac_pointer_done		; already visible to the program
-	cp #0xc0
+	cp #0xe0
 	jr nc,fac_pointer_done
 	ld de,(fac_copy_dst)
 	ld bc,(fac_copy_len)
@@ -471,17 +474,26 @@ fac_zext:
 	cp #ZEXT_REGISTER_ISR
 	jr nz,fac_zext_unregister
 	call irq_register
-	jr fac_zext_return
+	jp fac_zext_return
 fac_zext_unregister:
 	cp #ZEXT_UNREGISTER_ISR
 	jr nz,fac_zext_exit
 	call irq_unregister
-	jr fac_zext_return
+	jp fac_zext_return
 fac_zext_exit:
 	cp #ZEXT_PROGRAM_EXIT
-	jr nz,fac_zext_bios
+	jr nz,fac_zext_sysinfo
 	call irq_program_exit
-	jr fac_zext_return
+	jp fac_zext_return
+fac_zext_sysinfo:
+	cp #ZEXT_SYSINFO
+	jr nz,fac_zext_bios
+	ld hl,#zephyr_sysinfo
+	ld a,l
+	ld b,h
+	ld de,(fac_de)
+	ld sp,(fac_caller_sp)
+	ret
 fac_zext_bios:
 	sub #ZEXT_BIOS_EXT_FIRST
 	jr c,fac_zext_bad
@@ -519,7 +531,7 @@ fac_zext_bios:
 	ld bc,#REGBLK_BYTES
 	ldir
 	ld a,(FAC_REGBLK)
-	jr fac_zext_return
+	jp fac_zext_return
 fac_zext_jump:
 	push hl
 	ld hl,(fac_zext_target)
@@ -595,6 +607,24 @@ fac_flags_end:
 	.endif
 
 ; ---------------------------------------------------------------------------
+; Zephyr BDOS function 203: where a program finds what used to be published at
+; fixed addresses.  Layout: ZSYSINFO_OFF_* in cbios_defs.inc; the CP/M tools'
+; copy is ../Utilities/src/zbdos.inc.
+; ---------------------------------------------------------------------------
+zephyr_sysinfo:
+	.db ZSYSINFO_VERSION
+	.db ZBIOS_XPORT_LEVEL
+	.dw IOC_DIAG_STATUS
+	.dw SERCON_FLAGS
+	.dw BIOS_CODE_START
+	.dw ZBIOS_EXT_BASE
+zephyr_sysinfo_end:
+
+	.ifne (zephyr_sysinfo_end - zephyr_sysinfo) - (ZSYSINFO_OFF_EXT + 2)
+	.error 1			; the block and ZSYSINFO_OFF_* disagree
+	.endif
+
+; ---------------------------------------------------------------------------
 ; State.  RAM at run time: the cold-boot shadow copy puts this image in SRAM.
 ; ---------------------------------------------------------------------------
 fac_caller_sp:		.dw 0
@@ -617,6 +647,6 @@ fac_zext_target:	.dw 0
 
 FACADE_CODE_END:
 
-	.ifgt (FACADE_CODE_END - FACADE_CODE_START) - (FACADE_DATA_BASE - CBIOS_FACADE_BASE)
-	.error 1			; facade code runs into its staging buffers
+	.ifgt (FACADE_CODE_END - FACADE_CODE_START) - (FACADE_CODE_LIMIT - CBIOS_FACADE_BASE)
+	.error 1			; facade code runs into the BIOS
 	.endif

@@ -4,12 +4,9 @@
 ; therefore uses the BIOS jump table instead of initializing or polling console
 ; hardware directly.
 
-; CP/M-style BIOS jump table. Keep these symbol names short and unique because
-; ASxxxx only treats the leading characters as significant in some modes.
-BBASE			= 0xda00
-BCNST			= BBASE + 0x06
-BCIN			= BBASE + 0x09
-BCOUT			= BBASE + 0x0c
-BXMOVE			= BBASE + 0x36
-BMOVE			= BBASE + 0x33
-BLAUNCH			= BBASE + 0x3f
+; CP/M BIOS jump table entries, as offsets.  The banked OS publishes no fixed
+; addresses: bios_console (sio_console.inc) finds the table through page zero's
+; warm-boot vector.  Bank moves use Zephyr BDOS functions (zbdos.inc).
+BIOS_CONST_OFFSET	= 0x06
+BIOS_CONIN_OFFSET	= 0x09
+BIOS_CONOUT_OFFSET	= 0x0c

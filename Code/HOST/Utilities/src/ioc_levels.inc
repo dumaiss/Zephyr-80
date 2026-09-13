@@ -15,7 +15,7 @@
 
 IOC_FW_LEVEL		= 70		; 46h — controller firmware expected
 ZBIOS_XPORT_LEVEL	= 0x08		; BIOS transport level expected
-ZBIOS_XPORT_LEVEL_ADDR	= 0xDF7A	; one byte below IOCALL, readable from ROM
+; The running BIOS's level: call zb_xport_level (zbdos.inc).
 
 ; Printable forms.  The assembler cannot format a number into .ascii, so the
 ; digits live beside the value they describe: changing the level means editing
