@@ -8,7 +8,7 @@
 	.globl init_page_zero
 	.globl prepare_runnable_bank
 	.globl restore_ccp_from_rom
-	.globl console_backend_restore_font_from_rom
+	.globl facade_reset,irq_reset,bank7_check
 	.globl runtime_set_default_dma
 	.globl runtime_clear_default_dma
 	.globl console_init
@@ -43,9 +43,19 @@ boot:
 	di
 	ld sp,#CBIOS_STACK_TOP
 	call select_ram_bank0
+	; The rest of boot runs in mode 11: the drivers it initialises are in bank
+	; 7, and everything boot itself touches -- this code, its stack, page zero
+	; in the caller window -- is visible there too.
+	ld a,#OS_EXEC_LATCH
+	out (BANK_PORT),a
 	call ctc_disable_interrupts
+	call irq_reset
 	call sound_silence_psgs
 	call sio_core_init
+
+	; Nothing in bank 7 may be called until it is known to hold this build's
+	; image.  The check reports over SIO0/B, which is common, and halts.
+	call bank7_check
 
 	; SIO1/A is a cold-init device.  WBOOT must not repeat this call: its
 	; channel reset would destroy the persistent Bulk character boundary while
@@ -72,12 +82,16 @@ boot:
 	.endif
 	call boot_print_banner
 	call prepare_runnable_bank
+	call facade_reset
 	xor a
 	ld (IOBYTE),a
 	ld (TDRIVE),a
 	ld (DMA_BANK), a
 	call sio_core_enable_interrupts
-	
+
+	; Back to application execution for the CCP.
+	ld a,#RAM_ONLY_BANK0
+	out (BANK_PORT),a
 	ld sp,#APP_STACK_TOP
 	ld hl,#WBOOT
 	push hl
@@ -116,26 +130,31 @@ WBOOT_RESIDENT_START:
 wboot_resident:
 	di
 
-	; No stack or helper calls before bank 0 is selected.
-	ld a,#RAM_ONLY_BANK0
+	; No stack or helper calls before the latch is set.  Mode 11 with bank 0:
+	; the caller window is bank 0's page zero, bank 7 holds the drivers this
+	; path reinitialises, and common memory holds this code and its stack.
+	ld a,#OS_EXEC_LATCH
 	out (BANK_PORT),a
 	xor a
 	ld (CURRENT_BANK),a
 	ld (DMA_BANK), a
 
-	; Protected stack handoff happens immediately after bank 0 selection.
+	; Protected stack handoff happens immediately after the latch is set.
 	ld sp,#CBIOS_STACK_TOP
 	call ctc_disable_interrupts
+	; Interrupt callbacks belonged to the program that just ended (plan F5).
+	call irq_reset
 	call sound_silence_psgs
 	; Rebuild the console only.  SIO1/A deliberately retains its receiver state
 	; and persistent External-Sync character boundary across CP/M warm boots.
 	call sio_core_init
-	call console_backend_restore_font_from_rom
 	call restore_ccp_from_rom
 	call prepare_runnable_bank
-	; Keep console initialization after all bank-sensitive CCP/page-zero
-	; restoration. The VDrip backend may temporarily enable SIO RX for its READY
-	; handshake; the direct V9958 backend performs only physical VDP/HID setup.
+	call facade_reset
+	; The font is in bank 7, where no program can overwrite it, so console
+	; initialisation needs no restore from ROM first.  The VDrip backend may
+	; temporarily enable SIO RX for its READY handshake; the direct V9958
+	; backend performs only physical VDP/HID setup.
 	call console_init
 	.ifeq VDRIP_TRANSPORT_LINKED
 	; Rebind the serial console.  console_init() just reset CONSOLE_DRIVER to
@@ -145,6 +164,10 @@ wboot_resident:
 	call sercon_install
 	.endif
 	call sio_core_enable_interrupts
+
+	; Back to application execution for the CCP.
+	ld a,#RAM_ONLY_BANK0
+	out (BANK_PORT),a
 	ld a,(TDRIVE)
 	ld c,a
 	jp CCP_CLEARBUF_ENTRY
@@ -173,9 +196,8 @@ restore_ccp_from_rom:
 	ld bc,#FBASE-CBASE
 	ldir
 
-	; Leave shadow/copy mode and record the selected bank accurately. The RAM
-	; disk lives in banks 2-7; CCP restore must not select or alter those banks.
-	ld a,#RAM_ONLY_BANK0
+	; Back to mode 11, where WBOOT runs, and record the selected bank.
+	ld a,#OS_EXEC_LATCH
 	out (BANK_PORT),a
 	xor a
 	ld (CURRENT_BANK),a

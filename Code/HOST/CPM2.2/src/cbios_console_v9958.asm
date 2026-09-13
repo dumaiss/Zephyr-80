@@ -42,10 +42,9 @@
 	.globl v9958_console_conin,v9958_console_conout
 	.globl v9958_reset_display,v9958_data_write_block
 	.globl hid_input_init,hid_input_status,hid_input_get
-	.globl restore_font_from_rom
 	.globl V9958_CONSOLE_CODE_START,V9958_CONSOLE_CODE_END
 	.globl console_backend_driver,console_backend_cold_init,console_backend_init
-	.globl console_backend_restore_font_from_rom,console_backend_send_frame
+	.globl console_backend_send_frame
 	.globl console_backend_data_write_block,console_backend_reset_display
 
 ; ===========================================================================
@@ -2457,36 +2456,6 @@ v9958_cursor_store_y:
 	ld b,#0x08
 	jp v9958_write_vram_small
 
-; ---------------------------------------------------------------------------
-; restore_font_from_rom
-;
-; Called from wboot_resident (cbios_boot.asm) before console_init to refresh
-; the font data at CONSOLE_FONT_ROM_BASE (0x8000) in SRAM bank 0 from ROM.
-; Transient programs may have overwritten the TPA area containing the font.
-;
-; Uses COPY_LATCH0 (= SHADOW_BIT): reads come from ROM bank 0 low area,
-; writes go to SRAM bank 0. This is the same technique used by the shadow
-; copy and restore_ccp_from_rom for their respective ROM regions.
-;
-; Inputs:  None.
-; Outputs: SRAM bank 0 [CONSOLE_FONT_ROM_BASE .. +FONT_BYTES-1] refreshed.
-; Clobbers: AF, BC, DE, HL.
-; Interrupts: Safe to call with interrupts disabled (wboot context); matches
-;   the convention of restore_ccp_from_rom which is called without di/ei.
-; Virtual Drip traffic: None.
-; ---------------------------------------------------------------------------
-
-console_backend_restore_font_from_rom:
-restore_font_from_rom:
-	ld a,#COPY_LATCH0		; ROM bank 0 low area visible, writes to SRAM
-	out (BANK_PORT),a
-	ld hl,#CONSOLE_FONT_ROM_BASE	; ROM bank 0 source (0x8000)
-	ld de,#CONSOLE_FONT_ROM_BASE	; SRAM bank 0 destination (0x8000)
-	ld bc,#FONT_BYTES
-	ldir
-	ld a,#RAM_ONLY_BANK0
-	out (BANK_PORT),a
-	ret
 
 
 ; Write a caller-sized block at the raw VIDEO_SEND-selected VDP address.
@@ -2763,62 +2732,17 @@ il_dl_shift:
 esc_press_count:
 	.db 0x00
 
-; ---------------------------------------------------------------------------
-; ccp_read_up_sequence — recognize the remainder of the CCP cursor-up key.
-;
-; The first ESC byte has already been consumed by BDOS RDBUFF. The keyboard
-; transports deliver cursor-up as ESC [ A, so consume the remaining two bytes
-; and return Z only for that exact sequence. This is called only for the CCP;
-; normal BIOS CONIN continues to return raw terminal bytes.
-; Recall is accepted only on an empty line (B=0): there is no prefix match or
-; history cycling.
-;
-; Inputs: none.
-; Outputs: A/B = saved history length and NZ for recall; A=0/Z otherwise.
-;          BC is preserved when recall is rejected; C remains the line limit
-;          when recall succeeds.
-; Clobbers: AF, DE, HL. The caller preserves HL around this routine.
-; May block for the two bytes completing an ESC sequence.
-; Video traffic: none. Not ISR-safe.
-; ---------------------------------------------------------------------------
-ccp_read_up_sequence:
-	ld d,c
-	ld e,b
-	call GETCHAR
-	and #0x7f
-	cp #'['
-	jr nz,ccp_up_not_recalled
-	call GETCHAR
-	and #0x7f
-	cp #'A'
-	jr nz,ccp_up_not_recalled
-	ld a,e
-	or a
-	jr nz,ccp_up_not_recalled
-	ld a,(NBYTES)
-	ld b,a
-	ld c,d
-	or a
-	ret
-
-ccp_up_not_recalled:
-	ld b,e
-	ld c,d
-	xor a
-	ret
 
 
 V9958_CONSOLE_CODE_END:
 
 ; ---------------------------------------------------------------------------
-; Font data — bank 0 TPA, CONSOLE_FONT_ROM_BASE (0x8000).
+; Font data -- bank 7, CONSOLE_FONT_ROM_BASE (8000h).
 ;
 ; Placed in a separate absolute area so the driver CODE area ends cleanly at
-; V9958_CONSOLE_CODE_END. The 256-glyph CP850 font lands in the bank 0
-; firmware image at 0x8000. The boot shadow copy transfers it to SRAM bank 0.
-; restore_font_from_rom refreshes it from ROM using COPY_LATCH0 at warm boot.
-; Programs may overwrite this TPA address after init; the warm-boot restore
-; always refreshes it before the G6 atlas upload is performed.
+; V9958_CONSOLE_CODE_END.  8000h is in the OS body, so the 256-glyph CP850 font
+; is part of the bank 7 image the cold-boot shadow copy loads, and no program
+; can overwrite it.  v9958_upload_font_atlas reads it there, in mode 11.
 ; ---------------------------------------------------------------------------
 
 	.area FONT_DATA (ABS)

@@ -799,15 +799,46 @@ Work:
    - **Unchanged because not linked:** the RAM-disk and VDrip storage backends.
 5. **Done.** `SELMEM`, `SETBNK` and `XMOVE` refuse bank 7 with `A = FFh` and return `A = 00h` on success. A refused `XMOVE` leaves an earlier one armed.
    - Validation is `XING.COM` (`../Utilities/src/xing.asm`), which passes on hardware along with boot, drives A-C, SC2, TM2, SDDIR and SERCON: bank-7 refusal; `SELMEM` and `MOVE` in both modes; drive A and B reads in mode 11 matching mode 10; and the drive A read preserving interrupts off and on.
-6. Link ZSDOS in bank 7 within `2000h-BFFFh`, BIOS jump table directly after it. Replace `RST 0` (F1); grow the ZSDOS stack in place, keeping `IXSAVE` directly below `ZSDOSS` (F2); derive the `CCPBUF` range.
-7. BIOS and drivers into bank 7. The interrupt path goes in common: the full vector page, the SIO handler, the CTC dispatcher and the registration slots, with `CBIOS_IM2_VECTOR_PAGE` regenerated, every ISR switching to the common ISR stack (F2), and `EI` before every `RETI` (F9).
-8. BDOS facade: marshalling table, forced-staging build, DMA tracking (F10), non-reentrancy (F8), and the debug assertion that `I` is the BIOS page (F9).
-9. Common BIOS table with boot and console live and the disk entries inert (F6); generate ZCPR2's `BIOS EQU`; call the program-exit extension after `CALL TPA` (F5).
-10. Zephyr extension range and registers, including the bank primitives and ISR registration; retrofit section 10's callers; bulk path (F4).
-11. `WBOOT` (F5).
-12. Functions 27 and 31 return common copies, and the disk structures move into bank 7 (F7).
-13. Drop `DU2` from `tools/build_rom_disk.py`; drop or rewrite any other third-party tool that fails validation.
-14. Software validation (section 27).
+6. **Done.** ZSDOS is linked at `2000h` in bank 7 (`zsdos/build-zsdos.sh`: `ORG` `2000h`, `SIZE` `1000h`) and calls its BIOS as `ZSDOS+1000H`, where the firmware assembles ZSDOS's BIOS table. The table used to be at `+0E00H`; the grown stack moved it up, and the `0DF1H`/`0DF9H` size checks and internal-path `ORG`s moved with it.
+   - The live `RST 0` (in `ERROR5`) and the one in the unassembled ROM path are both `JP WBTRAP` (F1). `tools/gen_zsdos_bios.py` generates `WBTRAP` from the map.
+   - The stack grew in place by 192 bytes between `SPSAVE` and the copyright text, so `IXSAVE` is still the two bytes directly below `ZSDOSS` (F2).
+   - **Deviation:** `CCPBUF` keeps its `0C4H`/`0CCH` literals, which stay correct while the CCP is at `C400h`. Derive the range when Phase 2 moves `CBASE`.
+7. **Done.** The BIOS and drivers are in bank 7 (see "Banked OS layout" in `src/cbios_defs.inc`):
+   - console dispatch, the V9958 console and its font, HID input, the IOC transport, `VIDEO_SEND`
+   - the storage stubs, the SD and ROM-disk backends, and every DPH, DPB and allocation vector, plus the directory buffer
+
+   How it is built and what stayed common:
+   - **One assembly, two outputs.** `tools/split_banked_image.py` cuts the link into ROM page 0 and a bank 7 payload in ROM page 7, which the existing cold-boot copy loads. The ROM image is 512 KiB.
+   - **Common interrupt path.** The SIO core and serial console stay common. So do the IM2 page at `FD00h` (CTC `00h`-`06h`, SIO `10h`-`1Eh`, every other entry `EI`/`RETI`), the CTC dispatcher and registration slots (`src/cbios_irq.asm`) and the ISR stack. Every handler switches stacks first and ends `EI`/`RETI`.
+   - **Drive A:** its shadow/copy window runs from common memory (`xing_rom_copy_record`). The destination bank comes from the DMA address as mode 11 sees it. SD record copies need no bank selection.
+   - **Stock CP/M removed.** `cpm22.asm`'s CCP and BDOS are no longer assembled. `ccp_clear_redraw` and `ccp_read_up_sequence`, which served only the stock BDOS, are gone, and warm boot no longer restores the font from ROM.
+   - **Boot check.** Boot checks a signature in bank 7 (`bank7_check`) before calling into it, and reports over SIO0/B if the signature is missing.
+   - **Deviation:** the BIOS private stacks, `MOVE_BUFFER` and the runtime state stay in common memory through Phase 1. Phase 2 moves what it must.
+   - **Deviation:** `docs/memory-map.md` and `docs/symbol-map.md` are no longer regenerated, because `tools/generate_memory_docs.py` validates the fixed-slot layout. Until the tool is rewritten, `check_overlap.py` and the assembler region checks guard the layout.
+8. **Done.** BDOS facade, `src/cbios_facade.asm`, at `CC00h` (`FBASE` `CC06h`):
+   - per-function argument flags for functions 0-48 and 98-103
+   - staging buffers at `D400h-D9FFh`
+   - DMA tracking that follows function 13 (F10); ZSDOS's DMA is set lazily, on the next call that uses it
+   - single-slot, non-reentrant state (F8)
+   - the interrupt state left alone (F9)
+   - functions 27 and 31 copying into common memory (F7)
+
+   The build forces staging (`FACADE_FORCE_STAGE = 1`), except for function 10: ZSDOS tells the CCP's own line input apart by the buffer's address.
+   - **Deviation:** no debug assertion on `I` yet.
+9. **Done.** The common table at `DA00h` has boot and console live, and the disk and auxiliary entries inert (F6). ZCPR2 calls function 202 after `CALL TPA` (F5).
+   - **Deviation:** ZCPR2's `BIOS EQU` stays a literal, because the table did not move in Phase 1. Generate it when Phase 2 moves the table.
+10. **Done.** Zephyr BDOS functions:
+    - 200 `REGISTER_ISR`: `B` = CTC channel, `DE` = callback in `E000h-E3FFh`
+    - 201 `UNREGISTER_ISR`: `B` = CTC channel
+    - 202 `PROGRAM_EXIT`
+    - 210-217: the eight extended entries, called through a seven-byte register block at `DE` (`A`, `C`, `B`, `E`, `D`, `L`, `H`)
+
+    Bulk transfers are staged through a 512-byte common buffer, so no transfer crosses the mapping (F4).
+    - **Deviation:** the fixed extended table at `DA33h` stays live as staging gates, so this tree's utilities work unchanged. They are retrofitted to functions 210-217 when Phase 2 moves the table.
+11. **Done.** `WBOOT` runs in mode 11 on bank 0. It resets the CTC and its vector, clears registrations and restores the CCP through a mode-00 window, then returns to mode 10 for the CCP (F5). Bank 7 is not reinstalled on warm boot.
+12. **Done**, as part of steps 7 and 8.
+13. **Done.** `DU2` is dropped from A:. The other third-party tools are checked in step 14.
+14. **Done.** On hardware: cold and warm boot, `DIR` on A:-C:, `^R`/`^L`, `SYSID`, `BANKOS.COM` from B: (PASS), SD utilities, SC2, a TM2 build, WordStar, PIP, STAT, SERCON and `MAP11` all pass. `BANKOS.COM` (`../Utilities/src/bankos.asm`) automates section 27's tests 3, 5 and 6, and the file I/O part of test 8. The rest, including the third-party tools, is run by hand.
 
 At the end of Phase 1 the OS is out of the application's body.
 

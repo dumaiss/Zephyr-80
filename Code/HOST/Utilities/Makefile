@@ -46,9 +46,10 @@ NORMAL += sysid
 # Phase 1 banked-OS bring-up: proves the mode 11 decoder map (MEM_DECODER
 # rev 10).  Non-destructive to CP/M state; exits by warm boot.
 NORMAL += map11
-# Phase 1 steps 3-5: bank-7 refusal, mode-11 bank selects and disk reads.
-# Selects drives behind ZSDOS; exits by warm boot.
-NORMAL += xing
+# Banked OS Phase 1 software validation: facade staging, IX, interrupt
+# registration.  xing.asm (steps 3-5) is kept as a record but not built: it
+# calls the direct disk BIOS, which is inert now the OS is in bank 7.
+NORMAL += bankos
 
 # --- diagnostic profile ------------------------------------------------------
 # DESTRUCTIVE: these write to whatever card is inserted.

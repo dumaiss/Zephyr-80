@@ -256,12 +256,16 @@ BANKING_STATE_END:
 
 ; Reset all Z80 CTC channels with interrupt enable clear.  Relocated from
 ; cbios_boot.asm to free three bytes there for the IOCALL link bring-up call.
+; Channel 0's port also takes the CTC's IM2 vector base, a byte with D0 clear.
+; The BIOS owns it: channels 0-3 vector to entries 00h-06h of its page.
 ctc_disable_interrupts:
 	ld a,#CTC_RESET_DISABLE
 	out (CTC0_CTRL),a
 	out (CTC1_CTRL),a
 	out (CTC2_CTRL),a
 	out (CTC3_CTRL),a
+	ld a,#CTC_VECTOR_BASE
+	out (CTC0_CTRL),a
 	ret
 
 	.area CODE (ABS)

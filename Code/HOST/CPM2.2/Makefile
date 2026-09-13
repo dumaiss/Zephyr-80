@@ -79,6 +79,9 @@ RUNTIME_SRCS ?= \
 	$(SRC_DIR)/cbios_console.asm \
 	$(SRC_DIR)/sio_core.asm \
 	$(SRC_DIR)/cbios_xing.asm \
+	$(SRC_DIR)/cbios_gate.asm \
+	$(SRC_DIR)/cbios_irq.asm \
+	$(SRC_DIR)/cbios_facade.asm \
 	$(VDRIP_TRANSPORT_SRC) \
 	$(SRC_DIR)/cbios_bios_ext.asm \
 	$(SRC_DIR)/cbios_iocall.asm \
@@ -100,6 +103,9 @@ FIRMWARE_REL ?= $(BUILD_DIR)/firmware.rel
 FIRMWARE_IHX ?= $(BUILD_DIR)/firmware.ihx
 FIRMWARE_LST ?= $(BUILD_DIR)/firmware.lst
 FIRMWARE_SYM ?= $(BUILD_DIR)/firmware.sym
+# The linked address space before it is cut into ROM page 0 and bank 7.
+FIRMWARE_FLAT ?= $(BUILD_DIR)/firmware_flat.bin
+BANK7_BIN ?= $(BUILD_DIR)/bank7.bin
 
 FINAL_IMAGE ?= $(BUILD_DIR)/zephyr80.bin
 LAYOUT_MANIFEST ?= $(BUILD_DIR)/layout.manifest
@@ -158,12 +164,13 @@ ROM_DISK_INPUTS := $(wildcard $(UTILITIES_BUILD)/*.com) \
 	$(wildcard $(MONITOR_BUILD)/zephyr80_monitor.bin) \
 	$(wildcard $(SOFTWARE_DIR)/disk1/0/*) $(wildcard $(SOFTWARE_DIR)/disk1/1/*)
 
-ifeq ($(STORAGE_A),rom)
+# Bank 7, the OS image, is a payload in every build; the ROM disk chunks only
+# when drive A: is the ROM disk.
 PAYLOAD_ARGS := --payload-config "$(PAYLOAD_CONFIG)"
-IMAGE_PREREQS := $(ROM_DISK_CHUNKS)
+ifeq ($(STORAGE_A),rom)
+IMAGE_PREREQS := $(ROM_DISK_CHUNKS) $(BANK7_BIN)
 else
-PAYLOAD_ARGS :=
-IMAGE_PREREQS :=
+IMAGE_PREREQS := $(BANK7_BIN)
 endif
 CPM22_CONVERT_TOOL := $(TOOLS_DIR)/convert_cpm22_asxxxx.py
 MEMORY_DOC_TOOL := $(TOOLS_DIR)/generate_memory_docs.py
@@ -187,7 +194,7 @@ all: image
 CPM_CONFIG = $(CCP)-$(BDOS)
 STAMPED_IMAGE = $(BUILD_DIR)/zephyr80-$(CPM_CONFIG).bin
 
-image: $(FINAL_IMAGE) docs
+image: $(FINAL_IMAGE)
 	@cp "$(FINAL_IMAGE)" "$(STAMPED_IMAGE)"
 	@echo ""
 	@echo "  ROM built:  CCP=$(CCP)  BDOS=$(BDOS)"
@@ -196,27 +203,22 @@ image: $(FINAL_IMAGE) docs
 	@echo ""
 
 
-docs: $(FINAL_IMAGE) $(FIRMWARE_LST) $(SYMBOLS_FILE) $(LAYOUT_MANIFEST) $(MEMORY_DOC_TOOL)
-	$(PYTHON) $(MEMORY_DOC_TOOL) \
-		--listing "$(FIRMWARE_LST)" \
-		--map "$(SYMBOLS_FILE)" \
-		--manifest "$(LAYOUT_MANIFEST)" \
-		--firmware-bin "$(FIRMWARE_BIN)" \
-		--final-image "$(FINAL_IMAGE)" \
-		--symbol-map "$(SYMBOL_MAP_DOC)" \
-		--memory-map "$(MEMORY_MAP_DOC)"
+# docs/memory-map.md and docs/symbol-map.md describe the fixed-slot common BIOS
+# the banked OS replaced, and generate_memory_docs.py validates that layout, so
+# it is not run.  Both come back from a rewritten tool once Phase 2 settles the
+# layout; until then check_overlap.py and the assembler's region checks guard it.
+docs:
+	@echo "memory docs describe the pre-banked layout and are not regenerated (see Makefile)"
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 check-inputs: $(BUILD_DIR) $(FIRMWARE_BIN) $(SYMBOLS_FILE)
-	@test -f "$(CPM22_SRC)" || { echo "Missing CP/M source input: $(CPM22_SRC)"; exit 1; }
 	@test -f "$(FIRMWARE_BIN)" || { echo "Missing firmware image: $(FIRMWARE_BIN)"; exit 1; }
 	@test -f "$(SYMBOLS_FILE)" || { echo "Missing firmware symbol map: $(SYMBOLS_FILE)"; exit 1; }
 	@test -f "$(CPMTOOLS_DISKDEF)" || { echo "Missing cpmtools disk definition: $(CPMTOOLS_DISKDEF)"; exit 1; }
 	@test -f "$(SRC_DIR)/cbios_defs.inc" || { echo "Missing CBIOS definitions: $(SRC_DIR)/cbios_defs.inc"; exit 1; }
 	@test -f "$(IMAGE_TOOL)" || { echo "Missing image tool: $(IMAGE_TOOL)"; exit 1; }
-	@test -f "$(CPM22_CONVERT_TOOL)" || { echo "Missing CP/M conversion tool: $(CPM22_CONVERT_TOOL)"; exit 1; }
 	@test -f "$(MEMORY_DOC_TOOL)" || { echo "Missing memory documentation tool: $(MEMORY_DOC_TOOL)"; exit 1; }
 
 runtime-sources-check:
@@ -227,20 +229,15 @@ runtime-sources-check:
 $(CPM22_ASXXXX_SRC): $(CPM22_SRC) $(CPM22_CONVERT_TOOL) | $(BUILD_DIR)
 	$(PYTHON) $(CPM22_CONVERT_TOOL) "$<" "$@"
 
-$(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm $(CPM22_ASXXXX_SRC) Makefile FORCE | $(BUILD_DIR)
+$(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm Makefile FORCE | $(BUILD_DIR)
 	sed \
-		-e 's|\.include "../$(CPM22_SRC)"|.include "cpm22_asxxxx.asm"|' \
 		-e 's|\.include "vdrip_transport.asm"|$(VDRIP_TRANSPORT_INCLUDE)|' \
 		-e 's|^VDRIP_TRANSPORT_LINKED = 1$$|VDRIP_TRANSPORT_LINKED = $(VDRIP_TRANSPORT_LINKED)|' \
 		-e 's|\.include "cbios_console_vdrip.asm"|.include "cbios_console_$(CONSOLE).asm"|' \
 		-e 's|\.include "cbios_storage_vdrip.asm"|.include "cbios_storage_$(STORAGE_A).asm"|' \
 		"$<" > "$@"
-	@grep -q 'cpm22_asxxxx\.asm' "$@" || { \
-		echo "The CP/M include rewrite matched nothing in $@."; \
-		echo "CPM22_SRC ($(CPM22_SRC)) and the .include in $(SRC_DIR)/zephyr.asm have drifted apart."; \
-		exit 1; }
 
-$(FIRMWARE_REL): $(FIRMWARE_SRC) $(RUNTIME_SRCS) $(CPM22_ASXXXX_SRC) $(CPM22_SRC) | $(BUILD_DIR)
+$(FIRMWARE_REL): $(FIRMWARE_SRC) $(RUNTIME_SRCS) | $(BUILD_DIR)
 	$(SDASZ80) -I$(SRC_DIR) -I$(BUILD_DIR) $(ASFLAGS) $@ $(FIRMWARE_SRC)
 
 $(FIRMWARE_IHX): $(FIRMWARE_REL)
@@ -249,21 +246,20 @@ $(FIRMWARE_IHX): $(FIRMWARE_REL)
 	$(PYTHON) $(TOOLS_DIR)/check_diag_record.py \
 		--defs "$(SRC_DIR)/cbios_defs.inc" --mirror "$(DIAG_RECORD_MIRROR)"
 
-# Which command processor and BDOS the ROM carries.
+# The command processor and BDOS.  The banked OS is built around ZSDOS in bank 7
+# behind the BDOS facade, and ZCPR2, whose program-exit call the interrupt
+# registrations rely on; the stock CP/M CCP and BDOS are not assembled.
 #
-#   CCP  = stock | zcpr2    C400h-CBFFh
-#   BDOS = stock | zsdos    CC00h-D9FFh
+#   CCP  = zcpr2    C400h-CBFFh, common memory
+#   BDOS = zsdos    2000h-2FFFh, bank 7
 #
-# Both are assembled into the firmware image like everything else, so selecting
-# one is a byte replacement at a fixed address rather than a link change.  The
-# two are independent: ZSDOS runs under the stock CCP and ZCPR2 runs over the
-# stock BDOS.
-#
-# Neither is built by a plain `make`: both need a CP/M emulator to run their
-# period assemblers, so they are explicit targets.  `make CCP=zcpr2` fails with
-# a clear message if `make zcpr2` has not been run.
-CCP  ?= stock
-BDOS ?= stock
+# Both need a CP/M emulator to run their period assemblers; the vendored RunCPM
+# below is built for them.
+CCP  ?= zcpr2
+BDOS ?= zsdos
+ifneq ($(CCP)-$(BDOS),zcpr2-zsdos)
+$(error The banked OS needs CCP=zcpr2 BDOS=zsdos; the stock CP/M CCP and BDOS are no longer supported)
+endif
 
 CBASE_ADDR ?= 0xC400
 ZCPR2_BIN  ?= $(BUILD_DIR)/ccp-zcpr2.bin
@@ -302,35 +298,27 @@ zsdos: $(ZSDOS_BIN)
 $(ZCPR2_BIN): $(ZCPR2_SRCS) $(RUNCPM_BIN) | $(BUILD_DIR)
 	RUNCPM="$(RUNCPM)" ./zcpr2/build-zcpr2.sh $(BUILD_DIR)/zcpr2-build $@
 
-# Depends on the symbol map: ZSDOS calls two BIOS helpers by absolute address,
-# and both move when the BIOS is rebuilt.  The addresses are generated, never
-# written down -- a stale one would assemble cleanly and jump into the middle of
-# something at run time.
+# Depends on the symbol map: ZSDOS jumps to WBTRAP, the common warm-boot trap,
+# by absolute address, and it moves when the BIOS is rebuilt.  The address is
+# generated, never written down -- a stale one would assemble cleanly and jump
+# into the middle of something at run time.
 $(ZSDOS_BIN): $(ZSDOS_SRCS) $(SYMBOLS_FILE) $(TOOLS_DIR)/gen_zsdos_bios.py $(RUNCPM_BIN) | $(BUILD_DIR)
 	RUNCPM="$(RUNCPM)" ./zsdos/build-zsdos.sh $(BUILD_DIR)/zsdos-build $@ $(SYMBOLS_FILE)
 
-CPM_PATCH_ARGS :=
-CPM_PATCH_DEPS :=
-ifeq ($(CCP),zcpr2)
-CPM_PATCH_ARGS += --ccp $(ZCPR2_BIN)
-CPM_PATCH_DEPS += $(ZCPR2_BIN)
-endif
-ifeq ($(BDOS),zsdos)
-CPM_PATCH_ARGS += --bdos $(ZSDOS_BIN)
-CPM_PATCH_DEPS += $(ZSDOS_BIN)
-endif
+# One assembly, two outputs: the linked address space is cut into ROM page 0
+# (common memory and the reset vector) and the bank 7 payload (2000h-BFFFh), with
+# ZCPR2 installed at CBASE and ZSDOS at ZSDOS_ORG.
+SPLIT_TOOL := $(TOOLS_DIR)/split_banked_image.py
 
-$(FIRMWARE_BIN): $(CPM_PATCH_DEPS)
+$(FIRMWARE_BIN): $(FIRMWARE_IHX) $(ZCPR2_BIN) $(ZSDOS_BIN) $(SPLIT_TOOL) $(SRC_DIR)/cbios_defs.inc $(SRC_DIR)/zephyr.asm
+	$(MAKEBIN) $(MAKEBIN_FLAGS) $< $(FIRMWARE_FLAT)
+	$(PYTHON) $(SPLIT_TOOL) --flat $(FIRMWARE_FLAT) --ihx $(FIRMWARE_IHX) \
+		--defs $(SRC_DIR)/cbios_defs.inc --wrapper $(SRC_DIR)/zephyr.asm \
+		--ccp $(ZCPR2_BIN) --zsdos $(ZSDOS_BIN) \
+		--page0 $@ --bank7 $(BANK7_BIN)
 
-$(FIRMWARE_BIN): $(FIRMWARE_IHX)
-	$(MAKEBIN) $(MAKEBIN_FLAGS) $< $@
-ifneq ($(strip $(CPM_PATCH_ARGS)),)
-	@for f in $(CPM_PATCH_DEPS); do test -f "$$f" || { \
-		echo "Missing $$f -- run 'make zcpr2' / 'make zsdos' (both need RUNCPM)"; \
-		exit 1; }; done
-	$(PYTHON) $(PATCH_CPM) --firmware $@ $(CPM_PATCH_ARGS) \
-		--cbase $(CBASE_ADDR) --output $@
-endif
+# Produced by the same run as the page 0 image; no recipe of its own.
+$(BANK7_BIN): $(FIRMWARE_BIN) ;
 
 $(SYMBOLS_FILE): $(FIRMWARE_REL)
 	cp "$(FIRMWARE_SYM)" "$@"

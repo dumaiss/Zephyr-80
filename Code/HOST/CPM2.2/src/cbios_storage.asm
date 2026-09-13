@@ -30,7 +30,6 @@
 
 	.globl home,seldsk,settrk,setsec,setdma,read,write,sectran
 	.globl STORAGE_STUB_CODE_START,STORAGE_STUB_CODE_END
-	.globl CCP_QOL_CODE_START,CCP_QOL_CODE_END,ccp_clear_redraw
 	.globl cbios_dma_addr
 	.globl stg_home,stg_seldsk,stg_settrk,stg_setsec
 	.globl stg_read,stg_write,stg_sectran
@@ -76,41 +75,3 @@ setdma:
 
 STORAGE_STUB_CODE_END:
 
-; ---------------------------------------------------------------------------
-; CCP quality-of-life display helper.
-;
-; Lives in slot 3 after the transport shims (CBIOS_CCP_QOL_CODE_BASE).  It used
-; to fill the core-BIOS gap before banking, which banking now needs.  It is
-; called only by the CCP-specific BDOS input path.
-;
-; ccp_clear_redraw
-; Purpose: clear the screen and redraw the current drive/user prompt at 0,0.
-; Inputs: ACTIVE and USERNO contain the current CP/M drive and user.
-; Outputs: CURPOS and STARTING are both reset to the three-character prompt.
-; Clobbers: AF, BC. The caller preserves BC around this routine.
-; Blocking: may block in CONOUT while the display clear completes.
-; VDrip traffic: emits one clear-screen operation and three prompt characters.
-; ISR-safe: no.
-; ---------------------------------------------------------------------------
-	.area CODE (ABS)
-	.org CBIOS_CCP_QOL_CODE_BASE
-
-CCP_QOL_CODE_START:
-ccp_clear_redraw:
-	ld c,#FF
-	call CONOUT
-	ld a,(ACTIVE)
-	add a,#'A'
-	ld c,a
-	call CONOUT
-	ld a,(USERNO)
-	add a,#'0'
-	ld c,a
-	call CONOUT
-	ld c,#'>'
-	call CONOUT
-	ld a,#3
-	ld (CURPOS),a
-	ld (STARTING),a
-	ret
-CCP_QOL_CODE_END:

@@ -78,6 +78,65 @@ BIOS_ERR_BAD_REPLY              = 0x04
 ; SELMEM, SETBNK and XMOVE refuse it and return BANK_REJECTED in A.
 OS_BANK                         = 0x07
 BANK_REJECTED                   = 0xff
+
+; ------------------------------------------------------------------------------
+; Banked OS layout (Phase 1)
+; ------------------------------------------------------------------------------
+; The OS runs in SRAM bank 7, visible at 2000h-BFFFh in latch mode 11; common
+; memory is C000h-FFFFh in both RAM modes.  docs/Zephyr-80_OS_Execution_Memory_
+; Architecture.md is the plan.  Every address a utility reads directly keeps its
+; value: the CP/M and extended jump tables at DA00h and DA33h, the IOC diag
+; record at DCC0h, the transport level at DF7Ah and SERCON_FLAGS at FE78h.
+;
+; Bank 7 (tools/split_banked_image.py; loaded from ROM page 7 at cold boot):
+;   2000h  ZSDOS, ZSDOS_SIZE bytes, linked there by zsdos/build-zsdos.sh
+;   3000h  ZSDOS's BIOS jump table: ZSDOS computes its BIOS as ZSDOS+1000h
+;   3040h  console dispatch, storage stubs, VIDEO_SEND, IOC transport, HID,
+;          SD and ROM-disk backends, V9958 console; 6000h disk structures;
+;          8000h font; 8800h boot banner
+; Common:
+;   C400h  CCP (ZCPR2)
+;   CC00h  BDOS facade; D400h-D9FFh its staging buffers, gate and facade stacks
+;   DA00h  jump tables, boot, banking, SIO core, crossing layer
+;   E000h  program interrupt callbacks (PROGRAM_ISR_AREA): nothing assembled
+;   E400h  crossing gates; E800h interrupt dispatch
+;   F760h  serial console; FA80h MOVE_BUFFER; FD00h IM2 vector page
+;   FE00h  runtime state; FE80h stacks
+;
+; Region comments further down were written for the fixed-slot common BIOS and
+; still give the old common addresses and slot numbers for regions that moved;
+; the values assigned here and below are authoritative.
+
+OS_EXEC_LATCH                   = ROMDIS_BIT | SHADOW_BIT       ; mode 11, bank 0
+ZSDOS_ORG                       = 0x2000
+ZSDOS_SIZE                      = 0x1000
+ZSDOS_ENTRY                     = ZSDOS_ORG + 0x0006
+BIOS7_BASE                      = ZSDOS_ORG + ZSDOS_SIZE        ; 3000h
+
+PROGRAM_ISR_AREA                = 0xe000                        ; E000h-E3FFh
+CBIOS_GATE_CODE_BASE            = 0xe400
+CBIOS_GATE_CODE_LIMIT           = 0xe800
+CBIOS_IRQ_CODE_BASE             = 0xe800
+CBIOS_IRQ_CODE_LIMIT            = 0xeb00
+IRQ_SOURCE_COUNT                = 0x04                          ; CTC channels 0-3
+CTC_VECTOR_BASE                 = 0x00
+
+CBIOS_FACADE_BASE               = 0xcc00                        ; CBASE + 800h
+FACADE_DATA_BASE                = 0xd400
+FAC_BULK_SIZE                   = 0x0200
+FAC_BULK_BUF                    = 0xd400        ; 512: IOCBULK/IOCBULKW/VIDEO_SEND
+FAC_DMA_BUF                     = 0xd600        ; 128
+FAC_FCB_BUF                     = 0xd680        ; 36
+FAC_SFCB_BUF                    = 0xd6a4        ; 36: search-first FCB
+FAC_DPB_COPY                    = 0xd6c8        ; 16: function 31
+FAC_TIME_BUF                    = 0xd6d8        ; 6
+FAC_REGBLK                      = 0xd6e0        ; 7: Zephyr function register block
+FAC_CONBUF                      = 0xd700        ; 258: function 10
+FAC_ALV_COPY                    = 0xd810        ; 256: function 27
+GATE_TX_BUF                     = 0xd910        ; 32
+GATE_RX_BUF                     = 0xd930        ; 32
+GATE_STACK_TOP                  = 0xd9a0        ; D950h-D99Fh
+FAC_STACK_TOP                   = 0xda00        ; D9A0h-D9FFh
 CONST_NO_CHAR                   = 0x00
 CONST_HAS_CHAR                  = 0xff
 CR                              = 0x0d
@@ -389,13 +448,13 @@ SIO_COMMAND_TIMEOUT_OUTER       = 0x08
 ; MOVE_BUFFER was NOT reclaimed for this.  Despite looking idle it is live
 ; scratch for the VDrip storage backend, cbios_bank's cross-bank MOVE and the
 ; ramdisk path.
-CBIOS_IOC_COMMAND_CODE_BASE     = 0xf000
+CBIOS_IOC_COMMAND_CODE_BASE     = BIOS7_BASE + 0x0400                  ; 3400h, bank 7
 
 ; Overflow half of the unified IOC transport.  The active VDrip console image
 ; ends at ECB9h, leaving ED00h-EFFFh unused inside its reserved slot-3
 ; headroom.  IOCBULKW and the small link helpers live here so the SD backend
 ; remains contiguous and no scratch/TPA allocation is consumed.
-CBIOS_IOC_BULK_CODE_BASE        = 0xed00
+CBIOS_IOC_BULK_CODE_BASE        = BIOS7_BASE + 0x0a00                  ; 3A00h, bank 7
 
 ; ------------------------------------------------------------------------------
 ; CP/M Page Zero & Environment Setup
@@ -451,8 +510,8 @@ CBIOS_CORE_SIZE                 = CBIOS_CORE_LIMIT - CBIOS_CORE_BASE
 
 ; Existing public symbols kept.
 CBIOS_JUMP_TABLE                = CBIOS_BASE
-CBIOS_CONSOLE_CODE_BASE         = CBIOS_BASE + 0x017c      ; DB7Ch
-CBIOS_STORAGE_CODE_BASE         = CBIOS_BASE + 0x01c3      ; DBC3h
+CBIOS_CONSOLE_CODE_BASE         = BIOS7_BASE + 0x0040                  ; 3040h, bank 7
+CBIOS_STORAGE_CODE_BASE         = BIOS7_BASE + 0x0100                  ; 3100h, bank 7
 
 ; Banking is core BIOS, not a driver.
 ; Existing public symbol name kept, moved into the core BIOS region.
@@ -463,10 +522,10 @@ CBIOS_STORAGE_CODE_BASE         = CBIOS_BASE + 0x01c3      ; DBC3h
 ; SIO core base (DD10h) moves, so the IM2 vector entry is untouched.
 ;
 ; Banked OS Phase 1 steps 4-5 grew banking by the bank-7 checks and mode
-; preservation, about 36 bytes it did not have.  ccp_clear_redraw, the 38
-; bytes between the storage stubs and banking, moved to slot 3 after the
-; transport shims (CBIOS_CCP_QOL_CODE_BASE), and banking now starts where the
-; storage stubs end.
+; preservation, about 36 bytes it did not have.  It took the 38 bytes of
+; ccp_clear_redraw, which sat between the storage stubs and banking; that
+; helper served only the stock BDOS and is gone.  The console and storage stubs
+; that preceded banking are in bank 7 now.
 CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x01dd      ; DBDDh
 
 ; ------------------------------------------------------------------------------
@@ -491,7 +550,7 @@ CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x01dd      ; DBDDh
 
 CBIOS_DRIVER_SLOT_SIZE          = 0x0400
 
-CBIOS_DRIVER_SLOT0_BASE         = 0xe000
+CBIOS_DRIVER_SLOT0_BASE         = BIOS7_BASE + 0x1800                  ; 4800h, bank 7: console driver
 CBIOS_DRIVER_SLOT0_LIMIT        = CBIOS_DRIVER_SLOT0_BASE + CBIOS_DRIVER_SLOT_SIZE
 CBIOS_DRIVER_SLOT0_END          = CBIOS_DRIVER_SLOT0_LIMIT - 1
 
@@ -511,20 +570,14 @@ CBIOS_DRIVER_SLOT3_END          = CBIOS_DRIVER_SLOT3_LIMIT - 1
 ; between the console driver's code end and the Bulk lane's base at ED00h.
 ; They live here rather than beside their bodies because the Bulk region runs
 ; solid from ED00h to the EFFFh slot ceiling; this is the nearest free run.
-; 34 bytes used of 82; the CCP prompt-redraw helper takes the next 38, leaving
-; 10 of slack.  See CBIOS_XPORT_STACK_TOP for why the shims exist.
+; 34 bytes used of 82.  See CBIOS_XPORT_STACK_TOP for why the shims exist.
 ;
 ; This base is the V9958 console's code end, not a fixed boundary: it was ECA6h
 ; until the console's idle-spin delay grew the driver by eight bytes.  Growing
 ; the console again means moving this up again, and the slack is what pays for
 ; it -- check_overlap.py names this symbol when the two collide.
-CBIOS_XPORT_SHIM_CODE_BASE      = 0xecae
+CBIOS_XPORT_SHIM_CODE_BASE      = BIOS7_BASE + 0x0900                  ; 3900h, bank 7
 
-; The CCP prompt-redraw helper follows the shims.  It moved out of core BIOS to
-; give banking room (see CBIOS_BANKING_CODE_BASE).  It is a ZSDOS helper, not a
-; driver, and goes to bank 7 with ZSDOS later in Phase 1.  check_overlap.py
-; names it if the shims grow into it.
-CBIOS_CCP_QOL_CODE_BASE         = CBIOS_XPORT_SHIM_CODE_BASE + 0x0022  ; ECD0h
 
 CBIOS_DRIVER_SLOT4_BASE         = 0xf000
 CBIOS_DRIVER_SLOT4_LIMIT        = CBIOS_DRIVER_SLOT4_BASE + CBIOS_DRIVER_SLOT_SIZE
@@ -582,10 +635,10 @@ CBIOS_SD_PROBE_CODE_SIZE              = 0x30
 ; does not fit: 649 + 41 + 356 = 1046 bytes in a 1024-byte slot, and that build
 ; fails layout validation by 29 bytes.  See the STORAGE_A comment in the
 ; Makefile; it is a known, documented state, not a regression.
-CBIOS_SD_PROBE_CODE_BASE              = 0xf909
+CBIOS_SD_PROBE_CODE_BASE              = BIOS7_BASE + 0x1300            ; 4300h, bank 7
 	.else
 ; Nothing precedes it: the slot head is the slot head.
-CBIOS_SD_PROBE_CODE_BASE              = CBIOS_DRIVER_SLOT5_BASE              ; F680h
+CBIOS_SD_PROBE_CODE_BASE              = BIOS7_BASE + 0x1300            ; 4300h, bank 7
 	.endif
 
 ; Neutral name for the drive A: backend code slot.  Exactly one A: backend links
@@ -760,7 +813,7 @@ IOC_BULK_REASON_CRC             = 0x07
 ; IOCALL, and the pre-storage gap at F41Bh is only 21 bytes before
 ; CBIOS_STORAGE_SD_CODE_BASE.  This fills slot 3; check_overlap.py enforces the
 ; EFFFh ceiling.
-CBIOS_HID_INPUT_CODE_BASE       = 0xef3e
+CBIOS_HID_INPUT_CODE_BASE       = BIOS7_BASE + 0x0d00                  ; 3D00h, bank 7
 ; HID mailbox/queue state occupies the otherwise-unused gap immediately after
 ; the SD backend.  It must not live in MOVE_BUFFER because CONST can fire from
 ; BDOS OUTCHAR while a storage request is staged, and it must not live at FD00h:
@@ -770,19 +823,19 @@ CBIOS_HID_INPUT_CODE_BASE       = 0xef3e
 ; full 32-byte mailbox.  Together with the 32-byte reply, 16-byte queue and four
 ; queue-control bytes, the state occupies 57 bytes: F642h-F67Ah.  The VDrip
 ; transport begins at F680h, leaving five guard bytes.
-CBIOS_HID_INPUT_STATE_BASE      = 0xf642
+CBIOS_HID_INPUT_STATE_BASE      = BIOS7_BASE + 0x0e00                  ; 3E00h, bank 7
 
 CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x0310                  ; DD10h
 CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_V9958_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
-CBIOS_BIOS_EXT_CODE_BASE        = CBIOS_BASE + 0x0550                  ; DF50h
-CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x057B                  ; DF7Bh — immediately after VIDEO_SEND
+CBIOS_BIOS_EXT_CODE_BASE        = BIOS7_BASE + 0x0200                  ; 3200h, bank 7
+CBIOS_IOCTRL_CODE_BASE          = BIOS7_BASE + 0x0280                  ; 3280h, bank 7
 
 ; Common crossing layer (banked OS, Phase 1 step 3): the SIO interrupt entry
 ; with its stack switch, and the mode-preserving bank select.  The gap between
 ; the SIO core's end and the BIOS extensions.
 CBIOS_XING_CODE_BASE            = CBIOS_BASE + 0x052c                  ; DF2Ch
-CBIOS_XING_CODE_LIMIT           = CBIOS_BIOS_EXT_CODE_BASE             ; DF50h
+CBIOS_XING_CODE_LIMIT           = CBIOS_BASE + 0x0550                  ; DF50h
 
 ; Transport level, readable directly from ROM at a fixed address.
 ;
@@ -806,7 +859,7 @@ CBIOS_XING_CODE_LIMIT           = CBIOS_BIOS_EXT_CODE_BASE             ; DF50h
 ;      protocol is unchanged at this level; only what a .COM may read out of
 ;      CBIOS_IOC_DIAG_BASE is.  Tools gate their decode on this value.
 ZBIOS_XPORT_LEVEL               = 0x08
-ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_IOCTRL_CODE_BASE - 1           ; DF7Ah
+ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_BASE + 0x057a                  ; DF7Ah: published, stays common
 
 ; VDrip CP850 font placement in bank 0 TPA.
 ; Font data lives at VDRIP_FONT_ROM_BASE in the firmware binary (bank 0 ROM).
@@ -886,7 +939,7 @@ BOOT_BANNER_ROM_BASE            = 0x8800                ; follows the 2 KiB font
 ; Reply offset carrying the controller's own IOC_FW_LEVEL, in a PING response.
 IOC_OFF_PING_LEVEL              = 20
 
-CONSOLE_FONT_ROM_BASE           = 0x8000                ; font start in bank 0 TPA
+CONSOLE_FONT_ROM_BASE           = 0x8000                ; font, bank 7
 VDRIP_FONT_ROM_BASE             = CONSOLE_FONT_ROM_BASE ; compatibility alias
 
 ; Resident code region ends before scratch.
@@ -921,16 +974,16 @@ CBIOS_SCRATCH_END               = CBIOS_SCRATCH_LIMIT - 1
 MOVE_BUFFER                     = CBIOS_SCRATCH_BASE                   ; FA80h
 MOVE_BUFFER_SIZE                = 0x00c0                               ; 192 bytes
 
-VDRIP_STORAGE_DPHDPB_BASE             = MOVE_BUFFER + MOVE_BUFFER_SIZE       ; FB40h
+VDRIP_STORAGE_DPHDPB_BASE             = BIOS7_BASE + 0x3000            ; 6000h, bank 7
 VDRIP_STORAGE_DPHDPB_SIZE             = 0x0040                               ; 64 bytes (DPH+DPB = 31)
 
-VDRIP_STORAGE_DIRBUF                  = CBIOS_SCRATCH_BASE + 0x0100          ; FB80h
+VDRIP_STORAGE_DIRBUF                  = BIOS7_BASE + 0x3040            ; 6040h, bank 7
 ; One directory buffer serves every DPH, which is ordinary CP/M.  Neutral name
 ; so drives do not have to reference the VDrip backend to find it.
 CBIOS_STORAGE_DIRBUF                  = VDRIP_STORAGE_DIRBUF
 VDRIP_STORAGE_DIRBUF_SIZE             = 0x0080
 
-VDRIP_STORAGE_ALV_BUFFER              = CBIOS_SCRATCH_BASE + 0x0180          ; FC00h
+VDRIP_STORAGE_ALV_BUFFER              = BIOS7_BASE + 0x3100            ; 6100h, bank 7
 VDRIP_STORAGE_ALV_BUFFER_SIZE         = 0x0200
 
 ; ------------------------------------------------------------------------------
@@ -939,8 +992,8 @@ VDRIP_STORAGE_ALV_BUFFER_SIZE         = 0x0200
 ; DD10h-DD11h = SIO-core-owned exact IM2 vector table entry.
 ;
 ; The SIO core emits ".dw sio_core_isr" at this address.
-CBIOS_IM2_VECTOR_TABLE          = CBIOS_SIO_CORE_CODE_BASE
-CBIOS_IM2_VECTOR_PAGE           = 0xdd
+CBIOS_IM2_VECTOR_TABLE          = 0xfd00                               ; cbios_irq.asm
+CBIOS_IM2_VECTOR_PAGE           = 0xfd
 CBIOS_IM2_VECTOR_ENTRY          = CBIOS_IM2_VECTOR_TABLE
 
 ; Byte written to SIO WR2.
@@ -948,7 +1001,7 @@ CBIOS_IM2_VECTOR_ENTRY          = CBIOS_IM2_VECTOR_TABLE
 CBIOS_SIO_VECTOR                = 0x10
 
 ; Table is exactly one IM2 entry in this layout.
-CBIOS_IM2_VECTOR_SIZE           = 0x0002
+CBIOS_IM2_VECTOR_SIZE           = 0x0100
 CBIOS_IM2_VECTOR_LIMIT          = CBIOS_IM2_VECTOR_TABLE + CBIOS_IM2_VECTOR_SIZE
 CBIOS_IM2_VECTOR_END            = CBIOS_IM2_VECTOR_LIMIT - 1
 
@@ -1073,8 +1126,8 @@ VDRIP_STORAGE_PROTO_DRIVE             = 0x00
 ; below ends around F611h with roughly 110 spare bytes before FA80h, so the
 ; cheapest space is on this side of the boundary.  check_overlap.py enforces
 ; both ends, so a mistake here fails the build rather than the machine.
-CBIOS_STORAGE_SD_CODE_BASE            = 0xf430
-CBIOS_STORAGE_SD_CODE_LIMIT           = 0xf680
+CBIOS_STORAGE_SD_CODE_BASE            = BIOS7_BASE + 0x1000            ; 4000h, bank 7
+CBIOS_STORAGE_SD_CODE_LIMIT           = BIOS7_BASE + 0x1300            ; 4300h
 ; The select probe is split across exact, otherwise-unused fixed-layout gaps.
 ; The generated memory-layout checks validate every fragment independently.
 ; The probe was split across four gaps -- DFEDh in the core BIOS tail, F41Bh in
@@ -1085,7 +1138,7 @@ CBIOS_STORAGE_SD_CODE_LIMIT           = 0xf680
 
 ; Per-drive state.  The allocation vector is the only large piece; it lands in
 ; the 256 bytes of scratch that were unallocated, which it fills exactly.
-SD_STORAGE_ALV_BUFFER                 = CBIOS_SCRATCH_BASE + 0x0280   ; FD00h
+SD_STORAGE_ALV_BUFFER                 = BIOS7_BASE + 0x3300            ; 6300h, bank 7
 
 ; C: state, placed in the tail of driver slot 5.
 ;
@@ -1098,10 +1151,10 @@ SD_STORAGE_ALV_BUFFER                 = CBIOS_SCRATCH_BASE + 0x0280   ; FD00h
 ; C: needs no DPB of its own: it is the same 8 MiB geometry as B:, so its DPH
 ; points at SD_STORAGE_DPB.  It needs no CSV either -- CKS is zero.  The
 ; allocation vector is the one thing CP/M cannot share between drives.
-SD_STORAGE_ALV2_BUFFER                = CBIOS_SCRATCH_BASE - 0x0100   ; F980h
+SD_STORAGE_ALV2_BUFFER                = BIOS7_BASE + 0x3400            ; 6400h, bank 7
 ; (DSM 2047 >> 3) + 1 -- one bit per block, matching B:'s vector exactly.
 SD_STORAGE_ALV2_SIZE                  = 0x0100
-SD_STORAGE_DPH2                       = CBIOS_SCRATCH_BASE - 0x0110   ; F970h
+SD_STORAGE_DPH2                       = BIOS7_BASE + 0x3500            ; 6500h, bank 7
 
 ; C:'s selection probe, the card probe both SD drives share, and the drive
 ; dispatcher.
@@ -1116,7 +1169,7 @@ SD_STORAGE_DPH2                       = CBIOS_SCRATCH_BASE - 0x0110   ; F970h
 ; beyond adjacency.  This is a named region with a declared size, not an
 ; incidental hole -- which is the distinction docs/memory-map.md's headroom
 ; table exists to preserve.
-CBIOS_SD_PROBE2_CODE_BASE             = SD_STORAGE_DPH2 - 0x00a0      ; F8D0h
+CBIOS_SD_PROBE2_CODE_BASE             = BIOS7_BASE + 0x1400            ; 4400h, bank 7
 CBIOS_SD_PROBE2_CODE_SIZE             = 0x00a0
 CBIOS_SD_PROBE2_CODE_END              = CBIOS_SD_PROBE2_CODE_BASE + CBIOS_SD_PROBE2_CODE_SIZE - 1
 SD_STORAGE_DPH                        = VDRIP_STORAGE_DPHDPB_BASE + 0x20  ; FB60h

@@ -113,8 +113,8 @@ MANIFEST = (
     ("utils", "sysid.com", "SYSID.COM", PROFILE_NORMAL),
     # Phase 1 banked-OS bring-up: proves the mode 11 decoder map.
     ("utils", "map11.com", "MAP11.COM", PROFILE_NORMAL),
-    # Phase 1 steps 3-5: bank-7 refusal, mode-11 bank selects and disk reads.
-    ("utils", "xing.com", "XING.COM", PROFILE_NORMAL),
+    # Banked OS Phase 1 software validation (plan section 27).
+    ("utils", "bankos.com", "BANKOS.COM", PROFILE_NORMAL),
     # The /SHARED/ folder tools.  Rescue tools in the most literal sense: with a
     # FAT card in the socket these are how a file gets off this machine, or onto
     # it, when nothing else works -- no serial link, no second drive.  None can
@@ -176,11 +176,6 @@ MANIFEST = (
     # Unlike most of Conn's set, MCOPY needs nothing installed: it has no
     # external-address abort path, and `dir:` accepts the plain DU: form.
     ("zsys", "MCOPY.COM", "MCOPY.COM", PROFILE_NORMAL),
-    # Sector-level disk editor.  The classic repair tool for a CP/M directory
-    # that has been damaged, and the only thing here that can put one back by
-    # hand.  Works through the standard BIOS jump table, so it reaches whatever
-    # drive is selected -- it writes, so it is as sharp as the user makes it.
-    ("zsys", "DU2.COM", "DU2.COM", PROFILE_NORMAL),
     # File CRC.  Directly relevant on this machine: every file that arrives
     # crosses the IO Controller link and the SD path, and this is how you find
     # out whether it arrived intact rather than inferring it from whether the

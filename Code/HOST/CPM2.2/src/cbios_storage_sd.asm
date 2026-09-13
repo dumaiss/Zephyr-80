@@ -31,7 +31,6 @@
 	.globl stg_a_settrk,stg_a_setsec
 	.globl stg_a_read,stg_a_write,stg_a_sectran
 	.globl storage_caller_sp
-	.globl xing_select_ram_bank
 	.globl SD_STORAGE_CODE_START,SD_STORAGE_CODE_END
 	.globl SD_PROBE_CODE_START,SD_PROBE_CODE_END
 	.globl SD_PROBE2_CODE_END
@@ -184,41 +183,28 @@ sd_exchange_echo:
 	ret
 
 ; ---------------------------------------------------------------------------
-; Bank-aware record copies.  The caller's DMA buffer can be in another bank, so
-; every transfer stages through MOVE_BUFFER in the BIOS bank.
+; Record copies.  The BIOS runs in mode 11, where every address ZSDOS hands it is
+; visible as it stands: its own directory buffer in bank 7, the facade's staging
+; buffers in common memory, or the program's caller window.  So the copies need
+; no bank selection.  They used to select DMA_BANK around the copy, back when
+; the BIOS was common and could not see a program's buffers.
 ; ---------------------------------------------------------------------------
 
 sd_copy_to_dma:
-	ld a,(CURRENT_BANK)
-	ld (sd_storage_saved_bank),a
-	ld a,(DMA_BANK)
-	call sd_select_bank
 	ld hl,#(MOVE_BUFFER + SD_STORAGE_DATA_OFF)
 	ld de,(cbios_dma_addr)
 	ld bc,#SD_STORAGE_RECORD_BYTES
 	ldir
-	ld a,(sd_storage_saved_bank)
-	jp sd_select_bank
+	xor a
+	ret
 
 sd_copy_from_dma:
-	ld a,(CURRENT_BANK)
-	ld (sd_storage_saved_bank),a
-	ld a,(DMA_BANK)
-	call sd_select_bank
 	ld hl,(cbios_dma_addr)
 	ld de,#(MOVE_BUFFER + SD_STORAGE_DATA_OFF)
 	ld bc,#SD_STORAGE_RECORD_BYTES
 	ldir
-	ld a,(sd_storage_saved_bank)
-	jr sd_select_bank
-
-; Storage runs on the console/storage stack in common memory, so the latch can
-; change here.  xing_select_ram_bank keeps mode 11 when the BIOS was called from
-; bank 7.  A returns the latch value written, as it always has.
-sd_select_bank:
-	and #BANK_MASK
-	ld (CURRENT_BANK),a
-	jp xing_select_ram_bank
+	xor a
+	ret
 
 ; ---------------------------------------------------------------------------
 ; READ one record

@@ -57,6 +57,7 @@
 	.globl rom_storage_selected_drive,rom_storage_track,rom_storage_sector
 	.globl storage_caller_sp
 	.globl CURRENT_BANK,DMA_BANK,cbios_dma_addr
+	.globl xing_rom_copy_record
 
 ROMDISK_DIRBUF			= CBIOS_STORAGE_DIRBUF
 
@@ -118,8 +119,8 @@ stg_a_sectran:
 ; Purpose:
 ;   Copy one 128-byte record from flash into the caller's DMA buffer.
 ; Inputs:
-;   rom_storage_track/rom_storage_sector select the record; DMA_BANK and
-;   cbios_dma_addr identify the caller's DMA buffer.
+;   rom_storage_track/rom_storage_sector select the record; cbios_dma_addr is
+;   the destination as ZSDOS sees it, in mode 11.
 ; Outputs:
 ;   A = BIOS_OK on success, BIOS_ERR on invalid drive/track/sector.
 ; Clobbers:
@@ -152,8 +153,14 @@ stg_a_read:
 	ret nz
 
 	; Build the shadow/copy latch value: ROM page in D7:D5 supplies the read
-	; side, SHADOW_BIT opens the window, and the caller's DMA bank in D2:D0
-	; takes the writes.  ROM_DIS stays clear; that is what makes ROM visible.
+	; side, SHADOW_BIT opens the window, and D2:D0 name the bank that takes
+	; the writes.  ROM_DIS stays clear; that is what makes ROM visible.
+	;
+	; The window unmaps bank 7, so the copy itself runs from common memory, in
+	; xing_rom_copy_record.  Inside it SRAM writes to 0000h-BFFFh go to the
+	; latch's bank, so that bank is the one the DMA address means in mode 11:
+	; the caller window's bank below 2000h, bank 7 in the OS body.  At C000h
+	; and above the write is forced to bank 0 whatever the bits say.
 	ld a,c
 	add a,a
 	add a,a
@@ -161,32 +168,25 @@ stg_a_read:
 	add a,a
 	add a,a				; A = page << 5
 	ld b,a
-	ld a,(DMA_BANK)
+	ld de,(cbios_dma_addr)
+	ld a,d
+	cp #0x20
+	jr c,stg_a_read_caller
+	cp #0xc0
+	jr nc,stg_a_read_common
+	ld a,#OS_BANK
+	jr stg_a_read_bank
+stg_a_read_caller:
+	ld a,(CURRENT_BANK)
 	and #BANK_MASK
+	jr stg_a_read_bank
+stg_a_read_common:
+	xor a
+stg_a_read_bank:
 	or b
 	or #SHADOW_BIT
 	ld b,a				; B = shadow latch value
-
-	ld de,(cbios_dma_addr)
-	ld a,i
-	jp pe,stg_a_read_iff
-	ld a,i
-stg_a_read_iff:
-	push af				; P/V set: interrupts were enabled
-	in a,(BANK_PORT)
-	push af				; the latch as found
-	di
-	ld a,b
-	out (BANK_PORT),a
-	ld bc,#ROMDISK_RECORD_BYTES
-	ldir
-	pop af
-	out (BANK_PORT),a
-	pop af
-	ld a,#BIOS_OK			; LD leaves P/V alone
-	ret po
-	ei
-	ret
+	jp xing_rom_copy_record
 
 ; WRITE backend.
 ; Purpose:

@@ -81,10 +81,9 @@
 ;* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
 	MACLIB	ZSDOS.LIB	; Get initialization code
-	MACLIB	ZSDOSBIO	; [Zephyr-80] BIOS helper addresses, generated from
-				;   build/firmware.sym.  ccp_clear_redraw sits in a
-				;   driver slot and moves whenever the console driver
-				;   is rebuilt, so it must not be hardcoded here.
+	MACLIB	ZSDOSBIO	; [Zephyr-80] Common-memory addresses, generated from
+				;   build/firmware.map: WBTRAP, the warm-boot trap
+				;   that restores latch mode 10 before 0000h.
 
 RAMLOW	EQU	0000H		; Start address memory
 
@@ -96,7 +95,7 @@ ZSDOS	EQU	$		; Start address ZSDOS
 BIOS:
 	CSEG
 	  ELSE
-BIOS	EQU	ZSDOS+0E00H
+BIOS	EQU	ZSDOS+1000H	; [Zephyr-80] bank 7: the grown stack moved it up
 	  ENDIF
 
 BOOT	EQU	BIOS+0000H	; Cold Boot
@@ -314,6 +313,11 @@ ERMODE:	DEFB	0		; BDOS error mode
 ARWORD:	DEFW	0		; De argument on entry - used for BGii
 DEVAL:	DEFW	0		; Return value for DE reg
 SPSAVE:	DEFW	0		; Stack pointer location
+	DEFS	192		; [Zephyr-80] Stack growth.  The stack is grown in
+				;   place, so IXSAVE stays the two bytes directly
+				;   below ZSDOSS: DOSEXT0 restores IX from IXSAVE
+				;   by address.  An interrupt used to overrun the
+				;   stock 56 bytes into SPSAVE.
 	  IF  ZS
 	DEFB	'ZSDOS 1.1 Copyri'
 	  ELSE
@@ -484,7 +488,7 @@ RAMIN2:	LD	(HL),A
 	DJNZ	RAMIN2
 	LD	HL,RAMLOW+80H	; Default DMA buffer
 	LD	(DMA),HL	; And save it
-	RST	0		; Now BIOS warm boot
+	JP	WBTRAP		; [Zephyr-80] was RST 0; see ERROR5
 	  ENDIF		; Rom
 
 ;.....
@@ -1023,7 +1027,9 @@ ERROR4:	BIT	1,C		; Test if return error mode
 	JR	NC,ERROR6	; If not a fatal error
 ERROR5:	XOR	A
 	LD	(ERMODE),A	; Set DOS error mode to default CP/M
-	RST	0		; ..and leave
+	JP	WBTRAP		; [Zephyr-80] ..and leave.  Was RST 0, which in
+				;   bank 7 runs a program's own 0000h vector in
+				;   mode 11; WBTRAP restores mode 10 first.
 
 ERROR6:	CALL	DCIO1		; Get console char if present
 	AND	A		; Test if any
@@ -3203,21 +3209,21 @@ CKSLP:	ADD	A,(HL)		; Sum all bytes to A
 
 CODEND:
 	  IF  ROM
-	    IF  $-ZSDOS GT 0E00H
+	    IF  $-ZSDOS GT 1000H
 	*** ZSDOS TOO BIG !!!!!	***
 	    ENDIF		;$-zsdos
 	DSEG
 	  ELSE
 	    IF  ZS
-	      IF  $-ZSDOS GT 0DF1H
+	      IF  $-ZSDOS GT 0FF1H
 	*** ZSDOS TOO BIG !!!!! ***
 	      ENDIF		;$-zsdos
-	ORG	ZSDOS+0DF1H		; Set here for Internal Path
+	ORG	ZSDOS+0FF1H		; Set here for Internal Path
 	    ELSE
-	      IF  $-ZSDOS GT 0DF9H
+	      IF  $-ZSDOS GT 0FF9H
 	*** ZDDOS TOO BIG !!!!! ***
 	      ENDIF		;$-zsdos
-	ORG	ZSDOS+0DF9H
+	ORG	ZSDOS+0FF9H
 	    ENDIF		;Zs
 	  ENDIF			;Rom
 HIRAM:

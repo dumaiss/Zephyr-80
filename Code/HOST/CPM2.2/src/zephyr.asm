@@ -1,7 +1,15 @@
-; Zephyr-80 CP/M 2.2 local runtime wrapper.
+; Zephyr-80 CP/M 2.2 local runtime wrapper: banked OS, Phase 1.
 ;
-; This wrapper keeps stock CP/M source immutable and supplies local runtime
-; boot and memory services for the Zephyr-80 memory model.
+; One assembly produces both halves of the system, and addresses decide which
+; half a byte belongs to: 2000h-BFFFh is bank 7, the OS body, visible in latch
+; mode 11; C000h-FFFFh is common memory, visible in both RAM modes.
+; tools/split_banked_image.py cuts the linked image into the ROM page 0 image
+; (common memory and the reset vector) and the bank 7 payload, and installs
+; ZCPR2 at CBASE and ZSDOS at ZSDOS_ORG.  See "Banked OS layout" in
+; cbios_defs.inc and docs/Zephyr-80_OS_Execution_Memory_Architecture.md.
+;
+; The stock CP/M 2.2 CCP and BDOS in ../cpm22 are no longer assembled: ZSDOS in
+; bank 7 is the BDOS, ZCPR2 is the CCP, and the BDOS facade owns FBASE.
 
 	.module zephyr80_cpm22_runtime
 
@@ -16,6 +24,14 @@
 ; template, so 1.
 VDRIP_TRANSPORT_LINKED = 1
 
+; CP/M addresses the BIOS uses.  They came from the stock CP/M source, which is
+; no longer assembled.  CBASE holds the CCP; FBASE, six bytes past the CCP slot,
+; is the BDOS entry every program calls through page zero.
+CBASE			= 0xc400
+FBASE			= CBASE + 0x0806
+IOBYTE			= 0x0003
+TDRIVE			= 0x0004
+
 	.include "platform_zephyr80.inc"
 	.include "cbios_defs.inc"
 
@@ -25,39 +41,31 @@ VDRIP_TRANSPORT_LINKED = 1
 	.globl const,conin,conout,list,punch,reader,listst
 	.globl home,seldsk,settrk,setsec,setdma,read,write,sectran
 	.globl MOVE,XMOVE,SELMEM,SETBNK,IOCALL,VIDEO_SEND
-	.globl ZBIOS_EXT_BASE
+	.globl gate_const,gate_conin,gate_conout
+	.globl gate_iocall,gate_video_send,gate_iocbulk,gate_iocbulkw
+	.globl wbtrap
+	.globl ZBIOS_EXT_BASE,BIOS7_MAGIC
 
 	.area RESET (ABS)
 	.org 0x0000
 reset_vector:
 	jp cpm_rom_entry_high
 
-cpm:
-; Stock CP/M 2.2 CCP+BDOS, vendored with local patches; see cpm22/README.md.
-; The Makefile rewrites this include to the asxxxx-converted copy in build/,
-; matching on CPM22_SRC -- keep the two in step or the build stops.
-	.include "../cpm22/cpm22.asm"
-
-; CP/M BIOS jump table.
+; CP/M BIOS jump table, common memory.
 ;
-; CP/M enters the BIOS only through this fixed sequence of three-byte jumps.
-; The order is the CP/M 2.2 ABI, so exported labels and spacing are part of
-; the operating-system contract:
-;   BOOT/WBOOT            cold and warm boot entry points
-;   CONST/CONIN/CONOUT    console status, blocking input, blocking output
-;   LIST/PUNCH/READER     legacy auxiliary character devices
-;   HOME..SECTRAN         disk selection, address setup, and sector I/O
+; This table serves programs running in mode 10.  The order is the CP/M 2.2
+; ABI and the address is published: ZCPR2 calls BIOS+6 and BIOS+9 directly, and
+; page zero's JP WBOOT points into it.
 ;
-; ZBIOS_EXT_BASE is a Zephyr extension table placed immediately after the
-; standard CP/M entries. It exposes memory services used by bank-aware tools:
-;   MOVE                  copy bytes, honoring a pending XMOVE if one exists
-;   XMOVE                 set source/destination banks for the next MOVE
-;   SELMEM/SETBNK         select execution bank / record disk DMA bank
-;   IOCALL                perform a BIOS-owned SIO1 IO Controller transaction
-;   VIDEO_SEND            send a selected-backend raw video request
+; Only boot and the console are live (plan F6).  CONST, CONIN and CONOUT are
+; gates into the bank 7 console.  The disk and auxiliary entries are inert: the
+; disk structures live in bank 7, and ZSDOS uses its own table there.
 ;
-; Banking and XMOVE live in the core BIOS range because they define how CP/M
-; itself crosses banks. They are not replaceable card drivers.
+; ZBIOS_EXT_BASE is the Zephyr extension table immediately after it:
+;   MOVE / XMOVE / SELMEM / SETBNK   bank primitives, common code
+;   IOCALL / VIDEO_SEND /            gates into bank 7 that stage the caller's
+;   IOCBULK / IOCBULKW               buffers through common memory
+; The same eight are reachable as BDOS functions 210-217 (cbios_facade.asm).
 	.area CODE (ABS)
 	.org CBIOS_BASE
 
@@ -67,45 +75,45 @@ BOOT:
 WBOOT:
 	jp wboot
 CONST:
-	jp const
+	jp gate_const
 CONIN:
-	jp conin
+	jp gate_conin
 CONOUT:
-	jp conout
+	jp gate_conout
 LIST:
-	jp list
+	jp bios_inert_ret
 PUNCH:
-	jp punch
+	jp bios_inert_ret
 READER:
-	jp reader
+	jp bios_inert_reader
 HOME:
-	jp home
+	jp bios_inert_ret
 SELDSK:
-	jp seldsk
+	jp bios_inert_seldsk
 SETTRK:
-	jp settrk
+	jp bios_inert_ret
 SETSEC:
-	jp setsec
+	jp bios_inert_ret
 SETDMA:
-	jp setdma
+	jp bios_inert_ret
 READ:
-	jp read
+	jp bios_inert_error
 WRITE:
-	jp write
+	jp bios_inert_error
 LISTST:
-	jp listst
+	jp bios_inert_listst
 SECTRAN:
 SECTRN:
-	jp sectran
+	jp bios_inert_sectran
 ZBIOS_EXT_BASE:
 	jp MOVE
 	jp XMOVE
 	jp SELMEM
 	jp SETBNK
-	jp IOCALL
-	jp VIDEO_SEND
-	jp IOCBULK
-	jp IOCBULKW
+	jp gate_iocall
+	jp gate_video_send
+	jp gate_iocbulk
+	jp gate_iocbulkw
 
 	.include "boot_shadow_copy.asm"
 	.include "cbios_bank_select.asm"
@@ -129,3 +137,42 @@ ZBIOS_EXT_BASE:
 	.include "cbios_storage_vdrip.asm"
 	.include "cbios_storage_sd.asm"
 	.include "cbios_bank.asm"
+	.include "cbios_gate.asm"
+	.include "cbios_irq.asm"
+	.include "cbios_facade.asm"
+
+; ZSDOS's BIOS jump table, bank 7.
+;
+; ZSDOS computes its BIOS as ZSDOS+1000h and calls it in mode 11, so this table
+; points straight at the bank 7 implementation.  BOOT and WBOOT go through the
+; warm-boot trap, which restores mode 10 first (plan F1).
+	.area CODE (ABS)
+	.org BIOS7_BASE
+
+BIOS7_TABLE:
+	jp wbtrap			; BOOT
+	jp wbtrap			; WBOOT
+	jp const
+	jp conin
+	jp conout
+	jp list
+	jp punch
+	jp reader
+	jp home
+	jp seldsk
+	jp settrk
+	jp setsec
+	jp setdma
+	jp read
+	jp write
+	jp listst
+	jp sectran
+
+; Signature bank7_check compares at boot, before anything calls into bank 7.
+BIOS7_MAGIC:
+	.ascii "BANK7OS1"
+BIOS7_TABLE_END:
+
+	.ifgt (BIOS7_TABLE_END - BIOS7_TABLE) - (CBIOS_CONSOLE_CODE_BASE - BIOS7_BASE)
+	.error 1			; the bank 7 table runs into the console dispatch
+	.endif

@@ -102,8 +102,6 @@
 	.endif
 	.globl SIO_CORE_IRQ_ENABLED
 	.globl CONSOLE_IRQ_ENABLED
-	.globl CONSOLE_IM2_VECTOR_ENTRY
-	.globl CONSOLE_IM2_VECTOR_TABLE_START,CONSOLE_IM2_VECTOR_TABLE_END
 
 SIO0A_CTRL_PORT		= SIOA_CTRL
 SIO0B_DATA_PORT		= SIOB_DATA
@@ -134,21 +132,8 @@ SIO_WR5_IOCTRL_RTS_ON	= 0xea
 
 SIO_CORE_CODE_START:
 
-; SIO-core-owned exact IM2 table entry.
-; Purpose:
-;   Provide the exact ISR address that the Z80 fetches in interrupt mode 2.
-; Inputs:
-;   I = CBIOS_IM2_VECTOR_PAGE and SIO0/B WR2 = CBIOS_SIO_VECTOR.
-; Outputs:
-;   The CPU reads this word and vectors to xing_isr (cbios_xing.asm), which
-;   switches to the ISR stack and calls sio_core_isr.
-; Important invariants:
-;   SIO0/B WR1 status-affects-vector must remain disabled so WR2 selects this
-;   exact two-byte table entry.
-CONSOLE_IM2_VECTOR_TABLE_START:
-CONSOLE_IM2_VECTOR_ENTRY:
-	.dw xing_isr
-CONSOLE_IM2_VECTOR_TABLE_END:
+; The IM2 vector page, including this core's entries at CBIOS_SIO_VECTOR, is
+; in cbios_irq.asm.
 
 ; Compatibility entry kept for existing boot/source references.
 sio_init:
