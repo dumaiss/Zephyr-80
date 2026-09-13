@@ -23,7 +23,7 @@ ZCPR2 is configured here to need **nothing** outside the 2 KiB slot:
 | Setting | Value | Consequence |
 |---|---|---|
 | `MULTCMD` | `FALSE` | no external command-line buffer at `CLBASE` |
-| `INTPATH` | `TRUE` | the search path lives inside the CCP |
+| `INTPATH` | `TRUE` | the command search path lives inside the CCP: A0, current drive user 0, B0 |
 | `INTSTACK` | `TRUE` | the stack lives inside the CCP |
 | `EXTFCB` | `TRUE`, `FCBADR=005Ch` | reuses page zero's standard FCB, not extra RAM |
 | `WHEEL` | `FALSE` | no wheel byte |
@@ -92,7 +92,7 @@ every warm boot: the CCP *plus* that serial.
 
 ## Configuration is baked in, and the ROM makes that worse
 
-ZCPR2's search path and named directories are *assembled into the CCP*. On a
+ZCPR2's command search path is *assembled into the CCP*. On a
 floppy system reconfiguring means writing a new CCP to disk; here the CCP lives
 in ROM and `restore_ccp_from_rom` reinstates it on **every warm boot**, so a
 runtime change would not survive `^C` even if you made one.
@@ -119,9 +119,27 @@ plain `'>'`.
 Masking bit 7 in the console driver would have "fixed" it and broken every
 graphic character the CP850 font provides, so the fix belongs here.
 
-Not yet exercised: named directories, the search path, and the resident
-`DIR`/`ERA`/`TYPE` commands — the features that are the reason to run ZCPR2 at
-all.
+Not yet exercised: the resident `DIR`/`ERA`/`TYPE` commands.
+
+## Named directories
+
+The CCP does not resolve names; ZCPR2's utilities do. `MKDIR` writes
+`NAMES.DIR`, `CD name` logs into the drive and user it names, and `PWD` lists
+the names and shows the current one. There is no memory named-directory buffer,
+so `LD`, which loads names into one, is not carried.
+
+The utilities ship uninstalled, with an external path at `0040h` and a command
+line buffer at `FF00h`: page-zero noise and the BDOS facade's stack on this
+machine. `../tools/build_rom_disk.py` installs every ZCPR2 utility it puts on
+the ROM disk, the way `GENINS` would: no external path (address `0000h` — the
+program tests the address, not the flag byte before it), no command line buffer,
+and an internal path of current, B0, A0. That path is where `NAMES.DIR` is
+looked for; A: is read only, so keep it on B0.
+
+`CD`, `PWD` and `MKDIR` are on the ROM disk, and the command search path
+includes B0, so anything kept there runs from every drive too. Verified on
+hardware 2026-09-13 with `NAMES.DIR` on B0: `CD` to A0 and to B4, and `PWD`,
+from any drive and user on B:.
 
 ## Provenance and licence
 

@@ -211,7 +211,7 @@ PATH	equ	40H		;External ZCPR2 PATH at CBIOS Buffer Area
 IPATH	MACRO
 	db	'A'-'@',0	;Disk A, User 0
 	db	'$',0		;Current Disk, User 0 - see DRVPREFIX
-	db	'A'-'@','$'	;Disk A, Current User
+	db	'B'-'@',0	;Disk B, User 0 - Zephyr-80: the SD work volume
 	db	0		;End of Path -- MUST be here
 	ENDM
 ;

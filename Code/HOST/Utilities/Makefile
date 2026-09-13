@@ -5,18 +5,17 @@
 # diagnostic that speaks the IO Controller protocol -- so all of it is versioned
 # with the BIOS and the controller firmware, not with the user's software.
 #
-# Two profiles, mirroring build_rom_disk.py's:
+# Two sets:
 #
-#   normal      what belongs on the ROM rescue disk (A:) -- non-destructive,
-#               or destructive only where there is no other way to provision a
-#               card (SDFMT).
+#   normal      the ROM rescue disk (A:) -- non-destructive, or destructive
+#               only where there is no other way to provision a card (SDFMT).
+#               ../CPM2.2/tools/build_rom_disk.py lists what ships.
 #   diagnostic  bring-up, benchmark and DESTRUCTIVE tools.  These act on
-#               whatever card is inserted, with no drive letter to get wrong,
-#               and have no business on the disk you reach for when the machine
-#               is already in trouble.
+#               whatever card is inserted, with no drive letter to get wrong.
+#               They are never put on the ROM disk; copy one to a work drive
+#               when it is needed.
 #
-# `make` builds both.  The ROM disk manifest in ../CPM2.2 decides which of them
-# actually ships, so nothing here is deleted by the profile split.
+# `make` builds both.
 
 BUILD_DIR := build
 SRC_DIR   := src
@@ -43,18 +42,12 @@ NORMAL += volinfo sddir sdget sdput sddel
 # Reports which CCP and BDOS are actually executing, read out of RAM.  Uses no
 # IO Controller traffic, so it answers when the link is dead.
 NORMAL += sysid
-# Phase 1 banked-OS bring-up: proves the mode 11 decoder map (MEM_DECODER
-# rev 10).  Non-destructive to CP/M state; exits by warm boot.
-NORMAL += map11
-# Banked OS Phase 1 software validation: facade staging, IX, interrupt
-# registration.  xing.asm (steps 3-5) is kept as a record but not built: it
-# calls the direct disk BIOS, which is inert now the OS is in bank 7.
-NORMAL += bankos
 
-# --- diagnostic profile ------------------------------------------------------
+# --- diagnostic set ----------------------------------------------------------
 # DESTRUCTIVE: these write to whatever card is inserted.
 DIAG := ioc_bulk ioc_sdblk ioc_sdwrite ioc_sdsoak ioc_sdrec ioc_sdbench
-# Non-destructive bring-up.
+# Non-destructive bring-up: SIO RTS probe, BIOS failure-record check, V9958
+# display test, IO Controller HID status pages, sound card test.
 DIAG += ioc_rts_probe ioc_diagchk v9958tst hidstat sndtest
 
 TARGETS := $(NORMAL) $(DIAG)

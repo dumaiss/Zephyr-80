@@ -123,17 +123,6 @@ ROM_DISK_TOOL := $(TOOLS_DIR)/build_rom_disk.py
 
 # ROM disk inputs and outputs.  Only used when STORAGE_A=rom; a vdrip or ramdisk
 # build embeds no payloads and produces the same 128 KiB image it always did.
-# Which utility set lands on the ROM rescue disk.
-#
-#   normal      rescue and provisioning tools only (default)
-#   diagnostic  normal plus bring-up, benchmark and DESTRUCTIVE tools
-#
-# The destructive ones -- SDWRITE, SDREC, SDSOAK, SDBENCH -- act on whatever
-# card is inserted, with no drive letter to get wrong.  They have no business on
-# a disk you reach for when the machine is already in trouble.  Nothing is
-# deleted by this: every tool still builds, and the diagnostic profile carries
-# them all.
-ROM_DISK_PROFILE ?= normal
 
 PAYLOAD_CONFIG ?= config/banks.ini
 ROM_DISK_PAGES ?= 3
@@ -351,7 +340,6 @@ sibling-builds:
 
 $(ROM_DISK_IMAGE): sibling-builds $(ROM_DISK_TOOL) $(CPMTOOLS_DISKDEF) $(ROM_DISK_INPUTS) | $(BUILD_DIR)
 	$(PYTHON) $(ROM_DISK_TOOL) \
-		--profile "$(ROM_DISK_PROFILE)" \
 		--diskdef "$(CPMTOOLS_DISKDEF)" \
 		--staging-dir "$(ROM_DISK_STAGE)" \
 		--utils-dir "$(UTILITIES_BUILD)" \

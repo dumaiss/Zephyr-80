@@ -38,110 +38,100 @@ from pathlib import Path
 # (cpm22.asm "always use drive A for submit"), so it cannot work on a read-only
 # A:.  ZSID is carried instead of DDT because DDT's assembler and disassembler
 # are 8080-only, which is a real handicap on a Z80.
-# Profiles.
-#
-# "normal" is the rescue disk: what you want present when the machine is in
-# trouble and A: is the only volume you can trust.  "diagnostic" is normal plus
-# the bring-up, benchmark and destructive tools.
-#
-# The split exists because four of these tools DESTROY DATA and three of those
-# do it to whatever card is inserted, with no drive letter involved:
+# The volume is the rescue disk: what you want present when the machine is in
+# trouble and A: is the only volume you can trust.  Bring-up, benchmark and
+# destructive tools (../Utilities `make diagnostic`) are never carried.  Four of
+# them destroy data on whatever card is inserted, with no drive letter to get
+# wrong:
 #   SDWRITE  overwrites block 0 and with it the partition table
 #   SDREC    overwrites records 0-7, which is the head of the CP/M directory
 #   SDSOAK   writes across multiple LBAs as an addressing stress test
 #   SDBENCH  writes a fixed high LBA repeatedly and does not restore it
-# A rescue disk that ships those is a rescue disk that can finish the job.
-#
-# RTSPROBE is not destructive to data but writes SIO registers behind the BIOS
-# and invalidates persistent sync, so it takes the machine down with it.
-#
-# Removing a tool from the normal profile does NOT delete it: every one of them
-# still builds, and the diagnostic profile still carries it.
-PROFILE_NORMAL = "normal"
-PROFILE_DIAGNOSTIC = "diagnostic"
-PROFILES = (PROFILE_NORMAL, PROFILE_DIAGNOSTIC)
+# A rescue disk that ships those is a rescue disk that can finish the job.  They
+# still build; copy one to a work drive when it is needed.
 
-# (root, source name, CP/M name, lowest profile that carries it)
+# (root, source name, CP/M name)
 MANIFEST = (
-    # --- Rescue and provisioning: present on every profile ---------------
+    # --- Rescue and provisioning ----------------------------------------
     # Non-destructive version, transport, power and controller-health check.
-    ("utils", "ioc_ping.com", "PING.COM", PROFILE_NORMAL),
+    ("utils", "ioc_ping.com", "PING.COM"),
     # Deliberate recovery: resets host and controller together.
-    ("utils", "ioc_reset.com", "RESET.COM", PROFILE_NORMAL),
+    ("utils", "ioc_reset.com", "RESET.COM"),
     # Non-destructive command-lane read; separates controller/SD failure from
     # CP/M filesystem failure.  The BIOS media probe uses the same command.
-    ("utils", "ioc_sd_read.com", "SDREAD.COM", PROFILE_NORMAL),
+    ("utils", "ioc_sd_read.com", "SDREAD.COM"),
     # Provisioning, not a soak test: a fresh SD volume needs its directory
     # initialised.  Destructive, and kept only because without it a new card
     # cannot be made usable at all.  See the warning note below.
-    ("utils", "ioc_sdfmt.com", "SDFMT.COM", PROFILE_NORMAL),
+    ("utils", "ioc_sdfmt.com", "SDFMT.COM"),
     # Separates IOC HID translation and queueing from BIOS CONST/CONIN.
-    ("utils", "hidkey.com", "HIDKEY.COM", PROFILE_NORMAL),
+    ("utils", "hidkey.com", "HIDKEY.COM"),
     # Passive normal-firmware USB/F310 enumeration and report status.
-    ("utils", "padstat.com", "PADSTAT.COM", PROFILE_NORMAL),
+    ("utils", "padstat.com", "PADSTAT.COM"),
     # Arms or disarms the serial console tee.  Rescue tool by definition: it is
     # what you reach for when the screen is dark, or what turns the mirror off
     # again once a terminal has been unplugged.
-    ("utils", "sercon.com", "SERCON.COM", PROFILE_NORMAL),
+    ("utils", "sercon.com", "SERCON.COM"),
     # The only recovery environment that still works with no usable disk:
     # L loads Intel HEX over the console, DB dumps a bank, I/O reach ports.
     # Built from source rather than copied, so it always matches the tree.
-    ("monitor", "zephyr80_monitor.bin", "MONITOR.COM", PROFILE_NORMAL),
+    ("monitor", "zephyr80_monitor.bin", "MONITOR.COM"),
     # Required to provision and inspect the SD volume from the ROM disk.
-    ("stock0", "pip.com", "PIP.COM", PROFILE_NORMAL),
-    ("stock0", "STAT.COM", "STAT.COM", PROFILE_NORMAL),
+    ("stock0", "pip.com", "PIP.COM"),
+    ("stock0", "STAT.COM", "STAT.COM"),
     # User-facing console configuration, not hardware bring-up.  Built from
     # source in ../Utilities: these used to be shipped as prebuilt binaries
     # carried in a software volume, so the ROM could ship a build that no longer
     # matched the source it was supposedly made from.
-    ("utils", "nowrap.com", "NOWRAP.COM", PROFILE_NORMAL),
-    ("utils", "wrapon.com", "WRAPON.COM", PROFILE_NORMAL),
+    ("utils", "nowrap.com", "NOWRAP.COM"),
+    ("utils", "wrapon.com", "WRAPON.COM"),
     # General Z80 diagnosis that adds no BIOS instrumentation.  ZSID rather
     # than DDT: DDT's assembler and disassembler are 8080-only.
-    ("stock1", "ZSID.COM", "ZSID.COM", PROFILE_NORMAL),
-    ("stock1", "DUMP.COM", "DUMP.COM", PROFILE_NORMAL),
+    ("stock1", "ZSID.COM", "ZSID.COM"),
+    ("stock1", "DUMP.COM", "DUMP.COM"),
     # Reports which addressing mode each storage unit is really using -- an
     # 8 MiB file on a FAT card, or the raw card.  A rescue tool because the
     # alternative is inferring the mode from whether the disk looks right,
     # which is the slowest possible way to discover that an image failed to
     # mount and the firmware fell back to raw.
-    ("utils", "volinfo.com", "VOLINFO.COM", PROFILE_NORMAL),
+    ("utils", "volinfo.com", "VOLINFO.COM"),
     # Reports which CCP and BDOS are actually EXECUTING, read out of RAM rather
     # than inferred from what was meant to be flashed.  Uses no IO Controller
     # traffic, so it answers when the link is dead -- which is when the question
     # tends to be asked.
-    ("utils", "sysid.com", "SYSID.COM", PROFILE_NORMAL),
-    # Phase 1 banked-OS bring-up: proves the mode 11 decoder map.
-    ("utils", "map11.com", "MAP11.COM", PROFILE_NORMAL),
-    # Banked OS Phase 1 software validation (plan section 27).
-    ("utils", "bankos.com", "BANKOS.COM", PROFILE_NORMAL),
+    ("utils", "sysid.com", "SYSID.COM"),
     # The /SHARED/ folder tools.  Rescue tools in the most literal sense: with a
     # FAT card in the socket these are how a file gets off this machine, or onto
     # it, when nothing else works -- no serial link, no second drive.  None can
     # reach /CPM/: the controller builds every path itself under /SHARED/ and
     # rejects any name carrying a separator, which is what keeps a user program
     # structurally unable to touch a mounted disk image.
-    ("utils", "sddir.com", "SDDIR.COM", PROFILE_NORMAL),
-    ("utils", "sdget.com", "SDGET.COM", PROFILE_NORMAL),
-    ("utils", "sdput.com", "SDPUT.COM", PROFILE_NORMAL),
-    ("utils", "sddel.com", "SDDEL.COM", PROFILE_NORMAL),
+    ("utils", "sddir.com", "SDDIR.COM"),
+    ("utils", "sdget.com", "SDGET.COM"),
+    ("utils", "sdput.com", "SDPUT.COM"),
+    ("utils", "sddel.com", "SDDEL.COM"),
 
     # --- Z-System general-purpose tools ----------------------------------
     # Richard Conn's ZCPR2 utility set, plus NSWEEP.  Prebuilt binaries, not
     # built from source here: they are third-party CP/M software, carried in
     # ../Utilities/zsys.
     #
-    # These ship UNINSTALLED -- GENINS has never been run on them, so every
-    # external address in their configuration block is 0000h.  That is the
-    # correct state for this machine: ../CPM2.2/zcpr2 is built with
-    # MULTCMD=FALSE, INTPATH=TRUE, INTSTACK=TRUE and WHEEL=FALSE precisely so
-    # the CCP needs nothing outside its 2 KiB slot, which means there is no
-    # external path buffer, no named-directory buffer and no wheel byte for
-    # GENINS to point at.  Each tool here works from plain DU: forms and needs
-    # none of them.
+    # The binaries in ../Utilities/zsys are UNINSTALLED: they carry ZCPR2's
+    # distribution defaults, an external path at 0040h and a multiple command
+    # line buffer at FF00h.  On this machine 0040h is page-zero noise (it decodes
+    # as a path to drive O:) and FF00h is the BDOS facade's stack.  So every
+    # ZCPR2 utility is installed as it is staged -- see install_zcpr2_utility --
+    # the way GENINS would: no external path, no command line buffer, and an
+    # internal path of current, B0, A0.  The checked-in files stay pristine.
     #
-    # Most of the ZCPR2 set is therefore deliberately NOT carried:
-    #   PATH, LD, CD, PWD, MKDIR   need the external path / NDR buffer
+    # ../CPM2.2/zcpr2 is built with MULTCMD=FALSE, INTPATH=TRUE and WHEEL=FALSE,
+    # so there is no external path buffer, no memory named-directory buffer and
+    # no wheel byte for a tool to use.  Named directories still work: CD, PWD
+    # and MKDIR read and write a NAMES.DIR file, found on that internal path.
+    #
+    # Not carried:
+    #   LD                         loads NAMES.DIR into a memory buffer
+    #   PATH                       edits the external path
     #   WHEEL                      needs the wheel byte
     #   STARTUP                    needs the multiple-command buffer
     #   SUB, ZEX                   $$$.SUB is hard-coded to drive A, which is
@@ -164,7 +154,7 @@ MANIFEST = (
     # Full-screen file manager: copy, erase, rename, view, tag, set attributes,
     # across every user area.  The one tool that makes this volume self
     # sufficient for file work without PIP command syntax.
-    ("zsys", "NSWP.COM", "NSWP.COM", PROFILE_NORMAL),
+    ("zsys", "NSWP.COM", "NSWP.COM"),
     # Command-line multi-file copy with automatic verify, and an interactive
     # mode.  This is the machine's working copy tool, not a convenience: the
     # stock DRI PIP carried above does not run under ZCPR2/ZSDOS, so under that
@@ -175,45 +165,26 @@ MANIFEST = (
     #
     # Unlike most of Conn's set, MCOPY needs nothing installed: it has no
     # external-address abort path, and `dir:` accepts the plain DU: form.
-    ("zsys", "MCOPY.COM", "MCOPY.COM", PROFILE_NORMAL),
+    ("zsys", "MCOPY.COM", "MCOPY.COM"),
     # File CRC.  Directly relevant on this machine: every file that arrives
     # crosses the IO Controller link and the SD path, and this is how you find
     # out whether it arrived intact rather than inferring it from whether the
     # program runs.
-    ("zsys", "CRC.COM", "CRC.COM", PROFILE_NORMAL),
-
-    # --- Diagnostic profile only -----------------------------------------
-    # Synthetic ramp throughput/integrity test for the Bulk lane.
-    ("utils", "ioc_bulk.com", "BULK.COM", PROFILE_DIAGNOSTIC),
-    # Raw 512-byte Bulk path isolation; redundant with the record path in
-    # normal use.
-    ("utils", "ioc_sdblk.com", "SDBLK.COM", PROFILE_DIAGNOSTIC),
-    # DESTRUCTIVE: overwrites records 0-7, the head of the CP/M directory.
-    ("utils", "ioc_sdrec.com", "SDREC.COM", PROFILE_DIAGNOSTIC),
-    # DESTRUCTIVE: addressing/interrupt stress across multiple LBAs.
-    ("utils", "ioc_sdsoak.com", "SDSOAK.COM", PROFILE_DIAGNOSTIC),
-    # DESTRUCTIVE: overwrites block 0 and destroys the partition table.
-    ("utils", "ioc_sdwrite.com", "SDWRITE.COM", PROFILE_DIAGNOSTIC),
-    # DESTRUCTIVE: writes a fixed high LBA repeatedly, never restores it.
-    ("utils", "ioc_sdbench.com", "SDBENCH.COM", PROFILE_DIAGNOSTIC),
-    # Writes SIO registers behind the BIOS and invalidates persistent sync.
-    ("utils", "ioc_rts_probe.com", "RTSPROBE.COM", PROFILE_DIAGNOSTIC),
-    # Verifies the BIOS failure record by provoking a rejection that never
-    # reaches the wire.  Harmless, but it is a test tool, not a rescue tool.
-    ("utils", "ioc_diagchk.com", "DIAGCHK.COM", PROFILE_DIAGNOSTIC),
-    # V9958 console bring-up test.  The console it tests is now the production
-    # console, so this is a display bring-up aid rather than a rescue tool.
-    ("utils", "v9958tst.com", "V9958TST.COM", PROFILE_DIAGNOSTIC),
+    ("zsys", "CRC.COM", "CRC.COM"),
+    # Named directories.  MKDIR edits NAMES.DIR, CD logs into a directory by
+    # name, PWD lists the names and shows the current one.  The file lives on
+    # B0 (A: is read only) or wherever the internal path finds it first.
+    ("zsys", "CD.COM", "CD.COM"),
+    ("zsys", "PWD.COM", "PWD.COM"),
+    ("zsys", "MKDIR.COM", "MKDIR.COM"),
 )
 
 # The volume is 144 KiB in 1 KiB blocks (DSM=143 in cbios_storage_rom.asm), of
 # which 4 blocks are the 128-entry directory -- 140 blocks of content, and that
 # is a BIOS-side constant, not something this script can grow.
 #
-# Both profiles have to fit, so the diagnostic profile is the real ceiling: it
-# is the normal set plus 16 blocks.  Anything added to PROFILE_NORMAL is paid
-# for twice.  That budget, not usefulness, is why the ZCPR2 set above is four
-# tools and not ten.
+# Space, not usefulness, decides what is carried: when the set outgrows the
+# volume, cpmcp stops the build with "device full".
 #
 # Unallocated space is filled with E5h, the conventional "formatted but empty"
 # byte.  CP/M never reads a block the directory does not reference, so this is
@@ -241,8 +212,6 @@ def run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProc
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=PROFILES, default=PROFILE_NORMAL,
-                        help="which utility set to place on the volume")
     parser.add_argument("--utils-dir", type=Path, default=Path("../Utilities/build"))
     parser.add_argument("--zsys-dir", type=Path, default=Path("../Utilities/zsys"))
     parser.add_argument("--monitor-dir", type=Path, default=Path("../Monitor/build"))
@@ -299,9 +268,7 @@ def collect_sources(args: argparse.Namespace) -> list[tuple[Path, str]]:
     }
     resolved: list[tuple[Path, str]] = []
     missing: list[str] = []
-    for root_key, name, cpm_name, profile in MANIFEST:
-        if profile == PROFILE_DIAGNOSTIC and args.profile != PROFILE_DIAGNOSTIC:
-            continue
+    for root_key, name, cpm_name in MANIFEST:
         source = _find(roots[root_key], name)
         if source is not None:
             resolved.append((source, cpm_name))
@@ -319,9 +286,39 @@ def collect_sources(args: argparse.Namespace) -> list[tuple[Path, str]]:
 
 
 def stage(staging_dir: Path, sources: list[tuple[Path, str]]) -> None:
+    # Start empty, so a tool dropped from the manifest does not linger here.
+    shutil.rmtree(staging_dir, ignore_errors=True)
     staging_dir.mkdir(parents=True, exist_ok=True)
     for source, cpm_name in sources:
-        shutil.copy2(source, staging_dir / cpm_name)
+        target = staging_dir / cpm_name
+        shutil.copy2(source, target)
+        target.write_bytes(install_zcpr2_utility(source.read_bytes()))
+
+
+# ZCPR2 utility installation, the fields GENINS sets.  Every Conn utility opens
+# with JP START and this block; "chdir" (the privileged-area password) at 1Fh is
+# how one is recognised.
+#   04h  external path address; 0000h selects the internal path (the program
+#        tests this address, not the byte at 03h)
+#   06h  internal path: up to eight disk/user pairs, disks 1-based, '$' current
+#   16h  end of path
+#   17h  multiple command line buffer available (0 = no); address at 18h
+Z2_SIGNATURE_OFFSET = 0x1F
+Z2_SIGNATURE = b"chdir"
+Z2_INTERNAL_PATH = bytes([ord("$"), ord("$"), 2, 0, 1, 0])   # current, B0, A0
+
+
+def install_zcpr2_utility(data: bytes) -> bytes:
+    """Return data installed for this machine if it is a ZCPR2 utility, else unchanged."""
+    if len(data) < 0x24 or data[0] != 0xC3 or \
+            data[Z2_SIGNATURE_OFFSET:Z2_SIGNATURE_OFFSET + len(Z2_SIGNATURE)] != Z2_SIGNATURE:
+        return data
+    out = bytearray(data)
+    out[0x04:0x06] = b"\x00\x00"
+    out[0x06:0x16] = Z2_INTERNAL_PATH + bytes(16 - len(Z2_INTERNAL_PATH))
+    out[0x16] = 0x00
+    out[0x17] = 0x00
+    return bytes(out)
 
 
 def read_directory(image: bytes, args: argparse.Namespace) -> list[tuple]:
@@ -379,7 +376,8 @@ def verify(image: bytes, args: argparse.Namespace,
     files = extract_files(image, args)
     problems: list[str] = []
     for source, cpm_name in sources:
-        want = source.read_bytes()
+        # Compare with what was staged: ZCPR2 utilities are installed on the way.
+        want = (args.staging_dir.resolve() / cpm_name).read_bytes()
         got = files.get((args.user, cpm_name))
         if got is None:
             problems.append(f"{cpm_name}: missing from the directory")

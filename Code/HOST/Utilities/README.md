@@ -11,7 +11,7 @@ experiments and bring-up sketches belong in `../HelloWorld`.
 ## Building
 
 ```sh
-make              # both profiles
+make              # both sets
 make normal       # just the ROM rescue set
 make diagnostic   # just the diagnostics
 make list         # show which is which
@@ -43,7 +43,7 @@ A tool that needs a timer interrupt registers a CTC callback with BDOS function
 200. The callback, and everything it touches, must be copied into
 `E000h-E3FFh` first. `SDSOAK` is the worked example.
 
-## The two profiles
+## The two sets
 
 **`normal`** is the ROM rescue disk: what you want present when the machine is
 in trouble and A: is the only volume you can trust.
@@ -61,13 +61,17 @@ in trouble and A: is the only volume you can trust.
 | `VOLINFO` | Which addressing mode each storage unit is really using: an image file on a FAT card, or the raw card. |
 | `SDDIR` `SDGET` `SDPUT` `SDDEL` | The `/SHARED/` folder tools. With a FAT card in the socket, these are how a file gets off this machine or onto it when nothing else works. |
 
-**`diagnostic`** is bring-up and benchmark work, and most of it is
+**`diagnostic`** is bring-up and benchmark work, and much of it is
 **destructive**: `SDWRITE`, `SDREC`, `SDSOAK` and `SDBENCH` act on whatever card
-is inserted, with no drive letter to get wrong. They have no business on the
-disk you reach for when the machine is already in trouble, which is why the ROM
-manifest in `../CPM2.2/tools/build_rom_disk.py` carries them only on the
-diagnostic profile. Nothing is deleted by that split — everything here always
-builds.
+is inserted, with no drive letter to get wrong. The rest — `BULK`, `SDBLK`,
+`RTSPROBE`, `DIAGCHK`, `V9958TST`, `HIDSTAT` and `SNDTEST` — are non-destructive
+bring-up aids. None of them goes on the ROM disk: they have no business on the
+disk you reach for when the machine is already in trouble. They always build;
+copy one to a work drive when you need it.
+
+The ROM disk also carries prebuilt Z-System tools from `zsys/`: `CD`, `PWD` and
+`MKDIR` for named directories, `MCOPY`, `CRC` and `NSWP`. The ROM build installs
+them for this machine as it stages them; the files here are the originals.
 
 ## `src/ioc_diag_record.inc` is a mirror, not an original
 
