@@ -5,8 +5,8 @@
 ; Entry:     CP/M transient-program origin 0100h
 ;
 ; This is a one-way takeover. All fallible CP/M file operations finish before
-; bank 7 or common RAM is changed. Once construct_target_bank begins, there is
-; deliberately no error or return path.
+; the takeover bank or common RAM is changed. Once construct_target_bank
+; begins, there is deliberately no error or return path.
 
 	.module colecogo
 	.area CODE (ABS)
@@ -32,12 +32,15 @@ FCB_R1			= 34
 FCB_R2			= 35
 
 ; ---------------------------------------------------------------------------
-; Zephyr extended BIOS ABI. These are public jump-table entries, not internal
-; map-file helper addresses. Keep in sync with CPM2.2 ZBIOS_EXT_BASE at DA33h.
+; Zephyr services published through the stable BDOS facade. Functions 210-217
+; accept a seven-byte register block containing A,C,B,E,D,L,H. The private BIOS
+; jump table moves with the OS image and must never be called by address.
 ; ---------------------------------------------------------------------------
-ZBIOS_MOVE		= 0xda33
-ZBIOS_XMOVE		= 0xda36
-ZBIOS_SETBNK		= 0xda3c
+ZEXT_SYSINFO		= 203
+ZEXT_MOVE		= 210
+ZEXT_XMOVE		= 211
+ZEXT_SETBNK		= 213
+ZSYSINFO_VERSION	= 1
 
 ; ---------------------------------------------------------------------------
 ; Zephyr hardware and takeover layout.
@@ -45,7 +48,9 @@ ZBIOS_SETBNK		= 0xda3c
 BANK_PORT		= 0x00
 RAM_BANK_MASK		= 0x07
 ROMDIS_BIT		= 0x10
-TARGET_BANK		= 0x07
+; Bank 7 belongs to the operating system. Bank 6 is sacrificed only after all
+; fallible CP/M work has completed; takeover never returns to the OS.
+TARGET_BANK		= 0x06
 TARGET_BANK_LATCH	= ROMDIS_BIT | TARGET_BANK
 
 BIOS_BUFFER		= 0x1800
@@ -65,8 +70,10 @@ TARGET_CART_TAIL	= 0xff80
 STAGE_RECORD_BYTES	= 0x0080
 TARGET_UPPER_PREFIX	= CART_HALF_BYTES - STAGE_RECORD_BYTES
 
-COMMON_STAGE_A		= 0xc000
-COMMON_STAGE_LIMIT	= 0xc400
+; E000h-E3FFh is the application's common interrupt reservation in the current
+; memory architecture. Stage A disables interrupts before using it.
+COMMON_STAGE_A		= 0xe000
+COMMON_STAGE_LIMIT	= 0xe400
 
 ; Physical I/O ports from platform_zephyr80.inc.
 SIO0A_CTRL		= 0x21
@@ -122,15 +129,11 @@ start:
 	ld de,#msg_banner
 	call puts
 
-	; Refuse to call through an absent or incompatible extended jump table.
-	ld a,(ZBIOS_MOVE)
-	cp #0xc3
-	jp nz,error_bios_abi
-	ld a,(ZBIOS_XMOVE)
-	cp #0xc3
-	jp nz,error_bios_abi
-	ld a,(ZBIOS_SETBNK)
-	cp #0xc3
+	; Refuse an OS without the stable Zephyr BDOS facade.
+	ld c,#ZEXT_SYSINFO
+	call BDOS
+	ld a,(hl)
+	cp #ZSYSINFO_VERSION
 	jp nz,error_bios_abi
 
 	; The loader and both file buffers live in the currently selected low bank.
@@ -142,7 +145,10 @@ start:
 	jp z,error_target_active
 
 	; Keep the BIOS disk-DMA bank record consistent with our physical source.
-	call ZBIOS_SETBNK
+	ld a,(source_bank)
+	call zext_setbnk
+	or a
+	jp nz,error_bios_abi
 
 	call capture_cart_name
 	or a
@@ -154,7 +160,7 @@ start:
 	call validate_cart_file
 
 	; Read every record and close both files before modifying the takeover bank.
-	; Any error through this point returns to CP/M with bank 7 untouched.
+	; Any error through this point returns to CP/M with bank 6 untouched.
 	ld de,#msg_loading
 	call puts
 	call load_bios_file
@@ -384,7 +390,7 @@ read_exact_record_ok:
 ; ===========================================================================
 
 construct_target_bank:
-	; BIOS -> bank 7 0000h-1FFFh.
+	; BIOS -> takeover bank 6, 0000h-1FFFh.
 	ld de,#BIOS_BUFFER
 	ld hl,#TARGET_BIOS
 	ld bc,#BIOS_BYTES
@@ -411,14 +417,14 @@ construct_target_bank:
 	call xmove_source_to_target
 
 	; Stage A is position-independent except for explicit COMMON_STAGE_A-based
-	; references. It occupies only the application-owned C000h-C3FFh window.
+	; references. It occupies only the application-owned E000h-E3FFh window.
 	ld hl,#stage_a_template
 	ld de,#COMMON_STAGE_A
 	ld bc,#(stage_a_template_end - stage_a_template)
 	ldir
 	jp COMMON_STAGE_A
 
-; Inputs: DE=current-bank source, HL=bank-7 destination, BC=count.
+; Inputs: DE=current-bank source, HL=bank-6 destination, BC=count.
 ; Outputs: bytes copied; caller's bank restored. Clobbers AF, BC, DE, HL.
 ; May block while the BIOS stages chunks through common MOVE_BUFFER.
 xmove_source_to_target:
@@ -426,20 +432,59 @@ xmove_source_to_target:
 	ld a,(source_bank)
 	ld c,a
 	ld b,#TARGET_BANK
-	call ZBIOS_XMOVE
+	call zext_xmove
 	pop bc
-	call ZBIOS_MOVE
+	call zext_move
 	ret
 
-; Inputs: DE=bank-7 source, HL=bank-7 destination, BC=count.
+; Inputs: DE=bank-6 source, HL=bank-6 destination, BC=count.
 ; Outputs and blocking behavior match xmove_source_to_target.
 xmove_target_to_target:
 	push bc
 	ld c,#TARGET_BANK
 	ld b,#TARGET_BANK
-	call ZBIOS_XMOVE
+	call zext_xmove
 	pop bc
-	call ZBIOS_MOVE
+	call zext_move
+	ret
+
+; Stable Zephyr BDOS facade adapters. The facade copies zext_regs into common
+; memory, invokes the private BIOS service, and copies the resulting registers
+; back. These routines may block in BDOS and are not ISR-safe.
+zext_setbnk:
+	ld (zext_regs),a
+	ld (zext_regs + 1),bc
+	ld (zext_regs + 3),de
+	ld (zext_regs + 5),hl
+	ld c,#ZEXT_SETBNK
+	jr zext_call
+
+zext_xmove:
+	; XMOVE preserves DE and HL. They must still be marshalled explicitly:
+	; otherwise the facade returns stale register-block values and the MOVE
+	; immediately following this call uses the wrong source and destination.
+	ld (zext_regs + 1),bc
+	ld (zext_regs + 3),de
+	ld (zext_regs + 5),hl
+	ld c,#ZEXT_XMOVE
+	jr zext_call
+
+zext_move:
+	ld (zext_regs + 1),bc
+	ld (zext_regs + 3),de
+	ld (zext_regs + 5),hl
+	ld c,#ZEXT_MOVE
+
+; C=function, zext_regs=A,C,B,E,D,L,H. Restores the service's result registers
+; and sets flags from its returned A.
+zext_call:
+	ld de,#zext_regs
+	call BDOS
+	ld hl,(zext_regs + 5)
+	ld de,(zext_regs + 3)
+	ld bc,(zext_regs + 1)
+	ld a,(zext_regs)
+	or a
 	ret
 
 ; ===========================================================================
@@ -504,7 +549,7 @@ puts:
 ;
 ; Public behavior: does not return. It disables CP/M interrupt sources,
 ; establishes the LunchCrema state original Coleco software cannot select,
-; changes to bank 7, and jumps to Stage B. It may block briefly on paced V9958
+; changes to bank 6, and jumps to Stage B. It may block briefly on paced V9958
 ; writes. It is not ISR-safe and emits no Virtual Drip traffic.
 ;
 ; Any absolute reference inside this template MUST be expressed relative to
@@ -667,11 +712,12 @@ stage_a_palette:
 stage_a_template_end:
 
 ; ===========================================================================
-; Stage B template -- installed at bank 7 address 5F80h.
+; Stage B template -- installed at bank 6 address 5F80h.
 ;
-; Public behavior: does not return. It copies the staged upper cartridge into
-; physical common bank 0, restores the record hidden by this code, clears the
-; full Coleco RAM range, and jumps (never calls) to 0000h. It is stackless,
+; Public behavior: does not return. It copies the staged upper cartridge across
+; bank 6 at C000h-DFFFh and common bank 0 at E000h-FFFFh, restores the record
+; hidden by this code, clears the full Coleco RAM range, and jumps (never calls)
+; to 0000h. It is stackless,
 ; interrupt-disabled, not ISR-safe, and emits no I/O traffic.
 ; ===========================================================================
 
@@ -718,6 +764,8 @@ load_ptr:
 	.dw 0
 records_left:
 	.dw 0
+zext_regs:
+	.ds 7
 read_error_target:
 	.dw 0
 
@@ -784,7 +832,7 @@ bios_vdp_patch_table:
 	.db 0,0
 
 msg_banner:
-	.ascii "ColecoGo 0.3 - Zephyr-80 ColecoVision loader\r\n$"
+	.ascii "ColecoGo 0.4 - Zephyr-80 ColecoVision loader\r\n$"
 msg_validating:
 	.ascii "Validating COLECO.ROM and cartridge...\r\n$"
 msg_loading:
@@ -794,9 +842,9 @@ msg_takeover:
 msg_usage:
 	.ascii "Error: use COLECOGO GAME.ROM (wildcards are not allowed).\r\n$"
 msg_bios_abi:
-	.ascii "Error: required Zephyr extended BIOS banking ABI is unavailable.\r\n$"
+	.ascii "Error: required Zephyr BDOS banking services are unavailable.\r\n$"
 msg_target_active:
-	.ascii "Error: CP/M is executing in reserved takeover bank 7.\r\n$"
+	.ascii "Error: CP/M is executing in reserved takeover bank 6.\r\n$"
 msg_bios_open:
 	.ascii "Error: cannot open COLECO.ROM on the current drive.\r\n$"
 msg_bios_size:
@@ -804,7 +852,7 @@ msg_bios_size:
 msg_bios_close:
 	.ascii "Error: cannot close COLECO.ROM.\r\n$"
 msg_bios_read:
-	.ascii "Error: failed while reading COLECO.ROM. Bank 7 was not changed.\r\n$"
+	.ascii "Error: failed while reading COLECO.ROM. Bank 6 was not changed.\r\n$"
 msg_bios_variant:
 	.ascii "Error: COLECO.ROM is not the supported standard BIOS image.\r\n$"
 msg_cart_open:
@@ -814,6 +862,6 @@ msg_cart_size:
 msg_cart_close:
 	.ascii "Error: cannot close the cartridge image.\r\n$"
 msg_cart_read:
-	.ascii "Error: failed while reading cartridge. Bank 7 was not changed.\r\n$"
+	.ascii "Error: failed while reading cartridge. Bank 6 was not changed.\r\n$"
 
 program_end:

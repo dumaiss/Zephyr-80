@@ -29,11 +29,11 @@ Larger bank-switched cartridge formats are outside the scope of the first versio
 In normal RAM-only operation, Zephyr-80 exposes:
 
 ```text
-0000h-BFFFh   selected SRAM bank
-C000h-FFFFh   SRAM bank 0, fixed/common
+0000h-DFFFh   selected SRAM bank
+E000h-FFFFh   SRAM bank 0, fixed/common
 ```
 
-This means a ColecoVision cartridge mapped at `8000h-FFFFh` crosses the Zephyr physical bank boundary at `C000h`.
+This means a ColecoVision cartridge mapped at `8000h-FFFFh` crosses the Zephyr physical bank boundary at `E000h`.
 
 That boundary is invisible to the Z80, so the loader can construct the final Coleco address space from two physical RAM regions:
 
@@ -43,11 +43,12 @@ Logical address   Physical Zephyr RAM
 0000h-1FFFh       selected Coleco bank
 2000h-5FFFh       selected Coleco bank, temporary staging area
 6000h-7FFFh       selected Coleco bank, Coleco RAM
-8000h-BFFFh       selected Coleco bank, cartridge lower 16 KiB
-C000h-FFFFh       bank 0, cartridge upper 16 KiB
+8000h-DFFFh       selected Coleco bank, cartridge lower 24 KiB
+E000h-FFFFh       bank 0, cartridge upper 8 KiB
 ```
 
-The first implementation can reserve one SRAM bank, for example bank 7, as the Coleco takeover bank.
+Bank 7 belongs to the running operating system and is never a legal application
+bank. ColecoGo sacrifices bank 6 as its fixed one-way takeover bank.
 
 ## Loading scheme
 
@@ -63,7 +64,7 @@ While CP/M is still fully operational, it:
 4. opens the requested cartridge image
 5. validates the cartridge size
 6. loads both files through normal CP/M BDOS services
-7. uses the Zephyr extended BIOS cross-bank move support to construct the target bank
+7. uses Zephyr BDOS functions 210 and 211 to construct the target bank
 
 All errors should be reported before the takeover begins.
 
@@ -80,13 +81,16 @@ The target bank is prepared as follows:
 
 For cartridge images smaller than 32 KiB, the cartridge destination should be initialized to a deterministic fill value before overlaying the file contents. `FFh` is the proposed initial fill value.
 
-The upper 16 KiB of a 32 KiB cartridge cannot be placed directly at logical `C000h-FFFFh` in the target bank because that logical range always resolves to physical bank 0 in RAM-only mode. It is therefore staged temporarily at `2000h-5FFFh` in the target bank.
+The upper 16 KiB of a 32 KiB cartridge crosses the current RAM-only mapping
+boundary: `C000h-DFFFh` is in the selected bank while `E000h-FFFFh` is physical
+bank 0. It is staged at `2000h-5FFFh`, then copied across that boundary after
+the final bank switch.
 
 ### 3. Install the final handoff code
 
 The final takeover requires code that survives the bank switch.
 
-The current CP/M memory model reserves `C000h-C3FFh` as application-owned common memory. A small Stage A trampoline can be copied there before takeover.
+The current CP/M memory model reserves `E000h-E3FFh` as application-owned common memory. A small Stage A trampoline can be copied there before takeover.
 
 Stage A is responsible for:
 
@@ -95,11 +99,13 @@ Stage A is responsible for:
 3. switching to the selected Coleco RAM bank
 4. jumping to Stage B in the newly selected bank
 
-Stage B must live below `C000h` in the target bank. Its exact location is intentionally left open until implementation, but it must not depend on CP/M, BDOS, BIOS stack state, or any code/data that will be overwritten.
+Stage B must live below `E000h` in the target bank. Its exact location is intentionally left open until implementation, but it must not depend on CP/M, BDOS, BIOS stack state, or any code/data that will be overwritten.
 
 ### 4. Complete the cartridge mapping
 
-Once Stage B is executing in the target bank, the loader can overwrite the common bank-0 CP/M region.
+Once Stage B is executing in the target bank, the loader can populate both the
+bank-6 and common-bank portions of the upper cartridge and overwrite the common
+CP/M region.
 
 Conceptually:
 
@@ -112,7 +118,9 @@ ldir
 
 This copies the staged upper 16 KiB of the cartridge into the live logical range `C000h-FFFFh`.
 
-At this point CP/M, BDOS, BIOS, drivers, and the former CP/M stack in that region are intentionally destroyed. No return path is expected.
+At this point the common CP/M facade, BIOS and stacks are intentionally
+destroyed. The protected bank-7 OS image is not overwritten, but there is no
+supported return path to it.
 
 The final Z80-visible image is then:
 
@@ -150,7 +158,7 @@ data/command ports.
 The current loader recognizes the standard Coleco BIOS layout (CRC32
 `3AA93EF3`) by checking every affected operand and patches its in-memory copy
 from `BEh/BFh` to LunchCrema's `A0h/A1h`. The disk file is not modified. A BIOS
-with a different layout is rejected before bank 7 is changed. Cartridge code
+with a different layout is rejected before bank 6 is changed. Cartridge code
 that performs its own direct `BEh/BFh` VDP I/O is not yet adapted; the initial
 target is software such as Donkey Kong that uses the standard BIOS VDP calls.
 
@@ -208,7 +216,9 @@ The transfer to `0000h` is a `JP`, not a `CALL`. There is no caller to return to
 
 ## Implementation notes
 
-The initial implementation should prefer the existing Zephyr extended BIOS banking services while CP/M is still active instead of writing directly to the memory-control latch. In particular, the current BIOS provides cross-bank move support suitable for staging data into the takeover bank while restoring the caller's original bank afterward.
+While CP/M is active, the implementation uses the stable Zephyr BDOS facade:
+function 211 selects the source and destination banks and function 210 performs
+the cross-bank move. It does not call the movable private BIOS jump table.
 
 Direct low-level bank manipulation belongs only in the final no-return trampoline where CP/M bookkeeping is no longer relevant.
 
@@ -239,7 +249,7 @@ The repository now contains an SDCC/ASxxxx Z80 implementation in
 - reads both files completely before changing the takeover bank
 - guards and adapts the standard BIOS's VDP ports for LunchCrema
 - fills unused cartridge space with `FFh`
-- constructs bank 7 through the public Zephyr `XMOVE`/`MOVE` ABI
+- constructs bank 6 through Zephyr BDOS functions 211/210 (`XMOVE`/`MOVE`)
 - installs the common Stage A and target-bank Stage B handoff routines
 - disables CP/M CTC/SIO interrupt sources
 - establishes a clean TMS-compatible V9958 baseline, LunchCrema WAIT/DRAM
@@ -253,7 +263,7 @@ make
 ```
 
 The result is `build/COLECOGO.COM`. The build also checks that the ordinary
-program remains below its fixed file buffers, Stage A fits in `C000h-C3FFh`,
+program remains below its fixed file buffers, Stage A fits in `E000h-E3FFh`,
 and Stage B fits in the backed-up 128-byte staging record.
 
 CP/M 2.2 records file sizes in 128-byte units. Runtime validation can therefore
@@ -266,7 +276,7 @@ return to CP/M, title-specific timing adaptation, cartridge-side direct VDP
 port rewriting, or runtime emulation/proxying of Coleco hardware. Hardware
 testing of version 0.2 reached both the BIOS title and Donkey Kong's option
 screen, exposing inherited CP/M V9958 state: the BIOS VRAM clear ran with G6
-mode and CPU VRAM page 7 still selected. Version 0.3 resets that state before
-takeover and requires a hardware retest. Successful takeover overwrites SRAM
-bank 7 by design; it does not remove or reconfigure the CP/M RAM-disk driver in
-the system image.
+mode and CPU VRAM page 7 still selected. Version 0.3 reset that state. Version
+0.4 moves the handoff to the current memory architecture and requires a hardware
+retest. Successful takeover overwrites SRAM bank 6 and the common CP/M region.
+The bank-7 OS image remains intact, though there is deliberately no return path.

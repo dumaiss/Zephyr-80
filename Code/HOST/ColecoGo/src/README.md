@@ -7,8 +7,8 @@ ASxxxx-compatible `sdasz80` syntax and builds as a CP/M transient program at
 The source keeps the three execution contexts visibly separate:
 
 - the CP/M loader validates and reads both files into the current TPA
-- the relocatable Stage A template runs from common RAM at `C000h`
-- the Stage B template runs from bank 7 at `5F80h`
+- the relocatable Stage A template runs from the program's common reservation at `E000h`
+- the Stage B template runs from takeover bank 6 at `5F80h`
 
 After reading `COLECO.ROM`, the CP/M phase verifies and adapts the 15 VDP-port
 operands in the standard Coleco BIOS. This converts the Coleco `BEh/BFh`

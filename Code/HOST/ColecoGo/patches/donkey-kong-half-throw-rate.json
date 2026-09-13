@@ -1,0 +1,23 @@
+{
+  "format": "colecogo-patch-v1",
+  "title": "Donkey Kong half-rate barrel throw scheduler",
+  "load_address": "0x8000",
+  "rom": {
+    "size": 16384,
+    "sha256": "93f6ed7bd0d1a0ac751fbe09ce7011881939bc2f4c82d3bdfef7c617367f1ae4"
+  },
+  "patches": [
+    {
+      "name": "double primary barrel-state timer period",
+      "address": "0x8B04",
+      "expect": "21 28 00",
+      "replace": "21 50 00"
+    },
+    {
+      "name": "double alternate barrel-state timer period",
+      "address": "0x8B10",
+      "expect": "21 50 00",
+      "replace": "21 A0 00"
+    }
+  ]
+}
