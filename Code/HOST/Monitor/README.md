@@ -12,16 +12,16 @@ initialize the SIO.
 At startup, Monitor initializes only its own command-line state, prints the
 banner, and displays the prompt immediately.
 
-Console input and output use the resident BIOS jump table:
+Console input and output use the CP/M BIOS jump table. Monitor finds the table
+through page zero's `JP WBOOT`, whose target is the table's second entry, and
+calls `CONST`, `CONIN` and `CONOUT` through it. It uses no fixed BIOS address.
 
-- `CONST` at `DA06h`
-- `CONIN` at `DA09h`
-- `CONOUT` at `DA0Ch`
-- `LAUNCH` at `DA3Fh`
+Bank access uses the Zephyr BDOS functions, through
+`../Utilities/src/zbdos.inc`.
 
-BIOS owns SIO channel B initialization and polling. Monitor owns command
-parsing, line editing/history, Intel HEX load/export, memory and port commands,
-and the `G` trampoline.
+BIOS owns console initialization and input. Monitor owns command parsing, line
+editing/history, Intel HEX load/export, memory and port commands, and the `G`
+trampoline.
 
 ## Build
 
@@ -50,14 +50,14 @@ make clean
 
 - `R`: print saved monitor register snapshot. `PC` is reported as `NA`
   because there is no interrupted user context.
-- `D <addr> <len>`: dump memory, 16 bytes per line.
-- `DB <bank> <addr> <len>`: dump memory from RAM bank `0` through `7` using
-  the resident BIOS `XMOVE`/`MOVE` extension entries.
+- `D <addr> <len>`: dump memory, 16 bytes per line. Addresses below `E000h`
+  are Monitor's own bank; `E000h-FFFFh` is common memory.
+- `DB <bank> <addr> <len>`: dump memory from RAM bank `0` through `6`, using
+  the `XMOVE` and `MOVE` services (BDOS functions 211 and 210). Bank 7 holds the
+  operating system and is refused.
 - `M <addr> <value>`: write one byte.
 - `I <port>`: read an 8-bit I/O port using `IN A,(C)`.
 - `O <port> <value>`: write an 8-bit I/O port using `OUT (C),A`.
-- `APP <bank>`: launch application bank `0` through `7` by calling BIOS
-  `LAUNCH`.
 - `L`: receive Intel HEX records. Supports type `00` data and type `01` EOF.
 - `G <addr>`: call code at `addr`. The monitor pushes a return address first,
   so loaded code can execute `RET` to return to the prompt.
@@ -65,8 +65,12 @@ make clean
   data records and one type `01` EOF record.
 - `H` or `?`: help.
 
+`APP <bank>` is retired: the BIOS `LAUNCH` entry it called no longer exists. The
+help text still lists it, and it reports a command error.
+
 ## Notes
 
 Direct `I` and `O` commands can access any requested Z80 I/O port. They are
 operator-requested diagnostics and are separate from Monitor's own console path,
-which always uses BIOS console calls.
+which always uses BIOS console calls. Writing the banking latch at port `00h`
+with `O` changes Monitor's own memory under it.

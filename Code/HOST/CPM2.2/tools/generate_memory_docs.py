@@ -1,10 +1,25 @@
 #!/usr/bin/env python3
-"""Generate synchronized Zephyr-80 firmware symbol and memory maps."""
+"""Generate and validate the Zephyr-80 banked-OS memory map and symbol map.
+
+The OS runs from SRAM bank 7, mapped at 2000h-DFFFh only in latch mode 11, and
+keeps what both modes must see in common memory, E000h-FFFFh.  One link builds
+both halves, so addresses alone decide which is which.  This reads that link --
+the assembler listing for symbol addresses and emitted bytes, cbios_defs.inc for
+constants the listing does not show -- and:
+
+  - checks every declared region against the limit cbios_defs.inc gives it
+  - checks the layout invariants the design depends on (docs/
+    Zephyr-80_OS_Execution_Memory_Architecture.md, section 28)
+  - writes docs/memory-map.md and docs/symbol-map.md
+
+A failed check stops the build with every error found, not just the first.
+tools/check_overlap.py already catches bytes emitted twice; this checks what the
+bytes are allowed to be.
+"""
 
 from __future__ import annotations
 
 import argparse
-import bisect
 from pathlib import Path
 import re
 import sys
@@ -18,331 +33,260 @@ EQU_PATTERN = re.compile(
     r"^\s*([0-9A-F]{8})\s+\d+\s+([A-Za-z_][A-Za-z0-9_]*)\s*=",
     re.IGNORECASE,
 )
+EMIT_PATTERN = re.compile(r"^\s+0000([0-9A-Fa-f]{4}) ((?:[0-9A-Fa-f]{2} )+)")
+# A line with more bytes than fit wraps onto lines with no address, indented to
+# the byte column.
+EMIT_CONTINUATION = re.compile(r"^ {13}((?:[0-9A-Fa-f]{2} ?)+)\s*$")
+DEFS_PATTERN = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(0x[0-9A-Fa-f]+|[0-9]+)\s*(?:;|$)", re.MULTILINE
+)
 
+OS_BODY_START = 0x2000
+OS_IMAGE_LIMIT = 0xC000        # shadow/copy mode loads only 0000h-BFFFh of a page
+OS_BODY_LIMIT = 0xE000
+COMMON_START = 0xE000
+CCP_SLOT = 0x0800
+BIOS_TABLE_ENTRIES = 17
+EXT_TABLE_ENTRIES = 8
+EXT_FIRST_FUNCTION = 210
+IM2_PAGE_SIZE = 0x100
 
-BIOS_TABLE = [
-    ("BOOT", "boot"),
-    ("WBOOT", "wboot"),
-    ("CONST", "const"),
-    ("CONIN", "conin"),
-    ("CONOUT", "conout"),
-    ("LIST", "list"),
-    ("PUNCH", "punch"),
-    ("READER", "reader"),
-    ("HOME", "home"),
-    ("SELDSK", "seldsk"),
-    ("SETTRK", "settrk"),
-    ("SETSEC", "setsec"),
-    ("SETDMA", "setdma"),
-    ("READ", "read"),
-    ("WRITE", "write"),
-    ("LISTST", "listst"),
-    ("SECTRAN", "sectran"),
+BIOS_ENTRY_NAMES = [
+    "BOOT", "WBOOT", "CONST", "CONIN", "CONOUT", "LIST", "PUNCH", "READER",
+    "HOME", "SELDSK", "SETTRK", "SETSEC", "SETDMA", "READ", "WRITE", "LISTST",
+    "SECTRAN",
+]
+EXT_ENTRY_NAMES = [
+    "MOVE", "XMOVE", "SELMEM", "SETBNK", "IOCALL", "VIDEO_SEND", "IOCBULK", "IOCBULKW",
 ]
 
-EXTENDED_TABLE = [
-    ("00h", "MOVE"),
-    ("03h", "XMOVE"),
-    ("06h", "SELMEM"),
-    ("09h", "SETBNK"),
-    ("0Ch", "IOCALL"),
-    ("0Fh", "VIDEO_SEND"),
-    ("12h", "IOCBULK"),
-    ("15h", "IOCBULKW"),
+
+class Region:
+    """A declared region: code from start_sym to end_sym, bounded by limit_sym.
+
+    end_sym None means the region has no end label; its end is the last emitted
+    byte below the limit.
+    """
+
+    def __init__(self, name: str, start_sym: str, end_sym: str | None, limit_sym: str,
+                 notes: str, optional: bool = False):
+        self.name = name
+        self.start_sym = start_sym
+        self.end_sym = end_sym
+        self.limit_sym = limit_sym
+        self.notes = notes
+        self.optional = optional
+
+
+COMMON_REGIONS = [
+    Region("BDOS facade", "FACADE_CODE_START", "FACADE_CODE_END", "FACADE_CODE_LIMIT",
+           "`CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-217, system information block."),
+    Region("BIOS tables, ROM copy, boot", "BIOS_CODE_START", None, "CBIOS_BANKING_CODE_BASE",
+           "CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero."),
+    Region("Banking services", "BANKING_CODE_START", "BANKING_CODE_END", "CBIOS_SPARE_CODE_BASE",
+           "`SELMEM`, `SETBNK`, `XMOVE`, `MOVE`."),
+    Region("CTC reset", "CBIOS_SPARE_CODE_BASE", None, "CBIOS_IOC_DIAG_BASE",
+           "`ctc_disable_interrupts`: CTC reset and vector base."),
+    Region("IOC link failure record", "CBIOS_IOC_DIAG_BASE", "IOC_DIAG_RECORD_END", "CBIOS_BOOT_BANNER_CODE_BASE",
+           "Read by the CP/M tools through BDOS function 203."),
+    Region("Boot banner printer", "BOOT_BANNER_CODE_START", "BOOT_BANNER_CODE_END", "CBIOS_SIO_CORE_CODE_BASE",
+           "Prints the banner text kept in bank 7."),
+    Region("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END", "CBIOS_XING_CODE_BASE",
+           "SIO0/B and SIO1 initialization, receive sinks, SIO interrupt body."),
+    Region("Crossing layer", "XING_CODE_START", "XING_CODE_END", "CBIOS_XING_CODE_LIMIT",
+           "`xing_isr`, the SIO IM2 entry, and mode-preserving bank select."),
+    Region("Transport level", "ZBIOS_XPORT_LEVEL_ADDR", None, "CBIOS_GATE_CODE_BASE",
+           "The BIOS IO Controller transport level byte."),
+    Region("Crossing gates", "GATE_CODE_START", "GATE_CODE_END", "CBIOS_GATE_CODE_LIMIT",
+           "Console and IOC/video gates into bank 7, inert disk entries, warm-boot trap, ROM-disk copy window, bank 7 check."),
+    Region("Interrupt dispatch", "IRQ_CODE_START", "IRQ_CODE_END", "CBIOS_IRQ_CODE_LIMIT",
+           "CTC entries, callback dispatcher, registration."),
+    Region("Serial console", "SERCON_CODE_START", "SERCON_CODE_END", "CBIOS_SERCON_CODE_LIMIT",
+           "Serial console tee and input switch.", optional=True),
 ]
 
-IMPLEMENTATION_SYMBOLS = [
-    (("cpm_rom_entry_high", "shadow_copy_rom_to_ram"), "Reset copy routine in high firmware memory."),
-    (("shadow_copy_rom_to_ram_done",), "Shadow-copy completion branch point."),
-    (("cbios_boot_after_rom_copy",), "Stack setup and cold boot handoff."),
-    (("BANK_HELPERS_START",), "Low-level bank helper code start."),
-    (("bank_select_internal",), "Selects RAM bank and records current bank."),
-    (("select_ram_bank0",), "Selects RAM bank 0."),
-    (("BANK_HELPERS_END",), "Low-level bank helper code end."),
-    (("sio_init",), "Compatibility entry that jumps to `sio_core_init`."),
-    (("boot",), "Cold boot implementation; starts the CP/M CCP."),
+BANK7_REGIONS = [
+    Region("ZSDOS's BIOS table", "BIOS7_TABLE", "BIOS7_TABLE_END", "CBIOS_CONSOLE_CODE_BASE",
+           "The table ZSDOS calls, and the `BANK7OS1` image marker."),
+    Region("Console facade", "CONSOLE_CODE_START", "CONSOLE_CODE_END", "CBIOS_STORAGE_CODE_BASE",
+           "CP/M console entries; dispatch on the console stack."),
+    Region("Storage facade", "STORAGE_STUB_CODE_START", "STORAGE_STUB_CODE_END", "CBIOS_BIOS_EXT_CODE_BASE",
+           "CP/M disk entries; jumps into the drive dispatcher."),
+    Region("VIDEO_SEND", "BIOS_EXT_CODE_START", "BIOS_EXT_CODE_END", "CBIOS_IOCTRL_CODE_BASE",
+           "Raw video request through the selected console backend."),
+    Region("IOCALL", "IOCTRL_CODE_START", "IOCTRL_CODE_END", "CBIOS_IOC_COMMAND_CODE_BASE",
+           "32-byte mailbox transaction."),
+    Region("IOC command lane", "IOC_CMD_CODE_START", "IOC_CMD_CODE_END", "CBIOS_XPORT_SHIM_CODE_BASE",
+           "Common-packet command-lane transport."),
+    Region("Bulk entries", "XPORT_SHIM_CODE_START", "XPORT_SHIM_CODE_END", "CBIOS_IOC_BULK_CODE_BASE",
+           "`IOCBULK` and `IOCBULKW`."),
+    Region("IOC bulk lane", "IOC_BULK_CODE_START", "IOC_BULK_CODE_END", "CBIOS_HID_INPUT_CODE_BASE",
+           "Common-packet bulk-lane transport and link bring-up."),
+    Region("USB keyboard input", "HID_INPUT_CODE_START", "HID_INPUT_CODE_END", "CBIOS_HID_INPUT_STATE_BASE",
+           "Doorbell-gated keyboard fetch."),
+    Region("USB keyboard state", "HID_INPUT_STATE_START", "HID_INPUT_STATE_END", "CBIOS_STORAGE_SD_CODE_BASE",
+           "Mailboxes and keyboard queue."),
+    Region("SD-card backend", "SD_STORAGE_CODE_START", "SD_STORAGE_CODE_END", "CBIOS_STORAGE_SD_CODE_LIMIT",
+           "Record read and write through the IO Controller cache."),
+    Region("B: select probe", "SD_PROBE_CODE_START", "SD_PROBE_CODE_END", "CBIOS_STORAGE_A_CODE_BASE",
+           "Card availability, then the B: DPH."),
+    Region("Drive A: backend", "STORAGE_A_CODE_START", "STORAGE_A_CODE_END", "CBIOS_SD_PROBE2_CODE_BASE",
+           "The build-selected A: backend."),
+    Region("Drive dispatcher", "CBIOS_SD_PROBE2_CODE_BASE", "SD_PROBE2_CODE_END", "CBIOS_V9958_CONSOLE_CODE_BASE",
+           "Routes A: to its backend and B:/C: to SD units; C: select probe."),
+]
+
+CONSOLE_REGIONS = {
+    "v9958": Region("V9958 console", "V9958_CONSOLE_CODE_START", "V9958_CONSOLE_CODE_END",
+                    "VDRIP_STORAGE_DPHDPB_BASE",
+                    "Direct LunchCrema V9958 console: parser, renderer, cursor and state."),
+    "vdrip": Region("Virtual Drip console", "VDRIP_CONSOLE_CODE_START", "VDRIP_CONSOLE_CODE_END",
+                    "VDRIP_STORAGE_DPHDPB_BASE",
+                    "Retained Virtual Drip console."),
+}
+
+COMMON_IMPLEMENTATION = [
+    (("reset_vector",), "ROM reset entry."),
+    (("cpm_rom_entry_high", "shadow_copy_rom_to_ram"), "ROM-to-RAM copy of every page."),
+    (("cbios_boot_after_rom_copy",), "Cold boot handoff after the copy."),
+    (("boot",), "Cold boot: enters mode 11, checks bank 7, initializes, enters the CCP in mode 10."),
     (("wboot",), "Warm boot trampoline."),
-    (("wboot_resident",), "Protected warm boot implementation; returns to the CP/M CCP."),
-    (("WBOOT_RESIDENT_START",), "Resident warm boot body start."),
-    (("WBOOT_RESIDENT_END",), "Resident warm boot body end."),
-    (("restore_ccp_from_rom",), "Warm boot helper that restores `CBASE` through `FBASE-1` from ROM page 0."),
-    (("ctc_disable_interrupts",), "CTC interrupt disable helper."),
-    (("prepare_runnable_bank",), "Page-zero and DMA preparation helper."),
+    (("wboot_resident",), "Warm boot: resets the CTC, clears registrations, restores the CCP."),
+    (("restore_ccp_from_rom",), "Copies `CBASE` through `FBASE-1` from ROM page 0."),
+    (("prepare_runnable_bank",), "Page zero and default DMA."),
     (("init_page_zero",), "Installs `JP WBOOT` and `JP FBASE`."),
-    (("runtime_set_default_dma",), "Sets default DMA to `0080h`."),
-    (("runtime_clear_default_dma",), "Clears command tail/default DMA area."),
-    (("DSKERROR",), "BDOS disk-error recovery; reports the failing drive and warm-boots on A:."),
-    (("CONSOLE_CODE_START",), "Console BIOS facade start."),
-    (("console_init",), "Installs and initializes the default console driver."),
-    (("console_set_driver",), "Installs an alternate console driver table."),
-    (("const",), "Console status facade."),
-    (("conin",), "Blocking console input facade."),
-    (("conout",), "Blocking console output facade."),
-    (("list",), "No-op list implementation."),
-    (("punch",), "No-op punch implementation."),
-    (("reader",), "EOF reader implementation."),
-    (("listst",), "Ready list-status implementation."),
-    (("CONSOLE_CODE_END",), "Console BIOS facade end."),
-    (("STORAGE_STUB_CODE_START",), "Storage BIOS facade start."),
-    (("home",), "Storage HOME facade; routes to the selected drive-A backend."),
-    (("settrk",), "Storage SETTRK facade; records selected track."),
-    (("setsec",), "Storage SETSEC facade; records selected sector."),
-    (("seldsk",), "Storage SELDSK facade; returns a drive DPH or no disk."),
-    (("setdma",), "Records DMA address."),
-    (("read",), "Storage READ facade; transfers from the selected drive-A backend."),
-    (("write",), "Storage WRITE facade; transfers to the selected drive-A backend."),
-    (("sectran",), "Returns untranslated 0-based logical sector for no-skew media."),
-    (("STORAGE_STUB_CODE_END",), "Storage BIOS facade end."),
-    (("CCP_QOL_CODE_START",), "CCP clear-screen prompt-redraw helper start."),
-    (("ccp_clear_redraw",), "Clears the console and redraws the CCP prompt."),
-    (("CCP_QOL_CODE_END",), "CCP clear-screen prompt-redraw helper end."),
-    (("VDRIP_TRANSPORT_CODE_START",), "Shared Virtual Drip transport start."),
-    (("vdrip_send_frame",), "Current no-CRC Virtual Drip frame sender."),
-    (("vdrip_rx_sink",), "Single SIO0/B Virtual Drip receive sink."),
-    (("VDRIP_TRANSPORT_CODE_END",), "Shared Virtual Drip transport end."),
-    (("STORAGE_A_CODE_START",), "Drive A: storage backend code start."),
-    (("stg_a_seldsk",), "Selects CP/M drive A and returns its DPH."),
-    (("stg_a_read",), "Reads one 128-byte record from the drive A: backend."),
-    (("stg_a_write",), "Writes one 128-byte record to the drive A: backend."),
-    (("STORAGE_A_DPH",), "Drive A disk parameter header."),
-    (("STORAGE_A_DPB",), "Drive A disk parameter block."),
-    (("STORAGE_A_CODE_END",), "Drive A: storage backend code end."),
-    (("SIO_CORE_CODE_START",), "BIOS-owned SIO core code start in core BIOS."),
-    (("CONSOLE_IM2_VECTOR_ENTRY",), "SIO core exact IM2 vector table entry address."),
-    (("CONSOLE_IM2_VECTOR_TABLE_START",), "SIO core exact IM2 vector table start."),
-    (("CONSOLE_IM2_VECTOR_TABLE_END",), "SIO core exact IM2 vector table end."),
-    (("sio_core_init",), "Initializes BIOS-owned SIO services, SIO0/B async mode, and SIO1/A sync mode."),
-    (("sio1_ioc_init",), "Initializes SIO1/A synchronous external-clock/external-sync IO Controller mode."),
-    (("sio_core_enable_interrupts",), "Enables BIOS-owned SIO/IM2 interrupts."),
-    (("sio_core_disable_interrupts",), "Disables BIOS-owned SIO interrupts."),
-    (("sio_register_rx_sink",), "Registers one RX byte sink for a BIOS-owned SIO channel."),
-    (("sio_send_byte",), "Blocking send-byte API for BIOS-owned SIO channels."),
-    (("sio_recv_byte",), "Polling receive-byte API for BIOS-owned SIO channels."),
-    (("sio0b_rts_assert",), "Asserts SIO0/B RTS for software-managed console RX flow control."),
-    (("sio0b_rts_release",), "Releases SIO0/B RTS for software-managed console RX flow control."),
-    (("sio1_ioc_rts_assert",), "Asserts SIO1/A RTS as an IO Controller service request."),
-    (("sio1_ioc_rts_release",), "Releases SIO1/A RTS after an IO Controller transaction."),
-    (("sio1_ioc_put_byte",), "SIO1/A IO Controller byte transmit helper."),
-    (("sio1_ioc_get_byte",), "SIO1/A IO Controller byte receive helper."),
-    (("sio_rx_kick",), "Foreground RX poll/dispatch helper."),
-    (("sio_core_isr",), "SIO interrupt body; called from `xing_isr` on the ISR stack."),
-    (("sio_console_isr",), "Compatibility label that jumps to `xing_isr`."),
-    (("SIO_CORE_CODE_END",), "BIOS-owned SIO core code end."),
-    (("XING_CODE_START",), "Common crossing layer start."),
-    (("xing_isr",), "SIO IM2 entry: switches to the ISR stack, calls `sio_core_isr`, EI and RETI."),
+    (("ctc_disable_interrupts",), "Resets the CTC and programs its vector base."),
+    (("boot_print_banner",), "Prints the boot banner."),
+    (("SELMEM",), "Selects a program bank, keeping the RAM mode."),
+    (("SETBNK",), "Records the next disk DMA bank."),
+    (("XMOVE",), "Arms a cross-bank `MOVE`."),
+    (("MOVE",), "Same-bank or cross-bank move through the staging buffer."),
+    (("sio_core_init",), "Initializes SIO0/B and clears receive sinks."),
+    (("sio1_ioc_init",), "Initializes SIO1 for the IO Controller link; cold boot only."),
+    (("sio_core_enable_interrupts",), "Loads `I`, enters IM2, programs SIO0/B WR2."),
+    (("sio_register_rx_sink",), "Registers a receive sink for a BIOS-owned SIO channel."),
+    (("sio_send_byte",), "Blocking send on a BIOS-owned SIO channel."),
+    (("sio_core_isr",), "SIO interrupt body, called on the ISR stack."),
+    (("xing_isr",), "SIO IM2 entry: ISR stack, `sio_core_isr`, `EI`/`RETI`."),
     (("xing_select_ram_bank",), "Selects a RAM bank while keeping mode 10 or mode 11."),
-    (("XING_CODE_END",), "Common crossing layer end."),
-    (("IOCTRL_CODE_START",), "IOCALL transaction code start in core BIOS."),
-    (("IOCALL",), "Zephyr extended BIOS IO Controller transaction call."),
-    (("IOCTRL_CODE_END",), "IOCALL transaction code end."),
-    (("SD_PROBE_CODE_START",), "SD selection probe code start."),
-    (("sd_probe_store_result",), "Returns the selected DPH, or zero for an unavailable drive."),
-    (("SD_PROBE_CODE_END",), "SD selection probe code end."),
-    (("IOC_CMD_CODE_START",), "Common-packet Command-lane helper code start."),
-    (("IOC_CMD_CODE_END",), "Common-packet Command-lane helper code end."),
-    (("sd_storage_probe",), "B: select probe: card availability, then the B: DPH."),
-    (("sd_storage_probe_card",), "Non-destructive SD block-zero probe shared by B: and C:."),
-    (("sd_storage_probe2",), "C: select probe: card availability, then CMD_VOL_INFO for a mounted unit 1."),
-    (("stg_seldsk",), "Drive dispatcher: A: to the ROM backend, B:/C: to volume units 0/1."),
-    (("IOC_BULK_CODE_START",), "Common-packet Bulk-write helper code start."),
-    (("IOC_BULK_CODE_END",), "Common-packet Bulk-write helper code end."),
-    (("HID_INPUT_CODE_START",), "USB keyboard IOC polling helper code start."),
-    (("HID_INPUT_CODE_END",), "USB keyboard IOC polling helper code end."),
-    (("HID_INPUT_STATE_START",), "USB keyboard IOC mailbox and queue state start."),
-    (("HID_INPUT_STATE_END",), "USB keyboard IOC mailbox and queue state end."),
-    (("SD_STORAGE_CODE_START",), "SD-card BIOS backend code start."),
-    (("SD_STORAGE_CODE_END",), "SD-card BIOS backend code end."),
-    (("sd_probe_store_result",), "Stores the SD select result in the protected caller frame."),
-    (("VDRIP_CONSOLE_CODE_START",), "Virtual Drip console driver code start."),
-    (("vdrip_console_driver",), "Virtual Drip console driver dispatch table."),
-    (("vdrip_console_init",), "Virtual Drip console init, proxy handshake, VDP setup."),
-    (("ccp_read_up_sequence",), "Consumes the `ESC [ A` suffix for CCP one-line recall."),
-    (("VDRIP_CONSOLE_CODE_END",), "Virtual Drip console driver code end."),
-    (("V9958_CONSOLE_CODE_START",), "Direct LunchCrema V9958 console driver code start."),
-    (("v9958_console_driver",), "Direct V9958 console driver dispatch table."),
-    (("v9958_console_init",), "Direct V9958 warm initialization and HID setup."),
-    (("V9958_CONSOLE_CODE_END",), "Direct LunchCrema V9958 console driver code end."),
-    (("BANKING_CODE_START",), "Banking extension implementation start."),
-    (("SELMEM",), "Select RAM bank."),
-    (("SETBNK",), "Record future DMA bank."),
-    (("XMOVE",), "Set source/destination banks for next `MOVE`."),
-    (("MOVE",), "Same-bank or cross-bank memory move."),
-    (("BANKING_CODE_END",), "Banking extension implementation end."),
-    (("VIDEO_SEND",), "Extended BIOS call: selected-backend raw video request."),
-    (("IOCBULK",), "Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake."),
-    (("IOCBULKW",), "Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake."),
-    (("BIOS_EXT_CODE_START",), "BIOS extension code start."),
-    (("BIOS_EXT_CODE_END",), "BIOS extension code end."),
-    (("BIOS_CODE_END",), "End of core BIOS code."),
+    (("xing_os_call_ix",), "Calls a bank 7 routine in mode 11 and restores the latch."),
+    (("gate_const",), "`CONST` gate for programs."),
+    (("gate_conin",), "`CONIN` gate for programs."),
+    (("gate_conout",), "`CONOUT` gate for programs."),
+    (("gate_iocall",), "`IOCALL` gate; stages both mailboxes."),
+    (("gate_iocbulk",), "`IOCBULK` gate; delivers from the staging buffer."),
+    (("gate_iocbulkw",), "`IOCBULKW` gate; stages the payload first."),
+    (("gate_video_send",), "`VIDEO_SEND` gate; stages frames, chunks data blocks."),
+    (("bios_inert_seldsk",), "Inert `SELDSK`: returns `HL = 0`."),
+    (("bios_inert_error",), "Inert `READ`/`WRITE`: returns an error."),
+    (("wbtrap",), "Warm-boot trap: common stack, mode 10, `JP 0000h`."),
+    (("xing_rom_copy_record",), "Drive A: shadow/copy window; keeps its state in common variables."),
+    (("bank7_check",), "Verifies the `BANK7OS1` marker at cold boot."),
+    (("ctc0_isr",), "CTC channel 0 entry."),
+    (("irq_register",), "BDOS function 200."),
+    (("irq_unregister",), "BDOS function 201."),
+    (("irq_program_exit",), "BDOS function 202; ZCPR2 calls it when a transient returns."),
+    (("irq_reset",), "Clears every registration; cold and warm boot."),
+    (("irq_unexpected",), "`EI`/`RETI` stub for unprogrammed vectors."),
+    (("irq_ctc_slots",), "Callback entry per CTC channel; zero is unregistered."),
+    (("facade_entry",), "BDOS facade entry, reached from `FBASE`."),
+    (("facade_reset",), "Resets the facade's DMA tracking."),
+    (("zephyr_sysinfo",), "System information block returned by function 203."),
+]
+
+COMMON_OPTIONAL = [
+    (("sercon_init",), "Arms the serial console fallback at cold boot."),
+    (("sercon_install",), "Rebinds the serial console after warm boot."),
+]
+
+BANK7_IMPLEMENTATION = [
+    (("BIOS7_TABLE",), "ZSDOS's BIOS jump table."),
+    (("BIOS7_MAGIC",), "`BANK7OS1` image marker."),
+    (("console_init",), "Installs the console driver table."),
+    (("const",), "Console status."),
+    (("conin",), "Console input."),
+    (("conout",), "Console output."),
+    (("seldsk",), "Storage `SELDSK` entry."),
+    (("read",), "Storage `READ` entry."),
+    (("write",), "Storage `WRITE` entry."),
+    (("stg_seldsk",), "Drive dispatcher."),
+    (("stg_a_seldsk",), "Drive A: select."),
+    (("stg_a_read",), "Drive A: record read."),
+    (("sd_storage_probe",), "B: select probe."),
+    (("sd_storage_probe2",), "C: select probe."),
+    (("VIDEO_SEND",), "Raw video request."),
+    (("IOCALL",), "IO Controller command/reply."),
+    (("IOCBULK",), "IO Controller bulk receive."),
+    (("IOCBULKW",), "IO Controller bulk transmit."),
+    (("ioc_link_bringup",), "Establishes command-lane sync at cold boot."),
+    (("console_backend_cold_init",), "Selected console backend cold init."),
+    (("STORAGE_A_DPH",), "Drive A: DPH."),
+    (("SD_STORAGE_DPH",), "B: DPH."),
+    (("SD_STORAGE_DPH2",), "C: DPH."),
+    (("CBIOS_STORAGE_DIRBUF",), "Shared directory buffer."),
+    (("CONSOLE_FONT_ROM_BASE",), "Console font."),
+    (("BOOT_BANNER_TEXT",), "Boot banner text."),
+]
+
+BANK7_OPTIONAL = [
+    (("v9958_console_driver",), "V9958 console driver table."),
+    (("v9958_console_init",), "V9958 warm initialization."),
+    (("vdrip_console_driver",), "Virtual Drip console driver table."),
+    (("vdrip_console_init",), "Virtual Drip console initialization."),
 ]
 
 RUNTIME_STATE = [
-    ("CURRENT_BANK", 1),
-    ("cbios_dma_addr", 2),
-    ("CONSOLE_DRIVER", 2),
-    ("CONSOLE_CALLER_SP", 2),
-    ("SAVED_BANK", 1),
-    ("DMA_BANK", 1),
-    ("XMOVE_SRC_BANK", 1),
-    ("XMOVE_DST_BANK", 1),
-    ("XMOVE_PENDING", 1),
-    ("MOVE_SRC_PTR", 2),
-    ("MOVE_DST_PTR", 2),
-    ("MOVE_REMAIN", 2),
-    ("MOVE_CHUNK_LEN", 2),
-    ("stg_a_selected_drive", 1),
-    ("stg_a_track", 2),
-    ("stg_a_sector", 2),
-    ("VDRIP_STORAGE_SAVED_BANK", 1),
-    ("vdrip_storage_seq", 1),
-    ("vdrip_storage_active_seq", 1),
-    ("vdrip_storage_lba", 2),
-    ("vdrip_rx_mode", 1),
-    ("vdrip_idle_mode", 1),
-    ("vdrip_proxy_online", 1),
-    ("vdrip_raw_callback", 2),
-    ("vdrip_rx_state", 1),
-    ("vdrip_declared_len", 2),
-    ("vdrip_payload_len", 1),
-    ("vdrip_rx_type", 1),
-    ("vdrip_payload_remaining", 1),
-    ("vdrip_payload_index", 1),
-    ("vdrip_pending_type", 1),
-    ("vdrip_pending_seq", 1),
-    ("vdrip_reply_ready", 1),
-    ("vdrip_reply_error", 1),
-    ("vdrip_reply_status", 1),
-    ("storage_caller_sp", 2),
-    ("SIO0B_RX_SINK", 2),
-    ("SIO1_RX_SINK", 2),
-    ("SIO_CORE_IRQ_ENABLED", 1),
-    ("SIO0B_LAST_RR1", 1),
-    ("SIO0B_LAST_RX_ERROR", 1),
-]
-
-COMMON_DRIVER_DECLARATIONS = [
-    ("IOC Bulk transport overflow", "IOC_BULK_CODE_START", "IOC_BULK_CODE_END", 3, 3),
-    ("USB keyboard IOC polling helper", "HID_INPUT_CODE_START", "HID_INPUT_CODE_END", 3, 3),
-    ("IOC Command transport", "IOC_CMD_CODE_START", "IOC_CMD_CODE_END", 4, 5),
-    ("SD-card BIOS backend", "SD_STORAGE_CODE_START", "SD_STORAGE_CODE_END", 4, 5),
-    ("SD selection probe", "SD_PROBE_CODE_START", "SD_PROBE_CODE_END", 5, 5),
-    ("Drive A: storage backend", "STORAGE_A_CODE_START", "STORAGE_A_CODE_END", 5, 5),
-    ("CCP prompt-redraw helper", "CCP_QOL_CODE_START", "CCP_QOL_CODE_END", 3, 3),
-]
-
-OPTIONAL_IMPLEMENTATION_SYMBOLS = {
-    "VDRIP_TRANSPORT_CODE_START",
-    "vdrip_send_frame",
-    "vdrip_rx_sink",
-    "VDRIP_TRANSPORT_CODE_END",
-    "VDRIP_CONSOLE_CODE_START",
-    "vdrip_console_driver",
-    "vdrip_console_init",
-    "VDRIP_CONSOLE_CODE_END",
-    "V9958_CONSOLE_CODE_START",
-    "v9958_console_driver",
-    "v9958_console_init",
-    "V9958_CONSOLE_CODE_END",
-}
-
-CORE_RANGES = [
-    ("BIOS jump table and boot glue", "BIOS_CODE_START", "CONSOLE_CODE_START"),
-    ("console facade", "CONSOLE_CODE_START", "CONSOLE_CODE_END"),
-    ("storage facade", "STORAGE_STUB_CODE_START", "STORAGE_STUB_CODE_END"),
-    ("banking/XMOVE", "BANKING_CODE_START", "BANKING_CODE_END"),
-    ("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END"),
-    ("crossing layer", "XING_CODE_START", "XING_CODE_END"),
-    ("BIOS extensions", "BIOS_EXT_CODE_START", "BIOS_EXT_CODE_END"),
+    (("CURRENT_BANK",), "Running or suspended program bank; not the bank executing below `E000h`."),
+    (("cbios_dma_addr",), "BIOS DMA address."),
+    (("CONSOLE_DRIVER",), "Active console driver table."),
+    (("CONSOLE_CALLER_SP",), "Caller SP while the console backend runs on its stack."),
+    (("SAVED_BANK",), "Saved bank for a cross-bank move."),
+    (("DMA_BANK",), "Recorded DMA bank."),
+    (("XMOVE_SRC_BANK",), "Pending move source bank."),
+    (("XMOVE_DST_BANK",), "Pending move destination bank."),
+    (("XMOVE_PENDING",), "Cross-bank move armed."),
+    (("MOVE_SRC_PTR",), "Cross-bank move source pointer."),
+    (("MOVE_DST_PTR",), "Cross-bank move destination pointer."),
+    (("MOVE_REMAIN",), "Cross-bank move bytes left."),
+    (("MOVE_CHUNK_LEN",), "Current cross-bank chunk."),
+    (("SAVED_LATCH",), "Latch as found by a cross-bank move."),
+    (("stg_drive",), "Drive the dispatcher routes to."),
+    (("storage_caller_sp",), "Caller SP while a storage backend runs on its stack."),
+    (("SIO0B_RX_SINK",), "SIO0/B receive sink."),
+    (("SIO1_RX_SINK",), "SIO1 receive sink."),
+    (("SIO_CORE_IRQ_ENABLED",), "SIO interrupt mode flag."),
+    (("SERCON_FLAGS",), "Serial console flags; programs find it through function 203."),
+    (("IOC_DIAG_STATUS",), "IOC link failure record; programs find it through function 203."),
 ]
 
 VALIDATION_NOTES = [
-    "BIOS core must stay inside CBIOS_CORE_BASE-CBIOS_CORE_END.",
-    "Core BIOS component ranges must not overlap.",
-    "Each declared driver must stay inside its declared fixed slot range.",
-    "Selected console driver must stay inside its declared driver-slot range.",
-    "Shared VDrip transport, when selected, must stay inside slot 5.",
-    "Drive-A storage backend must stay inside slot 5.",
-    "SIO core and its exact IM2 vector entry must stay inside core BIOS.",
-    "Scratch buffers and the storage allocation vector must not overlap resident code.",
-    "Runtime state must not overlap scratch, stack, or the SIO-owned IM2 table.",
-    "Stack guard must remain above runtime state.",
-    "Protected/common TPA C000h-C3FFh is application-owned and must not be used by BIOS.",
+    "Every declared region starts at its base symbol and ends at or below its limit.",
+    "Declared regions do not overlap.",
+    "Nothing is assembled into the caller window `0003h-1FFFh`, the ZSDOS slot, bank 7's runtime-only `C000h-DFFFh`, the program reservation, or the CCP slot.",
+    "The bank 7 image ends below `C000h`, the end of what shadow/copy mode loads.",
+    "`FBASE` is six bytes into the facade, which follows the 2 KiB CCP slot; the facade ends below `CBIOS_BASE`.",
+    "ZSDOS's BIOS table is at `ZSDOS_ORG + ZSDOS_SIZE`, and ends with the `BANK7OS1` marker.",
+    "The CP/M BIOS table and the Zephyr extension table are jumps, in order.",
+    "The IM2 vector page is 256 bytes at `I * 100h`, and every entry points into common memory.",
+    "Staging buffers stay inside the shared buffer, and the returned copies do not overlap each other or the IM2 page.",
+    "Runtime state blocks stay inside `FE00h-FE7Fh` without overlapping.",
+    "The interrupt, gate and facade stacks are ordered, disjoint and common; the BIOS private stacks and SD scratch lie in bank 7's `C000h-DFFFh`.",
 ]
 
 
-def selected_console(symbols: dict[str, int], manifest: dict[str, str]) -> tuple[str, str, str, str]:
-    """Return backend, display label, start symbol, and exclusive-end symbol."""
-    backend = manifest.get("console.backend")
-    if backend not in ("v9958", "vdrip"):
-        raise SystemExit(f"Unknown or missing console backend in layout manifest: {backend}")
-    if backend == "v9958":
-        start_sym = "V9958_CONSOLE_CODE_START"
-        end_sym = "V9958_CONSOLE_CODE_END"
-        label = "Direct LunchCrema V9958 console"
-    else:
-        start_sym = "VDRIP_CONSOLE_CODE_START"
-        end_sym = "VDRIP_CONSOLE_CODE_END"
-        label = "Virtual Drip console"
-    require_symbol(symbols, start_sym)
-    require_symbol(symbols, end_sym)
-    other = "VDRIP_CONSOLE_CODE_START" if backend == "v9958" else "V9958_CONSOLE_CODE_START"
-    if other in symbols:
-        raise SystemExit(f"Unselected console symbol was linked: {other}")
-    return backend, label, start_sym, end_sym
-
-
-def driver_declarations(
-    symbols: dict[str, int], manifest: dict[str, str]
-) -> list[tuple[str, str, str, int, int]]:
-    backend, label, start_sym, end_sym = selected_console(symbols, manifest)
-    declarations = [(label, start_sym, end_sym, 0, 3)]
-    declarations.extend(COMMON_DRIVER_DECLARATIONS)
-    if backend == "vdrip":
-        declarations.append(
-            ("Shared VDrip transport", "VDRIP_TRANSPORT_CODE_START", "VDRIP_TRANSPORT_CODE_END", 5, 5)
-        )
-    elif "VDRIP_TRANSPORT_CODE_START" in symbols:
-        raise SystemExit("Direct V9958 build unexpectedly linked the shared VDrip transport")
-    return declarations
-
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--listing", required=True, type=Path)
     parser.add_argument("--map", required=True, type=Path)
+    parser.add_argument("--defs", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--firmware-bin", required=True, type=Path)
+    parser.add_argument("--bank7-bin", required=True, type=Path)
     parser.add_argument("--final-image", required=True, type=Path)
     parser.add_argument("--symbol-map", required=True, type=Path)
     parser.add_argument("--memory-map", required=True, type=Path)
     return parser.parse_args()
-
-
-def parse_listing(path: Path) -> dict[str, int]:
-    if not path.is_file():
-        raise SystemExit(f"Missing assembler listing: {path}")
-
-    symbols: dict[str, int] = {}
-    for line in path.read_text(errors="replace").splitlines():
-        match = LABEL_PATTERN.match(line) or EQU_PATTERN.match(line)
-        if match:
-            address = int(match.group(1), 16)
-            name = match.group(2)
-            symbols.setdefault(name, address)
-    return symbols
-
-
-def parse_manifest(path: Path) -> dict[str, str]:
-    if not path.is_file():
-        raise SystemExit(f"Missing layout manifest: {path}")
-
-    values: dict[str, str] = {}
-    for line in path.read_text().splitlines():
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
-    return values
 
 
 def require_file(path: Path) -> None:
@@ -350,11 +294,47 @@ def require_file(path: Path) -> None:
         raise SystemExit(f"Missing input artifact: {path}")
 
 
-def require_symbol(symbols: dict[str, int], name: str) -> int:
-    try:
-        return symbols[name]
-    except KeyError as exc:
-        raise SystemExit(f"Missing required symbol in listing: {name}") from exc
+def parse_listing(path: Path) -> tuple[dict[str, int], dict[int, int]]:
+    """Symbol addresses, and every byte the listing shows emitted."""
+    require_file(path)
+    symbols: dict[str, int] = {}
+    emitted: dict[int, int] = {}
+    next_address: int | None = None
+    for line in path.read_text(errors="replace").splitlines():
+        match = EMIT_PATTERN.match(line)
+        if match:
+            next_address = int(match.group(1), 16)
+            for byte in match.group(2).split():
+                emitted[next_address] = int(byte, 16)
+                next_address += 1
+        elif next_address is not None and (cont := EMIT_CONTINUATION.match(line)):
+            for byte in cont.group(1).split():
+                emitted[next_address] = int(byte, 16)
+                next_address += 1
+        elif line.strip() and not line.startswith("ASxxxx") and not line.startswith("Hexadecimal"):
+            next_address = None
+        match = LABEL_PATTERN.match(line) or EQU_PATTERN.match(line)
+        if match:
+            symbols.setdefault(match.group(2), int(match.group(1), 16))
+    return symbols, emitted
+
+
+def add_defs(symbols: dict[str, int], path: Path) -> None:
+    """Numeric constants the listing does not show, from cbios_defs.inc."""
+    require_file(path)
+    for name, value in DEFS_PATTERN.findall(path.read_text(errors="replace")):
+        symbols.setdefault(name, int(value, 0))
+
+
+def parse_manifest(path: Path) -> dict[str, str]:
+    require_file(path)
+    values: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
 
 
 def h4(value: int) -> str:
@@ -366,968 +346,502 @@ def h2(value: int) -> str:
 
 
 def span(start: int, end: int) -> str:
-    if end < start:
-        return f"{h4(start)}-{h4(end)}"
-    if start == end:
-        return h4(start)
-    return f"{h4(start)}-{h4(end)}"
+    return h4(start) if start == end else f"{h4(start)}-{h4(end)}"
 
 
-def exclusive_span(start: int, limit: int) -> str:
-    return span(start, limit - 1)
+def xspan(start: int, limit: int) -> str:
+    return span(start, limit - 1) if limit > start else f"{h4(start)} (empty)"
 
 
-def slot_range(symbols: dict[str, int], slot: int) -> tuple[int, int]:
-    return (
-        require_symbol(symbols, f"CBIOS_DRIVER_SLOT{slot}_BASE"),
-        require_symbol(symbols, f"CBIOS_DRIVER_SLOT{slot}_LIMIT"),
+class Layout:
+    def __init__(self, symbols: dict[str, int], emitted: dict[int, int], manifest: dict[str, str]):
+        self.symbols = symbols
+        self.emitted = emitted
+        self.manifest = manifest
+        self.errors: list[str] = []
+        self.by_address: dict[int, list[str]] = {}
+        for name, address in symbols.items():
+            self.by_address.setdefault(address, []).append(name)
+
+    def sym(self, name: str) -> int:
+        try:
+            return self.symbols[name]
+        except KeyError as exc:
+            raise SystemExit(f"Missing required symbol: {name}") from exc
+
+    def has(self, name: str) -> bool:
+        return name in self.symbols
+
+    def error(self, message: str) -> None:
+        self.errors.append(f"ERROR: {message}")
+
+    def emitted_in(self, start: int, limit: int) -> list[int]:
+        return sorted(a for a in self.emitted if start <= a < limit)
+
+    def region_bounds(self, region: Region) -> tuple[int, int, int] | None:
+        """start, exclusive end, limit; None for an absent optional region."""
+        if region.optional and not self.has(region.start_sym):
+            return None
+        start = self.sym(region.start_sym)
+        limit = self.sym(region.limit_sym)
+        if region.end_sym is None:
+            inside = self.emitted_in(start, limit)
+            end = inside[-1] + 1 if inside else start
+        else:
+            end = self.sym(region.end_sym)
+        return start, end, limit
+
+    def target_name(self, address: int) -> str:
+        names = self.by_address.get(address, [])
+        preferred = [n for n in names if not re.search(r"(_START|_BASE|_LIMIT|_END|_ADDR|_TOP)$", n)]
+        lower = [n for n in preferred if n[0].islower()]
+        pick = (lower or preferred or names or [None])[0]
+        return f"`{pick}`" if pick else "*(no symbol)*"
+
+    def jump_target(self, address: int) -> int | None:
+        opcode = self.emitted.get(address)
+        low = self.emitted.get(address + 1)
+        high = self.emitted.get(address + 2)
+        if opcode != 0xC3 or low is None or high is None:
+            return None
+        return low | (high << 8)
+
+    def word(self, address: int) -> int | None:
+        low = self.emitted.get(address)
+        high = self.emitted.get(address + 1)
+        if low is None or high is None:
+            return None
+        return low | (high << 8)
+
+
+def check_regions(layout: Layout, regions: list[Region], area: str) -> list[tuple[Region, int, int, int]]:
+    placed: list[tuple[Region, int, int, int]] = []
+    for region in regions:
+        bounds = layout.region_bounds(region)
+        if bounds is None:
+            continue
+        start, end, limit = bounds
+        if end < start:
+            layout.error(f"{area} {region.name}: end {h4(end)} is below start {h4(start)}")
+        if end > limit:
+            layout.error(
+                f"{area} {region.name}: {region.end_sym or 'last byte'} = {h4(end)} exceeds "
+                f"{region.limit_sym} = {h4(limit)} by {end - limit} bytes"
+            )
+        placed.append((region, start, end, limit))
+    ordered = sorted(placed, key=lambda item: item[1])
+    for (left, l_start, l_end, _), (right, r_start, _, _) in zip(ordered, ordered[1:]):
+        if l_end > r_start:
+            layout.error(
+                f"{area} {left.name} ({xspan(l_start, l_end)}) overlaps {right.name} starting {h4(r_start)}"
+            )
+    return placed
+
+
+def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
+    s = layout.sym
+    facts: dict[str, int] = {}
+
+    for label, start, limit in [
+        ("the caller window", 0x0003, OS_BODY_START),
+        ("the ZSDOS slot", s("ZSDOS_ORG"), s("ZSDOS_ORG") + s("ZSDOS_SIZE")),
+        ("bank 7's runtime-only range", OS_IMAGE_LIMIT, OS_BODY_LIMIT),
+        ("the program reservation", s("PROGRAM_ISR_AREA"), s("PROGRAM_ISR_AREA") + 0x400),
+        ("the CCP slot", s("CBASE"), s("CBASE") + CCP_SLOT),
+    ]:
+        inside = layout.emitted_in(start, limit)
+        if inside:
+            layout.error(f"{len(inside)} bytes assembled into {label} ({xspan(start, limit)}), first at {h4(inside[0])}")
+
+    body = layout.emitted_in(OS_BODY_START, OS_BODY_LIMIT)
+    image_end = body[-1] + 1 if body else OS_BODY_START
+    facts["bank7_image_end"] = image_end
+    if image_end > OS_IMAGE_LIMIT:
+        layout.error(f"bank 7 image ends at {h4(image_end - 1)}, past what shadow/copy mode loads")
+
+    if s("PROGRAM_ISR_AREA") != COMMON_START:
+        layout.error(f"PROGRAM_ISR_AREA = {h4(s('PROGRAM_ISR_AREA'))}, expected {h4(COMMON_START)}")
+    if s("CBASE") + CCP_SLOT != s("CBIOS_FACADE_BASE"):
+        layout.error("the BDOS facade does not follow the 2 KiB CCP slot")
+    if s("FACADE_CODE_START") != s("CBIOS_FACADE_BASE"):
+        layout.error("FACADE_CODE_START is not CBIOS_FACADE_BASE")
+    if s("FBASE") != s("CBIOS_FACADE_BASE") + 6:
+        layout.error(f"FBASE = {h4(s('FBASE'))} is not six bytes into the facade")
+    if s("FACADE_CODE_LIMIT") != s("CBIOS_BASE"):
+        layout.error("FACADE_CODE_LIMIT is not CBIOS_BASE")
+    if s("BIOS7_BASE") != s("ZSDOS_ORG") + s("ZSDOS_SIZE"):
+        layout.error("BIOS7_BASE is not ZSDOS_ORG + ZSDOS_SIZE; ZSDOS computes its BIOS as ZSDOS+1000h")
+
+    magic = bytes(layout.emitted.get(s("BIOS7_MAGIC") + i, 0) for i in range(8))
+    if magic != b"BANK7OS1":
+        layout.error(f"BIOS7_MAGIC holds {magic!r}, expected b'BANK7OS1'")
+
+    for table, count, label in [
+        (s("BIOS_CODE_START"), BIOS_TABLE_ENTRIES, "CP/M BIOS table"),
+        (s("BIOS7_TABLE"), BIOS_TABLE_ENTRIES, "ZSDOS's BIOS table"),
+        (s("ZBIOS_EXT_BASE"), EXT_TABLE_ENTRIES, "Zephyr extension table"),
+    ]:
+        for index in range(count):
+            if layout.jump_target(table + 3 * index) is None:
+                layout.error(f"{label} entry {index} at {h4(table + 3 * index)} is not a JP")
+    if s("ZBIOS_EXT_BASE") != s("CBIOS_BASE") + 3 * BIOS_TABLE_ENTRIES:
+        layout.error("ZBIOS_EXT_BASE does not follow the 17-entry CP/M BIOS table")
+    if s("BIOS_CODE_START") != s("CBIOS_BASE"):
+        layout.error("BIOS_CODE_START is not CBIOS_BASE")
+
+    im2_start = s("IM2_VECTOR_TABLE_START")
+    im2_end = s("IM2_VECTOR_TABLE_END")
+    if im2_end - im2_start != IM2_PAGE_SIZE:
+        layout.error(f"IM2 vector page is {im2_end - im2_start} bytes, expected 256")
+    if im2_start != s("CBIOS_IM2_VECTOR_PAGE") << 8 or im2_start != s("CBIOS_IM2_VECTOR_TABLE"):
+        layout.error(f"IM2 vector page {h4(im2_start)} is not CBIOS_IM2_VECTOR_PAGE * 100h")
+    for vector in range(0, IM2_PAGE_SIZE, 2):
+        target = layout.word(im2_start + vector)
+        if target is None or target < COMMON_START:
+            shown = "nothing" if target is None else h4(target)
+            layout.error(f"IM2 vector {h2(vector)} points at {shown}, not common memory")
+
+    bulk = s("FAC_BULK_BUF")
+    bulk_end = bulk + s("FAC_BULK_SIZE")
+    users = [
+        ("FAC_DMA_BUF", s("FAC_DMA_BUF"), 128),
+        ("FAC_FCB_BUF", s("FAC_FCB_BUF"), s("FCB_BYTES")),
+        ("GATE_TX_BUF", s("GATE_TX_BUF"), s("IOC_FRAME_SIZE")),
+        ("GATE_RX_BUF", s("GATE_RX_BUF"), s("IOC_FRAME_SIZE")),
+        ("MOVE_XBUF", s("MOVE_XBUF"), s("MOVE_BUFFER_SIZE")),
+    ]
+    for name, start, size in users:
+        if start < bulk or start + size > bulk_end:
+            layout.error(f"{name} ({xspan(start, start + size)}) is outside the staging buffer ({xspan(bulk, bulk_end)})")
+    for (a, a_start, a_size), (b, b_start, b_size) in [(users[0], users[1]), (users[2], users[3])]:
+        if a_start < b_start + b_size and b_start < a_start + a_size:
+            layout.error(f"{a} and {b} are used by the same call and overlap")
+    copies = sorted([
+        ("FAC_SFCB_BUF", s("FAC_SFCB_BUF"), s("FCB_BYTES")),
+        ("FAC_DPB_COPY", s("FAC_DPB_COPY"), s("DPB_COPY_BYTES")),
+        ("FAC_REGBLK", s("FAC_REGBLK"), 7),
+        ("FAC_ALV_COPY", s("FAC_ALV_COPY"), s("ALV_COPY_BYTES")),
+    ], key=lambda item: item[1])
+    cursor, previous = bulk_end, "the staging buffer"
+    for name, start, size in copies:
+        if start < cursor:
+            layout.error(f"{name} at {h4(start)} overlaps {previous}")
+        cursor, previous = start + size, name
+    if cursor > im2_start:
+        layout.error(f"{previous} ends at {h4(cursor - 1)}, inside the IM2 vector page")
+    facts["staging_end"] = cursor
+
+    state_base = s("CBIOS_RUNTIME_STATE_BASE")
+    state_limit = s("CBIOS_RUNTIME_STATE_LIMIT")
+    blocks = sorted(
+        (s(f"{name}_START"), s(f"{name}_END"), name)
+        for name in ("RUNTIME_WORK_AREA", "CONSOLE_STATE", "BANKING_STATE", "STORAGE_STATE", "SIO_CORE_STATE")
     )
+    cursor = state_base
+    for start, end, name in blocks:
+        if start < cursor or end > state_limit:
+            layout.error(f"{name} ({xspan(start, end)}) overlaps another block or leaves {xspan(state_base, state_limit)}")
+        cursor = end
+    if im2_end > state_base:
+        layout.error("the IM2 vector page runs into runtime state")
+
+    isr_save = s("CBIOS_ISR_SP_SAVE")
+    tops = [state_limit, isr_save, s("CBIOS_ISR_STACK_TOP"), s("GATE_STACK_TOP"), s("FAC_STACK_TOP")]
+    if isr_save < state_limit or tops != sorted(tops) or s("FAC_STACK_TOP") > 0x10000:
+        layout.error("common stacks are not ordered state < ISR SP save < ISR stack < gate stack < facade stack <= FFFFh")
+
+    private = [OS_IMAGE_LIMIT, s("CBIOS_STACK_TOP"), s("CBIOS_CONSOLE_STACK_TOP"), s("CBIOS_XPORT_STACK_TOP")]
+    if private != sorted(private):
+        layout.error("BIOS private stacks are not ordered upward from C000h")
+    scratch = s("MOVE_BUFFER")
+    if scratch < s("CBIOS_XPORT_STACK_TOP") or scratch + s("MOVE_BUFFER_SIZE") > OS_BODY_LIMIT:
+        layout.error(f"MOVE_BUFFER ({xspan(scratch, scratch + s('MOVE_BUFFER_SIZE'))}) is not above the stacks in C000h-DFFFh")
+
+    return facts
 
 
-def ranges_overlap(left_start: int, left_limit: int, right_start: int, right_limit: int) -> bool:
-    return left_start < right_limit and right_start < left_limit
-
-
-def artifact_size(path: Path) -> int:
-    require_file(path)
-    return path.stat().st_size
-
-
-def manifest_int(values: dict[str, str], key: str) -> int:
-    value = values[key]
-    if value.lower().endswith("h"):
-        return int(value[:-1], 16)
-    return int(value, 10)
-
-
-def symbol_row(symbols: dict[str, int], names: tuple[str, ...], notes: str) -> str:
-    address = require_symbol(symbols, names[0])
-    for alias in names[1:]:
-        alias_address = require_symbol(symbols, alias)
-        if alias_address != address:
-            raise SystemExit(f"Symbol aliases do not share an address: {', '.join(names)}")
-    label = " / ".join(f"`{name}`" for name in names)
-    return f"| {label} | `{h4(address)}` | {notes} |"
-
-
-def optional_symbol_row(symbols: dict[str, int], names: tuple[str, ...],
-                        notes: str) -> str | None:
-    """Row for a symbol only some builds link.
-
-    Storage and console backends are chosen at build time (STORAGE_A in the
-    Makefile), so their private state exists in one build and not another.  A
-    missing symbol here means "that backend is not linked", not "the layout is
-    broken", so the row is dropped instead of failing the documentation step.
-    """
-    if names[0] not in symbols:
-        return None
-    return symbol_row(symbols, names, notes)
-
-
-def value_row(symbols: dict[str, int], name: str, notes: str) -> str:
-    return f"| `{name}` | `{h2(require_symbol(symbols, name))}` | {notes} |"
-
-
-def range_row(range_text: str, use: str, notes: str) -> str:
-    return f"| `{range_text}` | {use} | {notes} |"
-
-
-def runtime_range(symbols: dict[str, int]) -> tuple[int, int]:
-    starts = [
-        require_symbol(symbols, "RUNTIME_WORK_AREA_START"),
-        require_symbol(symbols, "CONSOLE_STATE_START"),
-        require_symbol(symbols, "BANKING_STATE_START"),
-        require_symbol(symbols, "STORAGE_STATE_START"),
-        require_symbol(symbols, "SIO_CORE_STATE_START"),
-    ]
-    ends = [
-        require_symbol(symbols, "RUNTIME_WORK_AREA_END"),
-        require_symbol(symbols, "CONSOLE_STATE_END"),
-        require_symbol(symbols, "BANKING_STATE_END"),
-        require_symbol(symbols, "STORAGE_STATE_END"),
-        require_symbol(symbols, "SIO_CORE_STATE_END"),
-    ]
-    return min(starts), max(ends) - 1
-
-
-def scratch_buffer_ranges(symbols: dict[str, int]) -> list[tuple[str, int, int, str]]:
-    move_start = require_symbol(symbols, "MOVE_BUFFER")
-    move_limit = move_start + require_symbol(symbols, "MOVE_BUFFER_SIZE")
-    dphdpb_start = require_symbol(symbols, "VDRIP_STORAGE_DPHDPB_BASE")
-    dphdpb_limit = dphdpb_start + require_symbol(symbols, "VDRIP_STORAGE_DPHDPB_SIZE")
-    dirbuf_start = require_symbol(symbols, "VDRIP_STORAGE_DIRBUF")
-    dirbuf_limit = dirbuf_start + require_symbol(symbols, "DEFAULT_DMA_LEN")
-    alv_start = require_symbol(symbols, "STORAGE_A_ALV")
-    alv_limit = alv_start + require_symbol(symbols, "VDRIP_STORAGE_ALV_SIZE")
-    sd_alv_start = require_symbol(symbols, "SD_STORAGE_ALV_BUFFER")
-    sd_alv_limit = sd_alv_start + require_symbol(symbols, "VDRIP_STORAGE_ALV_SIZE")
-    return [
-        ("MOVE_BUFFER", move_start, move_limit, "Cross-bank MOVE and VDrip storage transaction staging buffer."),
-        ("VDRIP_STORAGE_DPHDPB", dphdpb_start, dphdpb_limit, "CP/M DPH/DPB constants for the VDrip storage disk."),
-        ("VDRIP_STORAGE_DIRBUF", dirbuf_start, dirbuf_limit, "CP/M directory buffer referenced by the VDrip storage DPH."),
-        ("STORAGE_A_ALV", alv_start, alv_limit, "CP/M allocation vector for the drive A: volume."),
-        ("SD_STORAGE_ALV", sd_alv_start, sd_alv_limit, "CP/M allocation vector for the fixed 8 MiB SD-card disk."),
-    ]
-
-
-def derived_free_scratch_ranges(symbols: dict[str, int]) -> list[tuple[int, int]]:
-    scratch_start = require_symbol(symbols, "CBIOS_SCRATCH_BASE")
-    scratch_limit = require_symbol(symbols, "CBIOS_SCRATCH_LIMIT")
-    used = sorted((start, limit) for _, start, limit, _ in scratch_buffer_ranges(symbols))
-    free: list[tuple[int, int]] = []
-    cursor = scratch_start
-    for start, limit in used:
-        if cursor < start:
-            free.append((cursor, start))
-        cursor = max(cursor, limit)
-    if cursor < scratch_limit:
-        free.append((cursor, scratch_limit))
-    return free
-
-
-def validation_error(message: str) -> str:
-    return f"ERROR: {message}"
-
-
-def validate_within(
-    errors: list[str],
-    symbols: dict[str, int],
-    label: str,
-    start_sym: str,
-    limit_sym: str,
-    allowed_start: int,
-    allowed_limit: int,
-    allowed_name: str,
-) -> tuple[int, int]:
-    start = require_symbol(symbols, start_sym)
-    limit = require_symbol(symbols, limit_sym)
-    if start < allowed_start or start >= allowed_limit:
-        errors.append(
-            validation_error(
-                f"{start_sym} = {h4(start)} is outside {allowed_name} "
-                f"({exclusive_span(allowed_start, allowed_limit)}) for {label}"
-            )
-        )
-    if limit > allowed_limit:
-        errors.append(
-            validation_error(
-                f"{limit_sym} = {h4(limit)} exceeds {allowed_name} limit "
-                f"{h4(allowed_limit)} (last byte {h4(allowed_limit - 1)}) for {label}"
-            )
-        )
-    if limit < start:
-        errors.append(validation_error(f"{limit_sym} = {h4(limit)} is below {start_sym} = {h4(start)}"))
-    return start, limit
-
-
-def validate_layout(symbols: dict[str, int], manifest: dict[str, str]) -> list[str]:
-    errors: list[str] = []
-    warnings: list[str] = []
-
-    cbios_base = require_symbol(symbols, "CBIOS_BASE")
-    cbios_code_limit = require_symbol(symbols, "CBIOS_CODE_LIMIT")
-    cbios_core_base = require_symbol(symbols, "CBIOS_CORE_BASE")
-    cbios_core_limit = require_symbol(symbols, "CBIOS_CORE_LIMIT")
-    scratch_start = require_symbol(symbols, "CBIOS_SCRATCH_BASE")
-    scratch_limit = require_symbol(symbols, "CBIOS_SCRATCH_LIMIT")
-    runtime_start = require_symbol(symbols, "CBIOS_RUNTIME_STATE_BASE")
-    runtime_limit = require_symbol(symbols, "CBIOS_RUNTIME_STATE_LIMIT")
-    stack_guard = require_symbol(symbols, "CBIOS_STACK_GUARD")
-    im2_start = require_symbol(symbols, "CBIOS_IM2_VECTOR_TABLE")
-    im2_limit = require_symbol(symbols, "CBIOS_IM2_VECTOR_LIMIT")
-
-    # Validate core BIOS ranges against both the core region and overall code limit.
-    core_component_ranges: list[tuple[str, int, int]] = []
-    for label, start_sym, limit_sym in CORE_RANGES:
-        start, limit = validate_within(
-            errors, symbols, label, start_sym, limit_sym, cbios_core_base, cbios_core_limit, "CBIOS core"
-        )
-        core_component_ranges.append((label, start, limit))
-    for index, (left_label, left_start, left_limit) in enumerate(core_component_ranges):
-        for right_label, right_start, right_limit in core_component_ranges[index + 1 :]:
-            if ranges_overlap(left_start, left_limit, right_start, right_limit):
-                errors.append(
-                    validation_error(
-                        f"{left_label} ({exclusive_span(left_start, left_limit)}) overlaps "
-                        f"{right_label} ({exclusive_span(right_start, right_limit)})"
-                    )
-                )
-    bios_code_end = require_symbol(symbols, "BIOS_CODE_END")
-    if bios_code_end > cbios_code_limit:
-        errors.append(
-            validation_error(
-                f"BIOS_CODE_END = {h4(bios_code_end)} crosses CBIOS_CODE_LIMIT = {h4(cbios_code_limit)}"
-            )
-        )
-    if cbios_base < require_symbol(symbols, "CBASE"):
-        errors.append(validation_error("CBIOS_BASE is below CBASE; BIOS overlaps CP/M CCP/BDOS space"))
-
-    # Validate declared driver ranges and check pairwise overlap.
-    declared_ranges: list[tuple[str, int, int]] = []
-    for label, start_sym, limit_sym, first_slot, last_slot in driver_declarations(symbols, manifest):
-        allowed_start, _ = slot_range(symbols, first_slot)
-        _, allowed_limit = slot_range(symbols, last_slot)
-        start, limit = validate_within(
-            errors,
-            symbols,
-            label,
-            start_sym,
-            limit_sym,
-            allowed_start,
-            allowed_limit,
-            f"slot {first_slot}" if first_slot == last_slot else f"slots {first_slot}-{last_slot}",
-        )
-        if limit > cbios_code_limit:
-            errors.append(
-                validation_error(
-                    f"{limit_sym} = {h4(limit)} crosses CBIOS_CODE_LIMIT = {h4(cbios_code_limit)}"
-                )
-            )
-        declared_ranges.append((label, start, limit))
-
-    for index, (left_label, left_start, left_limit) in enumerate(declared_ranges):
-        for right_label, right_start, right_limit in declared_ranges[index + 1 :]:
-            if ranges_overlap(left_start, left_limit, right_start, right_limit):
-                errors.append(
-                    validation_error(
-                        f"{left_label} ({exclusive_span(left_start, left_limit)}) overlaps "
-                        f"{right_label} ({exclusive_span(right_start, right_limit)})"
-                    )
-                )
-
-    # HID's mutable state uses the narrow fixed gap between the SD backend and
-    # slot 5. In a compatibility build, the VDrip transport begins at that
-    # boundary; direct builds deliberately leave it absent.
-    hid_state_start = require_symbol(symbols, "HID_INPUT_STATE_START")
-    hid_state_limit = require_symbol(symbols, "HID_INPUT_STATE_END")
-    hid_gap_start = require_symbol(symbols, "SD_STORAGE_CODE_END")
-    hid_gap_limit = require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE")
-    if hid_state_start < hid_gap_start or hid_state_limit > hid_gap_limit:
-        errors.append(
-            validation_error(
-                f"HID input state ({exclusive_span(hid_state_start, hid_state_limit)}) is outside "
-                f"the post-SD/pre-slot-5 gap ({exclusive_span(hid_gap_start, hid_gap_limit)})"
-            )
-        )
-
-    sio_core_start = require_symbol(symbols, "SIO_CORE_CODE_START")
-    sio_core_end = require_symbol(symbols, "SIO_CORE_CODE_END")
-    im2_entry = require_symbol(symbols, "CONSOLE_IM2_VECTOR_ENTRY")
-    if im2_start < sio_core_start or im2_limit > sio_core_end:
-        errors.append(
-            validation_error(
-                f"IM2 table {exclusive_span(im2_start, im2_limit)} is outside SIO core "
-                f"({exclusive_span(sio_core_start, sio_core_end)})"
-            )
-        )
-    if im2_start < cbios_core_base or im2_limit > cbios_core_limit:
-        errors.append(
-            validation_error(
-                f"IM2 table {exclusive_span(im2_start, im2_limit)} exceeds CBIOS core "
-                f"({exclusive_span(cbios_core_base, cbios_core_limit)})"
-            )
-        )
-    if im2_entry != im2_start:
-        errors.append(
-            validation_error(
-                f"CONSOLE_IM2_VECTOR_ENTRY = {h4(im2_entry)} must match CBIOS_IM2_VECTOR_TABLE = {h4(im2_start)}"
-            )
-        )
-
-    for label, start, limit, _ in scratch_buffer_ranges(symbols):
-        if start < scratch_start or limit > scratch_limit:
-            errors.append(
-                validation_error(
-                    f"{label} {exclusive_span(start, limit)} is outside scratch "
-                    f"({exclusive_span(scratch_start, scratch_limit)})"
-                )
-            )
-        if start < cbios_code_limit:
-            errors.append(
-                validation_error(
-                    f"{label} starts at {h4(start)} before CBIOS_CODE_LIMIT = {h4(cbios_code_limit)}"
-                )
-            )
-
-    for left_name, left_start, left_limit, _ in scratch_buffer_ranges(symbols):
-        for right_name, right_start, right_limit, _ in scratch_buffer_ranges(symbols):
-            if left_name >= right_name:
-                continue
-            if ranges_overlap(left_start, left_limit, right_start, right_limit):
-                errors.append(
-                    validation_error(
-                        f"{left_name} ({exclusive_span(left_start, left_limit)}) overlaps "
-                        f"{right_name} ({exclusive_span(right_start, right_limit)})"
-                    )
-                )
-
-    for name in ("CBIOS_SCRATCH_FREE0", "CBIOS_SCRATCH_FREE1"):
-        limit_name = f"{name}_LIMIT"
-        if name in symbols and limit_name in symbols:
-            free_start = symbols[name]
-            free_limit = symbols[limit_name]
-            for buffer_name, buffer_start, buffer_limit, _ in scratch_buffer_ranges(symbols):
-                if ranges_overlap(free_start, free_limit, buffer_start, buffer_limit):
-                    warnings.append(
-                        f"WARNING: declared {name} ({exclusive_span(free_start, free_limit)}) overlaps "
-                        f"{buffer_name} ({exclusive_span(buffer_start, buffer_limit)}); derived scratch gaps are authoritative."
-                    )
-
-    if ranges_overlap(runtime_start, runtime_limit, scratch_start, scratch_limit):
-        errors.append(
-            validation_error(
-                f"runtime state ({exclusive_span(runtime_start, runtime_limit)}) overlaps scratch "
-                f"({exclusive_span(scratch_start, scratch_limit)})"
-            )
-        )
-    if ranges_overlap(runtime_start, runtime_limit, im2_start, im2_limit):
-        errors.append(
-            validation_error(
-                f"runtime state ({exclusive_span(runtime_start, runtime_limit)}) overlaps IM2 "
-                f"({exclusive_span(im2_start, im2_limit)})"
-            )
-        )
-    if runtime_limit > stack_guard:
-        errors.append(
-            validation_error(
-                f"runtime state limit {h4(runtime_limit)} exceeds CBIOS_STACK_GUARD = {h4(stack_guard)}"
-            )
-        )
-    if stack_guard < runtime_limit:
-        errors.append(
-            validation_error(
-                f"CBIOS_STACK_GUARD = {h4(stack_guard)} is below runtime state limit {h4(runtime_limit)}"
-            )
-        )
-
-    protected_effective_start, protected_effective_end = protected_tpa_effective_range(symbols)
-    protected_effective_limit = protected_effective_end + 1
-    for label, start, limit in declared_ranges + [("CBIOS core", cbios_core_base, cbios_core_limit)]:
-        if ranges_overlap(start, limit, protected_effective_start, protected_effective_limit):
-            errors.append(
-                validation_error(
-                    f"{label} ({exclusive_span(start, limit)}) overlaps protected/common TPA "
-                    f"({span(protected_effective_start, protected_effective_end)})"
-                )
-            )
-
-    if errors:
-        raise SystemExit("\n".join(errors))
-    return warnings
-
-
-def protected_tpa_effective_range(symbols: dict[str, int]) -> tuple[int, int]:
-    """Return the portion of the protected TPA marker below the CCP."""
-    start = require_symbol(symbols, "PROTECTED_TPA_START")
-    end = require_symbol(symbols, "PROTECTED_TPA_END")
-    cbase = require_symbol(symbols, "CBASE")
-    return start, min(end, cbase - 1)
-
-
-def payload_rows(values: dict[str, str]) -> list[str]:
-    payload_ids = sorted(
-        {
-            key.split(".")[1]
-            for key in values
-            if key.startswith("payload.") and len(key.split(".")) >= 3
-        },
-        key=lambda payload_id: manifest_int(values, f"payload.{payload_id}.bank"),
-    )
-    rows: list[str] = []
-    for payload_id in payload_ids:
-        name = values.get(f"payload.{payload_id}.name", payload_id)
+def region_rows(layout: Layout, placed: list[tuple[Region, int, int, int]]) -> list[str]:
+    rows = []
+    for region, start, end, limit in sorted(placed, key=lambda item: item[1]):
         rows.append(
-            f"| {name} | {values[f'payload.{payload_id}.bank']} | "
-            f"`{values[f'payload.{payload_id}.entry']}` | "
-            f"{values[f'payload.{payload_id}.size']} | "
-            f"`{values[f'payload.{payload_id}.end']}` | "
-            f"`{values[f'payload.{payload_id}.path']}` |"
+            f"| `{xspan(start, limit)}` | {region.name} | {end - start} | {limit - end} | {region.notes} |"
         )
-    if not rows:
-        rows = ["| *(none — firmware only, no bank payloads)* | | | | | |"]
     return rows
 
 
-def ramdisk_rows(values: dict[str, str]) -> list[str]:
-    if "ramdisk.name" not in values:
-        return []
-    bank_base = manifest_int(values, "ramdisk.bank_base")
-    bank_limit = manifest_int(values, "ramdisk.bank_limit")
-    return [
-        (
-            f"| {values['ramdisk.name']} | "
-            f"{values['ramdisk.first_bank']}-{values['ramdisk.last_bank']} | "
-            f"`{h4(bank_base)}-{h4(bank_limit - 1)}` | "
-            f"{values['ramdisk.image_size']} | {values['ramdisk.total_bytes']} | "
-            f"{values['ramdisk.pad_size']} | `{values['ramdisk.fill']}` | "
-            f"`{values['ramdisk.path']}` |"
-        )
-    ]
+def symbol_rows(layout: Layout, entries, optional: bool = False) -> list[str]:
+    rows = []
+    for names, notes in entries:
+        if optional and names[0] not in layout.symbols:
+            continue
+        address = layout.sym(names[0])
+        for alias in names[1:]:
+            if layout.sym(alias) != address:
+                raise SystemExit(f"Symbol aliases do not share an address: {', '.join(names)}")
+        label = " / ".join(f"`{name}`" for name in names)
+        rows.append(f"| {label} | `{h4(address)}` | {notes} |")
+    return rows
 
 
-def storage_rows(values: dict[str, str]) -> list[str]:
-    if "ramdisk.name" in values:
-        return [
-            (
-                f"| Drive A | embedded RAM disk image | `{values['ramdisk.name']}` | "
-                f"{values['ramdisk.total_bytes']} | {int(values['ramdisk.total_bytes']) // 128} | 128 |"
-            )
-        ]
-    backend = values.get("storage.backend")
-    if backend == "rom":
-        total = sum(
-            int(value)
-            for key, value in values.items()
-            if key.startswith("payload.romdisk_page") and key.endswith(".size")
-        )
-        return [
-            f"| Drive A | ROM CP/M volume | `ROM pages 1-3` | {total:,} | {total // 128:,} | 128 |"
-        ]
-    if backend == "vdrip":
-        return [
-            "| Drive A | VDrip proxy flat image | `Zephyr VDrip CP/M 8M` | 8,388,608 | 65,536 | 128 |"
-        ]
-    if backend == "ramdisk":
-        return [
-            "| Drive A | banked RAM disk | `banks 2-7, 0000h-BFFFh` | 294,912 | 2,304 | 128 |"
-        ]
-    raise SystemExit(f"Unknown or missing storage backend in layout manifest: {backend}")
+def artifact_row(label: str, path: Path) -> str:
+    require_file(path)
+    return f"| {label} | `{path}` | {path.stat().st_size} bytes |"
 
 
-def write_symbol_map(args: argparse.Namespace, symbols: dict[str, int], manifest: dict[str, str]) -> None:
+def im2_rows(layout: Layout) -> list[str]:
+    start = layout.sym("IM2_VECTOR_TABLE_START")
+    runs: list[tuple[int, int, int]] = []
+    for vector in range(0, IM2_PAGE_SIZE, 2):
+        target = layout.word(start + vector) or 0
+        if runs and runs[-1][2] == target and runs[-1][1] == vector - 2:
+            runs[-1] = (runs[-1][0], vector, target)
+        else:
+            runs.append((vector, vector, target))
+    rows = []
+    for first, last, target in runs:
+        vectors = h2(first) if first == last else f"{h2(first)}-{h2(last)}"
+        rows.append(f"| {vectors} | `{h4(start + first)}` | `{h4(target)}` {layout.target_name(target)} |")
+    return rows
+
+
+def jump_table_rows(layout: Layout, base: int, names: list[str], functions: bool = False) -> list[str]:
+    rows = []
+    for index, name in enumerate(names):
+        address = base + 3 * index
+        target = layout.jump_target(address)
+        shown = f"`{h4(target)}` {layout.target_name(target)}" if target is not None else "*(not a JP)*"
+        prefix = f"| {EXT_FIRST_FUNCTION + index} " if functions else ""
+        rows.append(f"{prefix}| `{name}` | `{h4(address)}` | {shown} |")
+    return rows
+
+
+def write_symbol_map(args: argparse.Namespace, layout: Layout) -> None:
+    s = layout.sym
     lines = [
         "# Zephyr-80 CP/M 2.2 Symbol Map",
         "",
-        "Generated by `tools/generate_memory_docs.py` from `build/firmware.lst`, `build/firmware.map`, and `build/layout.manifest`.",
+        "Generated by `tools/generate_memory_docs.py` from `build/firmware.lst`, `src/cbios_defs.inc` and `build/layout.manifest`. Do not edit by hand.",
         "",
-        "The complete ASxxxx symbol output is available at `build/firmware.map`. This file records stable project-facing symbols because ASxxxx truncates long names in its summary table.",
+        "Programs must not use these addresses. The program interface is `CALL 5` and the CP/M BIOS boot and console entries; this map is for BIOS maintenance and debugging.",
         "",
         "## Build Artifacts",
         "",
         "| Artifact | Path | Size |",
         "|---|---|---:|",
-        f"| Firmware binary | `{args.firmware_bin}` | {artifact_size(args.firmware_bin)} bytes |",
-        f"| Firmware symbol map | `{args.map}` | {artifact_size(args.map)} bytes |",
-        f"| Burnable image | `{args.final_image}` | {artifact_size(args.final_image)} bytes |",
-        f"| Layout manifest | `{args.manifest}` | {artifact_size(args.manifest)} bytes |",
+        artifact_row("ROM page 0: reset vector and common memory", args.firmware_bin),
+        artifact_row("Bank 7 payload", args.bank7_bin),
+        artifact_row("Burnable image", args.final_image),
+        artifact_row("Assembler listing", args.listing),
+        artifact_row("Linker symbol map", args.map),
+        artifact_row("Layout manifest", args.manifest),
         "",
-        "## Reset And CP/M Common Symbols",
+        "## System Addresses",
         "",
         "| Symbol | Address | Notes |",
         "|---|---:|---|",
-        symbol_row(symbols, ("reset_vector",), "ROM reset entry."),
-        symbol_row(symbols, ("CBASE",), "CP/M CCP base for the configured memory size."),
-        symbol_row(symbols, ("FBASE",), "CP/M BDOS entry in this assembled image."),
-        symbol_row(symbols, ("CCP_ENTRY",), "CCP command processor entry alias for `CBASE`."),
-        symbol_row(symbols, ("CCP_CLEARBUF_ENTRY",), "CCP warm-entry target after clearing the command buffer."),
-        symbol_row(symbols, ("PROTECTED_TPA_START",), "Start marker for the non-banked protected TPA window."),
-        symbol_row(symbols, ("PROTECTED_TPA_END",), "End marker for the non-banked protected TPA window."),
+        *symbol_rows(layout, [
+            (("PROGRAM_ISR_AREA",), "Program reservation for interrupt callbacks, `E000h-E3FFh`."),
+            (("CBASE", "CCP_ENTRY"), "CCP (ZCPR2), 2 KiB."),
+            (("CCP_CLEARBUF_ENTRY",), "CCP entry used by cold and warm boot, `C` = drive."),
+            (("FBASE",), "BDOS entry: the facade's jump."),
+            (("CBIOS_BASE",), "CP/M BIOS jump table."),
+            (("ZBIOS_EXT_BASE",), "Zephyr extension table, reached through BDOS functions 210-217."),
+            (("ZSDOS_ORG",), "ZSDOS, bank 7."),
+            (("ZSDOS_ENTRY",), "ZSDOS entry the facade calls in mode 11."),
+            (("BIOS7_BASE",), "ZSDOS's BIOS table, bank 7."),
+        ]),
         "",
         "## Banking Latch Constants",
         "",
         "| Symbol | Value | Notes |",
         "|---|---:|---|",
-        value_row(symbols, "BANK_PORT", "Memory banking latch I/O port."),
-        value_row(symbols, "SHADOW_BIT", "Enables ROM-to-RAM shadow/copy mode while ROM remains visible."),
-        value_row(symbols, "ROMDIS_BIT", "Disables ROM and selects RAM-only operation."),
-        value_row(symbols, "ROM_VISIBLE_BANK0", "Normal ROM-visible mode for ROM page 0 / RAM bank 0; used when restoring high-common CCP bytes."),
-        value_row(symbols, "COPY_LATCH0", "Shadow/copy mode for ROM page 0 / RAM bank 0; reads ROM only below `C000h`."),
-        value_row(symbols, "RAM_ONLY_BANK0", "RAM-only mode for bank 0 after ROM-copy operations."),
-        "",
-        "## BIOS Jump Table",
-        "",
-        "| Entry | Address | Target |",
-        "|---|---:|---|",
     ]
-    for entry, target in BIOS_TABLE:
-        lines.append(f"| `{entry}` | `{h4(require_symbol(symbols, entry))}` | `{target}` |")
+    for name, notes in [
+        ("BANK_PORT", "Banking latch I/O port."),
+        ("SHADOW_BIT", "D3: shadow/copy with ROM enabled, operating-system mode with ROM disabled."),
+        ("ROMDIS_BIT", "D4: disables ROM."),
+        ("ROM_VISIBLE_BANK0", "Boot mode, ROM page 0 over bank 0; the warm-boot CCP restore."),
+        ("COPY_LATCH0", "Shadow/copy mode, page 0 into bank 0."),
+        ("RAM_ONLY_BANK0", "Application mode, bank 0."),
+        ("OS_EXEC_LATCH", "Operating-system mode, bank 0."),
+        ("OS_BANK", "The operating system's SRAM bank."),
+    ]:
+        lines.append(f"| `{name}` | `{h2(s(name))}` | {notes} |")
 
-    ext_base = require_symbol(symbols, "ZBIOS_EXT_BASE")
-    lines.append(f"| `ZBIOS_EXT_BASE` | `{h4(ext_base)}` | Extended BIOS jump table base. |")
-    for offset_text, target in EXTENDED_TABLE:
-        offset = int(offset_text[:-1], 16)
-        lines.append(f"| `ZBIOS_EXT_BASE + {offset_text}` | `{h4(ext_base + offset)}` | `{target}` |")
-
-    lines.extend(
-        [
-            "",
-            "## BIOS Implementation Symbols",
-            "",
-            "| Symbol | Address | Notes |",
-            "|---|---:|---|",
-        ]
-    )
-    for names, notes in IMPLEMENTATION_SYMBOLS:
-        if names[0] in OPTIONAL_IMPLEMENTATION_SYMBOLS:
-            row = optional_symbol_row(symbols, names, notes)
-            if row is not None:
-                lines.append(row)
-        else:
-            lines.append(symbol_row(symbols, names, notes))
-
-    lines.extend(
-        row
-        for row in [
-            "",
-            "## Runtime State Symbols",
-            "",
-            "| Symbol | Address | Notes |",
-            "|---|---:|---|",
-            symbol_row(symbols, ("RUNTIME_WORK_AREA_START",), "Runtime work area start."),
-            symbol_row(symbols, ("CURRENT_BANK",), "Active RAM bank record."),
-            symbol_row(symbols, ("cbios_dma_addr",), "Current DMA address."),
-            symbol_row(symbols, ("RUNTIME_WORK_AREA_END",), "Runtime work area end."),
-            symbol_row(symbols, ("CONSOLE_STATE_START",), "Console state start."),
-            symbol_row(symbols, ("CONSOLE_DRIVER",), "Active console driver table pointer."),
-            symbol_row(symbols, ("CONSOLE_CALLER_SP",), "Saved caller stack pointer while console backends run on their private stack."),
-            symbol_row(symbols, ("CONSOLE_STATE_END",), "Console state end."),
-            symbol_row(symbols, ("BANKING_STATE_START",), "Banking state start."),
-            symbol_row(symbols, ("SAVED_BANK",), "Saved active bank for cross-bank moves."),
-            symbol_row(symbols, ("DMA_BANK",), "Recorded DMA bank."),
-            symbol_row(symbols, ("XMOVE_SRC_BANK",), "Source bank for pending cross-bank move."),
-            symbol_row(symbols, ("XMOVE_DST_BANK",), "Destination bank for pending cross-bank move."),
-            symbol_row(symbols, ("XMOVE_PENDING",), "Pending cross-bank move flag."),
-            symbol_row(symbols, ("MOVE_SRC_PTR",), "Cross-bank move source pointer."),
-            symbol_row(symbols, ("MOVE_DST_PTR",), "Cross-bank move destination pointer."),
-            symbol_row(symbols, ("MOVE_REMAIN",), "Cross-bank move remaining byte count."),
-            symbol_row(symbols, ("MOVE_CHUNK_LEN",), "Current cross-bank chunk length."),
-            symbol_row(symbols, ("BANKING_STATE_END",), "Banking state end."),
-            symbol_row(symbols, ("STORAGE_STATE_START",), "Storage state start."),
-            symbol_row(symbols, ("stg_a_selected_drive",), "Selected storage drive, or `FFh` for unsupported."),
-            symbol_row(symbols, ("stg_a_track",), "Selected CP/M track."),
-            symbol_row(symbols, ("stg_a_sector",), "Selected 0-based CP/M sector."),
-            optional_symbol_row(symbols, ("VDRIP_STORAGE_SAVED_BANK",), "Saved active bank for DMA copies."),
-            optional_symbol_row(symbols, ("vdrip_storage_seq",), "VDrip storage sequence byte."),
-            optional_symbol_row(symbols, ("vdrip_storage_active_seq",), "Sequence byte for the active storage transaction."),
-            optional_symbol_row(symbols, ("vdrip_storage_lba",), "Computed little-endian 16-bit LBA for the active request."),
-            optional_symbol_row(symbols, ("VDRIP_TRANSPORT_STATE_START",), "Shared Virtual Drip transport state start."),
-            optional_symbol_row(symbols, ("vdrip_rx_mode",), "Current raw/readiness/storage/PTY receive mode."),
-            optional_symbol_row(symbols, ("vdrip_idle_mode",), "Console backend idle receive mode."),
-            optional_symbol_row(symbols, ("vdrip_proxy_online",), "Packetized PROXY_READY online flag."),
-            optional_symbol_row(symbols, ("vdrip_raw_callback",), "Selected console raw-byte callback."),
-            optional_symbol_row(symbols, ("vdrip_rx_state",), "Shared frame parser state."),
-            optional_symbol_row(symbols, ("vdrip_declared_len",), "Current 16-bit declared frame length."),
-            optional_symbol_row(symbols, ("vdrip_payload_len",), "Current decoded payload length."),
-            optional_symbol_row(symbols, ("vdrip_rx_type",), "Current received packet type."),
-            optional_symbol_row(symbols, ("vdrip_payload_remaining",), "Payload bytes remaining."),
-            optional_symbol_row(symbols, ("vdrip_payload_index",), "Payload staging index."),
-            optional_symbol_row(symbols, ("vdrip_pending_type",), "Expected storage reply type."),
-            optional_symbol_row(symbols, ("vdrip_pending_seq",), "Expected storage reply sequence."),
-            optional_symbol_row(symbols, ("vdrip_reply_ready",), "Matching storage reply completion flag."),
-            optional_symbol_row(symbols, ("vdrip_reply_error",), "Storage reply/protocol error flag."),
-            optional_symbol_row(symbols, ("vdrip_reply_status",), "Decoded storage or protocol status."),
-            optional_symbol_row(symbols, ("VDRIP_TRANSPORT_STATE_END",), "Shared Virtual Drip transport state end."),
-            symbol_row(symbols, ("storage_caller_sp",), "Saved caller stack pointer while storage backends run on the BIOS stack."),
-            symbol_row(symbols, ("STORAGE_A_ALV",), "Drive A: allocation vector."),
-            symbol_row(symbols, ("STORAGE_STATE_END",), "Storage state end."),
-            symbol_row(symbols, ("SIO_CORE_STATE_START",), "BIOS-owned SIO core state start."),
-            symbol_row(symbols, ("SIO0B_RX_SINK",), "Registered RX byte sink for SIO_CH_CONSOLE / SIO0/B."),
-            symbol_row(symbols, ("SIO1_RX_SINK",), "Registered RX byte sink slot for SIO_CH_IOCTRL / SIO1/A."),
-            symbol_row(symbols, ("SIO_CORE_IRQ_ENABLED", "CONSOLE_IRQ_ENABLED"), "BIOS-owned SIO IRQ mode flag; legacy alias retained."),
-            optional_symbol_row(symbols, ("SIO0B_LAST_RR1",), "Last SIO0/B RR1 value sampled after RX data read; linked only with the VDrip transport, its sole reader."),
-            optional_symbol_row(symbols, ("SIO0B_LAST_RX_ERROR",), "Last masked SIO0/B RR1 receive-error bits; linked only with the VDrip transport, its sole reader."),
-            symbol_row(symbols, ("SIO_CORE_STATE_END",), "BIOS-owned SIO core state end."),
-            "",
-        ]
-        if row is not None
-    )
+    lines += ["", "## CP/M BIOS Jump Table (common)", "",
+              "Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert.", "",
+              "| Entry | Address | Target |", "|---|---:|---|",
+              *jump_table_rows(layout, s("CBIOS_BASE"), BIOS_ENTRY_NAMES)]
+    lines += ["", "## Zephyr Extension Table (common)", "",
+              "| BDOS function | Entry | Address | Target |", "|---:|---|---:|---|",
+              *jump_table_rows(layout, s("ZBIOS_EXT_BASE"), EXT_ENTRY_NAMES, functions=True)]
+    lines += ["", "## ZSDOS's BIOS Jump Table (bank 7)", "",
+              "| Entry | Address | Target |", "|---|---:|---|",
+              *jump_table_rows(layout, s("BIOS7_TABLE"), BIOS_ENTRY_NAMES)]
+    lines += ["", "## IM2 Vector Page", "",
+              f"`I` = `{h2(s('CBIOS_IM2_VECTOR_PAGE'))}`. The BIOS programs the CTC vector base `{h2(s('CTC_VECTOR_BASE'))}` and SIO0/B WR2 `{h2(s('CBIOS_SIO_VECTOR'))}`.", "",
+              "| Vectors | Entry | Target |", "|---|---:|---|", *im2_rows(layout)]
+    lines += ["", "## Common Implementation Symbols", "",
+              "| Symbol | Address | Notes |", "|---|---:|---|",
+              *symbol_rows(layout, COMMON_IMPLEMENTATION),
+              *symbol_rows(layout, COMMON_OPTIONAL, optional=True)]
+    lines += ["", "## Bank 7 Implementation Symbols", "",
+              "Visible at these addresses only in operating-system mode.", "",
+              "| Symbol | Address | Notes |", "|---|---:|---|",
+              *symbol_rows(layout, BANK7_IMPLEMENTATION),
+              *symbol_rows(layout, BANK7_OPTIONAL, optional=True)]
+    lines += ["", "## Runtime State Symbols", "",
+              "| Symbol | Address | Notes |", "|---|---:|---|",
+              *symbol_rows(layout, RUNTIME_STATE), ""]
     args.symbol_map.write_text("\n".join(lines))
 
 
-
-# Regions of the resident window, for attributing free space to an owner.
-HEADROOM_REGIONS = [
-    ("Core BIOS", 0xDA00, 0xE000),
-    ("Driver slots 0-4", 0xE000, 0xF400),
-    ("Packed driver extension", 0xF400, 0xF680),
-    ("Driver slot 5", 0xF680, 0xFA80),
-]
-
-# Gaps smaller than this are alignment slack, not usable headroom.
-HEADROOM_MIN_BYTES = 4
-
-
-def find_headroom(listing_path: Path) -> list[tuple[int, int]]:
-    """Free fragments in the resident window: addresses that were neither
-    emitted nor reserved.
-
-    Emitted bytes are listing lines carrying hex after the address.  Reserved
-    storage is a `.ds`, which occupies space without emitting anything -- it
-    shows as a listing line at the START of the run and nothing after, so a gap
-    whose first address is a `.ds` line is storage, not free space.  Without
-    that distinction every uninitialised buffer would be reported as headroom,
-    which is precisely the wrong answer to give someone looking for room.
-    """
-    emitted: set[int] = set()
-    listed: set[int] = set()
-    ds_starts: list[int] = []
-    emit_re = re.compile(r"^\s+0000([0-9A-Fa-f]{4}) ((?:[0-9A-Fa-f]{2} )+)")
-    addr_re = re.compile(r"^\s+0000([0-9A-Fa-f]{4})\s")
-    for line in listing_path.read_text(errors="replace").splitlines():
-        match = emit_re.match(line)
-        if match:
-            base = int(match.group(1), 16)
-            listed.add(base)
-            for index in range(len(match.group(2).split())):
-                emitted.add(base + index)
-            continue
-        match = addr_re.match(line)
-        if match:
-            address = int(match.group(1), 16)
-            listed.add(address)
-            # `.blkb` is asxxxx's synonym for `.ds` and reserves space the
-            # same way.  Matching only ".ds" meant a .blkb reservation inside
-            # the resident window was reported as FREE -- which is how C:'s
-            # 256-byte allocation vector came to be listed as headroom while
-            # its DPH already pointed at it.
-            if ".ds" in line or ".blkb" in line:
-                ds_starts.append(address)
-
-    # A .ds reserves space without emitting anything, so it looks like a gap.
-    # Its extent runs to the next address the listing mentions -- the label or
-    # directive that follows it.  Deriving the extent that way rather than
-    # parsing the operand is what makes this correct for `.ds SYMBOL`, which
-    # the listing does not resolve to a number.
-    #
-    # An earlier version treated a gap whose first address was a .ds as
-    # reserved in its entirety.  That is right only when the .ds fills the gap;
-    # an 8-byte buffer at the head of 547 free bytes hid all of them.
-    ordered = sorted(listed)
-    reserved: set[int] = set()
-    for start in ds_starts:
-        index = bisect.bisect_right(ordered, start)
-        end = ordered[index] if index < len(ordered) else start + 1
-        reserved.update(range(start, end))
-
-    gaps: list[tuple[int, int]] = []
-    for _, start, limit in HEADROOM_REGIONS:
-        run: int | None = None
-        for address in range(start, limit + 1):
-            free = address < limit and address not in emitted
-            if free and run is None:
-                run = address
-            elif not free and run is not None:
-                gaps.append((run, address - 1))
-                run = None
-    out: list[tuple[int, int]] = []
-    for start, end in gaps:
-        run: int | None = None
-        for address in range(start, end + 2):
-            free = address <= end and address not in reserved
-            if free and run is None:
-                run = address
-            elif not free and run is not None:
-                if address - run >= HEADROOM_MIN_BYTES:
-                    out.append((run, address - 1))
-                run = None
-    return out
-
-
-def headroom_lines(listing_path: Path) -> list[str]:
-    gaps = find_headroom(listing_path)
-    lines = [
-        "",
-        "## Headroom",
-        "",
-        "Free space in the resident window: neither emitted nor reserved by a",
-        "`.ds`.  Fragments below "
-        f"{HEADROOM_MIN_BYTES} bytes are alignment slack and are not listed.",
-        "",
-        "This table exists so the next component lands in a region that has room",
-        "for it, rather than in whichever incidental hole happens to fit -- which",
-        "is how the SD selection probe ended up in four pieces across three",
-        "regions.",
-        "",
-        "| Range | Bytes | Region |",
-        "|---|---:|---|",
-    ]
-    totals: dict[str, int] = {}
-    for start, end in gaps:
-        owner = next(
-            (name for name, lo, hi in HEADROOM_REGIONS if lo <= start < hi),
-            "unattributed",
-        )
-        size = end - start + 1
-        totals[owner] = totals.get(owner, 0) + size
-        lines.append(f"| `{span(start, end)}` | {size} | {owner} |")
-    lines.extend(["", "| Region | Free bytes | Largest fragment |", "|---|---:|---:|"])
-    for name, lo, hi in HEADROOM_REGIONS:
-        sizes = [end - start + 1 for start, end in gaps if lo <= start < hi]
-        lines.append(
-            f"| {name} | {sum(sizes)} | {max(sizes) if sizes else 0} |"
-        )
-    return lines
-
-
-def write_memory_map(
-    args: argparse.Namespace,
-    symbols: dict[str, int],
-    manifest: dict[str, str],
-    validation_warnings: list[str],
-) -> None:
-    console_backend, console_label, console_start_sym, console_end_sym = selected_console(symbols, manifest)
-    console_start = require_symbol(symbols, console_start_sym)
-    console_end = require_symbol(symbols, console_end_sym)
-    cbios_base = require_symbol(symbols, "CBIOS_BASE")
-    bios_code_end = require_symbol(symbols, "BIOS_CODE_END")
-    code_limit = require_symbol(symbols, "CBIOS_CODE_LIMIT")
-    core_base = require_symbol(symbols, "CBIOS_CORE_BASE")
-    core_end = require_symbol(symbols, "CBIOS_CORE_END")
-    stack_guard = require_symbol(symbols, "CBIOS_STACK_GUARD")
-    stack_top = require_symbol(symbols, "CBIOS_STACK_TOP")
-    console_stack_top = require_symbol(symbols, "CBIOS_CONSOLE_STACK_TOP")
-    area_end = require_symbol(symbols, "CBIOS_AREA_END")
-    runtime_start, runtime_end = runtime_range(symbols)
-    protected_tpa_start = require_symbol(symbols, "PROTECTED_TPA_START")
-    protected_tpa_end = require_symbol(symbols, "PROTECTED_TPA_END")
-    protected_tpa_effective_start, protected_tpa_effective_end = protected_tpa_effective_range(symbols)
-    banked_tpa_end = min(require_symbol(symbols, "CBASE") - 1, protected_tpa_start - 1)
+def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
+                     common: list, bank7: list, facts: dict[str, int]) -> None:
+    s = layout.sym
+    manifest = layout.manifest
+    cbase, fbase = s("CBASE"), s("FBASE")
+    im2 = s("IM2_VECTOR_TABLE_START")
+    state_base, state_limit = s("CBIOS_RUNTIME_STATE_BASE"), s("CBIOS_RUNTIME_STATE_LIMIT")
+    isr_save = s("CBIOS_ISR_SP_SAVE")
+    bulk, bulk_size = s("FAC_BULK_BUF"), s("FAC_BULK_SIZE")
+    last_common_code = max(end for _, _, end, _ in common)
 
     lines = [
         "# Zephyr-80 CP/M 2.2 Memory Map",
         "",
-        "Generated by `tools/generate_memory_docs.py` from `build/firmware.lst`, `build/layout.manifest`, and image artifacts.",
+        "Generated by `tools/generate_memory_docs.py` from `build/firmware.lst`, `src/cbios_defs.inc`, `build/layout.manifest` and the image artifacts. Do not edit by hand; `make` regenerates it and fails if the layout breaks a rule below.",
         "",
-        "## Address Space Overview",
+        "The operating system runs from SRAM bank 7, visible at `2000h-DFFFh` only in latch mode 11. Common memory, `E000h-FFFFh`, is SRAM bank 0 in both modes. See `docs/Zephyr-80_OS_Execution_Memory_Architecture.md` for the design.",
+        "",
+        "## What a Program Sees (mode 10)",
+        "",
+        "| Range | Use |",
+        "|---|---|",
+        "| `0000h-00FFh` | Page zero, default FCBs and default DMA, in the program's bank |",
+        f"| `0100h-{h4(COMMON_START - 1)}` | Banked transient program area |",
+        f"| `{xspan(s('PROGRAM_ISR_AREA'), s('PROGRAM_ISR_AREA') + 0x400)}` | Program reservation: interrupt callbacks and their data |",
+        f"| `{xspan(cbase, cbase + CCP_SLOT)}` | CCP (ZCPR2), restored on warm boot |",
+        f"| `{xspan(s('CBIOS_FACADE_BASE'), fbase)}` | BDOS serial number |",
+        f"| `{h4(fbase)}` | `FBASE`, the BDOS entry |",
+        f"| `{h4(s('CBIOS_BASE'))}-FFFFh` | System common memory |",
+        "",
+        f"Page zero's `0006h` holds `{h4(fbase)}`: the transient program area is `0100h-{h4(fbase - 1)}`, {fbase - 0x100} bytes ({(fbase - 0x100) / 1024:.1f} KiB).",
+        "",
+        "## Common Memory",
+        "",
+        "Code regions, each bounded by the limit `cbios_defs.inc` declares for it. Used and free are bytes.",
+        "",
+        "| Region | Owner | Used | Free | Contents |",
+        "|---|---|---:|---:|---|",
+        *region_rows(layout, common),
+        "",
+        "Data and stacks:",
         "",
         "| Range | Use | Notes |",
         "|---|---|---|",
-        range_row(span(0x0000, 0x00FF), "Page zero and default DMA area", "Runtime code installs `JP WBOOT` at `0000h` and `JP FBASE` at `0005h`; default DMA/command tail starts at `0080h`."),
-        range_row(span(0x0100, banked_tpa_end), "CP/M banked TPA", "Runnable programs may use this banked low-memory range."),
-        range_row(
-            span(protected_tpa_effective_start, protected_tpa_effective_end),
-            "Protected/common TPA",
-            f"Application-owned common TPA. The marker range is `{span(protected_tpa_start, protected_tpa_end)}`; the effective TPA portion stops before `CBASE`.",
-        ),
-        range_row(span(require_symbol(symbols, "CBASE"), require_symbol(symbols, "CCPSTACK")), "CP/M CCP", f"`CBASE` is `{h4(require_symbol(symbols, 'CBASE'))}`."),
-        range_row(span(require_symbol(symbols, "FBASE"), cbios_base - 1), "CP/M BDOS and state", f"`FBASE` is `{h4(require_symbol(symbols, 'FBASE'))}`; disk select and sector-I/O errors report the failing drive and warm-boot on A:."),
-        range_row(span(core_base, core_end), "Core BIOS", "BIOS jump table, BOOT/WBOOT, page-zero setup, console facade, storage facade, banking, XMOVE, SIO core, VIDEO_SEND extension, IOCALL transport, and SD probe recovery."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT0_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END")), "Driver slots 0-4", f"{console_label}, IOC Bulk/HID helpers, and IOC Command transport."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT4_END") + 1, require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE") - 1), "Packed driver extension", "IOC Command tail, SD select-probe request, SD-card backend, and USB keyboard state."),
-        range_row(span(require_symbol(symbols, "CBIOS_DRIVER_SLOT5_BASE"), require_symbol(symbols, "CBIOS_DRIVER_SLOT5_END")), "Driver slot 5", ("VDrip transport plus storage and SD probe continuations." if console_backend == "vdrip" else "Storage backend and SD probe continuations; no VDrip transport is linked.")),
-        range_row(span(require_symbol(symbols, "CBIOS_SCRATCH_BASE"), require_symbol(symbols, "CBIOS_SCRATCH_END")), "Protected BIOS scratch/storage buffers", f"`MOVE_BUFFER` is at `{h4(require_symbol(symbols, 'MOVE_BUFFER'))}`; `VDRIP_STORAGE_DPHDPB` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DPHDPB_BASE'))}`; `VDRIP_STORAGE_DIRBUF` is at `{h4(require_symbol(symbols, 'VDRIP_STORAGE_DIRBUF'))}`; `STORAGE_A_ALV` is at `{h4(require_symbol(symbols, 'STORAGE_A_ALV'))}`."),
-        range_row(span(runtime_start, runtime_end), "BIOS runtime state", "Current bank, DMA address, banking state, storage state, SIO core state, and console driver state."),
-        range_row(span(stack_guard, area_end), "Protected firmware stack and work window", f"Stack top is `{h4(stack_top)}`; console backend stack top is `{h4(console_stack_top)}`; stack guard is `{h4(stack_guard)}`."),
+        f"| `{xspan(bulk, bulk + bulk_size)}` | Staging buffer | {bulk_size} bytes, shared by facade DMA/FCB/console/time staging, gate mailboxes and payloads, and cross-bank `MOVE` chunks. Users never overlap in time. |",
+        f"| `{xspan(s('FAC_SFCB_BUF'), facts['staging_end'])}` | Facade copies | Search-first FCB, DPB copy (function 31), register block (functions 210-217), ALV copy (function 27). |",
+        f"| `{xspan(facts['staging_end'], im2)}` | Unallocated | |",
+        f"| `{xspan(im2, im2 + IM2_PAGE_SIZE)}` | IM2 vector page | `I` = `{h2(s('CBIOS_IM2_VECTOR_PAGE'))}`; every entry points into common memory. |",
+        f"| `{xspan(state_base, state_limit)}` | BIOS runtime state | Bank, DMA, console, banking, storage, SIO and serial console state. |",
+        f"| `{xspan(isr_save, isr_save + 2)}` | Interrupted SP | Saved by every interrupt entry. |",
+        f"| `{xspan(isr_save + 2, s('CBIOS_ISR_STACK_TOP'))}` | ISR stack | SIO and CTC interrupts; registered callbacks run here. |",
+        f"| `{xspan(s('CBIOS_ISR_STACK_TOP'), s('GATE_STACK_TOP'))}` | Gate stack | Program calls through the crossing gates. |",
+        f"| `{xspan(s('GATE_STACK_TOP'), s('FAC_STACK_TOP'))}` | Facade stack | BDOS facade, warm-boot trap, final boot switch to mode 10. |",
+        f"| `{xspan(s('FAC_STACK_TOP'), 0x10000)}` | Unallocated | |",
         "",
-        "## Core BIOS Layout",
+        f"System common code ends at `{h4(last_common_code - 1)}`.",
         "",
-        "| Range | Component |",
+        "## SRAM Bank 7 (mode 11 only)",
+        "",
+        "| Region | Owner | Used | Free | Contents |",
+        "|---|---|---:|---:|---|",
+        f"| `{xspan(s('ZSDOS_ORG'), s('ZSDOS_ORG') + s('ZSDOS_SIZE'))}` | ZSDOS | — | — | Installed from `build/bdos-zsdos.bin` by `tools/split_banked_image.py`. |",
+        *region_rows(layout, bank7),
+        "",
+        "Data:",
+        "",
+        "| Range | Use | Notes |",
+        "|---|---|---|",
+        f"| `{h4(s('STORAGE_A_DPH'))}` | Drive A: DPH and DPB | Build-selected A: backend. |",
+        f"| `{h4(s('SD_STORAGE_DPH'))}` | B: DPH and DPB | SD unit 0. |",
+        f"| `{h4(s('CBIOS_STORAGE_DIRBUF'))}` | Directory buffer | Shared by every drive. |",
+        f"| `{h4(s('STORAGE_A_ALV'))}` | Drive A: allocation vector | |",
+        f"| `{h4(s('SD_STORAGE_ALV_BUFFER'))}` | B: allocation vector | |",
+        f"| `{h4(s('SD_STORAGE_ALV2_BUFFER'))}` | C: allocation vector | |",
+        f"| `{h4(s('SD_STORAGE_DPH2'))}` | C: DPH and DPB | SD unit 1. |",
+        f"| `{xspan(s('CONSOLE_FONT_ROM_BASE'), s('CONSOLE_FONT_ROM_BASE') + s('FONT_CP850_6X8_SIZE'))}` | Console font | CP850 6x8. |",
+        f"| `{xspan(s('BOOT_BANNER_TEXT'), s('BOOT_BANNER_TEXT_END'))}` | Boot banner text | |",
+        "",
+        f"The bank 7 image ends at `{h4(facts['bank7_image_end'] - 1)}`; shadow/copy mode loads `0000h-{h4(OS_IMAGE_LIMIT - 1)}`, so `{xspan(facts['bank7_image_end'], OS_IMAGE_LIMIT)}` is free for image growth.",
+        "",
+        "Runtime only, never loaded from ROM:",
+        "",
+        "| Range | Use |",
         "|---|---|",
-        f"| `{span(require_symbol(symbols, 'reset_vector'), require_symbol(symbols, 'reset_vector') + 2)}` | Reset vector: `JP cpm_rom_entry_high`. |",
-        f"| `{span(require_symbol(symbols, 'CBASE'), require_symbol(symbols, 'CCPSTACK'))}` | CP/M CCP area through `CCPSTACK`. |",
-        f"| `{span(require_symbol(symbols, 'FBASE'), cbios_base - 1)}` | CP/M BDOS, BDOS work variables, and CP/M tables. |",
-        f"| `{span(require_symbol(symbols, 'CBIOS_JUMP_TABLE'), require_symbol(symbols, 'ZBIOS_EXT_BASE') + 0x17)}` | Standard BIOS jump table plus `ZBIOS_EXT_BASE`. |",
-        f"| `{span(require_symbol(symbols, 'cpm_rom_entry_high'), require_symbol(symbols, 'BANK_HELPERS_START') - 1)}` | ROM-to-RAM shadow-copy boot code. |",
-        f"| `{span(require_symbol(symbols, 'BANK_HELPERS_START'), require_symbol(symbols, 'BANK_HELPERS_END') - 1)}` | Low-level bank selection helpers. |",
-        f"| `{span(require_symbol(symbols, 'boot'), require_symbol(symbols, 'CONSOLE_CODE_START') - 1)}` | Cold boot, warm boot, CCP restore, page-zero, DMA, CTC helpers, and alignment gap. |",
-        f"| `{span(require_symbol(symbols, 'CONSOLE_CODE_START'), require_symbol(symbols, 'CONSOLE_CODE_END') - 1)}` | Console BIOS facade. |",
-        f"| `{span(require_symbol(symbols, 'STORAGE_STUB_CODE_START'), require_symbol(symbols, 'STORAGE_STUB_CODE_END') - 1)}` | Storage BIOS facade. |",
-        f"| `{span(require_symbol(symbols, 'CCP_QOL_CODE_START'), require_symbol(symbols, 'CCP_QOL_CODE_END') - 1)}` | CCP clear-screen prompt-redraw helper. |",
-        f"| `{span(require_symbol(symbols, 'BANKING_CODE_START'), require_symbol(symbols, 'BANKING_CODE_END') - 1)}` | Banking and XMOVE implementation. |",
-        f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core and exact IM2 vector entry. |",
-        f"| `{span(require_symbol(symbols, 'BIOS_EXT_CODE_START'), require_symbol(symbols, 'BIOS_EXT_CODE_END') - 1)}` | BIOS extension: `VIDEO_SEND`. |",
-        f"| `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` | IOCALL IO Controller transport. |",
+        f"| `{xspan(OS_IMAGE_LIMIT, s('CBIOS_STACK_TOP'))}` | Boot and warm-boot stack |",
+        f"| `{xspan(s('CBIOS_STACK_TOP'), s('CBIOS_CONSOLE_STACK_TOP'))}` | Console and storage dispatch stack |",
+        f"| `{xspan(s('CBIOS_CONSOLE_STACK_TOP'), s('CBIOS_XPORT_STACK_TOP'))}` | IO Controller transport stack |",
+        f"| `{xspan(s('MOVE_BUFFER'), s('MOVE_BUFFER') + s('MOVE_BUFFER_SIZE'))}` | SD transaction scratch (`MOVE_BUFFER`) |",
+        f"| `{xspan(s('MOVE_BUFFER') + s('MOVE_BUFFER_SIZE'), OS_BODY_LIMIT)}` | Unallocated |",
         "",
-        "## Driver Slot Table",
+        "## Image",
         "",
-        "| Slot | Start | End | Size | Owner | Current contents |",
-        "|---:|---:|---:|---:|---|---|",
+        "| Bank / page | Payload | Size | Source |",
+        "|---:|---|---:|---|",
+        f"| 0 | Reset vector and common memory | {args.firmware_bin.stat().st_size} | `{args.firmware_bin}` |",
     ]
-    slot_components = [
-        (console_label, console_start, console_end),
-        ("IOC Bulk transport", require_symbol(symbols, "IOC_BULK_CODE_START"), require_symbol(symbols, "IOC_BULK_CODE_END")),
-        ("USB HID polling", require_symbol(symbols, "HID_INPUT_CODE_START"), require_symbol(symbols, "HID_INPUT_CODE_END")),
-        ("IOC Command transport", require_symbol(symbols, "IOC_CMD_CODE_START"), require_symbol(symbols, "IOC_CMD_CODE_END")),
-        ("SD-card backend", require_symbol(symbols, "SD_STORAGE_CODE_START"), require_symbol(symbols, "SD_STORAGE_CODE_END")),
-        ("drive-A backend", require_symbol(symbols, "STORAGE_A_CODE_START"), require_symbol(symbols, "STORAGE_A_CODE_END")),
-    ]
-    if console_backend == "vdrip":
-        slot_components.append(
-            ("shared VDrip transport", require_symbol(symbols, "VDRIP_TRANSPORT_CODE_START"), require_symbol(symbols, "VDRIP_TRANSPORT_CODE_END"))
-        )
-
-    for slot in range(6):
-        slot_start, slot_limit = slot_range(symbols, slot)
-        present = [
-            (name, max(start, slot_start), min(limit, slot_limit))
-            for name, start, limit in slot_components
-            if ranges_overlap(start, limit, slot_start, slot_limit)
-        ]
-        owner = " + ".join(name for name, _, _ in present) if present else "unallocated"
-        contents = "; ".join(
-            f"`{exclusive_span(start, limit)}` {name}" for name, start, limit in present
-        ) or "No emitted driver bytes."
+    payloads = sorted(
+        {key.split(".")[1] for key in manifest if key.startswith("payload.") and key.count(".") >= 2},
+        key=lambda pid: int(manifest[f"payload.{pid}.bank"]),
+    )
+    for pid in payloads:
         lines.append(
-            f"| {slot} | `{h4(slot_start)}` | `{h4(slot_limit - 1)}` | "
-            f"{slot_limit - slot_start} bytes | {owner} | {contents} |"
+            f"| {manifest[f'payload.{pid}.bank']} | {manifest.get(f'payload.{pid}.name', pid)} | "
+            f"{manifest[f'payload.{pid}.size']} | `{manifest[f'payload.{pid}.path']}` |"
         )
-
-    lines.extend(
-        [
-            "",
-            "## Core SIO Layout",
-            "",
-            "| Range | Owner | Notes |",
-            "|---|---|---|",
-            f"| `{span(require_symbol(symbols, 'SIO_CORE_CODE_START'), require_symbol(symbols, 'SIO_CORE_CODE_END') - 1)}` | SIO core | BIOS-owned serial and IOC interrupt services. |",
-            f"| `{span(require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_START'), require_symbol(symbols, 'CONSOLE_IM2_VECTOR_TABLE_END') - 1)}` | SIO core | Exact two-byte IM2 vector table entry. |",
-            "",
-            ("SIO0/B remains available to the retained Virtual Drip console, including its RTS/CTS backpressure discipline." if console_backend == "vdrip" else "The direct V9958 console does not register or poll the SIO0/B Virtual Drip input path; console input comes only from the IOC HID queue."),
-            "",
-            "## Selected Console Layout",
-            "",
-            "| Range | Owner | Notes |",
-            "|---|---|---|",
-            f"| `{span(console_start, console_end - 1)}` | {console_label} | CP/M console semantics, ANSI/VT100-light parser, CP850 atlas, printable-run buffer, and sprite-cursor state. |",
-            *([f"| `{span(require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_START'), require_symbol(symbols, 'VDRIP_TRANSPORT_CODE_END') - 1)}` | Shared Virtual Drip transport | Packet sender, readiness/parser state, input dispatch, and legacy storage replies. |"] if console_backend == "vdrip" else []),
-            "",
-            "The IOC transport uses SIO1/B as its Command lane and SIO1/A as its Bulk lane. Both run the common A5/5A packet with persistent External Sync and Auto Enables off.",
-            f"`IOCALL` mailbox code is at `{span(require_symbol(symbols, 'IOCTRL_CODE_START'), require_symbol(symbols, 'IOCTRL_CODE_END') - 1)}` in core BIOS; packet helpers occupy `{span(require_symbol(symbols, 'IOC_CMD_CODE_START'), require_symbol(symbols, 'IOC_CMD_CODE_END') - 1)}` and `{span(require_symbol(symbols, 'IOC_BULK_CODE_START'), require_symbol(symbols, 'IOC_BULK_CODE_END') - 1)}`.",
-            f"The SD-card BIOS backend follows at `{span(require_symbol(symbols, 'SD_STORAGE_CODE_START'), require_symbol(symbols, 'SD_STORAGE_CODE_END') - 1)}`; the generated overlap check validates these adjacent ranges.",
-            f"The SD selection probe is one contiguous block at `{span(require_symbol(symbols, 'SD_PROBE_CODE_START'), require_symbol(symbols, 'SD_PROBE_CODE_END') - 1)}`; it was previously four fragments wedged into unrelated gaps.",
-            f"USB keyboard mailbox and queue state occupies `{span(require_symbol(symbols, 'HID_INPUT_STATE_START'), require_symbol(symbols, 'HID_INPUT_STATE_END') - 1)}` in the fixed gap after the SD backend.",
-            "",
-        "## BIOS Jump Table Layout",
+    lines += [
         "",
-        "| Address | Entry |",
-        "|---:|---|",
-        ]
-    )
-    for entry, target in BIOS_TABLE:
-        lines.append(f"| `{h4(require_symbol(symbols, entry))}` | `JP {target}` |")
-    ext_base = require_symbol(symbols, "ZBIOS_EXT_BASE")
-    for offset_text, target in EXTENDED_TABLE:
-        offset = int(offset_text[:-1], 16)
-        lines.append(f"| `{h4(ext_base + offset)}` | `JP {target}` |")
-
-    lines.extend(
-        [
-            "",
-            "## Runtime State Layout",
-            "",
-            "| Range | State |",
-            "|---|---|",
-        ]
-    )
-    for name, size in RUNTIME_STATE:
-        # Storage and console backends are build-time choices, so their private
-        # state symbols come and go.  Report what this build actually linked.
-        if name not in symbols:
-            continue
-        start = symbols[name]
-        lines.append(f"| `{span(start, start + size - 1)}` | `{name}` |")
-
-    lines.extend(
-        [
-            "",
-            "## Scratch Layout",
-            "",
-            "| Range | Use | Notes |",
-            "|---|---|---|",
-        ]
-    )
-    for name, start, limit, notes in scratch_buffer_ranges(symbols):
-        lines.append(f"| `{exclusive_span(start, limit)}` | `{name}` | {notes} |")
-    for start, limit in derived_free_scratch_ranges(symbols):
-        lines.append(f"| `{exclusive_span(start, limit)}` | unused scratch window | Derived from active buffers and scratch bounds. |")
-
-    im2_table = require_symbol(symbols, "CBIOS_IM2_VECTOR_TABLE")
-    im2_limit = require_symbol(symbols, "CBIOS_IM2_VECTOR_LIMIT")
-    im2_entry = require_symbol(symbols, "CBIOS_IM2_VECTOR_ENTRY")
-    lines.extend(
-        [
-            "",
-            "## IM2 Layout",
-            "",
-            "| Field | Value | Notes |",
-            "|---|---:|---|",
-            f"| Table base | `{h4(im2_table)}` | Start of the exact IM2 vector table entry. |",
-            f"| Table range | `{exclusive_span(im2_table, im2_limit)}` | Exactly {im2_limit - im2_table} bytes; `CONSOLE_IM2_VECTOR_TABLE_END` is the exclusive end label. |",
-            f"| Vector page | `{h2(require_symbol(symbols, 'CBIOS_IM2_VECTOR_PAGE'))}` | Loaded into the Z80 I register. |",
-            f"| SIO0/B WR2 vector byte | `{h2(require_symbol(symbols, 'CBIOS_SIO_VECTOR'))}` | Selects the exact two-byte table entry. |",
-            f"| Entry address | `{h4(im2_entry)}` | Contains the little-endian word `sio_core_isr`. |",
-            f"| Owner | SIO core | The IM2 entry lives inside core BIOS with the SIO core. |",
-            "",
-            "Future devices that need additional IM2 vectors should allocate explicit table entries and program their vector bytes directly; this build no longer emits a 256-byte repeated table.",
-        ]
-    )
-
-    lines.extend(
-        [
-            "",
-            "## Image Payload Layout",
-            "",
-            "| Payload | Bank | Entry | Size | End | Source |",
-            "|---|---:|---:|---:|---:|---|",
-            *payload_rows(manifest),
-            "",
-            "## Drive A Storage Layout",
-            "",
-            "| Drive | Backend | Format | Bytes | Records | Record Bytes |",
-            "|---|---|---|---:|---:|---:|",
-            *storage_rows(manifest),
-            "",
-            "## Image Artifacts",
-            "",
-            "| Artifact | Size | Notes |",
-            "|---|---:|---|",
-            f"| `{args.firmware_bin}` | {artifact_size(args.firmware_bin)} bytes | Firmware image before payload attachment. |",
-            f"| `{args.final_image}` | {artifact_size(args.final_image)} bytes | Burnable image after payload attachment. |",
-        ]
-    )
-    lines.extend(headroom_lines(args.listing))
-    lines.extend(
-        [
-            "",
-            "## Validation Report",
-            "",
-            "Status: PASS. No fatal layout errors were found.",
-            "",
-        ]
-    )
-    if validation_warnings:
-        lines.extend(["Warnings:", ""])
-        lines.extend(f"- {warning}" for warning in validation_warnings)
-        lines.append("")
-    lines.extend(
-        [
-            "Validated expectations:",
-            "",
-            *(f"- {note}" for note in VALIDATION_NOTES),
-            "",
-            "Additional notes:",
-            "",
-            f"- CP/M drive A uses the `{manifest['storage.backend']}` build-time backend; drive B remains the SD-card backend.",
-            ("- The direct console links no Virtual Drip transport, readiness, proxy-keyboard, or packet-output code." if console_backend == "v9958" else "- The retained Virtual Drip console links its shared transport and preserves proxy/HID input compatibility."),
-            f"- The protected TPA marker is `{span(protected_tpa_start, protected_tpa_end)}`; for this build, the application-usable protected TPA subrange is `{span(protected_tpa_effective_start, protected_tpa_effective_end)}` because `CBASE` starts at `{h4(require_symbol(symbols, 'CBASE'))}`.",
-            f"- WBOOT restores the CCP range `{span(require_symbol(symbols, 'CBASE'), require_symbol(symbols, 'FBASE') - 1)}` from ROM page 0 using `ROM_VISIBLE_BANK0` (`{h2(require_symbol(symbols, 'ROM_VISIBLE_BANK0'))}`) before returning to `CCP_CLEARBUF_ENTRY`.",
-            f"- `CBIOS_BASE` is `{h4(cbios_base)}`; CBIOS layout constants are derived from this base.",
-            f"- `CBIOS_CODE_LIMIT` is `{h4(code_limit)}`; no resident code may cross into scratch/staging.",
-            f"- SIO core code starts at `{h4(require_symbol(symbols, 'SIO_CORE_CODE_START'))}` inside core BIOS; the selected console driver starts at `{h4(console_start)}`, and the drive A: storage backend starts at `{h4(require_symbol(symbols, 'STORAGE_A_CODE_START'))}`.",
-            f"- `IOCALL` code is at `{h4(require_symbol(symbols, 'IOCTRL_CODE_START'))}` in core BIOS; SIO1/B Command and SIO1/A Bulk use the same persistent-External-Sync common packet.",
-            f"- `VIDEO_SEND` code is at `{h4(require_symbol(symbols, 'BIOS_EXT_CODE_START'))}` in core BIOS; raw VDP/display writes may desynchronize the V9958 logical-cell state.",
-            f"- `WBOOT` resident code starts at `{h4(require_symbol(symbols, 'WBOOT_RESIDENT_START'))}`, inside protected high BIOS memory.",
-            f"- `ZBIOS_EXT_BASE` is at `{h4(ext_base)}` and exposes `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `IOCALL`, `VIDEO_SEND`, `IOCBULK` and `IOCBULKW`.",
-            f"- The burnable image is `{args.final_image}`.",
-            "",
-        ]
-    )
+        f"The burnable image `{args.final_image}` is {args.final_image.stat().st_size} bytes. "
+        f"Console backend: `{manifest.get('console.backend')}`. Drive A: backend: `{manifest.get('storage.backend')}`.",
+        "",
+        "## Validation Report",
+        "",
+        "Status: PASS.",
+        "",
+        "Checked:",
+        "",
+        *(f"- {note}" for note in VALIDATION_NOTES),
+        "",
+    ]
     args.memory_map.write_text("\n".join(lines))
 
 
 def main() -> int:
     args = parse_args()
-    require_file(args.map)
-    symbols = parse_listing(args.listing)
+    for path in (args.map, args.firmware_bin, args.bank7_bin, args.final_image):
+        require_file(path)
+    symbols, emitted = parse_listing(args.listing)
+    add_defs(symbols, args.defs)
     manifest = parse_manifest(args.manifest)
-    validation_warnings = validate_layout(symbols, manifest)
+    layout = Layout(symbols, emitted, manifest)
+
+    backend = manifest.get("console.backend")
+    if backend not in CONSOLE_REGIONS:
+        raise SystemExit(f"Unknown or missing console backend in layout manifest: {backend}")
+    console = CONSOLE_REGIONS[backend]
+
+    common = check_regions(layout, COMMON_REGIONS, "common")
+    bank7 = check_regions(layout, BANK7_REGIONS + [console], "bank 7")
+    facts = check_invariants(layout, console)
+    if layout.errors:
+        raise SystemExit("\n".join(layout.errors))
 
     args.symbol_map.parent.mkdir(parents=True, exist_ok=True)
     args.memory_map.parent.mkdir(parents=True, exist_ok=True)
-    write_symbol_map(args, symbols, manifest)
-    write_memory_map(args, symbols, manifest, validation_warnings)
-    for warning in validation_warnings:
-        print(warning, file=sys.stderr)
+    write_symbol_map(args, layout)
+    write_memory_map(args, layout, console, common, bank7, facts)
     return 0
 
 

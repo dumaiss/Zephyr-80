@@ -1,101 +1,159 @@
 # Zephyr-80 CP/M 2.2
 
-Zephyr-80 is a Z80-based CP/M 2.2 machine and firmware target. This repository
-builds a CP/M 2.2 firmware image with a local Zephyr-80 CBIOS, banked RAM,
+Zephyr-80 is a Z80-based CP/M 2.2 machine and firmware target. This directory
+builds its ROM: ZSDOS and ZCPR2 on a local Zephyr-80 CBIOS, with banked RAM,
 ROM/SD storage, and build-selectable physical-V9958 or Virtual Drip console
 backends.
 
 The project is part of the broader pBITz / coffee-machine retro-computing
 family. It is hobby and experimental firmware, but the code tries to keep the
-low-level contracts explicit: memory ownership is declared in one place,
-generated documentation is checked against the build, and BIOS symbols are
-treated as ABI, not casual implementation details.
+low-level contracts explicit: memory ownership is declared in one place, region
+limits are checked by the assembler and the build, and the program interface is
+a short, documented list.
 
 ## Current Status
 
 Implemented now:
 
-- CP/M 2.2 boots on the Zephyr-80 firmware target.
-- The CBIOS uses a cleaned-up fixed memory map with a core BIOS area and six
-  fixed 1 KiB driver slots.
+- CP/M 2.2 boots with ZSDOS as the BDOS and ZCPR2 as the command processor.
+- The operating system — ZSDOS, the BIOS and its drivers — runs from SRAM bank
+  7, behind a BDOS facade in common memory. It needs memory decoder revision 11.
+- Programs get a 59 KiB transient area, `0100h-EC05h`.
 - Drive A is a read-only ROM volume by default; drive B is backed by SD card.
-- A BIOS-owned SIO core exists in core BIOS for SIO0/B and SIO1/A plumbing.
 - The default console drives the LunchCrema V9958 directly and reads terminal
   bytes only from the IOC HID queue.
 - The Virtual Drip console remains available as a build-time compatibility
   backend and retains its SIO0/B flow control and proxy keyboard behavior.
-- SIO1/A is initialized as a BIOS-owned synchronous IO Controller link.
-- `IOCALL` is exposed as a Zephyr extended BIOS call for simple IO Controller
-  command/reply transactions.
-- `CONST` checks buffered input, and `CONIN` consumes from the buffer.
-- `CONOUT` remains a blocking/polled transmit path.
-- The old NMI/debug path has been removed.
-- Banking, `XMOVE`, `MOVE`, `SELMEM`, `SETBNK`, and `LAUNCH` are core BIOS
-  services.
+- SIO1 is initialized as a BIOS-owned synchronous IO Controller link.
+- `IOCALL`, `IOCBULK`, `IOCBULKW`, `VIDEO_SEND` and the banking services are
+  Zephyr BDOS functions.
+- The BIOS owns IM2; programs get CTC interrupts by registering a callback.
 
 Planned later:
 
-- Real video-card interrupt handling may need a different IM2 ownership model
-  or table layout.
-- Additional drivers may occupy one or more whole fixed slots.
+- Measure the BIOS stacks on this layout; their sizes are hand-assigned.
+- Move the programs that still install private IM2 tables — the VGM player, the
+  trackers and `ctctest_interrupts` — to callback registration.
 
 ## Architecture Summary
 
-The firmware keeps patched stock CP/M source under `cpm22/` and adds local
-Zephyr-80 runtime code under `src/`. The top-level runtime wrapper assembles CP/M, installs
-the BIOS jump table at `DA00h`, and includes the local CBIOS modules.
+`src/zephyr.asm` assembles the whole address space in one link and includes the
+local CBIOS modules. `tools/split_banked_image.py` cuts the result in two:
 
-Important runtime areas:
+- ROM page 0: the reset vector and common memory, with ZCPR2 installed at
+  `CBASE`
+- the bank 7 payload, ROM page 7: the BIOS and drivers, with ZSDOS installed at
+  `2000h`
 
-- Page zero:
-  - `0000h`: `JP WBOOT`
-  - `0005h`: `JP FBASE`, the CP/M BDOS entry
-  - `0080h`: default DMA buffer / command tail
-- Banked TPA:
-  - `0100h-BFFFh`, switched by the RAM bank latch
-- Protected/common TPA:
-  - `C000h-C3FFh`, common across banks and application-owned
-  - this is not BIOS scratch space
-- CCP/BDOS:
-  - CCP begins at `C400h`
-  - BDOS entry is currently `CC06h`
-- CBIOS:
-  - BIOS jump table begins at `DA00h`
-  - core BIOS occupies `DA00h-DFFFh`
-  - driver slots occupy `E000h-FA7Fh`
-  - scratch, runtime state, and stack live above the driver slots
+The split refuses to emit anything that would land in the wrong place: code in
+`0003h-1FFFh`, code in bank 7's runtime-only `C000h-DFFFh`, or a ZSDOS or CCP
+image without its expected entry jumps.
 
-Warm boot restores the CCP range from ROM page 0 before returning to the CCP
-warm-entry path. BDOS and BIOS are left intact.
+At reset the ROM copy loads each page into the matching SRAM bank, so page 7
+becomes bank 7 with no loader of its own. Cold boot checks bank 7's image marker,
+initializes everything in operating-system mode, and enters the CCP in
+application mode.
+
+Warm boot restores the CCP range from ROM page 0, reinitializes the console,
+resets the CTC and clears interrupt registrations. ZSDOS and the BIOS in bank 7
+are left intact.
+
+## Program Interface
+
+Programs call the operating system in three ways.
+
+**`CALL 5`**, the BDOS. `0005h` jumps to `FBASE` (`EC06h`), the BDOS facade in
+common memory. The facade switches to its own stack and enters operating-system
+mode, then calls ZSDOS in bank 7 and returns to the program's mapping. ZSDOS
+handles functions 0-47 and 98-103 as usual. A program's FCB, DMA, console buffer
+or time buffer can be anywhere in its memory: the facade copies it across when
+ZSDOS cannot see it. Functions 27 and 31 return pointers to copies in common
+memory.
+
+**Zephyr BDOS functions**, handled by the facade:
+
+| Function | Service | Inputs | Output |
+| ---: | --- | --- | --- |
+| 200 | Register CTC callback | `B` = channel 0-3, `DE` = entry in `E000h-E3FFh` | `A` = `00h`, or `FFh` refused |
+| 201 | Unregister CTC callback | `B` = channel | `A` = `00h`, or `FFh` |
+| 202 | Program exit | — | Clears all registrations; ZCPR2 calls it |
+| 203 | System information | — | `HL` = system information block |
+| 210-217 | `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `IOCALL`, `VIDEO_SEND`, `IOCBULK`, `IOCBULKW` | `DE` = register block | Register block updated; `A` = status |
+
+The register block for 210-217 is seven bytes: `A`, `C`, `B`, `E`, `D`, `L`,
+`H`. The services keep their BIOS register contracts, and their buffers can be
+anywhere in the program's memory.
+
+The system information block is version 1:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 1 | Version, `01h` |
+| 1 | 1 | IO Controller transport level |
+| 2 | 2 | IOC link failure record |
+| 4 | 2 | Serial console flags byte |
+| 6 | 2 | CP/M BIOS jump table |
+| 8 | 2 | Zephyr extension table |
+
+`../Utilities/src/zbdos.inc` wraps all of this for assembly programs.
+
+**The CP/M BIOS jump table**, found through page zero's `JP WBOOT`. Only `BOOT`,
+`WBOOT`, `CONST`, `CONIN` and `CONOUT` are live. The disk structures live in
+bank 7 and ZSDOS uses its own table there, so the disk and auxiliary entries are
+inert. They fail cleanly: `SELDSK` returns `HL = 0`, `READ` and `WRITE` return
+an error, `LISTST` reports not ready and `READER` returns `^Z`. BDOS list and
+punch output still work.
 
 ## Memory Map
 
-The current fixed-slot layout is declared in `src/cbios_defs.inc` and reproduced
-by `tools/generate_memory_docs.py`. The generated `docs/memory-map.md` is the
-address authority after each build.
+The layout is declared in the "Banked OS layout" block of `src/cbios_defs.inc`.
+Each code region there has a limit. `tools/check_overlap.py` checks the link for
+bytes emitted twice, and `tools/generate_memory_docs.py` checks every region
+against its limit and the layout invariants, then writes `docs/memory-map.md`
+and `docs/symbol-map.md`. Those two are the address authority after each build.
 
-Major regions:
+What a program sees:
 
 | Range | Owner |
 |---|---|
-| `0100h-BFFFh` | Banked transient program area |
-| `C000h-C3FFh` | Protected/common TPA, application-owned |
-| `C400h-D9FFh` | CCP/BDOS in the current MEM=56 build |
-| `DA00h-DFFFh` | Core BIOS |
-| `E000h-FA7Fh` | Fixed driver/code slots |
-| `FA80h-FDFFh` | BIOS scratch and CP/M storage buffers |
-| `FE00h-FE7Fh` | Persistent BIOS runtime state |
-| `FE80h-FFFFh` | BIOS stack/reserve |
+| `0000h-00FFh` | Page zero, in the program's bank |
+| `0100h-DFFFh` | Banked transient program area |
+| `E000h-E3FFh` | Program reservation: interrupt callbacks and their data |
+| `E400h-EBFFh` | CCP (ZCPR2), restored on warm boot |
+| `EC00h-EFFFh` | BDOS facade; serial number at `EC00h`, `FBASE` at `EC06h` |
+| `F000h-F957h` | BIOS jump tables, boot, banking, SIO core, crossing gates, interrupt dispatch, serial console |
+| `F958h-FC97h` | Staging buffer and the copies returned by BDOS functions 27 and 31 |
+| `FD00h-FDFFh` | IM2 vector page |
+| `FE00h-FE7Fh` | BIOS runtime state |
+| `FE80h-FF5Fh` | Interrupt, gate and facade stacks |
+
+SRAM bank 7, visible at `2000h-DFFFh` only in operating-system mode:
+
+| Range | Owner |
+|---|---|
+| `2000h-2FFFh` | ZSDOS |
+| `3000h-303Fh` | ZSDOS's BIOS jump table and the `BANK7OS1` image marker |
+| `3040h-5FFFh` | Console dispatch, storage, IOC transport, HID, SD and ROM-disk backends, V9958 console |
+| `6000h-7FFFh` | Disk parameter blocks, directory buffer and allocation vectors |
+| `8000h-8FFFh` | Font and boot banner |
+| `C000h-DFFFh` | Runtime only: BIOS private stacks at `C000h-C2FFh`, SD scratch buffer from `C300h` |
+
+See [Memory Management](../../../Memory%20Management.md) for the decoder, the
+latch modes and the boot copy.
 
 Hand-written walkthroughs:
 
+- `docs/Zephyr-80_OS_Execution_Memory_Architecture.md` — the banked design and
+  its invariants
 - `docs/zephyr80_bios_walkthrough.md`
 - `docs/vdrip_protocol.md`
 - `docs/zephyr80_vdrip_disk.md`
-- `docs/lunchcrema-v9958-console-bringup.md`
-- `docs/v9958-console-implementation-plan.md`
+- `docs/ctc-and-real-time-programming.md`
 
-## Driver Model
+The VDrip documents predate the banked operating system and give older
+addresses.
+
+## Driver Placement
 
 The BIOS presents stable CP/M entry points and dispatches through facades:
 
@@ -104,31 +162,42 @@ The BIOS presents stable CP/M entry points and dispatches through facades:
 - `src/sio_core.asm` owns BIOS SIO hardware plumbing.
 - Driver backends provide tables or entry points behind those facades.
 
-The generated map reports exact ownership for the selected build. In the
-default direct-V9958 build:
+Driver code and private state belong in bank 7. Only what must be visible in
+both memory modes, or when an interrupt arrives, belongs in common memory:
 
-| Slot | Range | Current owner |
-|---:|---:|---|
-| 0-2 | `E000h-EBFFh` | Direct V9958 console driver |
-| 3 | `EC00h-EFFFh` | Direct console tail, IOC Bulk transport, and HID helper |
-| 4 | `F000h-F3FFh` | IOC Command/SD helpers |
-| 5 | `F680h-FA7Fh` | Drive-A backend and SD probe continuations |
+- interrupt handlers and everything they touch
+- code that changes the memory mode, and the stacks it runs on
+- buffers that carry a program's data across the mapping
 
-At a high level, adding a driver means:
+Common memory is 8 KiB, and a byte moved there comes out of every program's
+address space.
 
-1. Choose one or more whole driver slots.
-2. Define start and end symbols for the driver's resident code.
-3. Provide the facade-facing driver table or entry points.
-4. Keep persistent state in the runtime state area or another declared,
-   validated state block.
-5. Use scratch only for temporary buffers.
-6. Update validation expectations in the documentation generator.
-7. Regenerate the memory documentation.
-
-Fixed slots are intentional. They make driver growth and movement explicit
-instead of letting later drivers slide upward unpredictably.
+Bank 7's `C000h-DFFFh` holds only zero-initialized runtime state: the ROM copy
+loads just `0000h-BFFFh` of each page. Nothing a drive A: read can target may
+live there either, because the ROM-disk read uses shadow/copy mode, which maps
+that range to bank 0.
 
 ## Interrupt Model
+
+The BIOS owns IM2. `I` is `FDh` from cold boot on, and the vector page at
+`FD00h` is a full 256 entries:
+
+| Vector | Target |
+|---|---|
+| `00h-06h` | CTC channels 0-3: the callback dispatcher |
+| `10h-1Eh` | SIO0: the BIOS SIO handler (`10h` is live; the rest cover status-affects-vector) |
+| all others | `EI` / `RETI` stub |
+
+Every handler lives in common memory and switches to the common interrupt stack
+as its first action, so an interrupt is safe whichever bank is mapped. Handlers
+end with `EI` / `RETI`.
+
+CTC channels are programs' to use through registration (BDOS function 200). A
+callback must live, with everything it touches, in `E000h-E3FFh`. It runs with
+interrupts disabled on the interrupt stack, may use `AF`, `BC`, `DE` and `HL`,
+and ends with `RET`. It never calls BDOS or the BIOS. Registrations are cleared
+by warm boot and by the program-exit call ZCPR2 makes when a transient returns.
+A channel that interrupts without a registration is reset.
 
 The direct V9958 console does not register an SIO0/B receive sink. Its input
 path is `IOC HID queue -> CONST/CONIN`, while CONOUT parses ANSI/VT100-light
@@ -138,50 +207,32 @@ uses SIO0/B with Z80 maskable interrupts:
 - Boot and warm boot initialize BIOS-owned SIO services, install runtime state,
   register the console RX sink, and then enable the SIO interrupt path.
 - SIO RX interrupts dispatch received bytes to the registered console sink.
-- The Virtual Drip console sink stores raw terminal input bytes in `textq`.
-- `CONST` checks `textq`.
-- `CONIN` blocks until a buffered byte is available, then consumes it.
-- `CONOUT` emits framed VDrip display/control packets and keeps input and
-  output paths separate.
-- SIO0/B RTS is software-managed by the Virtual Drip console owner.
-- During SIO core init, RTS is held released and stale SIO0/B RX bytes are
-  discarded before the console sink is registered.
-- DTR/DCD are not required, and WR3 Auto Enables remain off to avoid depending
-  on DCD.
+- `CONST` checks the input queue; `CONIN` blocks until a byte is available.
+- SIO0/B RTS is software-managed by the Virtual Drip console owner, and WR3
+  Auto Enables remain off to avoid depending on DCD.
 
-The current IM2 setup is SIO-only and uses an exact two-byte table entry:
+SIO0/B WR1 keeps status-affects-vector disabled, so the SIO emits the exact WR2
+vector byte `10h`.
 
-- `I = DDh`
-- SIO0/B WR2 vector byte is `10h`
-- the IM2 table entry lives at `DD10h-DD11h`, inside the SIO core
-- the table word points directly at `sio_core_isr`
-
-SIO0/B WR1 keeps status-affects-vector disabled, so the SIO emits the exact
-WR2 vector byte and the BIOS no longer needs a 256-byte repeated IM2 table.
-Future devices that use IM2 should allocate explicit table entries and program
-their vector bytes directly.
-
-SIO1/A is initialized separately for the BIOS-owned IO Controller link:
+SIO1 is initialized separately for the BIOS-owned IO Controller link:
 
 - synchronous mode, 8-bit RX/TX
 - external clock and external sync from the IO Controller MCU
 - no parity, no CRC, no SIO1 interrupts
-- RTS starts inactive and is asserted only around an `IOCALL` transaction
-
-`IOCALL` lives at `ZBIOS_EXT_BASE + 0Fh`; its transport code is part of core
-BIOS, not a driver slot occupant. The caller passes `DE` pointing to a
-caller-owned request block in currently visible application memory; the BIOS
-reads TX bytes from the caller's TX pointer and writes reply bytes to the
-caller's RX pointer.
 
 ## Build
 
-The default build uses the physical V9958 console, ROM drive A, and SD drive B,
-then regenerates the memory documentation:
+The default build uses the physical V9958 console, ROM drive A, and SD drive B:
 
 ```sh
 make
 ```
+
+It builds ZCPR2 and ZSDOS under a vendored copy of RunCPM (`tools/runcpm`),
+which it compiles on first use. `CCP=zcpr2 BDOS=zsdos` is the only supported
+combination: the stock CCP and BDOS cannot run behind the banked operating
+system. The build also needs Python 3, GNU Make, and the SDCC Z80 tools
+`sdasz80`, `sdldz80` and `makebin`.
 
 Select the retained Virtual Drip console at build time with:
 
@@ -189,56 +240,52 @@ Select the retained Virtual Drip console at build time with:
 make CONSOLE=vdrip
 ```
 
-Supported console values are `v9958` (default) and `vdrip`. The direct build
-does not link `vdrip_transport.asm`; `STORAGE_A=vdrip` is therefore restricted
-to `CONSOLE=vdrip`. Existing `STORAGE_A=rom` and `STORAGE_A=ramdisk` choices are
-unchanged.
+Supported console values are `v9958` (default) and `vdrip`. `STORAGE_A`
+selects the drive A backend: `rom` (default), `vdrip` or `ramdisk`. The
+Makefile documents the limits on each.
 
 Primary generated artifacts:
 
 | Artifact | Meaning |
 |---|---|
-| `build/firmware.bin` | 64 KiB firmware image before payload attachment |
-| `build/zephyr80.bin` | burnable ROM image after firmware and payload assembly |
-| `docs/memory-map.md` | generated memory map and validation report |
-| `docs/symbol-map.md` | generated stable project-facing symbol map |
+| `build/zephyr80.bin` | 512 KiB burnable ROM image |
+| `build/zephyr80-zcpr2-zsdos.bin` | the same image, named for its CCP and BDOS |
+| `build/firmware.bin` | ROM page 0: reset vector and common memory |
+| `build/bank7.bin` | bank 7 payload: ZSDOS, the BIOS and drivers |
+| `docs/memory-map.md` | generated memory map, free space and validation report |
+| `docs/symbol-map.md` | generated jump tables, IM2 page and symbols |
 
-The memory documentation is generated by:
+`make` fails if the layout breaks a validated rule.
 
-```sh
-python3 tools/generate_memory_docs.py \
-  --listing build/firmware.lst \
-  --map build/firmware.map \
-  --manifest build/layout.manifest \
-  --firmware-bin build/firmware.bin \
-  --final-image build/zephyr80.bin \
-  --symbol-map docs/symbol-map.md \
-  --memory-map docs/memory-map.md
-```
+The ROM must be paired with memory decoder revision 11 from
+`../../HDL/WinCUPL`.
 
 ## Repository Layout
 
 ```text
 src/        Zephyr-80 CBIOS and platform-specific runtime source
-cpm22/      stock CP/M 2.2 CCP+BDOS source, with the local patches
-zcpr2/      ZCPR2 command processor (replaces the stock CCP)
-zsdos/      ZSDOS (replaces the stock BDOS)
+zcpr2/      ZCPR2 command processor
+zsdos/      ZSDOS, the BDOS
+cpm22/      stock CP/M 2.2 CCP+BDOS source with the local patches; not in the banked ROM
 cpm-2.2/    upstream submodule: manuals and stock .COM files, not built
 tools/      image-building, conversion, and documentation tools
 images/     payload and disk-format inputs
-docs/       generated and hand-written project documentation
+docs/       project documentation
 build/      generated build outputs
 ```
 
 ## Development Notes
 
-- Treat exported BIOS symbols and memory constants as firmware ABI.
-- Prefer explicit layout declarations over implicit placement.
-- Keep `src/cbios_defs.inc`, validation logic, and generated docs in sync.
-- Do not casually move code between core BIOS and driver slots.
-- Banking, `XMOVE`, `MOVE`, `SELMEM`, `SETBNK`, and `LAUNCH` are core BIOS
-  services, not drivers.
-- `C000h-C3FFh` is protected/common TPA and remains application-owned. It must
-  not be used as BIOS scratch, runtime state, or interrupt/vector storage.
+- The program interface is `CALL 5`, including the Zephyr functions, and the
+  CP/M BIOS boot and console entries. Nothing else is published at a fixed
+  address.
+- Keep `src/cbios_defs.inc` the single authority for the layout.
+- Never change the memory mode while executing from, or with `SP` in, a range
+  the change remaps. Restore the mode bits that were found; never assume
+  application mode.
+- Bank 7 code never calls `CALL 5`, and interrupt handlers never call BDOS: the
+  facade is not reentrant.
+- `E000h-E3FFh` belongs to the running program. The operating system must not
+  use it.
 - Virtual Drip work should clearly distinguish proxy-visible packet protocol
   changes from common core BIOS behavior.

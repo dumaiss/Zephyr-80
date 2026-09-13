@@ -334,3 +334,7 @@ sercon_rx_buffer:
 	.ds SERCON_RX_BUFFER_SIZE
 
 SERCON_CODE_END:
+
+	.ifgt (SERCON_CODE_END - SERCON_CODE_START) - (CBIOS_SERCON_CODE_LIMIT - CBIOS_SERCON_CODE_BASE)
+	.error 1			; serial console runs into the staging buffer
+	.endif

@@ -6,8 +6,10 @@ The authoritative implementation has four distinct software-visible parts:
 
 - **SIO0** provides the conventional asynchronous serial interfaces.
 - **CTC** supplies programmable timing and application timers.
-- **SIO1/B** is the command lane used by the Zephyr extended BIOS `IOCALL` entry.
-- **SIO1/A** is the bulk lane used by `IOCBULK` and `IOCBULKW` after command-lane admission.
+- **SIO1/B** is the command lane used by the `IOCALL` service.
+- **SIO1/A** is the bulk lane used by the `IOCBULK` and `IOCBULKW` services after command-lane admission.
+
+Programs reach all three services through Zephyr BDOS functions; see [Zephyr transport services](#zephyr-transport-services).
 
 The committed I/O-board design uses a **PIC18F57Q84** as the I/O controller.  The current firmware is no longer only a PING/reset bring-up target: it also contains SD-card, bulk-transfer, cache, profile, link-sync, and HID status/input handlers.  Unsolicited GameOS-style event delivery remains future work.  HID input is still fetched by command, but the host no longer polls blind: the MCU raises a hardware doorbell on `/CTSB` when keyboard bytes are waiting, and the BIOS issues `CMD_HID_INPUT` only when it sees it.
 
@@ -36,10 +38,10 @@ The assembly constants are authoritative for software.  The PLD decodes each dev
 | SIO0 channel B — console | `22h` | `23h` | BIOS |
 | SIO1 channel A — bulk lane | `30h` | `31h` | BIOS transport via `IOCBULK` / `IOCBULKW` |
 | SIO1 channel B — command lane | `32h` | `33h` | BIOS transport via `IOCALL` |
-| CTC channel 0 | `40h` | — | Application |
-| CTC channel 1 | `41h` | — | Application |
-| CTC channel 2 | `42h` | — | Application |
-| CTC channel 3 | `43h` | — | Application |
+| CTC channel 0 | `40h` | — | Application; interrupts by registration |
+| CTC channel 1 | `41h` | — | Application; interrupts by registration |
+| CTC channel 2 | `42h` | — | Application; interrupts by registration |
+| CTC channel 3 | `43h` | — | Application; interrupts by registration |
 
 The full platform map is documented in [Memory Management](Memory%20Management.md).  The constants used by CP/M are in [`platform_zephyr80.inc`](Code/HOST/CPM2.2/src/platform_zephyr80.inc) and [`cbios_defs.inc`](Code/HOST/CPM2.2/src/cbios_defs.inc).
 
@@ -81,7 +83,28 @@ The CTC register interface runs in the 10 MHz Z80 clock domain.  Its external tr
 | 2 | 7.3728 MHz | Application timer/counter; output `TO2` is routed outward |
 | 3 | 7.3728 MHz | General application timer/counter |
 
-The current BIOS disables CTC interrupts during initialization and otherwise leaves the device application-owned.  Software that enables CTC interrupts must install the corresponding IM 2 vectors and respect the board's interrupt daisy chain.
+Programs own the CTC channels, but not their interrupt vectors.  The BIOS resets the CTC and programs its vector base (`00h`) at cold and warm boot, and its IM 2 vector page routes each channel to a BIOS dispatcher in common memory.
+
+### CTC interrupts
+
+A program that wants a timer interrupt registers a callback, then programs the channel:
+
+1. Copy the callback, and everything it touches, into `E000h-E3FFh`.
+2. Call BDOS function 200 with `B` = channel 0-3 and `DE` = the callback entry.  `A = 00h` means registered.  `A = FFh` means refused: no such channel, an entry outside `E000h-E3FFh`, or a channel that is already registered.
+3. Set the channel's mode and time constant, with its interrupt enabled, through the CTC port.  Never write the CTC vector byte: the BIOS owns it.
+4. To stop, call BDOS function 201 with `B` = channel.  It resets the channel and clears the registration.
+
+A callback:
+
+- lives, with its code, callees and data, in `E000h-E3FFh`: it can run while the operating system's bank is mapped, when nothing below `E000h` belongs to the program
+- runs on the BIOS interrupt stack with interrupts disabled, and never enables them
+- may use `AF`, `BC`, `DE` and `HL`, and preserves `IX`, `IY` and the alternate register set
+- ends with `RET`, not `RETI`
+- never calls BDOS or the BIOS, writes the banking latch, or waits on a port
+
+Registrations belong to the running program.  Warm boot clears them, and so does ZCPR2 when a transient returns to it without warm booting.  A channel that interrupts without a registration is reset instead of being serviced.
+
+Keep callbacks short: the CTC sits ahead of SIO0 in the daisy chain, so a long callback delays console receive.  [`SDSOAK`](Code/HOST/Utilities/src/ioc_sdsoak.asm) is a worked example.
 
 ## SIO1: synchronous MCU transport
 
@@ -162,15 +185,20 @@ Normal packet errors do not reset the SIO receiver.  `CMD_LINK_SYNC` is the expl
 
 The detailed transport notes are in [`two-lane-transport.md`](Code/MCU/IOController/docs/two-lane-transport.md), with lower-level bring-up detail in [`external_sync_protocol.md`](Code/MCU/IOController/docs/external_sync_protocol.md).
 
-## Zephyr extended BIOS transport entries
+## Zephyr transport services
 
-The CP/M BIOS exposes the IO Controller transport through Zephyr-specific extended BIOS entries.  These are not standard CP/M BIOS calls.
+Programs reach the IO Controller transport, and the video command path, through Zephyr BDOS functions.  These are not standard CP/M calls.  The operating system runs from its own SRAM bank and publishes no fixed entry addresses.
 
-| Entry | Purpose |
-| --- | --- |
-| `IOCALL` | Send one 32-byte command mailbox and receive one 32-byte reply mailbox on SIO1/B |
-| `IOCBULK` | Receive DATA on SIO1/A after a command-lane READY admission |
-| `IOCBULKW` | Transmit DATA on SIO1/A after a command-lane READY admission |
+| Function | Service | Inputs | Purpose |
+| ---: | --- | --- | --- |
+| 214 | `IOCALL` | `HL` = TX frame, `DE` = RX frame | Send one 32-byte command mailbox and receive one 32-byte reply mailbox on SIO1/B |
+| 216 | `IOCBULK` | `HL` = destination, `DE` = count, at most 512 | Receive DATA on SIO1/A after a command-lane READY admission |
+| 217 | `IOCBULKW` | `HL` = source, `DE` = count, at most 512 | Transmit DATA on SIO1/A after a command-lane READY admission |
+| 215 | `VIDEO_SEND` | `A` = type, `HL` = payload, `BC` = length | Submit a video command or VDP data block |
+
+Each call takes `C` = function and `DE` = a seven-byte register block holding `A`, `C`, `B`, `E`, `D`, `L`, `H`.  The service's output registers are written back to the block, and its status is also returned in `A`.  [`zbdos.inc`](Code/HOST/Utilities/src/zbdos.inc) provides `IOCALL`, `IOCBULK`, `IOCBULKW` and `VIDEO_SEND` under those names and with those register contracts.
+
+Buffers can be anywhere in the program's memory.  The BIOS copies each one through a 512-byte buffer in common memory: both mailboxes for `IOCALL`, the whole payload before `IOCBULKW` starts and after `IOCBULK` completes.  A bulk transfer therefore never waits on a memory-mapping change.  `VIDEO_SEND` sends a VDP data block in 512-byte chunks, which the VDP receives as one continuous stream.
 
 ### `IOCALL`
 
@@ -178,8 +206,8 @@ Current `IOCALL` calling convention:
 
 ```text
 In:
-  HL = pointer to caller-owned 32-byte TX frame in visible application RAM
-  DE = pointer to caller-owned 32-byte RX frame buffer in visible application RAM
+  HL = pointer to caller-owned 32-byte TX frame
+  DE = pointer to caller-owned 32-byte RX frame buffer
 
 Out:
   A  = BIOS transport result
@@ -241,8 +269,11 @@ bus IEI → CTC → SIO0 → SIO1 → bus IEO
 
 This establishes hardware priority, not automatic software ownership.  In the current CP/M implementation:
 
-- SIO0/B receive is the active BIOS-managed IM 2 interrupt source.
-- SIO0/A and CTC interrupts belong to application software if enabled.
+- The BIOS owns IM 2.  `I` always selects the BIOS vector page at `FD00h`, and every entry in it leads to BIOS code in common memory, so an interrupt is safe whichever bank is mapped.  Programs never load `I` or install vector tables.
+- SIO0/B receive, vector `10h`, is the BIOS-managed console interrupt.
+- CTC channels 0-3, vectors `00h`-`06h`, reach programs through callback registration; see [CTC interrupts](#ctc-interrupts).
+- Every other vector reaches a stub that re-enables interrupts and returns.
+- SIO0/A shares SIO0's vector while status-affects-vector is off, so its interrupts cannot be registered.  Application use of SIO0/A is polled.
 - SIO1 command and bulk transports are polled and do not currently generate Z80 service interrupts.
 - The PIC firmware also runs the command path from its foreground loop with global interrupts disabled; `/SIO1B_INT` is sampled as a level.
 - The `/CTSB` HID doorbell is polled, not vectored.  SIO1/B External/Status interrupts stay disabled deliberately: `ioc_command_recv_frame` scans for the reply marker with Z80 interrupts enabled and reads RR0 on port `33h` as a WR0 pointer write followed by an `IN`, so an ISR touching that port could land between the two.  The doorbell is therefore read only from task level, in `CONST`.
@@ -255,7 +286,7 @@ Any future unsolicited keyboard, mouse, controller, or GameOS executive event de
 | --- | --- |
 | SIO0/B USB-serial console | Implemented and BIOS-owned |
 | SIO0/A programmable user serial | Hardware path present; application-owned |
-| CTC application timing | Available; BIOS leaves it application-owned |
+| CTC application timing | Available; interrupts through BIOS callback registration |
 | SIO1/B `IOCALL` command lane | Implemented |
 | SIO1/A `IOCBULK` / `IOCBULKW` bulk lane | Implemented |
 | Common packet marker/length/sequence/status/CRC transport | Implemented |
@@ -273,7 +304,7 @@ Consequently, the former separate 460.8 kbaud MCU UART, unframed SD-sector strea
 When the documentation, schematic annotations, and software disagree, use these sources in this order:
 
 1. Host port and register constants in [`platform_zephyr80.inc`](Code/HOST/CPM2.2/src/platform_zephyr80.inc) and [`cbios_defs.inc`](Code/HOST/CPM2.2/src/cbios_defs.inc).
-2. Command mailbox and command-lane transport code in [`cbios_iocall.asm`](Code/HOST/CPM2.2/src/cbios_iocall.asm) and [`cbios_ioc_command.asm`](Code/HOST/CPM2.2/src/cbios_ioc_command.asm).
+2. Command mailbox and command-lane transport code in [`cbios_iocall.asm`](Code/HOST/CPM2.2/src/cbios_iocall.asm) and [`cbios_ioc_command.asm`](Code/HOST/CPM2.2/src/cbios_ioc_command.asm); the program-facing staging in [`cbios_gate.asm`](Code/HOST/CPM2.2/src/cbios_gate.asm) and [`cbios_facade.asm`](Code/HOST/CPM2.2/src/cbios_facade.asm); interrupt ownership in [`cbios_irq.asm`](Code/HOST/CPM2.2/src/cbios_irq.asm).
 3. Host bulk transport code in [`cbios_ioc_command.asm`](Code/HOST/CPM2.2/src/cbios_ioc_command.asm) and the `IOCBULK` / `IOCBULKW` entry points.
 4. MCU protocol definitions and firmware under [`Code/MCU/IOController`](Code/MCU/IOController), especially [`ioc_frame.h`](Code/MCU/IOController/include/ioc_frame.h), [`external_sync.c`](Code/MCU/IOController/src/external_sync.c), [`bulk_channel.c`](Code/MCU/IOController/src/bulk_channel.c), and [`dispatch.c`](Code/MCU/IOController/src/dispatch.c).
 5. The current KiCad I/O-controller schematic and its validation notes.

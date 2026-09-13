@@ -2,8 +2,8 @@
 
 This note records the CTC and real-time constraints found while bringing up
 ColecoGo and the streamed VGM player. It is guidance for games and other timed
-applications running on the current Zephyr-80 hardware and CP/M BIOS; it does
-not define a new BIOS service or reserve a CTC channel.
+applications running on the current Zephyr-80 hardware and CP/M BIOS. It does
+not reserve a CTC channel.
 
 Unless a section says otherwise, clock rates and timing figures below apply to
 the currently committed fixed **10.000 MHz** CPU board.
@@ -24,13 +24,17 @@ The frequencies in the third column are separate external trigger/counter
 inputs derived from the I/O board's 14.7456 MHz oscillator. They are not the
 clock used by an automatically triggered channel in timer mode.
 
-The BIOS does not provide a CTC allocation or timer API. It writes `03h` to all
-four channels during both cold and warm boot, resetting the channels with their
-interrupt enables clear, then leaves them application-owned. Consequently:
+The CTC channels belong to programs, but their interrupt vectors belong to the
+BIOS. The BIOS resets all four channels with their interrupt enables clear and
+programs the CTC vector base at cold and warm boot. A program that wants a
+channel's interrupt registers a callback with the BIOS (see
+[Interrupts under CP/M](#interrupts-under-cpm)). Consequently:
 
-- a transient may program the CTC, but must stop it and restore interrupt state
+- a transient may program the CTC, and should stop its channels and unregister
   before returning to CP/M;
-- warm boot destroys any CTC setup left by a previous program;
+- warm boot resets the CTC and clears every registration, and so does ZCPR2 when
+  a transient returns to it;
+- a channel that interrupts without a registration is reset by the BIOS;
 - CTC0 is not entirely consequence-free: changing `TO0` changes the clock seen
   by SIO0/A, even though the BIOS does not currently use that serial channel;
 - code that takes over the machine, such as ColecoGo, should explicitly reset
@@ -94,7 +98,9 @@ case and has no alternating interval pattern.
 
 During VGM player bring-up, CTC0 at port `40h` produced stable periodic IM2
 interrupts using timer mode, `/256`, automatic trigger, and a constant of 217.
-It is the currently verified application time source.
+It is the currently verified application time source. That bring-up predates
+the banked operating system and used a private IM2 table; `SDSOAK` now drives
+CTC0 through callback registration.
 
 Attempts to obtain usable playback interrupts from CTC1 and CTC2 did not
 succeed during that bring-up. This is an unresolved observation, not proof that
@@ -107,39 +113,52 @@ console and foreground SD streaming. Moving stream decoding, PSG writes and
 BDOS reads into the ISR caused instability; moving all of that work back to
 foreground code made playback reliable.
 
-## IM2 integration under CP/M
+## Interrupts under CP/M
 
-The current BIOS runs in IM2 with `I = DDh`. SIO0/B supplies vector `10h`, so
-the CPU fetches the BIOS console ISR pointer from `DD10h-DD11h`. That is an
-exact two-byte table entry embedded at the start of the SIO core, not a general
-256-byte application vector table.
+The BIOS owns IM2. The operating system runs from SRAM bank 7, which replaces
+`2000h-DFFFh` of the running program's bank while it executes. An interrupt can
+therefore arrive while almost all of the program's memory is unmapped, and only
+common memory, `E000h-FFFFh`, is guaranteed to be there.
 
-Do **not** assume `DD00h-DD0Fh` is spare. An early VGM player wrote its CTC
-vector at `DD00h`; those bytes were occupied BIOS code, and the overwrite
-caused repeated banners, garbled output and crashes.
+So `I` always selects the BIOS vector page at `FD00h`, whose 256 entries all
+lead to BIOS code in common memory:
 
-VGMPLAY demonstrates the safe standalone-transient pattern:
+```text
+00h-06h   CTC channels 0-3   BIOS dispatcher -> the registered callback
+10h-1Eh   SIO0               BIOS console receive
+others                       EI, RETI
+```
 
-1. Disable maskable interrupts.
-2. Save the current `I` register and any application memory that will be reused.
-3. Build a private IM2 table in application RAM (`7F00h` in VGMPLAY).
-4. Initialize every possible even vector entry to a safe unexpected-interrupt
-   handler rather than leaving uninitialized pointers.
-5. Copy the BIOS SIO ISR pointer from `DD10h` into the private table's possible
-   SIO status-vector entries `10h` through `1Eh`.
-6. Install the CTC channel pointer, program the CTC base vector, load `I`, enter
-   IM2, then enable interrupts.
-7. On exit, stop the CTC before restoring `I` and the prior vector contents.
+Programs never load `I`, change interrupt mode, write the CTC vector byte or
+install a vector table. A private table, as the VGM player once built, is no
+longer safe: the table and its handlers would be in the program's bank, which is
+not mapped while the BIOS runs.
 
-The full-table treatment matters because an unexpected vector must not jump
-into arbitrary application data. Mirroring the SIO entries matters because a
-CP/M transient still depends on interrupt-driven keyboard input while it owns
-the CTC.
+A program gets a channel's interrupt this way:
 
-A machine-taking game that deliberately disables the BIOS SIO sources can use
-a private, simpler interrupt environment, but it must establish that environment
-explicitly. It must not combine a new CTC vector with the old BIOS `I` value and
-hope that adjacent BIOS bytes form a table.
+1. Copy the callback, and all the code and data it touches, into
+   `E000h-E3FFh`. That 1 KiB is reserved for the running program and is mapped
+   in both modes.
+2. Call BDOS function 200 with `B` = channel 0-3 and `DE` = the callback entry.
+   `A = 00h` means registered. `A = FFh` means refused: no such channel, an
+   entry outside `E000h-E3FFh`, or a channel already registered.
+3. Program the channel's mode and time constant, with its interrupt enabled.
+4. To stop, call BDOS function 201 with `B` = channel. The BIOS resets the
+   channel and clears the slot.
+
+When the channel fires, the BIOS saves the interrupted `SP` and switches to its
+own interrupt stack. It saves `AF`, `BC`, `DE` and `HL`, `CALL`s the callback,
+restores everything, and ends with `EI` / `RETI`. `SDSOAK`
+(`../../Utilities/src/ioc_sdsoak.asm`) is a small complete example.
+
+`../../Utilities/src/zbdos.inc` defines the function numbers
+(`ZB_REGISTER_ISR`, `ZB_UNREGISTER_ISR`) and the reservation
+(`ZB_ISR_AREA`).
+
+A machine-taking program such as ColecoGo, which never returns to CP/M, can
+still build its own interrupt environment. It must first quiesce the BIOS
+interrupt sources and establish the whole environment explicitly, as it does
+today.
 
 ## ISR contract
 
@@ -148,11 +167,10 @@ Treat the timer ISR as a scheduler, not as the game loop.
 The proven pattern is:
 
 ```text
-CTC ISR
--> save only the registers it actually touches
--> acknowledge/update phase
+CTC callback
+-> update phase
 -> increment a pending-tick counter
--> RETI
+-> RET
 
 foreground loop
 -> atomically consume pending ticks
@@ -162,17 +180,21 @@ foreground loop
 -> poll input and CP/M services
 ```
 
-The ISR must not call BDOS, access the disk, print diagnostics, redraw the
-screen, wait on an I/O port, decode an unbounded command stream, or switch to a
-bank that hides the executing ISR. CP/M and its BIOS services are not generally
-reentrant.
+A callback runs on the BIOS interrupt stack with interrupts disabled, possibly
+while the operating system's bank is mapped. It must:
 
-Use `RETI`, not `RET`, so the Z80 daisy chain releases its interrupt-under-
-service state. Preserve every register that the interrupted foreground code
-expects, and define an explicit IX/IY and alternate-register policy. Leave
-interrupts disabled during the ISR body. If foreground execution is to resume
-with maskable interrupts enabled, execute `EI` immediately before `RETI`; the
-Z80's one-instruction enable delay prevents nesting before `RETI` completes.
+- keep its code, callees and data in `E000h-E3FFh`, and touch no memory below
+  `E000h`
+- use only `AF`, `BC`, `DE` and `HL`, which the BIOS saves, and preserve `IX`,
+  `IY` and the alternate register set
+- end with `RET`; the BIOS issues `EI` / `RETI`
+- never enable interrupts
+- never call BDOS or the BIOS, write the banking latch, access the disk, print
+  diagnostics, redraw the screen, wait on an I/O port, or decode an unbounded
+  command stream
+
+Registration checks only the entry address. The rest is the program's
+responsibility.
 
 A pending counter is preferable to a single Boolean flag because an interrupt
 blackout can span more than one logical tick. Saturation is safer than wrapping,
@@ -260,9 +282,9 @@ selected clock or measure a stable reference before calculating CTC constants.
 - Keep NMI and CTC ISRs bounded; publish work to foreground code.
 - Budget for the worst interrupt-masked interval, not only average CPU load.
 - Never call BDOS or perform streamed I/O from an ISR.
-- Preserve the BIOS SIO IM2 path while running as a CP/M transient.
-- Reset and restore every interrupt source and vector resource that the program
-  changes.
+- As a CP/M transient, get timer interrupts by registering a callback in
+  `E000h-E3FFh`; never load `I` or install a vector table.
+- Stop and unregister every channel the program uses before exiting.
 - Use double buffering and incremental reads for streamed assets.
 - Count and expose missed ticks, underruns and unexpected interrupts during
   development, but print those counters only after timing-critical work stops.
@@ -272,12 +294,14 @@ selected clock or measure a stable reference before calculating CTC constants.
 ## Source references
 
 - `src/platform_zephyr80.inc` — CTC ports and reset command.
-- `src/cbios_boot.asm` and `src/cbios_bank.asm` — cold/warm-boot CTC reset.
-- `src/sio_core.asm` — current BIOS IM2/SIO ownership and ISR contract.
+- `src/cbios_irq.asm` — IM2 vector page, CTC dispatcher, registration and the
+  callback contract.
+- `src/cbios_boot.asm` — cold/warm-boot CTC reset and registration clearing.
 - `src/cbios_ioc_command.asm` — interrupt-masked command and bulk-transfer
   timing constraints.
-- `../../HelloWorld/src/vgmplay.asm` — verified CTC0 setup, private IM2 table,
-  phase accumulator and foreground tick processing.
+- `../../Utilities/src/ioc_sdsoak.asm` — CTC0 through callback registration.
+- `../../VGMPlayer/src/vgmplay.asm` — CTC0 timing, phase accumulator and
+  foreground tick processing.
 - `../../ColecoGo/src/colecogo.asm` — machine takeover and V9958 NMI setup.
 - `../../../../Clock Architecture.md` and
   `../../../../Z80 Peripherals Controller.md`

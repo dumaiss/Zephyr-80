@@ -194,7 +194,7 @@ all: image
 CPM_CONFIG = $(CCP)-$(BDOS)
 STAMPED_IMAGE = $(BUILD_DIR)/zephyr80-$(CPM_CONFIG).bin
 
-image: $(FINAL_IMAGE)
+image: $(FINAL_IMAGE) docs
 	@cp "$(FINAL_IMAGE)" "$(STAMPED_IMAGE)"
 	@echo ""
 	@echo "  ROM built:  CCP=$(CCP)  BDOS=$(BDOS)"
@@ -203,12 +203,20 @@ image: $(FINAL_IMAGE)
 	@echo ""
 
 
-# docs/memory-map.md and docs/symbol-map.md describe the fixed-slot common BIOS
-# the banked OS replaced, and generate_memory_docs.py validates that layout, so
-# it is not run.  Both come back from a rewritten tool once Phase 2 settles the
-# layout; until then check_overlap.py and the assembler's region checks guard it.
-docs:
-	@echo "memory docs describe the pre-banked layout and are not regenerated (see Makefile)"
+# docs/memory-map.md and docs/symbol-map.md are generated from the listing and
+# validated against the banked layout on every build; a layout that breaks a
+# rule stops here.
+docs: $(FINAL_IMAGE) $(FIRMWARE_LST) $(SYMBOLS_FILE) $(LAYOUT_MANIFEST) $(MEMORY_DOC_TOOL) $(BANK7_BIN)
+	$(PYTHON) $(MEMORY_DOC_TOOL) \
+		--listing "$(FIRMWARE_LST)" \
+		--map "$(SYMBOLS_FILE)" \
+		--defs "$(SRC_DIR)/cbios_defs.inc" \
+		--manifest "$(LAYOUT_MANIFEST)" \
+		--firmware-bin "$(FIRMWARE_BIN)" \
+		--bank7-bin "$(BANK7_BIN)" \
+		--final-image "$(FINAL_IMAGE)" \
+		--symbol-map "$(SYMBOL_MAP_DOC)" \
+		--memory-map "$(MEMORY_MAP_DOC)"
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)

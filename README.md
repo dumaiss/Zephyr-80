@@ -46,13 +46,15 @@ physical machine, while others remain under bring-up or development.
 - 512 KiB ROM arranged as eight 64 KiB pages
 - ATF22V10-based memory and I/O decoding
 - Memory-control latch at I/O port `00h`
-- 48 KiB banked application region plus a protected 16 KiB common region in
-  the normal RAM-only runtime configuration
+- 56 KiB banked program region plus an 8 KiB common region, with the operating
+  system in its own SRAM bank
 
 At reset, ROM is visible and writes are directed to SRAM underneath it. The
-firmware copies the ROM image into RAM, disables ROM, and continues from RAM.
-The common region at `C000h-FFFFh` remains mapped to SRAM bank 0 while the lower
-48 KiB selects one of the eight RAM banks.
+firmware copies every ROM page into the matching SRAM bank, disables ROM, and
+continues from RAM. From then on ROM is storage only: the operating system —
+ZSDOS, the BIOS and its drivers — runs from SRAM bank 7, which is mapped in only
+while it executes. A program sees `0000h-DFFFh` of its own bank and the common
+region at `E000h-FFFFh`, which stays SRAM bank 0.
 
 See [Memory Management.md](Memory%20Management.md) for the decoder equations,
 memory modes, banking-latch format, and I/O map.
@@ -63,7 +65,8 @@ The system uses two Z80 SIO devices and a Z80 CTC. The BIOS currently owns:
 
 - SIO0/B for the 115200-baud console and Virtual Drip transport
 - SIO1/B for the synchronous I/O Controller command channel
-- an explicit Z80 IM2 vector entry for the interrupt-driven console receive path
+- the Z80 IM2 vector page; programs get CTC timer interrupts by registering a
+  callback with the BIOS
 
 The I/O Controller supplies the external clock and synchronization signals for
 its synchronous SIO link. The initial IOCALL implementation is deliberately
@@ -77,36 +80,45 @@ in the [pBITzPlatform repository](https://github.com/dumaiss/pBITzPlatform).
 
 ## Memory model
 
-The memory hardware provides three useful operating modes:
+The memory hardware provides four operating modes:
 
 | Mode | Read behavior |
 | --- | --- |
-| Normal ROM mode | ROM at `0000h-5FFFh` and `C000h-FFFFh`; SRAM at `6000h-BFFFh` |
-| Shadow/copy mode | ROM at `0000h-BFFFh`; common SRAM bank 0 at `C000h-FFFFh` |
-| RAM-only mode | Selected SRAM bank at `0000h-BFFFh`; common SRAM bank 0 at `C000h-FFFFh` |
+| Boot | ROM at `0000h-5FFFh` and `C000h-FFFFh`; SRAM at `6000h-BFFFh` |
+| Shadow/copy | ROM at `0000h-BFFFh`; SRAM bank 0 at `C000h-FFFFh` |
+| Application | Selected SRAM bank at `0000h-DFFFh`; common SRAM bank 0 at `E000h-FFFFh` |
+| Operating system | Selected SRAM bank at `0000h-1FFFh`; SRAM bank 7 at `2000h-DFFFh`; common SRAM bank 0 at `E000h-FFFFh` |
 
 Writes always reach SRAM. This permits the firmware to populate RAM underneath
 ROM-visible addresses before switching to RAM-only operation.
 
-In the current CP/M build, the lower 48 KiB is the banked transient program
-area. The high common region contains a small application-owned common TPA,
-CCP, BDOS, the Zephyr BIOS, fixed driver slots, runtime state, and the firmware
-stack. Exact addresses are generated from each firmware build and recorded in
-the [CP/M memory map](Code/HOST/CPM2.2/docs/memory-map.md).
+In the current CP/M build, a program's transient area is `0100h-EC05h`, 59 KiB.
+The common region holds a 1 KiB program reservation for interrupt callbacks, the
+CCP, the BDOS entry, the BIOS jump tables, the interrupt path and the system
+stacks. ZSDOS, the BIOS drivers and their private state live in bank 7. Exact
+addresses are declared in
+[`cbios_defs.inc`](Code/HOST/CPM2.2/src/cbios_defs.inc).
 
 ## CP/M firmware
 
-The current system boots CP/M 2.2 with a Zephyr-specific CBIOS. The firmware
-separates core BIOS services from console and storage drivers and validates its
-resident memory layout as part of the build.
+The current system boots CP/M 2.2, with ZSDOS as the BDOS and ZCPR2 as the
+command processor, on a Zephyr-specific CBIOS. The operating system runs from
+SRAM bank 7 behind a BDOS entry in common memory, which copies a program's
+buffers across when the operating system cannot see them.
 
-Zephyr BIOS extensions currently include:
+Programs reach the Zephyr services through `CALL 5`, as BDOS functions:
 
-- `MOVE` and `XMOVE` for bank-aware memory transfers
-- `SELMEM` for selecting the execution bank
-- `SETBNK` for selecting the disk DMA bank
-- `IOCALL` for I/O Controller command/reply transactions
-- `VIDEO_SEND` for submitting video command streams
+- 200 and 201 to register and unregister a CTC interrupt callback
+- 203 for system information, such as the I/O Controller transport level
+- 210 and 211, `MOVE` and `XMOVE`, for bank-aware memory transfers
+- 212, `SELMEM`, for selecting the execution bank
+- 213, `SETBNK`, for selecting the disk DMA bank
+- 214, `IOCALL`, for I/O Controller command/reply transactions
+- 216 and 217, `IOCBULK` and `IOCBULKW`, for I/O Controller bulk transfers
+- 215, `VIDEO_SEND`, for submitting video command streams
+
+[`zbdos.inc`](Code/HOST/Utilities/src/zbdos.inc) wraps them for assembly
+programs.
 
 The current IOCALL transport sends one caller-owned 32-byte frame and receives
 one 32-byte reply frame over SIO1/B. The BIOS owns the transport but does not
@@ -279,20 +291,25 @@ Primary outputs include:
 
 | Artifact | Purpose |
 | --- | --- |
-| `build/firmware.bin` | 64 KiB logical firmware image |
-| `build/zephyr80.pre-swap.bin` | assembled logical ROM image before the CPU-board data-bit correction |
-| `build/zephyr80.bin` | final burnable image with the required data-bit swap applied |
-| `docs/memory-map.md` | generated and validated runtime memory map |
-| `docs/symbol-map.md` | generated project-facing firmware symbol map |
+| `build/zephyr80.bin` | 512 KiB burnable ROM image |
+| `build/zephyr80-zcpr2-zsdos.bin` | the same image, named for its CCP and BDOS |
+| `build/firmware.bin` | ROM page 0: the reset vector and common memory |
+| `build/bank7.bin` | the operating-system image, loaded into SRAM bank 7 |
+
+The ROM requires memory decoder revision 11, built from
+[`Code/HDL/WinCUPL`](Code/HDL/WinCUPL/README.md). The build also regenerates
+`docs/memory-map.md` and `docs/symbol-map.md`, and fails if the layout breaks a
+validated rule.
 
 Additional build and backend-selection details are documented in the
 [CP/M firmware README](Code/HOST/CPM2.2/README.md).
 
 ## Development notes
 
-- Treat the PLD equations and generated firmware memory map as authoritative
-  when older narrative documents disagree.
-- Treat exported BIOS entry points and memory constants as firmware ABI.
+- Treat the PLD equations and `Code/HOST/CPM2.2/src/cbios_defs.inc` as
+  authoritative when older narrative documents disagree.
+- The firmware ABI is `CALL 5`, including the Zephyr functions, and the CP/M
+  BIOS boot and console entries. Nothing else is published at a fixed address.
 - Several older architecture notes remain in the repository for design history
   and may describe superseded clock, I/O, or memory arrangements.
 - Hardware revisions and experimental subsystems may require matching firmware

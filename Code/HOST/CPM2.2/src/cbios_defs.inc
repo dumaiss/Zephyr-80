@@ -108,7 +108,7 @@ BANK_REJECTED                   = 0xff
 ;   EC00h  BDOS facade, FBASE EC06h
 ;   F000h  CP/M and Zephyr jump tables, boot, banking, IOC diag record, SIO
 ;          core, crossing layer, gates, interrupt dispatch, serial console
-;   F950h  staging buffer and pointer copies; FD00h IM2 vector page
+;   F958h  staging buffer and pointer copies; FD00h IM2 vector page
 ;   FE00h  runtime state; FE80h ISR, gate and facade stacks
 ;
 ; Region comments further down were written for the fixed-slot common BIOS and
@@ -135,7 +135,7 @@ CTC_VECTOR_BASE                 = 0x00
 ; overlap: a gate, a cross-bank MOVE and a facade call each run to completion,
 ; and within one facade call a staged DMA and a staged FCB take separate parts.
 FAC_BULK_SIZE                   = 0x0200
-FAC_BULK_BUF                    = 0xf950        ; F950h-FB4Fh
+FAC_BULK_BUF                    = 0xf958        ; F958h-FB57h, above the serial console
 FAC_DMA_BUF                     = FAC_BULK_BUF                  ; 128
 FAC_FCB_BUF                     = FAC_BULK_BUF + 0x0080         ; 36
 FAC_TIME_BUF                    = FAC_BULK_BUF                  ; 6
@@ -144,10 +144,10 @@ GATE_TX_BUF                     = FAC_BULK_BUF                  ; 32
 GATE_RX_BUF                     = FAC_BULK_BUF + 0x0020         ; 32
 MOVE_XBUF                       = FAC_BULK_BUF                  ; MOVE chunks
 ; These outlive the call that fills them.
-FAC_SFCB_BUF                    = 0xfb50        ; 36: search-first FCB, for search-next
-FAC_DPB_COPY                    = 0xfb74        ; 16: function 31 result
-FAC_REGBLK                      = 0xfb84        ; 7: Zephyr function register block
-FAC_ALV_COPY                    = 0xfb90        ; 256: function 27 result
+FAC_SFCB_BUF                    = 0xfb58        ; 36: search-first FCB, for search-next
+FAC_DPB_COPY                    = 0xfb7c        ; 16: function 31 result
+FAC_REGBLK                      = 0xfb8c        ; 7: Zephyr function register block
+FAC_ALV_COPY                    = 0xfb98        ; 256: function 27 result
 GATE_STACK_TOP                  = 0xff00        ; FEC0h-FEFFh
 FAC_STACK_TOP                   = 0xff60        ; FF00h-FF5Fh
 
@@ -913,6 +913,9 @@ CBIOS_BOOT_BANNER_CODE_BASE     = CBIOS_IOC_DIAG_BASE + 0x11           ; DCD1h
 ; is at a FIXED address that a .COM can poke without knowing the build.
 	.ifeq VDRIP_TRANSPORT_LINKED
 CBIOS_SERCON_CODE_BASE          = 0xf830
+; The receive ring at the end of the region is written from interrupt context,
+; so it must stay clear of the staging buffer a facade call may be filling.
+CBIOS_SERCON_CODE_LIMIT         = FAC_BULK_BUF
 	.endif
 
 SERCON_STATE_BASE               = CBIOS_WORK_AREA + 0x0078      ; FE78h
