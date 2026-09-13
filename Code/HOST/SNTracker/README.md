@@ -105,9 +105,8 @@ Copy `build/SNTRACK.COM` and `songs/night-market.ztr` to a CP/M disk, using an
 SNTRACK B:NIGHT.ZTR
 ```
 
-Press `Q` or Escape to stop. The compact status UI shows order, elapsed
-`Tmm:ss`, and the unexpected
-interrupt count. It refreshes once per pattern block (about every 6.4 seconds);
+Press `Q` or Escape to stop. The compact status UI shows order and elapsed
+`Tmm:ss`. It refreshes once per pattern block (about every 6.4 seconds);
 playback and effects continue at the song's full tick rate. It is deliberately
 a playback scaffold, not yet an interactive pattern editor.
 
@@ -158,21 +157,21 @@ This first player loads a whole ZTR file rather than streaming it:
 
 | Range | Use |
 | --- | --- |
-| `0100h`-approximately `1523h` | CP/M transient code and static state, including the fallback ISR at `1515h` |
-| `5E00h`-`5F00h` | 257-byte application-local IM2 vector table |
+| `0100h`-approximately `1510h` | CP/M transient code and static player state |
 | `6000h`-`AFFFh` | ZTR buffer (20 KiB maximum) |
-| `BFF0h` downward | private stack |
+| `BFF0h` downward | private foreground stack |
+| `E000h`-`E026h` | copied CTC callback |
+| `E040h`-`E042h` | callback tick state |
 
-The IM2 setup mirrors the existing BIOS SIO handler from `DD10h`, following the
-standalone VGMPlayer convention. The extra table byte makes the `FFh` vector
-fetch across the IM2 page boundary safe without touching the ZTR buffer at
-`6000h`. It does not alter the BIOS image or global BIOS timing. A future
-integration should replace this application-local hookup with an exported
-platform timing service if one becomes available.
+The BIOS owns IM2 and its vector page. SNTrack registers its copied callback as
+CTC channel 0 through Zephyr BDOS function 200 and unregisters it with function
+201. The callback only publishes pending ticks in the program-owned common
+reservation; all row decoding, effects, PSG writes, UI work, and BDOS calls
+remain in foreground application memory. SNTrack never changes `I`, creates an
+IM2 table, or writes a CTC vector byte.
 
 The Night Market ZTR is 20,234 bytes. That is larger than 20,000 decimal bytes
-but remains 246 bytes below the 20 KiB (20,480-byte) buffer limit. Its final
-rounded CP/M record ends at `AF80h`, below the `B000h` limit.
+but remains 246 bytes below the 20 KiB (20,480-byte) buffer limit.
 
 Other current limits are intentional:
 
@@ -189,8 +188,8 @@ Other current limits are intentional:
 
 ## Project layout
 
-- `src/tracker.asm`: CP/M entry point, foreground loop and application CTC/IM2
-  hookup.
+- `src/tracker.asm`: CP/M entry point, foreground loop and registered CTC
+  callback hookup.
 - `src/ztr.asm`: bounded CP/M file loader and ZTR header/section validation.
 - `src/player.asm`: sparse row decoding, channel state, effects and macros.
 - `src/sn76489.asm`: fixed 16-channel mapping and dirty-only PSG rendering.

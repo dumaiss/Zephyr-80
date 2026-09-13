@@ -306,7 +306,6 @@ ztr_init_pattern_ok:
 	ld (ctc_active),a
 	ld (aborted),a
 	ld (ticks_pending),a
-	ld (unexpected_interrupts),a
 	or a
 	ret
 ztr_init_failed:

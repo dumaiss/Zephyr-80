@@ -1,8 +1,9 @@
 ; SNTRACK.COM -- native Zephyr-80 tracker player.
 ;
 ; This CP/M transient loads one bounded ZTR file at 6000h.  CTC0 publishes
-; playback ticks through a private IM2 page at 5E00h; row decoding, macro
-; processing, UI output and all SN76489 writes remain in foreground code.
+; playback ticks through a callback registered with the BIOS-owned IM2
+; dispatcher; row decoding, macro processing, UI output and all SN76489 writes
+; remain in foreground code.
 
 	.module sntracker
 	.area CODE (ABS)
@@ -17,6 +18,8 @@ BDOS_OPEN	= 0x0f
 BDOS_CLOSE	= 0x10
 BDOS_READ_SEQ	= 0x14
 BDOS_SET_DMA	= 0x1a
+ZB_REGISTER_ISR = 200
+ZB_UNREGISTER_ISR = 201
 
 DEFAULT_FCB	= 0x005c
 FCB_BYTES	= 36
@@ -30,14 +33,6 @@ PSG_COUNT	= SOUND_PSG_COUNT
 
 CTC0_PORT	= CTC0_CTRL
 CTC_TIMER_PORT	= CTC0_PORT
-CTC_VECTOR_BASE	= 0x00
-APP_IM2_PAGE	= 0x5e
-APP_IM2_BASE	= 0x5e00
-APP_IM2_LIMIT	= 0x5f01	; 257 bytes: vector FFh fetches 5EFFh/5F00h
-CTC_VECTOR_ADDR	= 0x5e00
-APP_SIO_VECTOR_ADDR = 0x5e10
-BIOS_SIO_VECTOR_ADDR = 0xdd10
-UNEXPECTED_VECTOR_BYTE = 0x15	; repeated bytes form address 1515h
 CTC_CONTROL	= 0xa7		; interrupt, timer, /256, auto, TC follows
 CTC_STOP	= CTC_RESET_DISABLE
 CTC_TC_180HZ	= 217
@@ -47,6 +42,20 @@ SONG_BUFFER	= 0x6000
 SONG_BUFFER_END	= 0xb000
 SONG_BUFFER_BYTES = SONG_BUFFER_END - SONG_BUFFER
 PRIVATE_STACK	= 0xbff0
+
+; The callback and every byte it touches live in the transient's 1 KiB common
+; reservation.  All decoding and PSG work remains in foreground banked memory.
+COMMON_CALLBACK = 0xe000
+COMMON_GUARD_LO = 0xe03f
+COMMON_STATE_BASE = 0xe040
+tick_phase	= COMMON_STATE_BASE + 0
+ticks_pending	= COMMON_STATE_BASE + 1
+tick_rate	= COMMON_STATE_BASE + 2
+COMMON_GUARD_HI = 0xe043
+
+SONG_GUARD	= SONG_BUFFER_END
+GUARD_LO_VALUE	= 0xa5
+GUARD_HI_VALUE	= 0x5a
 
 ZTR_VERSION	= 1
 ZTR_HEADER_BYTES = 64
@@ -165,16 +174,28 @@ start:
 	ld sp,#PRIVATE_STACK
 	ld de,#msg_banner
 	call puts
+	call common_prepare
 
 	call ztr_load
-	jr c,start_load_error
+	jp c,start_load_error
 	call ztr_init
-	jr c,start_format_error
+	jp c,start_format_error
 	call ui_init
 	call ztr_play
 	call ctc_setup
+	jp c,start_ctc_error
 
 tracker_loop:
+	; At this boundary every foreground call must have unwound completely.
+	; Catch a damaged foreground stack before another CALL consumes it.
+	ld hl,#0
+	add hl,sp
+	ld de,#PRIVATE_STACK
+	or a
+	sbc hl,de
+	ld a,#1
+	jp nz,tracker_fault
+
 	ld a,(playing)
 	or a
 	jr z,tracker_done
@@ -187,6 +208,8 @@ tracker_loop:
 	ld (ticks_pending),a
 	ei
 	call ztr_tick
+	call runtime_check
+	jp c,tracker_fault
 	ld a,(row_changed)
 	or a
 	call nz,ui_refresh
@@ -211,12 +234,42 @@ tracker_done:
 	call puts
 	jr tracker_exit
 
+; A = diagnostic code. Stop the interrupt source before using the console so a
+; damaged callback cannot run again while the failure is being reported.
+tracker_fault:
+	ld (fault_code),a
+	ld sp,#PRIVATE_STACK
+	ld a,#1
+	ld (ctc_active),a
+	call ctc_stop
+	call sn_mute_all
+	ld de,#msg_runtime_fault
+	call puts
+	ld a,(fault_code)
+	call ui_puthex8
+	ld de,#ui_order
+	call puts
+	ld a,(current_order)
+	call ui_puthex8
+	ld de,#msg_runtime_row
+	call puts
+	ld a,(current_row)
+	call ui_puthex8
+	ld de,#msg_runtime_end
+	call puts
+	jr tracker_exit
+
 start_load_error:
 	ld de,#msg_load_error
 	call puts
 	jr tracker_exit
 start_format_error:
 	ld de,#msg_format_error
+	call puts
+	jr tracker_exit
+start_ctc_error:
+	call ztr_stop
+	ld de,#msg_ctc_error
 	call puts
 tracker_exit:
 	ld sp,(entry_sp)
@@ -244,74 +297,117 @@ poll_key_abort:
 ; ---------------------------------------------------------------------------
 ; CTC0 produces approximately 180 interrupts/s.  A phase accumulator derives
 ; the song header's rate; 60 Hz remains an exact divide-by-three schedule.
-ctc_setup:
-	di
-	ld a,i
-	ld (saved_i),a
-	ld hl,(CTC_VECTOR_ADDR)
-	ld (saved_ctc_vector),hl
-
-	; Fill 257 bytes, not 256: a directly wired device returns vector FFh and
-	; makes the Z80 fetch its word across the page boundary at 5EFFh/5F00h.
-	; Repeating 15h makes every default even vector, including FFh, resolve to
-	; the fixed unexpected interrupt handler at 1515h.
-	ld hl,#APP_IM2_BASE
-	ld (hl),#UNEXPECTED_VECTOR_BYTE
-	ld de,#(APP_IM2_BASE + 1)
-	ld bc,#(APP_IM2_LIMIT - APP_IM2_BASE - 1)
+common_prepare:
+	ld hl,#ctc_callback_template
+	ld de,#COMMON_CALLBACK
+	ld bc,#(ctc_callback_end - ctc_callback_template)
 	ldir
+	xor a
+	ld (tick_phase),a
+	ld (ticks_pending),a
+	ld (tick_rate),a
+	ld a,#GUARD_LO_VALUE
+	ld (COMMON_GUARD_LO),a
+	ld (SONG_GUARD),a
+	ld (state_guard),a
+	ld a,#GUARD_HI_VALUE
+	ld (COMMON_GUARD_HI),a
+	ld (SONG_GUARD + 1),a
+	ret
 
-	; Preserve all eight possible BIOS SIO status-vector words.
-	ld de,(BIOS_SIO_VECTOR_ADDR)
-	ld hl,#APP_SIO_VECTOR_ADDR
-	ld b,#8
-ctc_setup_sio_vector:
-	ld (hl),e
-	inc hl
-	ld (hl),d
-	inc hl
-	djnz ctc_setup_sio_vector
+; Check the boundaries most likely to identify cumulative corruption. Called
+; only after a consumed song tick, so the diagnostic cost stays bounded.
+; Out: carry set and A = code: 02 song end, 03/04 common state boundaries,
+;      05 static state end, 06 copied callback, 07 invalid tick rate.
+runtime_check:
+	ld a,(SONG_GUARD)
+	cp #GUARD_LO_VALUE
+	ld a,#2
+	jr nz,runtime_check_failed
+	ld a,(SONG_GUARD + 1)
+	cp #GUARD_HI_VALUE
+	ld a,#2
+	jr nz,runtime_check_failed
+	ld a,(COMMON_GUARD_LO)
+	cp #GUARD_LO_VALUE
+	ld a,#3
+	jr nz,runtime_check_failed
+	ld a,(COMMON_GUARD_HI)
+	cp #GUARD_HI_VALUE
+	ld a,#4
+	jr nz,runtime_check_failed
+	ld a,(state_guard)
+	cp #GUARD_LO_VALUE
+	ld a,#5
+	jr nz,runtime_check_failed
 
-	ld hl,#ctc_isr
-	ld (CTC_VECTOR_ADDR),hl
-	ld a,#CTC_VECTOR_BASE
-	out (CTC0_PORT),a
+	; Compare all 39 copied bytes, not just the entry and RET. Interrupt-time
+	; instruction fetch and foreground reads of the same immutable bytes are safe.
+	ld hl,#ctc_callback_template
+	ld de,#COMMON_CALLBACK
+	ld b,#(ctc_callback_end - ctc_callback_template)
+runtime_check_callback_loop:
+	ld a,(de)
+	cp (hl)
+	ld a,#6
+	jr nz,runtime_check_failed
+	inc de
+	inc hl
+	djnz runtime_check_callback_loop
+
+	ld a,(tick_rate)
+	or a
+	ld a,#7
+	jr z,runtime_check_failed
+	ld a,(tick_rate)
+	cp #(CTC_BASE_RATE + 1)
+	ld a,#7
+	jr nc,runtime_check_failed
+	or a
+	ret
+runtime_check_failed:
+	scf
+	ret
+
+ctc_setup:
+	ld b,#0				; CTC channel 0
+	ld de,#COMMON_CALLBACK
+	ld c,#ZB_REGISTER_ISR
+	call BDOS
+	or a
+	jr nz,ctc_setup_failed
+	xor a
+	ld (tick_phase),a
 	ld a,#CTC_CONTROL
 	out (CTC_TIMER_PORT),a
 	ld a,#CTC_TC_180HZ
 	out (CTC_TIMER_PORT),a
-	xor a
-	ld (tick_phase),a
-	ld a,#APP_IM2_PAGE
-	ld i,a
-	im 2
 	ld a,#1
 	ld (ctc_active),a
-	ei
+	or a
+	ret
+ctc_setup_failed:
+	scf
 	ret
 
 ctc_stop:
 	ld a,(ctc_active)
 	or a
 	ret z
-	di
+	; Stop the source before releasing the BIOS registration.
 	ld a,#CTC_STOP
 	out (CTC_TIMER_PORT),a
-	ld hl,(saved_ctc_vector)
-	ld (CTC_VECTOR_ADDR),hl
-	xor a
-	out (CTC0_PORT),a
-	ld a,(saved_i)
-	ld i,a
+	ld b,#0
+	ld c,#ZB_UNREGISTER_ISR
+	call BDOS
 	xor a
 	ld (ctc_active),a
-	ei
 	ret
 
-; ISR-safe: publishes a pending tick only.  No decoding, I/O or BDOS calls.
-ctc_isr:
-	push af
-	push hl
+; Copied to E000h. The BIOS dispatcher preserves AF, BC, DE and HL, owns the
+; interrupt stack, and performs EI/RETI. This callback publishes a pending tick
+; only, touches common state only, and returns with RET.
+ctc_callback_template:
 	ld a,(tick_phase)
 	ld hl,#tick_rate
 	add a,(hl)
@@ -333,10 +429,11 @@ ctc_tick_due:
 ctc_phase_store:
 	ld (tick_phase),a
 ctc_isr_done:
-	pop hl
-	pop af
-	ei
-	reti
+	ret
+ctc_callback_end:
+	.if (ctc_callback_end - ctc_callback_template) - 0x0027
+	.error 3
+	.endif
 
 puts:
 	push ix
@@ -357,6 +454,14 @@ msg_load_error:
 	.ascii "Error: cannot load ZTR file (max 20 KiB).\r\n$"
 msg_format_error:
 	.ascii "Error: malformed or unsupported ZTR v1 file.\r\n$"
+msg_ctc_error:
+	.ascii "Error: CTC channel 0 is unavailable.\r\n$"
+msg_runtime_fault:
+	.ascii "\r\nSNTRACK fault $"
+msg_runtime_row:
+	.ascii " R$"
+msg_runtime_end:
+	.ascii "\r\n$"
 msg_done:
 	.ascii "\r\nPlayback stopped.\r\n$"
 
@@ -364,16 +469,11 @@ ztr_magic:
 	.ascii "ZTR1"
 
 entry_sp:	.dw 0
-saved_ctc_vector: .dw 0
-saved_i:	.ds 1
 ctc_active:	.ds 1
-tick_phase:	.ds 1
-ticks_pending:	.ds 1
-unexpected_interrupts: .ds 1
+fault_code:	.ds 1
 
 playing:	.ds 1
 aborted:	.ds 1
-tick_rate:	.ds 1
 song_speed:	.ds 1
 tick_in_row:	.ds 1
 current_order:	.ds 1
@@ -426,20 +526,4 @@ wanted_pattern:	.ds 1
 pitch_negative:	.ds 1
 
 channel_state:	.ds (ZTR_CHANNELS * CHANNEL_STATE_BYTES)
-
-; The default IM2 table is filled with 15h, so all unclaimed even vectors and
-; the cross-page FFh vector fetch 1515h.  Keeping this handler at the matching
-; address makes the entire fallback table safe without consuming song-buffer
-; byte 6000h.  The preceding image must remain below this explicit placement.
-	.org 0x1515
-unexpected_isr:
-	push af
-	ld a,(unexpected_interrupts)
-	cp #0xff
-	jr z,unexpected_isr_done
-	inc a
-	ld (unexpected_interrupts),a
-unexpected_isr_done:
-	pop af
-	ei
-	reti
+state_guard:	.ds 1

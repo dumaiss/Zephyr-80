@@ -33,10 +33,6 @@ ui_refresh:
 	call ui_putchar
 	ld a,(elapsed_seconds)
 	call ui_putdec2
-	ld de,#ui_interrupts
-	call puts
-	ld a,(unexpected_interrupts)
-	call ui_puthex8
 	ld de,#ui_clear_tail
 	jp puts
 
@@ -130,8 +126,6 @@ ui_order:
 	.ascii "O$"
 ui_time:
 	.ascii " T$"
-ui_interrupts:
-	.ascii " I$"
 ui_clear_tail:
 	.ascii "   $"
 ui_note_names:

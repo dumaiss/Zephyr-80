@@ -13,14 +13,11 @@
 ;   10,000,000 / (256 * 217) = 180.0115 Hz
 ; A phase accumulator derives the ZVGC header's requested 1-180 Hz tick rate;
 ; 60 Hz retains an exact divide-by-three schedule.
-; The application uses its own IM2 page at 7F00h: CTC0 vectors through 7F00h
-; and the BIOS SIO vector is mirrored from DD10h to 7F10h. This avoids changing
-; occupied BIOS bytes at DD00h while keeping console interrupts operational.
-;
-; The ISR advances the phase and publishes a pending tick. Stream decoding,
-; PSG writes, BDOS calls and buffer filling all remain in foreground code. An
-; inactive buffer is marked FILLING before BDOS can write it and READY only
-; after its length is published.
+; The BIOS owns IM2.  This transient copies its CTC callback and all state the
+; callback touches into the program interrupt reservation at E000h-E3FFh, then
+; registers that callback through the Zephyr BDOS facade.  The callback consumes
+; a compact command ring and writes PSG0 while foreground code performs normal
+; BDOS reads into the application-bank file buffers.
 
 	.module vgmplay
 	.area CODE (ABS)
@@ -35,6 +32,8 @@ BDOS_OPEN	= 0x0f
 BDOS_CLOSE	= 0x10
 BDOS_READ_SEQ	= 0x14
 BDOS_SET_DMA	= 0x1a
+ZB_REGISTER_ISR = 200
+ZB_UNREGISTER_ISR = 201
 
 DEFAULT_FCB	= 0x005c
 FCB_BYTES	= 36
@@ -45,12 +44,6 @@ PSG_MUTE0	= 0x9f
 
 CTC0_PORT	= 0x40
 CTC_TIMER_PORT	= CTC0_PORT
-CTC_VECTOR_BASE	= 0x00
-APP_IM2_PAGE	= 0x7f
-APP_IM2_BASE	= 0x7f00
-CTC_VECTOR_ADDR = 0x7f00
-APP_SIO_VECTOR_ADDR = 0x7f10
-BIOS_SIO_VECTOR_ADDR = 0xdd10
 CTC_CONTROL	= 0xa7		; interrupt, timer, /256, auto, TC follows
 CTC_STOP	= 0x03
 CTC_TC_180HZ	= 217
@@ -62,19 +55,48 @@ BUFFER0		= 0x8000
 BUFFER1		= BUFFER0 + BUFFER_BYTES
 PRIVATE_STACK	= 0xbff0
 
+; The complete callback, its state, and its callees must remain in this 1 KiB
+; program-owned common reservation.  Foreground-only data stays in the normal
+; application bank below E000h.
+COMMON_ISR_CODE = 0xe000
+COMMON_STATE_BASE = 0xe120
+COMMON_RING_BASE = 0xe140
+COMMON_RING_LIMIT = 0xe400
+
+playing		= COMMON_STATE_BASE + 0
+tick_rate	= COMMON_STATE_BASE + 1
+tick_phase	= COMMON_STATE_BASE + 2
+wait_ticks	= COMMON_STATE_BASE + 3	; word
+ring_head	= COMMON_STATE_BASE + 5	; word, consumer-owned
+ring_tail	= COMMON_STATE_BASE + 7	; word, producer-owned
+ctc_interrupt_count = COMMON_STATE_BASE + 9	; word
+playback_tick_count = COMMON_STATE_BASE + 11	; word
+psg_write_count = COMMON_STATE_BASE + 13	; word
+underrun_count	= COMMON_STATE_BASE + 15
+format_error	= COMMON_STATE_BASE + 16
+bad_opcode	= COMMON_STATE_BASE + 17
+key_poll_count	= COMMON_STATE_BASE + 18
+key_poll_reload = COMMON_STATE_BASE + 19
+key_poll_due	= COMMON_STATE_BASE + 20
+pending_irqs	= COMMON_STATE_BASE + 21
+io_busy		= COMMON_STATE_BASE + 22
+
 BUF_FREE	= 0
 BUF_READY	= 1
 BUF_ACTIVE	= 2
 BUF_FILLING	= 3
 
 ZVG_HEADER_BYTES = 16
-ZVG_VERSION	= 1
+ZVG_VERSION_V1	= 1
+ZVG_VERSION	= 2
 ZVG_RATE_MAX	= CTC_BASE_RATE
 ZVG_END		= 0x00
 ZVG_WRITE	= 0x01
 ZVG_WAIT16	= 0x02
 ZVG_WAIT_SHORT0	= 0x40		; 40h..7Fh encode waits 1..64
 ZVG_WAIT_SHORTN	= 0x80
+ZVG_WRITE_RUN0	= 0x80		; 80h..8Fh: 1..16 following PSG bytes
+ZVG_WRITE_RUNN	= 0x90
 
 ; ---------------------------------------------------------------------------
 start:
@@ -87,23 +109,16 @@ start:
 	jp c,usage_error
 	call open_file
 	jp c,open_error
+	call common_prepare
 
 	xor a
 	ld (file_eof),a
-	ld (format_error),a
 	ld (file_io_error),a
-	ld (underrun_count),a
 	ld (buf0_state),a
 	ld (buf1_state),a
-	ld (playing),a
 	ld (aborted),a
 	ld (fill_active),a
-	ld hl,#0
-	ld (ctc_interrupt_count),hl
-	ld (playback_tick_count),hl
-	ld (psg_write_count),hl
-	ld (unexpected_interrupt_count),hl
-	ld (ticks_pending),a
+	ld (producer_done),a
 
 	xor a
 	call fill_buffer
@@ -136,72 +151,47 @@ start:
 	jp nz,read_error_open
 	ld a,#1
 	ld (playing),a
-	ld hl,#0
-	ld (wait_ticks),hl
-
-	; Apply time-zero writes before the first metadata-rate tick.
-	call playback_tick
+	call producer_fill_ring
+	ld a,(format_error)
+	or a
+	jp nz,format_error_open
 	call ctc_setup
+	jp c,ctc_error_open
 
 player_loop:
 	ld a,(playing)
 	or a
 	jr z,player_done
 
-	; Claim at most one pending playback tick atomically. Stream decoding and PSG
-	; writes run here in foreground, never in the CTC ISR.
-	di
-	ld a,(ticks_pending)
+	; Keep the common command ring full before issuing one potentially blocking
+	; disk record read.  The ISR continues consuming commands during that read.
+	call producer_fill_ring
+	call service_refill
+	ld a,(file_io_error)
 	or a
-	jr z,player_no_tick
-	dec a
-	ld (ticks_pending),a
-	ei
-	ld hl,(playback_tick_count)
-	inc hl
-	ld (playback_tick_count),hl
-	call playback_tick
-	ld a,(playing)
-	or a
-	jr z,player_done
+	jr z,player_check_key
+	xor a
+	ld (playing),a
+	jr player_done
 
-	; HID input is polled through BDOS at approximately ten polls per second.
-	; without flooding the shared IOC command/storage transport.
-	ld a,(key_poll_count)
-	dec a
-	ld (key_poll_count),a
-	jr nz,player_housekeeping
-	ld a,(key_poll_reload)
-	ld (key_poll_count),a
+player_check_key:
+	ld a,(key_poll_due)
+	or a
+	jr z,player_wait
+	xor a
+	ld (key_poll_due),a
 	ld c,#BDOS_CONST
+	ld a,#1
+	ld (io_busy),a
 	call BDOS
+	ld (bdos_result),a
+	call service_pending_ticks
+	ld a,(bdos_result)
 	or a
 	jr nz,user_abort
-	jr player_housekeeping
 
-player_no_tick:
-	ei
-
-player_housekeeping:
-	; Never begin another SD record while playback already has work queued.
-	; Drain delayed ticks first, then resume the incremental refill.
-	di
-	ld a,(ticks_pending)
-	or a
-	jr nz,player_pending_now
-	ei
-	call service_refill
-	; Do not HALT when a tick arrived during housekeeping: it is already pending
-	; and no new interrupt would be needed to process it.
-	di
-	ld a,(ticks_pending)
-	or a
-	jr nz,player_pending_now
-	ei
+player_wait:
 	halt
-	jr player_loop
-player_pending_now:
-	ei
 	jr player_loop
 
 user_abort:
@@ -293,6 +283,14 @@ read_error_open:
 	call puts
 	call close_file
 	jr exit
+ctc_error_open:
+	xor a
+	ld (playing),a
+	call mute_psg0
+	ld de,#msg_ctc_error
+	call puts
+	call close_file
+	jr exit
 
 ; ---------------------------------------------------------------------------
 ; Copy the CCP's first default FCB and clear only its runtime portion.
@@ -380,12 +378,20 @@ fill_buffer_step:
 	ld a,(fill_active)
 	or a
 	ret z
+	; A full decoder/PSG callback can disrupt the timing-sensitive storage
+	; transaction.  While inside BDOS, the callback queues raw CTC expirations;
+	; replay them immediately after the 128-byte read returns.
+	ld a,#1
+	ld (io_busy),a
 	ld de,(fill_ptr)
 	ld c,#BDOS_SET_DMA
 	call BDOS
 	ld de,#file_fcb
 	ld c,#BDOS_READ_SEQ
 	call BDOS
+	ld (bdos_result),a
+	call service_pending_ticks
+	ld a,(bdos_result)
 	or a
 	jr z,fill_record_ok
 	cp #1
@@ -465,6 +471,33 @@ service_refill_check1:
 	call fill_buffer_begin
 	jp fill_buffer_step
 
+; Drain CTC expirations accumulated while a foreground BDOS transaction was
+; active.
+; io_busy remains set while the common decoder runs, so a hardware tick can
+; only append to pending_irqs and cannot race the foreground ring consumer.
+; The zero-pending test and io_busy release are atomic with respect to CTC0.
+service_pending_ticks:
+	di
+	ld a,(pending_irqs)
+	or a
+	jr z,service_pending_done
+	dec a
+	ld (pending_irqs),a
+	ld a,(playing)
+	or a
+	jr z,service_pending_stopped
+	ei
+	call #(COMMON_ISR_CODE + common_active_irq - common_isr_template)
+	jr service_pending_ticks
+service_pending_stopped:
+	xor a
+	ld (pending_irqs),a
+service_pending_done:
+	xor a
+	ld (io_busy),a
+	ei
+	ret
+
 ; ---------------------------------------------------------------------------
 ; Validate the fixed 16-byte ZVG header in BUFFER0.
 validate_header:
@@ -479,8 +512,11 @@ validate_magic_loop:
 	inc hl
 	djnz validate_magic_loop
 	ld a,(hl)
+	cp #ZVG_VERSION_V1
+	jr z,validate_version_ok
 	cp #ZVG_VERSION
 	jr nz,validate_failed
+validate_version_ok:
 	inc hl
 	ld a,(hl)
 	or a
@@ -508,72 +544,83 @@ validate_failed:
 	ret
 
 ; ---------------------------------------------------------------------------
+; Copy the interrupt-only player into common RAM and clear its shared state.
+; This runs before the callback is registered and before the CTC is enabled.
+common_prepare:
+	ld hl,#common_isr_template
+	ld de,#COMMON_ISR_CODE
+	ld bc,#(common_isr_template_end - common_isr_template)
+	ldir
+	xor a
+	ld hl,#COMMON_STATE_BASE
+	ld b,#(COMMON_RING_BASE - COMMON_STATE_BASE)
+common_prepare_clear:
+	ld (hl),a
+	inc hl
+	djnz common_prepare_clear
+	ld hl,#COMMON_RING_BASE
+	ld (ring_head),hl
+	ld (ring_tail),hl
+	ret
+
+; ---------------------------------------------------------------------------
 ; CTC channel 0: 180.0115 Hz hardware interrupt and metadata-rate scheduler.
 ctc_setup:
-	di
-	ld a,i
-	ld (saved_i),a
-	ld hl,(CTC_VECTOR_ADDR)
-	ld (saved_ctc_vector),hl
-
-	; Make every even vector in the private page safe before enabling IM2.
-	; Known SIO status vectors are replaced with the real BIOS SIO handler
-	; below; anything unexpected is counted and dismissed with RETI.
-	ld hl,#APP_IM2_BASE
-	ld de,#unexpected_isr
-	ld b,#128
-ctc_setup_default_vector:
-	ld (hl),e
-	inc hl
-	ld (hl),d
-	inc hl
-	djnz ctc_setup_default_vector
-
-	; Mirror all eight possible SIO status-vector words, 10h through 1Eh.
-	ld de,(BIOS_SIO_VECTOR_ADDR)
-	ld hl,#APP_SIO_VECTOR_ADDR
-	ld b,#8
-ctc_setup_sio_vector:
-	ld (hl),e
-	inc hl
-	ld (hl),d
-	inc hl
-	djnz ctc_setup_sio_vector
-
-	ld hl,#ctc_isr
-	ld (CTC_VECTOR_ADDR),hl
-	ld a,#CTC_VECTOR_BASE
-	out (CTC0_PORT),a
+	ld b,#0				; CTC channel 0
+	ld de,#COMMON_ISR_CODE
+	ld c,#ZB_REGISTER_ISR
+	call BDOS
+	or a
+	jr nz,ctc_setup_failed
+	xor a
+	ld (tick_phase),a
 	ld a,#CTC_CONTROL
 	out (CTC_TIMER_PORT),a
 	ld a,#CTC_TC_180HZ
 	out (CTC_TIMER_PORT),a
-	xor a
-	ld (tick_phase),a
-	ld a,#APP_IM2_PAGE
-	ld i,a
-	im 2
-	ei
+	ld a,#1
+	ld (ctc_active),a
+	or a
+	ret
+ctc_setup_failed:
+	scf
 	ret
 
 ctc_stop:
-	di
+	ld a,(ctc_active)
+	or a
+	ret z
+	; Stop the source before releasing the BIOS registration.
 	ld a,#CTC_STOP
 	out (CTC_TIMER_PORT),a
-	ld hl,(saved_ctc_vector)
-	ld (CTC_VECTOR_ADDR),hl
-	xor a				; restore the conventional CTC vector base
-	out (CTC0_PORT),a
-	ld a,(saved_i)
-	ld i,a
-	ei
+	ld b,#0
+	ld c,#ZB_UNREGISTER_ISR
+	call BDOS
+	xor a
+	ld (ctc_active),a
 	ret
 
-; Minimal ISR: only AF and HL are touched and preserved. No stream parsing, PSG
-; output, BDOS call or storage transfer is permitted here.
-ctc_isr:
-	push af
-	push hl
+; ---------------------------------------------------------------------------
+; Copied verbatim to COMMON_ISR_CODE.  Every data address is in common RAM and
+; every control transfer is relative, so this remains runnable while the banked
+; OS is active in mode 11. It consumes only complete commands published by
+; producer_fill_ring; it never calls BDOS or touches application-bank memory.
+; The BIOS dispatcher preserves all registers and performs EI/RETI; this
+; callback must return with RET.
+common_isr_template:
+	; Storage receives bytes fast enough that even the normal phase/tick
+	; accounting is too expensive inside its transaction.  The busy path is a
+	; bounded ~60 T-states: queue the raw CTC expiration and replay it afterwards.
+	ld a,(io_busy)
+	or a
+	jr z,common_active_irq
+	ld hl,#pending_irqs
+	inc (hl)
+	ret nz
+	dec (hl)			; saturate at FFh
+	ret
+
+common_active_irq:
 	ld hl,(ctc_interrupt_count)
 	inc hl
 	ld (ctc_interrupt_count),hl
@@ -592,110 +639,241 @@ ctc_phase_overflow:
 	add a,#(256 - CTC_BASE_RATE)
 ctc_tick_due:
 	ld (tick_phase),a
-	ld a,(ticks_pending)
-	cp #0xff
-	jr z,ctc_isr_done
-	inc a
-	ld (ticks_pending),a
-	jr ctc_isr_done
-ctc_phase_store:
-	ld (tick_phase),a
-ctc_isr_done:
-	pop hl
-	pop af
-	ei
-	reti
-
-unexpected_isr:
-	push af
-	push hl
-	ld hl,(unexpected_interrupt_count)
-	inc hl
-	ld (unexpected_interrupt_count),hl
-	pop hl
-	pop af
-	ei
-	reti
-
-; ---------------------------------------------------------------------------
-; Process one metadata-rate tick. Multiple PSG writes at one timestamp emit in
-; the same ISR. A wait of N means the next command is eligible N ticks later.
-playback_tick:
 	ld a,(playing)
 	or a
-	ret z
+	jr z,common_quick_done
+	ld hl,(playback_tick_count)
+	inc hl
+	ld (playback_tick_count),hl
+
+	; Schedule foreground keyboard polling without making a BDOS call here.
+	ld a,(key_poll_count)
+	dec a
+	ld (key_poll_count),a
+	jr nz,common_process_tick
+	ld a,(key_poll_reload)
+	ld (key_poll_count),a
+	ld a,#1
+	ld (key_poll_due),a
+
+common_process_tick:
 	ld hl,(wait_ticks)
 	ld a,h
 	or l
-	jr z,decode_command
+	jr z,common_decode_begin
 	dec hl
 	ld (wait_ticks),hl
 	ld a,h
 	or l
-	ret nz
+	jr z,common_decode_begin
 
-decode_command:
-	; A command may straddle the active-buffer boundary. If its operand is not
-	; available yet, retry the whole command on the next tick rather than
-	; interpreting the operand as a new opcode.
-	ld hl,(stream_ptr)
-	ld (command_start_ptr),hl
-	ld a,(active_buffer)
-	ld (command_start_buffer),a
-	call stream_get_byte
-	jr c,decode_underrun
+common_quick_done:
+	ret
+
+ctc_phase_store:
+	ld (tick_phase),a
+	jr common_quick_done
+
+common_decode_begin:
+	ld hl,(ring_head)
+common_decode_next:
+	; The producer publishes ring_tail only after a complete command is copied.
+	ld de,(ring_tail)
+	ld a,h
+	cp d
+	jr nz,common_opcode_ready
+	ld a,l
+	cp e
+	jr nz,common_opcode_ready
+	ld a,(underrun_count)
+	cp #0xff
+	jr z,common_quick_done
+	inc a
+	ld (underrun_count),a
+	jr common_quick_done
+common_opcode_ready:
+	ld b,(hl)
+	inc hl
+	ld a,h
+	cp #(COMMON_RING_LIMIT >> 8)
+	jr nz,common_opcode_advanced
+	ld hl,#COMMON_RING_BASE
+common_opcode_advanced:
+	ld (ring_head),hl
+	ld a,b
 	cp #ZVG_END
-	jr z,decode_end
+	jr z,common_decode_end
 	cp #ZVG_WRITE
-	jr z,decode_write
+	jr nz,common_not_single_write
+	ld b,#1
+	jr common_decode_write_run
+common_not_single_write:
 	cp #ZVG_WAIT16
-	jr z,decode_wait16
+	jr z,common_decode_wait16
 	cp #ZVG_WAIT_SHORT0
-	jr c,decode_bad
+	jr c,common_decode_bad
 	cp #ZVG_WAIT_SHORTN
-	jr nc,decode_bad
+	jr c,common_decode_short
+	cp #ZVG_WRITE_RUNN
+	jr nc,common_decode_bad
+	and #0x0f
+	inc a
+	ld b,a
+common_decode_write_run:
+	ld c,(hl)
+	inc hl
+	ld a,h
+	cp #(COMMON_RING_LIMIT >> 8)
+	jr nz,common_run_advanced
+	ld hl,#COMMON_RING_BASE
+common_run_advanced:
+	ld (ring_head),hl
+	ld a,c
+	out (PSG0_PORT),a
+	ld de,(psg_write_count)
+	inc de
+	ld (psg_write_count),de
+	djnz common_decode_write_run
+	jr common_decode_next
+
+common_decode_short:
 	and #0x3f
 	inc a
 	ld l,a
 	ld h,#0
 	ld (wait_ticks),hl
-	ret
+	jr common_isr_done
 
-decode_write:
-	call stream_get_byte
-	jr c,decode_underrun
-	out (PSG0_PORT),a
-	ld hl,(psg_write_count)
+common_decode_wait16:
+	ld e,(hl)
 	inc hl
-	ld (psg_write_count),hl
-	jr decode_command
-
-decode_wait16:
-	call stream_get_byte
-	jr c,decode_underrun
-	; stream_get_byte uses DE while comparing stream_ptr with stream_end, so
-	; preserve the low operand byte across the second fetch on the stack.
-	push af
-	call stream_get_byte
-	jr c,decode_wait16_underrun
-	ld d,a
-	pop af
-	ld e,a
-	ld (wait_ticks),de
+	ld a,h
+	cp #(COMMON_RING_LIMIT >> 8)
+	jr nz,common_wait_low_advanced
+	ld hl,#COMMON_RING_BASE
+common_wait_low_advanced:
+	ld d,(hl)
+	inc hl
+	ld a,h
+	cp #(COMMON_RING_LIMIT >> 8)
+	jr nz,common_wait_high_advanced
+	ld hl,#COMMON_RING_BASE
+common_wait_high_advanced:
+	ld (ring_head),hl
 	ld a,d
 	or e
-	jr z,decode_bad
-	ret
-decode_wait16_underrun:
-	pop af
-	jr decode_underrun
+	jr z,common_decode_bad
+	ld (wait_ticks),de
+	jr common_isr_done
 
-decode_end:
+common_decode_end:
 	xor a
 	ld (playing),a
-	ret
+	jr common_isr_done
 
-decode_bad:
+common_decode_bad:
+	ld (bad_opcode),a
+	ld a,#1
+	ld (format_error),a
+	xor a
+	ld (playing),a
+	jr common_isr_done
+
+common_isr_done:
+	ret
+common_isr_template_end:
+	; The copied callback must not overlap its shared state at E120h.
+	.if (common_isr_template_end - common_isr_template) - 0x0108
+	.error 3
+	.endif
+
+; ---------------------------------------------------------------------------
+; Copy complete compact commands from the banked file stream to the common-RAM
+; producer/consumer ring.  ring_tail is published under DI only after all bytes
+; of one command are present, so the ISR never observes a partial command.
+producer_fill_ring:
+	ld a,(producer_done)
+	or a
+	ret nz
+producer_fill_loop:
+	call producer_has_command_free
+	ret nc
+	xor a
+	ld (producer_end_pending),a
+	ld hl,(stream_ptr)
+	ld (command_start_ptr),hl
+	ld a,(active_buffer)
+	ld (command_start_buffer),a
+	call stream_get_byte
+	jp c,producer_not_ready
+	ld (producer_command),a
+	cp #ZVG_END
+	jr z,producer_end
+	cp #ZVG_WRITE
+	jr z,producer_write
+	cp #ZVG_WAIT16
+	jr z,producer_wait16
+	cp #ZVG_WAIT_SHORT0
+	jr c,producer_bad
+	cp #ZVG_WAIT_SHORTN
+	jr c,producer_short
+	cp #ZVG_WRITE_RUNN
+	jr nc,producer_bad
+	and #0x0f
+	inc a
+	ld b,a
+	inc a
+	ld (producer_command_len),a
+	ld hl,#(producer_command + 1)
+producer_write_run:
+	push bc
+	push hl
+	call stream_get_byte
+	pop hl
+	pop bc
+	jr c,producer_not_ready
+	ld (hl),a
+	inc hl
+	djnz producer_write_run
+	jr producer_publish
+
+producer_short:
+	ld a,#1
+	ld (producer_command_len),a
+	jr producer_publish
+
+producer_write:
+	call stream_get_byte
+	jr c,producer_not_ready
+	ld (producer_command + 1),a
+	ld a,#2
+	ld (producer_command_len),a
+	jr producer_publish
+
+producer_wait16:
+	call stream_get_byte
+	jr c,producer_not_ready
+	ld (producer_command + 1),a
+	call stream_get_byte
+	jr c,producer_not_ready
+	ld (producer_command + 2),a
+	ld b,a
+	ld a,(producer_command + 1)
+	or b
+	jr z,producer_bad_saved
+	ld a,#3
+	ld (producer_command_len),a
+	jr producer_publish
+
+producer_end:
+	ld a,#1
+	ld (producer_end_pending),a
+	ld (producer_command_len),a
+	jr producer_publish
+
+producer_bad_saved:
+	ld a,(producer_command)
+producer_bad:
 	ld (bad_opcode),a
 	ld hl,(command_start_ptr)
 	ld (bad_address),hl
@@ -705,33 +883,73 @@ decode_bad:
 	ld (format_error),a
 	xor a
 	ld (playing),a
+	ld a,#1
+	ld (producer_done),a
 	ret
 
-decode_underrun:
-	ld a,(file_io_error)
-	or a
-	jr z,decode_underrun_retry
-	xor a
-	ld (playing),a
-	ret
-decode_underrun_retry:
-	; stream_get_byte cannot change buffers unless the next buffer is READY.
-	; Therefore a same-buffer underrun is safe to rewind. The buffer-mismatch
-	; case is retained defensively; normal 128-byte record fills cannot exhaust
-	; a newly selected buffer within one two- or three-byte command.
+producer_not_ready:
+	; A same-buffer partial command can be retried after more file data arrives.
+	; A buffer change occurs only to a fully READY 6144-byte buffer, so it cannot
+	; normally run out inside this maximum-three-byte command.
 	ld a,(active_buffer)
 	ld hl,#command_start_buffer
 	cp (hl)
-	jr nz,decode_underrun_count
+	ret nz
 	ld hl,(command_start_ptr)
 	ld (stream_ptr),hl
-decode_underrun_count:
-	ld a,(underrun_count)
-	cp #0xff
-	jr z,decode_underrun_done
-	inc a
-	ld (underrun_count),a
-decode_underrun_done:
+	ret
+
+producer_publish:
+	ld hl,(ring_tail)
+	ld de,#producer_command
+	ld a,(producer_command_len)
+	ld b,a
+producer_publish_loop:
+	ld a,(de)
+	ld (hl),a
+	inc de
+	call producer_advance_hl
+	djnz producer_publish_loop
+	; The ISR cannot interrupt the 16-bit tail publication.
+	di
+	ld (ring_tail),hl
+	ei
+	ld a,(producer_end_pending)
+	or a
+	jp z,producer_fill_loop
+	ld a,#1
+	ld (producer_done),a
+	ret
+
+; Carry set if the maximum 17-byte command can be added without head == tail.
+producer_has_command_free:
+	di
+	ld de,(ring_head)
+	ei
+	ld hl,(ring_tail)
+	ld b,#17
+producer_space_loop:
+	call producer_advance_hl
+	ld a,h
+	cp d
+	jr nz,producer_space_next
+	ld a,l
+	cp e
+	jr z,producer_no_space
+producer_space_next:
+	djnz producer_space_loop
+	scf
+	ret
+producer_no_space:
+	or a
+	ret
+
+producer_advance_hl:
+	inc hl
+	ld a,h
+	cp #(COMMON_RING_LIMIT >> 8)
+	ret nz
+	ld hl,#COMMON_RING_BASE
 	ret
 
 ; Return the next stream byte in A. Carry indicates that the next buffer is not
@@ -820,10 +1038,6 @@ print_runtime_counts:
 	call puts
 	ld hl,(psg_write_count)
 	call puthex16
-	ld de,#msg_other_irq_count
-	call puts
-	ld hl,(unexpected_interrupt_count)
-	call puthex16
 	ld de,#msg_crlf
 	jp puts
 
@@ -869,6 +1083,8 @@ msg_format_error:
 	.ascii "Error: not a supported ZVGC v1 file/rate.\r\n$"
 msg_read_error:
 	.ascii "Error: CP/M could not read the ZVGC file.\r\n$"
+msg_ctc_error:
+	.ascii "Error: CTC channel 0 is unavailable.\r\n$"
 msg_stream_error:
 	.ascii "Error: malformed compiled command stream; opcode $"
 msg_stream_buffer:
@@ -883,8 +1099,6 @@ msg_tick_count:
 	.ascii " ticks $"
 msg_write_count:
 	.ascii " PSG writes $"
-msg_other_irq_count:
-	.ascii " other IRQs $"
 msg_crlf:
 	.ascii "\r\n$"
 msg_underrun:
@@ -895,35 +1109,21 @@ msg_done:
 	.ascii "Playback complete.\r\n$"
 
 entry_sp:	.dw 0
-saved_ctc_vector: .dw 0
-saved_i:	.ds 1
-wait_ticks:	.dw 0
 stream_ptr:	.dw 0
 stream_end:	.dw 0
 command_start_ptr: .dw 0
 bad_address:	.dw 0
-ctc_interrupt_count: .dw 0
-playback_tick_count: .dw 0
-psg_write_count: .dw 0
-unexpected_interrupt_count: .dw 0
 buf0_len:	.dw 0
 buf1_len:	.dw 0
 fill_ptr:	.dw 0
 fill_len:	.dw 0
 
-playing:	.ds 1
 aborted:	.ds 1
+ctc_active:	.ds 1
+bdos_result:	.ds 1
 file_io_error:	.ds 1
-ticks_pending:	.ds 1
-key_poll_count:	.ds 1
-format_error:	.ds 1
-underrun_count:	.ds 1
-tick_rate:	.ds 1
-tick_phase:	.ds 1
-key_poll_reload: .ds 1
 active_buffer:	.ds 1
 command_start_buffer: .ds 1
-bad_opcode:	.ds 1
 bad_buffer:	.ds 1
 buf0_state:	.ds 1
 buf1_state:	.ds 1
@@ -931,5 +1131,9 @@ file_eof:	.ds 1
 fill_id:	.ds 1
 fill_left:	.ds 1
 fill_active:	.ds 1
+producer_done:	.ds 1
+producer_end_pending: .ds 1
+producer_command_len: .ds 1
+producer_command: .ds 17
 
 file_fcb:	.ds FCB_BYTES
