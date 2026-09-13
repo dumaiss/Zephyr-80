@@ -782,8 +782,8 @@ C000-FFFF   bank 0
 
 Work:
 
-1. Decoder: mode 11 as above. `RAM_A16..18` only; modes 00, 01 and 10 unchanged.
-2. Hardware validation, Phase 1 (section 26).
+1. **Done.** Decoder: mode 11 as above. `RAM_A16..18` only; modes 00, 01 and 10 unchanged. `MEM_DECODER.pld` revision 10. The WinCUPL expanded terms were checked against revision 09 for all 2,048 input combinations: only the address lines in mode 11 at `2000h-BFFFh` differ. Each address line uses 6 of its 10 product terms, which leaves room for Phase 2's common term.
+2. **Done.** Hardware validation, Phase 1 (section 26): `MAP11.COM` (`../Utilities/src/map11.asm`) passes on hardware for application banks 0 and 5.
 3. Common crossing layer: mode primitive, transition stack, ISR stack and crossing helpers, all placed at or above `E000h` so Phase 2 does not relocate them.
 4. Convert the latch writers (F3) and fix the drive A read's unconditional `EI`.
 5. Bank primitives reject bank 7.
@@ -823,6 +823,18 @@ mode 11:    0000-1FFF   same app bank   2000-BFFF   bank 7      C000-FFFF   same
 ```
 
 Boundaries: `1FFFh`/`2000h` and `BFFFh`/`C000h`.
+
+**Passed** with `MAP11.COM` for application banks 0 and 5. The program runs its mapping walk from `C000h` with interrupts disabled. For each bank it checks:
+
+- mode-11 reads at `1FFFh` (app bank), `2000h`, `8000h` and `BFFFh` (bank 7), and `C000h` (bank 0)
+- the latch readback in both modes
+- that mode-11 writes land in the app bank at `1FFEh`, in bank 7 at `2000h`, and in common memory
+- that the app bank's body is untouched by mode-11 writes
+
+Two tooling notes from this step:
+
+- `make` in `Code/HDL/WinCUPL` now builds the JED on Linux, running WinCUPL under Wine. The build script used to exec `cupl.exe` directly, which failed with "Exec format error".
+- MAME is out of scope for this port. The emulator is on hold until the machine is stable, and validation is on hardware.
 
 ### Phase 2
 

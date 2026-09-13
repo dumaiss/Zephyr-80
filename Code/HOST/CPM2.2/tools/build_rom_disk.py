@@ -111,6 +111,8 @@ MANIFEST = (
     # traffic, so it answers when the link is dead -- which is when the question
     # tends to be asked.
     ("utils", "sysid.com", "SYSID.COM", PROFILE_NORMAL),
+    # Phase 1 banked-OS bring-up: proves the mode 11 decoder map.
+    ("utils", "map11.com", "MAP11.COM", PROFILE_NORMAL),
     # The /SHARED/ folder tools.  Rescue tools in the most literal sense: with a
     # FAT card in the socket these are how a file gets off this machine, or onto
     # it, when nothing else works -- no serial link, no second drive.  None can

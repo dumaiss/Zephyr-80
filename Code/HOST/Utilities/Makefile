@@ -43,6 +43,9 @@ NORMAL += volinfo sddir sdget sdput sddel
 # Reports which CCP and BDOS are actually executing, read out of RAM.  Uses no
 # IO Controller traffic, so it answers when the link is dead.
 NORMAL += sysid
+# Phase 1 banked-OS bring-up: proves the mode 11 decoder map (MEM_DECODER
+# rev 10).  Non-destructive to CP/M state; exits by warm boot.
+NORMAL += map11
 
 # --- diagnostic profile ------------------------------------------------------
 # DESTRUCTIVE: these write to whatever card is inserted.

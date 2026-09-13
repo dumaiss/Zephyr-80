@@ -19,21 +19,23 @@ WinCUPL/
 
 ## Toolchain
 
-Install Microchip/Atmel WinCUPL and point the build at `cupl.exe`.
+On Linux, `make` runs WinCUPL under Wine from its default install location in
+the Wine prefix, `~/.wine/drive_c/WinCUPL/Shared/cupl.exe`, with
+`CUPLFLAGS = -jaxf -u C:\WinCUPL\Shared\cupl.dl` (JEDEC, absolute, expanded
+product terms, fuse plot; device library by its Windows path).  Nothing needs
+to be set.
 
-On Linux, the wrapper can run WinCUPL through Wine:
-
-```sh
-make CUPL="/path/to/WINCUPL/BIN/CUPL.EXE"
-```
-
-On Windows or when `cupl` is already on `PATH`:
+For another install, or a native `cupl` on `PATH`:
 
 ```sh
-make
+make CUPL="/path/to/WINCUPL/Shared/cupl.exe" CUPLFLAGS="-jaxf -u C:\\path\\cupl.dl"
+make CUPL=cupl
 ```
 
-You can also set `CUPL` permanently in your shell environment.
+A `CUPL` ending in `.exe` always runs under Wine.  The build fails if CUPL
+produces no JED, since CUPL can report errors and still exit 0.  The JED is
+named after the source's `Name` field (`MEM_DECODER.pld` gives
+`Z80_MEM_DECODE.jed`).
 
 ## Build
 

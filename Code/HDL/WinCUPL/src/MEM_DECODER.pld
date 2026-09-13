@@ -1,7 +1,7 @@
 Name     Z80_MEM_DECODE;
 Partno   008;
-Date     2026-05-19;
-Revision 09;
+Date     2026-09-12;
+Revision 10;
 Designer Kitamura;
 Company  Z80 Project;
 Assembly Memory Board;
@@ -59,12 +59,29 @@ EFFECTIVE_SHADOW = RAM_SHADOW & !ROM_DIS;
 /* Force RAM bank 0 for the high 16K when RAM-only or shadow/copy mode */
 FORCE_BANK0 = SAFE_RAM & (ROM_DIS # RAM_SHADOW);
 
+/* OS execution mode (ROM_DIS & RAM_SHADOW, latch D4:D3 = 11).
+   Until revision 10 this mode decoded exactly like RAM-only mode.
+     $0000-$1FFF  latch bank    (caller window: the running program's page zero)
+     $2000-$BFFF  RAM bank 7    (OS body)
+     $C000-$FFFF  RAM bank 0    (common, via FORCE_BANK0)
+   The latch bank bits keep the application bank while the OS runs.
+   FORCE_BANK7 and FORCE_BANK0 never overlap (OS_BODY excludes SAFE_RAM).
+   Chip selects are unchanged: ROM_DIS already selects SRAM for every access. */
+OS_MODE     = ROM_DIS & RAM_SHADOW;
+
+/* $2000-$BFFF: neither the low 8K nor SAFE_RAM, written as three product
+   terms.  The address lines are 10-term outputs; this form leaves room for
+   the mode-dependent common term Phase 2 adds. */
+OS_BODY     = (A13 & !A14) # (A14 & !A15) # (A15 & !A14);
+FORCE_BANK7 = OS_MODE & OS_BODY;
+
 
 /* Equations */
-/* Force RAM Address to 0 in forced/common area, otherwise pass latch */
-RAM_A16 = BANK_Q0 & !FORCE_BANK0;
-RAM_A17 = BANK_Q1 & !FORCE_BANK0;
-RAM_A18 = BANK_Q2 & !FORCE_BANK0;
+/* Force RAM Address to 0 in forced/common area, otherwise pass latch.
+   FORCE_BANK7 sets all three lines, so it needs no term in the latch path. */
+RAM_A16 = (BANK_Q0 & !FORCE_BANK0) # FORCE_BANK7;
+RAM_A17 = (BANK_Q1 & !FORCE_BANK0) # FORCE_BANK7;
+RAM_A18 = (BANK_Q2 & !FORCE_BANK0) # FORCE_BANK7;
 
 
 /* ROM select:
