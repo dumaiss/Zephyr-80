@@ -124,7 +124,8 @@ What a program sees:
 | `F000h-F957h` | BIOS jump tables, boot, banking, SIO core, crossing gates, interrupt dispatch, serial console |
 | `F958h-FC97h` | Staging buffer and the copies returned by BDOS functions 27 and 31 |
 | `FD00h-FDFFh` | IM2 vector page |
-| `FE00h-FE7Fh` | BIOS runtime state |
+| `FE00h` | IM2 `FFh`-vector high-byte guard |
+| `FE01h-FE7Fh` | BIOS runtime state |
 | `FE80h-FF5Fh` | Interrupt, gate and facade stacks |
 
 SRAM bank 7, visible at `2000h-DFFFh` only in operating-system mode:
@@ -179,8 +180,8 @@ that range to bank 0.
 
 ## Interrupt Model
 
-The BIOS owns IM2. `I` is `FDh` from cold boot on, and the vector page at
-`FD00h` is a full 256 entries:
+The BIOS owns IM2. `I` is `FDh` from cold boot on. Programmed devices use the
+even entries in the 256-byte vector page at `FD00h`:
 
 | Vector | Target |
 |---|---|
@@ -188,7 +189,11 @@ The BIOS owns IM2. `I` is `FDh` from cold boot on, and the vector page at
 | `10h-1Eh` | SIO0: the BIOS SIO handler (`10h` is live; the rest cover status-affects-vector) |
 | all others | `EI` / `RETI` stub |
 
-Every handler lives in common memory and switches to the common interrupt stack
+An unclaimed bus may supply `FFh`; that pointer fetch crosses the page boundary.
+The byte at `FE00h` is reserved so `FDFFh-FE00h` selects a dedicated safe
+`EI` / `RETI` stub at `F7F7h` instead of using mutable BIOS state.
+
+Every active handler lives in common memory and switches to the common interrupt stack
 as its first action, so an interrupt is safe whichever bank is mapped. Handlers
 end with `EI` / `RETI`.
 

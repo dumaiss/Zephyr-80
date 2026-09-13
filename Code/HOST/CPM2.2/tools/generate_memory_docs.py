@@ -236,6 +236,7 @@ BANK7_OPTIONAL = [
 ]
 
 RUNTIME_STATE = [
+    (("IM2_VECTOR_FF_HIGH",), "Second pointer byte for an IM2 `FFh` vector; with `FDFFh`, selects the safe `F7F7h` stub."),
     (("CURRENT_BANK",), "Running or suspended program bank; not the bank executing below `E000h`."),
     (("cbios_dma_addr",), "BIOS DMA address."),
     (("CONSOLE_DRIVER",), "Active console driver table."),
@@ -267,7 +268,7 @@ VALIDATION_NOTES = [
     "`FBASE` is six bytes into the facade, which follows the 2 KiB CCP slot; the facade ends below `CBIOS_BASE`.",
     "ZSDOS's BIOS table is at `ZSDOS_ORG + ZSDOS_SIZE`, and ends with the `BANK7OS1` marker.",
     "The CP/M BIOS table and the Zephyr extension table are jumps, in order.",
-    "The IM2 vector page is 256 bytes at `I * 100h`, and every entry points into common memory.",
+    "The IM2 vector page is 256 bytes at `I * 100h`; programmed even vectors and the cross-page `FFh` vector point into common memory.",
     "Staging buffers stay inside the shared buffer, and the returned copies do not overlap each other or the IM2 page.",
     "Runtime state blocks stay inside `FE00h-FE7Fh` without overlapping.",
     "The interrupt, gate and facade stacks are ordered, disjoint and common; the BIOS private stacks and SD scratch lie in bank 7's `C000h-DFFFh`.",
@@ -500,6 +501,14 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
         if target is None or target < COMMON_START:
             shown = "nothing" if target is None else h4(target)
             layout.error(f"IM2 vector {h2(vector)} points at {shown}, not common memory")
+    if s("IM2_VECTOR_FF_HIGH") != im2_end:
+        layout.error("IM2_VECTOR_FF_HIGH is not the byte immediately after the IM2 page")
+    ff_target = layout.word(im2_start + 0xff)
+    if ff_target != s("irq_ff_unexpected"):
+        shown = "nothing" if ff_target is None else h4(ff_target)
+        layout.error(f"IM2 vector FFh points at {shown}, not irq_ff_unexpected")
+    if s("CURRENT_BANK") != s("IM2_VECTOR_FF_HIGH") + 1:
+        layout.error("CURRENT_BANK does not immediately follow the IM2 FFh guard byte")
 
     bulk = s("FAC_BULK_BUF")
     bulk_end = bulk + s("FAC_BULK_SIZE")
@@ -679,7 +688,7 @@ def write_symbol_map(args: argparse.Namespace, layout: Layout) -> None:
               "| Entry | Address | Target |", "|---|---:|---|",
               *jump_table_rows(layout, s("BIOS7_TABLE"), BIOS_ENTRY_NAMES)]
     lines += ["", "## IM2 Vector Page", "",
-              f"`I` = `{h2(s('CBIOS_IM2_VECTOR_PAGE'))}`. The BIOS programs the CTC vector base `{h2(s('CTC_VECTOR_BASE'))}` and SIO0/B WR2 `{h2(s('CBIOS_SIO_VECTOR'))}`.", "",
+              f"`I` = `{h2(s('CBIOS_IM2_VECTOR_PAGE'))}`. The BIOS programs the CTC vector base `{h2(s('CTC_VECTOR_BASE'))}` and SIO0/B WR2 `{h2(s('CBIOS_SIO_VECTOR'))}`. A floating `FFh` vector straddles `FDFFh-FE00h` and reaches `{h4(s('irq_ff_unexpected'))}`.", "",
               "| Vectors | Entry | Target |", "|---|---:|---|", *im2_rows(layout)]
     lines += ["", "## Common Implementation Symbols", "",
               "| Symbol | Address | Notes |", "|---|---:|---|",
@@ -703,6 +712,7 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
     cbase, fbase = s("CBASE"), s("FBASE")
     im2 = s("IM2_VECTOR_TABLE_START")
     state_base, state_limit = s("CBIOS_RUNTIME_STATE_BASE"), s("CBIOS_RUNTIME_STATE_LIMIT")
+    runtime_data_start = s("CURRENT_BANK")
     isr_save = s("CBIOS_ISR_SP_SAVE")
     bulk, bulk_size = s("FAC_BULK_BUF"), s("FAC_BULK_SIZE")
     last_common_code = max(end for _, _, end, _ in common)
@@ -743,8 +753,9 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         f"| `{xspan(bulk, bulk + bulk_size)}` | Staging buffer | {bulk_size} bytes, shared by facade DMA/FCB/console/time staging, gate mailboxes and payloads, and cross-bank `MOVE` chunks. Users never overlap in time. |",
         f"| `{xspan(s('FAC_SFCB_BUF'), facts['staging_end'])}` | Facade copies | Search-first FCB, DPB copy (function 31), register block (functions 210-217), ALV copy (function 27). |",
         f"| `{xspan(facts['staging_end'], im2)}` | Unallocated | |",
-        f"| `{xspan(im2, im2 + IM2_PAGE_SIZE)}` | IM2 vector page | `I` = `{h2(s('CBIOS_IM2_VECTOR_PAGE'))}`; every entry points into common memory. |",
-        f"| `{xspan(state_base, state_limit)}` | BIOS runtime state | Bank, DMA, console, banking, storage, SIO and serial console state. |",
+        f"| `{xspan(im2, im2 + IM2_PAGE_SIZE)}` | IM2 vector page | `I` = `{h2(s('CBIOS_IM2_VECTOR_PAGE'))}`; programmed even entries point into common memory. |",
+        f"| `{h4(s('IM2_VECTOR_FF_HIGH'))}` | IM2 `FFh` guard | Second byte of the pointer fetched at `FDFFh`; completes the safe `{h4(s('irq_ff_unexpected'))}` target. |",
+        f"| `{xspan(runtime_data_start, state_limit)}` | BIOS runtime state | Bank, DMA, console, banking, storage, SIO and serial console state. |",
         f"| `{xspan(isr_save, isr_save + 2)}` | Interrupted SP | Saved by every interrupt entry. |",
         f"| `{xspan(isr_save + 2, s('CBIOS_ISR_STACK_TOP'))}` | ISR stack | SIO and CTC interrupts; registered callbacks run here. |",
         f"| `{xspan(s('CBIOS_ISR_STACK_TOP'), s('GATE_STACK_TOP'))}` | Gate stack | Program calls through the crossing gates. |",

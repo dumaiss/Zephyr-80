@@ -14,8 +14,8 @@
 ;         │   stack grows downward                       │
 ;   FE80h ├──────────────────────────────────────────────┤
 ;   FE7Fh │ Runtime state end                            │
-;   FE00h │ Runtime state start                          │
-;         │   CURRENT_BANK / DMA / XMOVE                 │
+;   FE00h │ IM2 FFh-vector high-byte guard               │
+;   FE01h │ Runtime state: CURRENT_BANK / DMA / XMOVE     │
 ;         │   storage state                              │
 ;         │   SIO core state                             │
 ;         │   console driver state                       │
@@ -109,7 +109,7 @@ BANK_REJECTED                   = 0xff
 ;   F000h  CP/M and Zephyr jump tables, boot, banking, IOC diag record, SIO
 ;          core, crossing layer, gates, interrupt dispatch, serial console
 ;   F958h  staging buffer and pointer copies; FD00h IM2 vector page
-;   FE00h  runtime state; FE80h ISR, gate and facade stacks
+;   FE00h  IM2 FFh-vector guard and runtime state; FE80h stacks
 ;
 ; Region comments further down were written for the fixed-slot common BIOS and
 ; still give old common addresses and slot numbers for regions that moved; the
@@ -1014,7 +1014,7 @@ VDRIP_STORAGE_ALV_BUFFER_SIZE         = 0x0200
 ; ------------------------------------------------------------------------------
 ; IM2 Interrupt Vectors
 ; ------------------------------------------------------------------------------
-; DD10h-DD11h = SIO-core-owned exact IM2 vector table entry.
+; FD10h-FD11h = SIO-core-owned exact IM2 vector table entry.
 ;
 ; The SIO core emits ".dw sio_core_isr" at this address.
 CBIOS_IM2_VECTOR_TABLE          = 0xfd00                               ; cbios_irq.asm
@@ -1022,10 +1022,12 @@ CBIOS_IM2_VECTOR_PAGE           = 0xfd
 CBIOS_IM2_VECTOR_ENTRY          = CBIOS_IM2_VECTOR_TABLE
 
 ; Byte written to SIO WR2.
-; With I = DDh and vector = 10h, the CPU reads the vector word at DD10h.
+; With I = FDh and vector = 10h, the CPU reads the vector word at FD10h.
 CBIOS_SIO_VECTOR                = 0x10
 
-; Table is exactly one IM2 entry in this layout.
+; The 256-byte page contains every programmed even entry.  A vector of FFh
+; fetches its second pointer byte at FE00h; cbios_boot.asm reserves that byte so
+; FDFFh/FE00h form the common safe-stub address F7F7h.
 CBIOS_IM2_VECTOR_SIZE           = 0x0100
 CBIOS_IM2_VECTOR_LIMIT          = CBIOS_IM2_VECTOR_TABLE + CBIOS_IM2_VECTOR_SIZE
 CBIOS_IM2_VECTOR_END            = CBIOS_IM2_VECTOR_LIMIT - 1
@@ -1033,7 +1035,7 @@ CBIOS_IM2_VECTOR_END            = CBIOS_IM2_VECTOR_LIMIT - 1
 ; ------------------------------------------------------------------------------
 ; Work Areas / Runtime State
 ; ------------------------------------------------------------------------------
-; FE00h-FE7Fh = persistent BIOS runtime state.
+; FE00h = IM2 FFh-vector high-byte guard; FE01h-FE7Fh = runtime state.
 ;
 ; Keep existing public work-area names so current source keeps assembling.
 

@@ -21,7 +21,7 @@
 	.globl BOOT_BANNER_TEXT,BOOT_BANNER_TEXT_END
 	.globl WBOOT_RESIDENT_START,WBOOT_RESIDENT_END
 	.globl RUNTIME_WORK_AREA_START,RUNTIME_WORK_AREA_END
-	.globl CURRENT_BANK,cbios_dma_addr
+	.globl IM2_VECTOR_FF_HIGH,CURRENT_BANK,cbios_dma_addr
 
 ; BOOT
 ; Purpose:
@@ -371,6 +371,11 @@ BOOT_BANNER_TEXT_END:
 	.area WORK (ABS)
 	.org CBIOS_WORK_AREA
 RUNTIME_WORK_AREA_START:
+; An IM2 vector byte of FFh reads its low pointer byte at FDFFh and its high
+; pointer byte here.  FDFFh is F7h, so keep FE00h at F7h to select the dedicated
+; EI/RETI stub at F7F7h.  This byte is immutable after the ROM image is loaded.
+IM2_VECTOR_FF_HIGH:
+	.db 0xf7
 CURRENT_BANK:
 	.db 0x00
 cbios_dma_addr:

@@ -1,9 +1,10 @@
 ; Zephyr-80 interrupt ownership (banked OS, Phase 1 step 7; plan section 18).
 ;
 ; IM2 belongs to the BIOS.  I always selects the page at CBIOS_IM2_VECTOR_TABLE,
-; every entry in it leads to common code, and a program that wants a timer
-; interrupt registers a callback through the BDOS facade rather than loading I
-; itself.  So an interrupt is safe in mode 11 whatever the program is doing.
+; every programmed even entry in it leads to common code, and a program that
+; wants a timer interrupt registers a callback through the BDOS facade rather
+; than loading I itself.  FE00h supplies the second byte for a floating FFh
+; vector and sends that case to irq_ff_unexpected in common code.
 ;
 ; Programmable sources are CTC channels 0-3.  SIO0/B and SIO1 belong to the BIOS.
 ;
@@ -207,6 +208,13 @@ irq_exit_next:
 ; Clobbers: AF, B, HL.
 ; ---------------------------------------------------------------------------
 irq_reset:
+	; Keep F7F7h available for the cross-page FFh vector described below.
+	jr irq_reset_body
+	.ds 5
+irq_ff_unexpected:
+	ei
+	reti
+irq_reset_body:
 	ld hl,#irq_ctc_slots
 	ld b,#IRQ_SOURCE_COUNT * 2
 	xor a
@@ -249,14 +257,15 @@ irq_ctc_slots:
 	.dw 0,0,0,0
 
 IRQ_CODE_END:
-
 	.ifgt (IRQ_CODE_END - IRQ_CODE_START) - (CBIOS_IRQ_CODE_LIMIT - CBIOS_IRQ_CODE_BASE)
 	.error 1			; interrupt code overflows its region
 	.endif
 
 ; ---------------------------------------------------------------------------
-; The IM2 vector page.  A full 256 bytes, so a vector from an unprogrammed or
-; future device is harmless.  The BIOS programs the CTC vector base
+; The IM2 vector page.  Programmed device vectors are even.  A floating bus may
+; supply FFh, whose pointer straddles the end of this page: FDFFh supplies F7h
+; below and IM2_VECTOR_FF_HIGH at FE00h supplies F7h, producing the safe F7F7h
+; irq_ff_unexpected target.  The BIOS programs the CTC vector base
 ; (CTC_VECTOR_BASE, in ctc_disable_interrupts) and SIO0/B WR2 (CBIOS_SIO_VECTOR,
 ; in sio_core_enable_interrupts).
 ; ---------------------------------------------------------------------------

@@ -62,7 +62,7 @@ These are defects in the design as it was first written: each one fails if imple
 | F6 | The common BIOS table keeps the CP/M 2.2 shape with only boot and console entries live, and ZCPR2's `BIOS EQU` is generated to point at it | ZCPR2 calls `BIOS+6` (CONST) and `BIOS+9` (CONIN) directly (`zcpr2/src/ZCPR2.ASM:691`, `:920-924`); `Z2HDR.LIB:96` hardcodes `0DA00H` | 11 |
 | F7 | BDOS functions 27 and 31 return common copies of the ALV and DPB; the disk structures themselves live in bank 7 | A pointer into bank 7 is invalid the moment the call returns to mode 10 | 22 |
 | F8 | The BDOS facade is non-reentrant: bank-7 code calls ZSDOS and the BIOS directly, never through `CALL 5`, and ISRs never call BDOS | A nested entry overwrites the saved caller state and returns with the wrong mapping | 9 |
-| F9 | The BIOS owns IM2: `I` is always the BIOS vector page, every entry in it reaches common BIOS code, and program interrupt handlers are callbacks registered through the Zephyr BDOS range, with the entry validated inside `E000h-E3FFh` | `I` locates the vector table, not the handlers: a program-installed table in common can vector to a handler at `9000h`, which is bank 7 in mode 11. The facade cannot see that, so a policy based on `I` must either disable interrupts across every OS call or risk a crash | 9, 18 |
+| F9 | The BIOS owns IM2: `I` is always the BIOS vector page, programmed even vectors and the floating `FFh` case reach common BIOS code, and program interrupt handlers are callbacks registered through the Zephyr BDOS range, with the entry validated inside `E000h-E3FFh` | `I` locates the vector table, not the handlers: a program-installed table in common can vector to a handler at `9000h`, which is bank 7 in mode 11. The facade cannot see that, so a policy based on `I` must either disable interrupts across every OS call or risk a crash | 9, 18 |
 | F10 | The facade's DMA tracking follows function 13 as well as `SETDMA` | Function 13 resets the DMA to `0080h` inside ZSDOS (`zsdos.z80:1080`); staging would otherwise target a stale address | 13 |
 
 Decisions recorded:
@@ -285,7 +285,7 @@ APPLICATION
 
 **Not reentrant (F8).** The facade keeps the caller's state in single slots. Bank-7 code calls ZSDOS and the BIOS directly and never through `CALL 5`. Interrupt handlers never call BDOS.
 
-**Interrupts (F9).** The facade has no interrupt policy. The BIOS owns IM2 (section 18): `I` is always the BIOS vector page and every entry in it reaches common code, so an interrupt is safe in mode 11 whatever the program is doing, and the facade leaves the caller's interrupt state alone. A debug build asserts on entry that `I` is still the BIOS page. A program that changes `I` is outside the supported interface.
+**Interrupts (F9).** The facade has no interrupt policy. The BIOS owns IM2 (section 18): `I` is always the BIOS vector page, programmed even vectors and the floating `FFh` case reach common code, so supported interrupts are safe in mode 11 whatever the program is doing, and the facade leaves the caller's interrupt state alone. A debug build asserts on entry that `I` is still the BIOS page. A program that changes `I` is outside the supported interface.
 
 Code that must disable interrupts for its own reasons — the IOC transport, bulk transfers — captures and restores the caller's state with the erratum-safe `LD A,I` retry, as the IOC transport now does in `cbios_iocall.asm` on `rom-services`, rather than forcing `EI` on exit.
 
@@ -547,7 +547,7 @@ Payload buffers need not be common if the handler records minimal state and defe
 
 `I` is loaded at cold boot, reloaded by `WBOOT`, and never otherwise changes. It always selects the BIOS vector page.
 
-IM2 forms the table address as `I × 100h + vector`, so the page starts at a page boundary in permanent common memory. It is a full 256 bytes, and every entry leads somewhere safe:
+IM2 forms the table address as `I × 100h + vector`, so the page starts at a page boundary in permanent common memory. Programmed device vectors are even and lead somewhere safe:
 
 ```text
 00h-06h      CTC channels 0-3     CTC dispatch stubs
@@ -556,7 +556,7 @@ IM2 forms the table address as `I × 100h + vector`, so the page starts at a pag
 all others                        unexpected-interrupt stub: EI, RETI
 ```
 
-Today's table is a single two-byte entry (`src/cbios_defs.inc:918-929`). The full page costs 256 bytes of common memory and makes any vector an unprogrammed or future device supplies harmless, which VGMPLAY's private table already found necessary. `CBIOS_IM2_VECTOR_PAGE` is regenerated with the layout.
+The full page costs 256 bytes of common memory. A floating or unclaimed interrupt may supply `FFh`; the Z80 then reads the pointer across the page boundary, using `FDFFh` as its low byte and `FE00h` as its high byte. `FE00h` is therefore an immutable guard byte, and the pair selects the dedicated safe stub at `F7F7h`. The generated layout validates both the programmed even vectors and this cross-page `FFh` case.
 
 The BIOS programs the CTC vector base and SIO0 `WR2` at cold boot and in `WBOOT`. Programs never write the CTC vector word.
 
@@ -809,7 +809,7 @@ Work:
 
    How it is built and what stayed common:
    - **One assembly, two outputs.** `tools/split_banked_image.py` cuts the link into ROM page 0 and a bank 7 payload in ROM page 7, which the existing cold-boot copy loads. The ROM image is 512 KiB.
-   - **Common interrupt path.** The SIO core and serial console stay common. So do the IM2 page at `FD00h` (CTC `00h`-`06h`, SIO `10h`-`1Eh`, every other entry `EI`/`RETI`), the CTC dispatcher and registration slots (`src/cbios_irq.asm`) and the ISR stack. Every handler switches stacks first and ends `EI`/`RETI`.
+   - **Common interrupt path.** The SIO core and serial console stay common. So do the IM2 page at `FD00h` (CTC `00h`-`06h`, SIO `10h`-`1Eh`, other programmed even entries `EI`/`RETI`, plus an `FFh` cross-page guard), the CTC dispatcher and registration slots (`src/cbios_irq.asm`) and the ISR stack. Every active handler switches stacks first and ends `EI`/`RETI`.
    - **Drive A:** its shadow/copy window runs from common memory (`xing_rom_copy_record`). The destination bank comes from the DMA address as mode 11 sees it. SD record copies need no bank selection.
    - **Stock CP/M removed.** `cpm22.asm`'s CCP and BDOS are no longer assembled. `ccp_clear_redraw` and `ccp_read_up_sequence`, which served only the stock BDOS, are gone, and warm boot no longer restores the font from ROM.
    - **Boot check.** Boot checks a signature in bank 7 (`bank7_check`) before calling into it, and reports over SIO0/B if the signature is missing.
@@ -939,7 +939,7 @@ Enable the full ZSDOS path only after 1, 2 and 3 are reliable.
 | Stack headroom | Every stack that runs with interrupts enabled keeps two bytes beyond its measured depth |
 | ZSDOS stack | `IXSAVE` is the two bytes directly below `ZSDOSS` |
 | BIOS interrupt path | Wholly common |
-| IM2 ownership | `I` is always the BIOS vector page, and every entry in it reaches common BIOS code; programs never load `I` |
+| IM2 ownership | `I` is always the BIOS vector page; programmed even vectors and the floating `FFh` case reach common BIOS code; programs never load `I` |
 | Program interrupts | Registered callbacks only, entry within `E000h-E3FFh`; cleared by `WBOOT` and on return to ZCPR2 |
 | Interrupt return | Every handler ends `EI` / `RETI`; callbacks end `RET` and never enable interrupts |
 | Direct BIOS | Boot and console entries only; disk entries inert |

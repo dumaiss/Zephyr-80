@@ -11,8 +11,8 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | ROM page 0: reset vector and common memory | `build/firmware.bin` | 65536 bytes |
 | Bank 7 payload | `build/bank7.bin` | 49152 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Assembler listing | `build/firmware.lst` | 914824 bytes |
-| Linker symbol map | `build/firmware.map` | 46594 bytes |
+| Assembler listing | `build/firmware.lst` | 916469 bytes |
+| Linker symbol map | `build/firmware.map` | 46676 bytes |
 | Layout manifest | `build/layout.manifest` | 1081 bytes |
 
 ## System Addresses
@@ -103,7 +103,7 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 
 ## IM2 Vector Page
 
-`I` = `FDh`. The BIOS programs the CTC vector base `00h` and SIO0/B WR2 `10h`.
+`I` = `FDh`. The BIOS programs the CTC vector base `00h` and SIO0/B WR2 `10h`. A floating `FFh` vector straddles `FDFFh-FE00h` and reaches `F7F7h`.
 
 | Vectors | Entry | Target |
 |---|---:|---|
@@ -161,7 +161,7 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | `irq_program_exit` | `F7CAh` | BDOS function 202; ZCPR2 calls it when a transient returns. |
 | `irq_reset` | `F7F0h` | Clears every registration; cold and warm boot. |
 | `irq_unexpected` | `F788h` | `EI`/`RETI` stub for unprogrammed vectors. |
-| `irq_ctc_slots` | `F819h` | Callback entry per CTC channel; zero is unregistered. |
+| `irq_ctc_slots` | `F823h` | Callback entry per CTC channel; zero is unregistered. |
 | `facade_entry` | `EC09h` | BDOS facade entry, reached from `FBASE`. |
 | `facade_reset` | `EF25h` | Resets the facade's DMA tracking. |
 | `zephyr_sysinfo` | `EF69h` | System information block returned by function 203. |
@@ -207,8 +207,9 @@ Visible at these addresses only in operating-system mode.
 
 | Symbol | Address | Notes |
 |---|---:|---|
-| `CURRENT_BANK` | `FE00h` | Running or suspended program bank; not the bank executing below `E000h`. |
-| `cbios_dma_addr` | `FE01h` | BIOS DMA address. |
+| `IM2_VECTOR_FF_HIGH` | `FE00h` | Second pointer byte for an IM2 `FFh` vector; with `FDFFh`, selects the safe `F7F7h` stub. |
+| `CURRENT_BANK` | `FE01h` | Running or suspended program bank; not the bank executing below `E000h`. |
+| `cbios_dma_addr` | `FE02h` | BIOS DMA address. |
 | `CONSOLE_DRIVER` | `FE04h` | Active console driver table. |
 | `CONSOLE_CALLER_SP` | `FE06h` | Caller SP while the console backend runs on its stack. |
 | `SAVED_BANK` | `FE20h` | Saved bank for a cross-bank move. |

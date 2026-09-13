@@ -34,7 +34,7 @@ Code regions, each bounded by the limit `cbios_defs.inc` declares for it. Used a
 | `F510h-F52Fh` | Crossing layer | 32 | 0 | `xing_isr`, the SIO IM2 entry, and mode-preserving bank select. |
 | `F530h-F537h` | Transport level | 1 | 7 | The BIOS IO Controller transport level byte. |
 | `F538h-F72Fh` | Crossing gates | 493 | 11 | Console and IOC/video gates into bank 7, inert disk entries, warm-boot trap, ROM-disk copy window, bank 7 check. |
-| `F730h-F82Fh` | Interrupt dispatch | 241 | 15 | CTC entries, callback dispatcher, registration. |
+| `F730h-F82Fh` | Interrupt dispatch | 251 | 5 | CTC entries, callback dispatcher, registration. |
 | `F830h-F957h` | Serial console | 291 | 5 | Serial console tee and input switch. |
 
 Data and stacks:
@@ -44,8 +44,9 @@ Data and stacks:
 | `F958h-FB57h` | Staging buffer | 512 bytes, shared by facade DMA/FCB/console/time staging, gate mailboxes and payloads, and cross-bank `MOVE` chunks. Users never overlap in time. |
 | `FB58h-FC97h` | Facade copies | Search-first FCB, DPB copy (function 31), register block (functions 210-217), ALV copy (function 27). |
 | `FC98h-FCFFh` | Unallocated | |
-| `FD00h-FDFFh` | IM2 vector page | `I` = `FDh`; every entry points into common memory. |
-| `FE00h-FE7Fh` | BIOS runtime state | Bank, DMA, console, banking, storage, SIO and serial console state. |
+| `FD00h-FDFFh` | IM2 vector page | `I` = `FDh`; programmed even entries point into common memory. |
+| `FE00h` | IM2 `FFh` guard | Second byte of the pointer fetched at `FDFFh`; completes the safe `F7F7h` target. |
+| `FE01h-FE7Fh` | BIOS runtime state | Bank, DMA, console, banking, storage, SIO and serial console state. |
 | `FE80h-FE81h` | Interrupted SP | Saved by every interrupt entry. |
 | `FE82h-FEBFh` | ISR stack | SIO and CTC interrupts; registered callbacks run here. |
 | `FEC0h-FEFFh` | Gate stack | Program calls through the crossing gates. |
@@ -126,7 +127,7 @@ Checked:
 - `FBASE` is six bytes into the facade, which follows the 2 KiB CCP slot; the facade ends below `CBIOS_BASE`.
 - ZSDOS's BIOS table is at `ZSDOS_ORG + ZSDOS_SIZE`, and ends with the `BANK7OS1` marker.
 - The CP/M BIOS table and the Zephyr extension table are jumps, in order.
-- The IM2 vector page is 256 bytes at `I * 100h`, and every entry points into common memory.
+- The IM2 vector page is 256 bytes at `I * 100h`; programmed even vectors and the cross-page `FFh` vector point into common memory.
 - Staging buffers stay inside the shared buffer, and the returned copies do not overlap each other or the IM2 page.
 - Runtime state blocks stay inside `FE00h-FE7Fh` without overlapping.
 - The interrupt, gate and facade stacks are ordered, disjoint and common; the BIOS private stacks and SD scratch lie in bank 7's `C000h-DFFFh`.
