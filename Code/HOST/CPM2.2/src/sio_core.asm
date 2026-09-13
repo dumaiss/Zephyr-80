@@ -92,6 +92,7 @@
 	.globl sio1_ioc_init,sio1_ioc_rts_assert,sio1_ioc_rts_release
 	.globl sio1_ioc_put_byte,sio1_ioc_get_byte
 	.globl sio_core_rx_lock,sio_core_rx_unlock,sio_core_isr,sio_console_isr
+	.globl xing_isr
 	.globl CONIRQ,sio_console_enable_interrupts,sio_console_disable_interrupts
 	.globl SIO_CORE_CODE_START,SIO_CORE_CODE_END
 	.globl SIO_CORE_STATE_START,SIO_CORE_STATE_END
@@ -139,13 +140,14 @@ SIO_CORE_CODE_START:
 ; Inputs:
 ;   I = CBIOS_IM2_VECTOR_PAGE and SIO0/B WR2 = CBIOS_SIO_VECTOR.
 ; Outputs:
-;   The CPU reads this word and vectors directly to sio_core_isr.
+;   The CPU reads this word and vectors to xing_isr (cbios_xing.asm), which
+;   switches to the ISR stack and calls sio_core_isr.
 ; Important invariants:
 ;   SIO0/B WR1 status-affects-vector must remain disabled so WR2 selects this
 ;   exact two-byte table entry.
 CONSOLE_IM2_VECTOR_TABLE_START:
 CONSOLE_IM2_VECTOR_ENTRY:
-	.dw sio_core_isr
+	.dw xing_isr
 CONSOLE_IM2_VECTOR_TABLE_END:
 
 ; Compatibility entry kept for existing boot/source references.
@@ -580,6 +582,7 @@ sio_core_rx_unlock:
 ;
 ; Entry assumptions:
 ;   - The Z80 is in IM2.
+;   - Called from xing_isr, already on CBIOS_ISR_STACK_TOP.
 ;   - SIO0/B WR2 selects CONSOLE_IM2_VECTOR_ENTRY.
 ;   - SIO0/B WR1 RX interrupts are enabled for all received characters.
 ;   - SIO0 WR9 MIE is enabled.
@@ -591,7 +594,8 @@ sio_core_rx_unlock:
 ;   clobber IX/IY, which the ISR does not save (sio_core has no free bytes for the
 ;   extra push/pop). This invariant holds today: no sink-reachable code uses
 ;   IX/IY, and the sole IX user, v9958_write_vram_small, preserves IX itself. The
-;   ISR restores AF/BC/DE/HL before RETI.
+;   ISR restores AF/BC/DE/HL and returns to xing_isr, which re-enables
+;   interrupts and issues the RETI on the interrupted stack.
 ;
 ; Channel serviced:
 ;   This ISR services BIOS-owned SIO0/B console RX. SIO1/A is polled by the
@@ -631,7 +635,8 @@ sio_core_rx_unlock:
 ; Important invariants:
 ;   The ISR is bounded: it handles at most one RX byte at entry and at most one
 ;   more byte after RESET_HIGHEST_IUS. It never calls BDOS, does not block, does
-;   not switch banks, resets highest IUS, and returns with RETI.
+;   not switch banks, resets highest IUS, and returns to xing_isr, which issues
+;   EI and RETI.
 sio_core_isr:
 	push af
 	push bc
@@ -657,7 +662,7 @@ SIO_CORE_ISR_EXIT:
 	pop de
 	pop bc
 	pop af
-	reti
+	ret				; xing_isr: EI, RETI
 
 sio_core_isr_rx_once:
 	xor a
@@ -789,9 +794,9 @@ SIO_DISPATCH_NO_SINK:
 	ret
 
 ; Compatibility label for older symbol maps and diagnostics. The exact IM2
-; table entry points at sio_core_isr directly.
+; table entry points at xing_isr.
 sio_console_isr:
-	jp sio_core_isr
+	jp xing_isr
 
 SIO_CORE_CODE_END:
 

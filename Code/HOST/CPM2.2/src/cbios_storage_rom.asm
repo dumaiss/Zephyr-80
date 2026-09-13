@@ -125,9 +125,10 @@ stg_a_sectran:
 ; Clobbers:
 ;   AF, BC, DE, HL.
 ; Important invariants:
-;   The latch is returned to RAM-only mode on the selected bank before this
-;   returns.  CURRENT_BANK is never changed: shadow mode only alters what the
-;   decoder selects, not which bank the BIOS considers active.
+;   The latch is restored exactly as found before this returns: mode 10, or
+;   mode 11 when the BIOS is called from bank 7.  CURRENT_BANK is never
+;   changed: shadow mode only alters what the decoder selects, not which bank
+;   the BIOS considers active.
 ;
 ;   A record never straddles the shadow window.  The highest source address is
 ;   record 383 at 0BF80h, whose last byte is 0BFFFh, so the copy stays clear of
@@ -142,9 +143,9 @@ stg_a_sectran:
 ;   about 2700 T-states, roughly seven character times at 115200 against a
 ;   3-deep SIO RX FIFO.  Never widen this to a whole block.
 ;
-;   As with the IOCALL transfers in cbios_ioc_command.asm, this assumes the
-;   caller had interrupts enabled, which every current caller does; preserving
-;   the entry state properly needs ld a,i with the Z80 erratum retry.
+;   The caller's interrupt state is restored, not forced on.  It is captured
+;   with LD A,I before the window opens, retried once for the NMOS erratum
+;   (a read that coincides with an accepted interrupt reports IFF2 clear).
 stg_a_read:
 	call rom_map_current
 	or a
@@ -167,16 +168,24 @@ stg_a_read:
 	ld b,a				; B = shadow latch value
 
 	ld de,(cbios_dma_addr)
+	ld a,i
+	jp pe,stg_a_read_iff
+	ld a,i
+stg_a_read_iff:
+	push af				; P/V set: interrupts were enabled
+	in a,(BANK_PORT)
+	push af				; the latch as found
 	di
 	ld a,b
 	out (BANK_PORT),a
 	ld bc,#ROMDISK_RECORD_BYTES
 	ldir
-	ld a,(CURRENT_BANK)
-	or #ROMDIS_BIT
+	pop af
 	out (BANK_PORT),a
+	pop af
+	ld a,#BIOS_OK			; LD leaves P/V alone
+	ret po
 	ei
-	xor a
 	ret
 
 ; WRITE backend.

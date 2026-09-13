@@ -112,6 +112,7 @@ ZBIOS_EXT_BASE:
 	.include "cbios_boot.asm"
 	.include "cbios_console.asm"
 	.include "sio_core.asm"
+	.include "cbios_xing.asm"
 ; The Makefile rewrites the next transport/console/storage includes according
 ; to CONSOLE and STORAGE_A. This source remains the VDrip compatibility
 ; template so it can still be assembled directly for that legacy target.

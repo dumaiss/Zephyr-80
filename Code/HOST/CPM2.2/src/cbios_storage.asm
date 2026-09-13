@@ -79,8 +79,9 @@ STORAGE_STUB_CODE_END:
 ; ---------------------------------------------------------------------------
 ; CCP quality-of-life display helper.
 ;
-; Physically occupies the otherwise-unused core-BIOS gap before the fixed
-; banking region. It is called only by the CCP-specific BDOS input path.
+; Lives in slot 3 after the transport shims (CBIOS_CCP_QOL_CODE_BASE).  It used
+; to fill the core-BIOS gap before banking, which banking now needs.  It is
+; called only by the CCP-specific BDOS input path.
 ;
 ; ccp_clear_redraw
 ; Purpose: clear the screen and redraw the current drive/user prompt at 0,0.
@@ -91,6 +92,9 @@ STORAGE_STUB_CODE_END:
 ; VDrip traffic: emits one clear-screen operation and three prompt characters.
 ; ISR-safe: no.
 ; ---------------------------------------------------------------------------
+	.area CODE (ABS)
+	.org CBIOS_CCP_QOL_CODE_BASE
+
 CCP_QOL_CODE_START:
 ccp_clear_redraw:
 	ld c,#FF

@@ -78,6 +78,7 @@ RUNTIME_SRCS ?= \
 	$(SRC_DIR)/cbios_boot.asm \
 	$(SRC_DIR)/cbios_console.asm \
 	$(SRC_DIR)/sio_core.asm \
+	$(SRC_DIR)/cbios_xing.asm \
 	$(VDRIP_TRANSPORT_SRC) \
 	$(SRC_DIR)/cbios_bios_ext.asm \
 	$(SRC_DIR)/cbios_iocall.asm \

@@ -9,7 +9,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | Artifact | Path | Size |
 |---|---|---:|
 | Firmware binary | `build/firmware.bin` | 65536 bytes |
-| Firmware symbol map | `build/firmware.map` | 54620 bytes |
+| Firmware symbol map | `build/firmware.map` | 55133 bytes |
 | Burnable image | `build/zephyr80.bin` | 262144 bytes |
 | Layout manifest | `build/layout.manifest` | 903 bytes |
 
@@ -112,16 +112,16 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `write` | `DBD2h` | Storage WRITE facade; transfers to the selected drive-A backend. |
 | `sectran` | `DBD5h` | Returns untranslated 0-based logical sector for no-skew media. |
 | `STORAGE_STUB_CODE_END` | `DBDDh` | Storage BIOS facade end. |
-| `CCP_QOL_CODE_START` | `DBDDh` | CCP clear-screen prompt-redraw helper start. |
-| `ccp_clear_redraw` | `DBDDh` | Clears the console and redraws the CCP prompt. |
-| `CCP_QOL_CODE_END` | `DC02h` | CCP clear-screen prompt-redraw helper end. |
+| `CCP_QOL_CODE_START` | `ECD0h` | CCP clear-screen prompt-redraw helper start. |
+| `ccp_clear_redraw` | `ECD0h` | Clears the console and redraws the CCP prompt. |
+| `CCP_QOL_CODE_END` | `ECF5h` | CCP clear-screen prompt-redraw helper end. |
 | `STORAGE_A_CODE_START` | `F6B0h` | Drive A: storage backend code start. |
 | `stg_a_seldsk` | `F6C1h` | Selects CP/M drive A and returns its DPH. |
 | `stg_a_read` | `F6D5h` | Reads one 128-byte record from the drive A: backend. |
-| `stg_a_write` | `F701h` | Writes one 128-byte record to the drive A: backend. |
+| `stg_a_write` | `F70Bh` | Writes one 128-byte record to the drive A: backend. |
 | `STORAGE_A_DPH` | `FB40h` | Drive A disk parameter header. |
 | `STORAGE_A_DPB` | `FB50h` | Drive A disk parameter block. |
-| `STORAGE_A_CODE_END` | `F752h` | Drive A: storage backend code end. |
+| `STORAGE_A_CODE_END` | `F75Ch` | Drive A: storage backend code end. |
 | `SIO_CORE_CODE_START` | `DD10h` | BIOS-owned SIO core code start in core BIOS. |
 | `CONSOLE_IM2_VECTOR_ENTRY` | `DD10h` | SIO core exact IM2 vector table entry address. |
 | `CONSOLE_IM2_VECTOR_TABLE_START` | `DD10h` | SIO core exact IM2 vector table start. |
@@ -133,16 +133,20 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `sio_register_rx_sink` | `DDDBh` | Registers one RX byte sink for a BIOS-owned SIO channel. |
 | `sio_send_byte` | `DDF0h` | Blocking send-byte API for BIOS-owned SIO channels. |
 | `sio_recv_byte` | `DE29h` | Polling receive-byte API for BIOS-owned SIO channels. |
-| `sio0b_rts_assert` | `DEC8h` | Asserts SIO0/B RTS for software-managed console RX flow control. |
-| `sio0b_rts_release` | `DED2h` | Releases SIO0/B RTS for software-managed console RX flow control. |
+| `sio0b_rts_assert` | `DEC7h` | Asserts SIO0/B RTS for software-managed console RX flow control. |
+| `sio0b_rts_release` | `DED1h` | Releases SIO0/B RTS for software-managed console RX flow control. |
 | `sio1_ioc_rts_assert` | `DE46h` | Asserts SIO1/A RTS as an IO Controller service request. |
 | `sio1_ioc_rts_release` | `DE50h` | Releases SIO1/A RTS after an IO Controller transaction. |
 | `sio1_ioc_put_byte` | `DE5Ah` | SIO1/A IO Controller byte transmit helper. |
 | `sio1_ioc_get_byte` | `DE5Fh` | SIO1/A IO Controller byte receive helper. |
 | `sio_rx_kick` | `DE64h` | Foreground RX poll/dispatch helper. |
-| `sio_core_isr` | `DE9Fh` | BIOS-owned SIO interrupt service routine. |
-| `sio_console_isr` | `DF29h` | Compatibility label that jumps to `sio_core_isr`. |
-| `SIO_CORE_CODE_END` | `DF2Ch` | BIOS-owned SIO core code end. |
+| `sio_core_isr` | `DE9Fh` | SIO interrupt body; called from `xing_isr` on the ISR stack. |
+| `sio_console_isr` | `DF28h` | Compatibility label that jumps to `xing_isr`. |
+| `SIO_CORE_CODE_END` | `DF2Bh` | BIOS-owned SIO core code end. |
+| `XING_CODE_START` | `DF2Ch` | Common crossing layer start. |
+| `xing_isr` | `DF2Ch` | SIO IM2 entry: switches to the ISR stack, calls `sio_core_isr`, EI and RETI. |
+| `xing_select_ram_bank` | `DF3Dh` | Selects a RAM bank while keeping mode 10 or mode 11. |
+| `XING_CODE_END` | `DF4Ch` | Common crossing layer end. |
 | `IOCTRL_CODE_START` | `DF7Bh` | IOCALL transaction code start in core BIOS. |
 | `IOCALL` | `DFEDh` | Zephyr extended BIOS IO Controller transaction call. |
 | `IOCTRL_CODE_END` | `DFFEh` | IOCALL transaction code end. |
@@ -162,19 +166,19 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `HID_INPUT_STATE_START` | `F642h` | USB keyboard IOC mailbox and queue state start. |
 | `HID_INPUT_STATE_END` | `F67Bh` | USB keyboard IOC mailbox and queue state end. |
 | `SD_STORAGE_CODE_START` | `F430h` | SD-card BIOS backend code start. |
-| `SD_STORAGE_CODE_END` | `F61Bh` | SD-card BIOS backend code end. |
+| `SD_STORAGE_CODE_END` | `F619h` | SD-card BIOS backend code end. |
 | `sd_probe_store_result` | `F68Dh` | Stores the SD select result in the protected caller frame. |
 | `ccp_read_up_sequence` | `EC8Bh` | Consumes the `ESC [ A` suffix for CCP one-line recall. |
 | `V9958_CONSOLE_CODE_START` | `E000h` | Direct LunchCrema V9958 console driver code start. |
 | `v9958_console_driver` | `E000h` | Direct V9958 console driver dispatch table. |
 | `v9958_console_init` | `E014h` | Direct V9958 warm initialization and HID setup. |
 | `V9958_CONSOLE_CODE_END` | `ECAEh` | Direct LunchCrema V9958 console driver code end. |
-| `BANKING_CODE_START` | `DC03h` | Banking extension implementation start. |
-| `SELMEM` | `DC03h` | Select RAM bank. |
-| `SETBNK` | `DC0Dh` | Record future DMA bank. |
-| `XMOVE` | `DC13h` | Set source/destination banks for next `MOVE`. |
-| `MOVE` | `DC25h` | Same-bank or cross-bank memory move. |
-| `BANKING_CODE_END` | `DCB1h` | Banking extension implementation end. |
+| `BANKING_CODE_START` | `DBDDh` | Banking extension implementation start. |
+| `SELMEM` | `DBDDh` | Select RAM bank. |
+| `SETBNK` | `DBF7h` | Record future DMA bank. |
+| `XMOVE` | `DC02h` | Set source/destination banks for next `MOVE`. |
+| `MOVE` | `DC1Dh` | Same-bank or cross-bank memory move. |
+| `BANKING_CODE_END` | `DCAFh` | Banking extension implementation end. |
 | `VIDEO_SEND` | `DF50h` | Extended BIOS call: selected-backend raw video request. |
 | `IOCBULK` | `ECAEh` | Extended BIOS call: bulk-lane receive on SIO1/A; owns the RTS handshake. |
 | `IOCBULKW` | `ECBDh` | Extended BIOS call: bulk-lane transmit on SIO1/A; owns the RTS handshake. |
@@ -204,7 +208,7 @@ The complete ASxxxx symbol output is available at `build/firmware.map`. This fil
 | `MOVE_DST_PTR` | `FE27h` | Cross-bank move destination pointer. |
 | `MOVE_REMAIN` | `FE29h` | Cross-bank move remaining byte count. |
 | `MOVE_CHUNK_LEN` | `FE2Bh` | Current cross-bank chunk length. |
-| `BANKING_STATE_END` | `FE2Dh` | Banking state end. |
+| `BANKING_STATE_END` | `FE2Eh` | Banking state end. |
 | `STORAGE_STATE_START` | `FE40h` | Storage state start. |
 | `stg_a_selected_drive` | `FE40h` | Selected storage drive, or `FFh` for unsupported. |
 | `stg_a_track` | `FE41h` | Selected CP/M track. |

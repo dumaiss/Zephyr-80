@@ -7,12 +7,18 @@
 ; single authoritative view of CURRENT_BANK, DMA_BANK, and pending XMOVE
 ; state. A replaceable device driver may call these services, but must not
 ; own the bank latch policy.
+;
+; Bank 7 is the OS bank.  SELMEM, SETBNK and XMOVE refuse it with
+; A = BANK_REJECTED; OS code that needs bank 7 sets the XMOVE state itself.
+; SELMEM and a cross-bank MOVE keep the RAM mode the latch was in, so they are
+; correct when called in mode 11 (plan F3).
 
 	.globl MOVE,XMOVE,SELMEM,SETBNK
 	.globl BIOS_CODE_END
 	.globl BANKING_CODE_START,BANKING_CODE_END
 	.globl BANKING_STATE_START,BANKING_STATE_END
 	.globl SAVED_BANK,DMA_BANK,XMOVE_SRC_BANK,XMOVE_DST_BANK,XMOVE_PENDING
+	.globl SAVED_LATCH
 	.globl MOVE_BUFFER
 	.globl CURRENT_BANK,cbios_dma_addr
 	.globl WBOOT,FBASE
@@ -32,52 +38,81 @@ BANKING_CODE_START:
 
 ; SELMEM
 ; Purpose:
-;   Select the active RAM-only execution/data bank.
+;   Select the active RAM execution/data bank.
 ; Input:
-;   A = target RAM bank.
+;   A = target RAM bank, 0-6.
 ; Output:
-;   CURRENT_BANK and the hardware bank latch are updated.
+;   A = 00h: CURRENT_BANK and the latch updated.  The RAM mode is kept: in mode
+;       11 only the caller window 0000h-1FFFh changes bank.
+;   A = BANK_REJECTED: A was the OS bank; nothing changed.
 ; Clobbers:
-;   AF. Preserves BC, DE, HL, IX, IY.
+;   F. Preserves BC, DE, HL, IX, IY.
+; Invariants:
+;   The mapping changes under the caller, so SP must be in common memory, as it
+;   always had to be.  BC is popped before the switch for the same reason.
 SELMEM:
 	and #BANK_MASK
+	cp #OS_BANK
+	jr z,bank_rejected
 	ld (CURRENT_BANK),a
+	push bc
+	ld b,a
+	in a,(BANK_PORT)
+	and #SHADOW_BIT			; mode 11 stays mode 11
 	or #ROMDIS_BIT
+	or b
+	pop bc
 	out (BANK_PORT),a
+	xor a
+	ret
+
+bank_rejected:
+	ld a,#BANK_REJECTED
 	ret
 
 ; SETBNK
 ; Purpose:
 ;   Record the bank containing the next CP/M disk DMA buffer.
 ; Input:
-;   A = future disk DMA bank.
+;   A = future disk DMA bank, 0-6.
 ; Output:
-;   DMA_BANK updated; the active hardware bank is unchanged.
+;   A = 00h: DMA_BANK updated; the active hardware bank is unchanged.
+;   A = BANK_REJECTED: A was the OS bank; nothing changed.
 ; Clobbers:
-;   AF. Preserves BC, DE, HL, IX, IY.
+;   F. Preserves BC, DE, HL, IX, IY.
 SETBNK:
 	and #BANK_MASK
+	cp #OS_BANK
+	jr z,bank_rejected
 	ld (DMA_BANK),a
+	xor a
 	ret
 
 ; XMOVE
 ; Purpose:
 ;   Arm the next MOVE as a cross-bank transfer.
 ; Input:
-;   C = source bank, B = destination bank.
+;   C = source bank, B = destination bank, each 0-6.
 ; Output:
-;   XMOVE_SRC_BANK, XMOVE_DST_BANK, and XMOVE_PENDING updated.
+;   A = 00h: XMOVE_SRC_BANK, XMOVE_DST_BANK, and XMOVE_PENDING updated.
+;   A = BANK_REJECTED: either bank was the OS bank.  XMOVE_PENDING is left as
+;       it was, so an earlier XMOVE stays armed.
 ; Clobbers:
-;   AF. Preserves BC, DE, HL, IX, IY.
+;   F. Preserves BC, DE, HL, IX, IY.
 XMOVE:
 	ld a,c
 	and #BANK_MASK
+	cp #OS_BANK
+	jr z,bank_rejected
 	ld (XMOVE_SRC_BANK),a
 	ld a,b
 	and #BANK_MASK
+	cp #OS_BANK
+	jr z,bank_rejected
 	ld (XMOVE_DST_BANK),a
 	ld a,#0x01
 	ld (XMOVE_PENDING),a
+	xor a
 	ret
 
 ; MOVE
@@ -89,7 +124,7 @@ XMOVE:
 ;   BC = byte count, DE = source address, HL = destination address.
 ; Outputs:
 ;   Same-bank move leaves LDIR results in BC/DE/HL. Cross-bank move restores the
-;   original active bank and clears XMOVE_PENDING.
+;   latch exactly as found -- bank and RAM mode -- and clears XMOVE_PENDING.
 ; Clobbers:
 ;   AF, BC, DE, HL. Preserves IX, IY.
 ; Important invariants:
@@ -108,6 +143,14 @@ MOVE:
 MOVE_CROSS_BANK:
 	; Snapshot the foreground bank and pointers, then copy in chunks no larger
 	; than MOVE_BUFFER_SIZE so the common scratch buffer is the only bridge.
+	;
+	; The copies themselves run in mode 10 whatever mode MOVE was called in:
+	; source and destination are application addresses below C000h, part of
+	; which mode 11 hides behind bank 7.  MOVE runs from common memory, so
+	; dropping to mode 10 does not unmap it; the latch as found is restored at
+	; the end.
+	in a,(BANK_PORT)
+	ld (SAVED_LATCH),a
 	ld a,(CURRENT_BANK)
 	ld (SAVED_BANK),a
 	ld (MOVE_SRC_PTR),de
@@ -168,7 +211,7 @@ MOVE_CROSS_DONE:
 	ld a,(SAVED_BANK)
 	and #BANK_MASK
 	ld (CURRENT_BANK),a
-	or #ROMDIS_BIT
+	ld a,(SAVED_LATCH)		; bank and RAM mode MOVE was called in
 	out (BANK_PORT),a
 	ret
 
@@ -195,6 +238,8 @@ MOVE_REMAIN:
 	.dw 0x0000
 MOVE_CHUNK_LEN:
 	.dw 0x0000
+SAVED_LATCH:
+	.db 0x00
 BANKING_STATE_END:
 
 	.area CODE (ABS)

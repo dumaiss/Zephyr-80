@@ -786,9 +786,19 @@ Work:
 
 1. **Done.** Decoder: mode 11 as above. `RAM_A16..18` only; modes 00, 01 and 10 unchanged. `MEM_DECODER.pld` revision 10. The WinCUPL expanded terms were checked against revision 09 for all 2,048 input combinations: only the address lines in mode 11 at `2000h-BFFFh` differ. Each address line uses 6 of its 10 product terms, which leaves room for Phase 2's common term.
 2. **Done.** Hardware validation, Phase 1 (section 26): `MAP11.COM` (`../Utilities/src/map11.asm`) passes on hardware for application banks 0 and 5.
-3. Common crossing layer: mode primitive, transition stack, ISR stack and crossing helpers, all placed at or above `E000h` so Phase 2 does not relocate them.
-4. Convert the latch writers (F3) and fix the drive A read's unconditional `EI`.
-5. Bank primitives reject bank 7.
+3. **Done.** Common crossing layer, `src/cbios_xing.asm`:
+   - `xing_isr` is the SIO IM2 entry. It saves the interrupted SP at `FE80h`, runs the handler on its own stack below `FEC0h`, and ends `EI` / `RETI`.
+   - The ISR stack is the lower half of the transport's old 128-byte run. The handler used to end in a bare `RETI`, which left interrupts disabled until foreground code next ran `EI`.
+   - `xing_select_ram_bank` selects a bank while keeping mode 10 or mode 11.
+   - **Deviation:** the layer sits in the core-BIOS gap at `DF2Ch`, not at or above `E000h`, because `E000h-FFFFh` is full until the BIOS leaves common memory in step 7. It moves then.
+   - **Deviation:** the transition stack comes with the facade in step 8, in the freed BDOS area.
+   - To make room, `ccp_clear_redraw` moved from core BIOS to `ECD0h` in slot 3, and banking now starts at `DBDDh`.
+4. **Done.** Latch writers (F3):
+   - **Converted:** SD record staging (`sd_select_bank`); the drive A read, which now restores the latch and the interrupt state it found instead of forcing mode 10 and `EI`; `SELMEM`, which keeps mode 11; and cross-bank `MOVE`, which copies in mode 10 from common memory and restores the latch it found.
+   - **Left forcing mode 10, by design:** cold boot's `bank_select_internal`, `WBOOT`'s entry, `restore_ccp_from_rom`, the font restore (warm boot only) and the boot shadow copy. These run only where section 19 says to force mode 10.
+   - **Unchanged because not linked:** the RAM-disk and VDrip storage backends.
+5. **Done.** `SELMEM`, `SETBNK` and `XMOVE` refuse bank 7 with `A = FFh` and return `A = 00h` on success. A refused `XMOVE` leaves an earlier one armed.
+   - Validation is `XING.COM` (`../Utilities/src/xing.asm`), which passes on hardware along with boot, drives A-C, SC2, TM2, SDDIR and SERCON: bank-7 refusal; `SELMEM` and `MOVE` in both modes; drive A and B reads in mode 11 matching mode 10; and the drive A read preserving interrupts off and on.
 6. Link ZSDOS in bank 7 within `2000h-BFFFh`, BIOS jump table directly after it. Replace `RST 0` (F1); grow the ZSDOS stack in place, keeping `IXSAVE` directly below `ZSDOSS` (F2); derive the `CCPBUF` range.
 7. BIOS and drivers into bank 7. The interrupt path goes in common: the full vector page, the SIO handler, the CTC dispatcher and the registration slots, with `CBIOS_IM2_VECTOR_PAGE` regenerated, every ISR switching to the common ISR stack (F2), and `EI` before every `RETI` (F9).
 8. BDOS facade: marshalling table, forced-staging build, DMA tracking (F10), non-reentrancy (F8), and the debug assertion that `I` is the BIOS page (F9).

@@ -113,6 +113,8 @@ MANIFEST = (
     ("utils", "sysid.com", "SYSID.COM", PROFILE_NORMAL),
     # Phase 1 banked-OS bring-up: proves the mode 11 decoder map.
     ("utils", "map11.com", "MAP11.COM", PROFILE_NORMAL),
+    # Phase 1 steps 3-5: bank-7 refusal, mode-11 bank selects and disk reads.
+    ("utils", "xing.com", "XING.COM", PROFILE_NORMAL),
     # The /SHARED/ folder tools.  Rescue tools in the most literal sense: with a
     # FAT card in the socket these are how a file gets off this machine, or onto
     # it, when nothing else works -- no serial link, no second drive.  None can

@@ -125,9 +125,13 @@ IMPLEMENTATION_SYMBOLS = [
     (("sio1_ioc_put_byte",), "SIO1/A IO Controller byte transmit helper."),
     (("sio1_ioc_get_byte",), "SIO1/A IO Controller byte receive helper."),
     (("sio_rx_kick",), "Foreground RX poll/dispatch helper."),
-    (("sio_core_isr",), "BIOS-owned SIO interrupt service routine."),
-    (("sio_console_isr",), "Compatibility label that jumps to `sio_core_isr`."),
+    (("sio_core_isr",), "SIO interrupt body; called from `xing_isr` on the ISR stack."),
+    (("sio_console_isr",), "Compatibility label that jumps to `xing_isr`."),
     (("SIO_CORE_CODE_END",), "BIOS-owned SIO core code end."),
+    (("XING_CODE_START",), "Common crossing layer start."),
+    (("xing_isr",), "SIO IM2 entry: switches to the ISR stack, calls `sio_core_isr`, EI and RETI."),
+    (("xing_select_ram_bank",), "Selects a RAM bank while keeping mode 10 or mode 11."),
+    (("XING_CODE_END",), "Common crossing layer end."),
     (("IOCTRL_CODE_START",), "IOCALL transaction code start in core BIOS."),
     (("IOCALL",), "Zephyr extended BIOS IO Controller transaction call."),
     (("IOCTRL_CODE_END",), "IOCALL transaction code end."),
@@ -223,6 +227,7 @@ COMMON_DRIVER_DECLARATIONS = [
     ("SD-card BIOS backend", "SD_STORAGE_CODE_START", "SD_STORAGE_CODE_END", 4, 5),
     ("SD selection probe", "SD_PROBE_CODE_START", "SD_PROBE_CODE_END", 5, 5),
     ("Drive A: storage backend", "STORAGE_A_CODE_START", "STORAGE_A_CODE_END", 5, 5),
+    ("CCP prompt-redraw helper", "CCP_QOL_CODE_START", "CCP_QOL_CODE_END", 3, 3),
 ]
 
 OPTIONAL_IMPLEMENTATION_SYMBOLS = {
@@ -244,9 +249,9 @@ CORE_RANGES = [
     ("BIOS jump table and boot glue", "BIOS_CODE_START", "CONSOLE_CODE_START"),
     ("console facade", "CONSOLE_CODE_START", "CONSOLE_CODE_END"),
     ("storage facade", "STORAGE_STUB_CODE_START", "STORAGE_STUB_CODE_END"),
-    ("CCP console helper", "CCP_QOL_CODE_START", "CCP_QOL_CODE_END"),
     ("banking/XMOVE", "BANKING_CODE_START", "BANKING_CODE_END"),
     ("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END"),
+    ("crossing layer", "XING_CODE_START", "XING_CODE_END"),
     ("BIOS extensions", "BIOS_EXT_CODE_START", "BIOS_EXT_CODE_END"),
 ]
 

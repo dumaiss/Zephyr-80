@@ -73,6 +73,11 @@ BIOS_ERR_BAD_LEN                = 0x01
 BIOS_ERR_TIMEOUT                = 0x02
 BIOS_ERR_IO                     = 0x03
 BIOS_ERR_BAD_REPLY              = 0x04
+
+; Bank 7 is the OS bank (banked OS, Phase 1).  The public bank primitives
+; SELMEM, SETBNK and XMOVE refuse it and return BANK_REJECTED in A.
+OS_BANK                         = 0x07
+BANK_REJECTED                   = 0xff
 CONST_NO_CHAR                   = 0x00
 CONST_HAS_CHAR                  = 0xff
 CR                              = 0x0d
@@ -456,7 +461,13 @@ CBIOS_STORAGE_CODE_BASE         = CBIOS_BASE + 0x01c3      ; DBC3h
 ; which holds the CP/M jump table and the extension vectors, was exactly full.
 ; Banking had 98 bytes of slack and absorbs the shift; nothing at or above the
 ; SIO core base (DD10h) moves, so the IM2 vector entry is untouched.
-CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x0203      ; DC03h
+;
+; Banked OS Phase 1 steps 4-5 grew banking by the bank-7 checks and mode
+; preservation, about 36 bytes it did not have.  ccp_clear_redraw, the 38
+; bytes between the storage stubs and banking, moved to slot 3 after the
+; transport shims (CBIOS_CCP_QOL_CODE_BASE), and banking now starts where the
+; storage stubs end.
+CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x01dd      ; DBDDh
 
 ; ------------------------------------------------------------------------------
 ; Fixed Driver Slots
@@ -500,13 +511,20 @@ CBIOS_DRIVER_SLOT3_END          = CBIOS_DRIVER_SLOT3_LIMIT - 1
 ; between the console driver's code end and the Bulk lane's base at ED00h.
 ; They live here rather than beside their bodies because the Bulk region runs
 ; solid from ED00h to the EFFFh slot ceiling; this is the nearest free run.
-; 34 bytes used of 82.  See CBIOS_XPORT_STACK_TOP for why they exist.
+; 34 bytes used of 82; the CCP prompt-redraw helper takes the next 38, leaving
+; 10 of slack.  See CBIOS_XPORT_STACK_TOP for why the shims exist.
 ;
 ; This base is the V9958 console's code end, not a fixed boundary: it was ECA6h
 ; until the console's idle-spin delay grew the driver by eight bytes.  Growing
 ; the console again means moving this up again, and the slack is what pays for
 ; it -- check_overlap.py names this symbol when the two collide.
 CBIOS_XPORT_SHIM_CODE_BASE      = 0xecae
+
+; The CCP prompt-redraw helper follows the shims.  It moved out of core BIOS to
+; give banking room (see CBIOS_BANKING_CODE_BASE).  It is a ZSDOS helper, not a
+; driver, and goes to bank 7 with ZSDOS later in Phase 1.  check_overlap.py
+; names it if the shims grow into it.
+CBIOS_CCP_QOL_CODE_BASE         = CBIOS_XPORT_SHIM_CODE_BASE + 0x0022  ; ECD0h
 
 CBIOS_DRIVER_SLOT4_BASE         = 0xf000
 CBIOS_DRIVER_SLOT4_LIMIT        = CBIOS_DRIVER_SLOT4_BASE + CBIOS_DRIVER_SLOT_SIZE
@@ -760,6 +778,12 @@ CBIOS_V9958_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
 CBIOS_BIOS_EXT_CODE_BASE        = CBIOS_BASE + 0x0550                  ; DF50h
 CBIOS_IOCTRL_CODE_BASE          = CBIOS_BASE + 0x057B                  ; DF7Bh — immediately after VIDEO_SEND
 
+; Common crossing layer (banked OS, Phase 1 step 3): the SIO interrupt entry
+; with its stack switch, and the mode-preserving bank select.  The gap between
+; the SIO core's end and the BIOS extensions.
+CBIOS_XING_CODE_BASE            = CBIOS_BASE + 0x052c                  ; DF2Ch
+CBIOS_XING_CODE_LIMIT           = CBIOS_BIOS_EXT_CODE_BASE             ; DF50h
+
 ; Transport level, readable directly from ROM at a fixed address.
 ;
 ; The MCU reports IOC_FW_LEVEL over PING, which proves the CONTROLLER is
@@ -957,12 +981,14 @@ CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 ; ------------------------------------------------------------------------------
 ; FE80h-FFFFh = BIOS stack / reserve.
 ;
-; Three tops, each owning a disjoint run.  They are private stacks, not nested
+; Four tops, each owning a disjoint run.  They are private stacks, not nested
 ; frames on one stack, so their ranges must not overlap:
 ;
 ;   FFF0h  CBIOS_STACK_TOP          boot/warm-boot, grows down toward FF80h
 ;   FF80h  CBIOS_CONSOLE_STACK_TOP  console dispatch and storage dispatch
-;   FF00h  CBIOS_XPORT_STACK_TOP    IOCALL / IOCBULK / IOCBULKW
+;   FF00h  CBIOS_XPORT_STACK_TOP    IOCALL / IOCBULK / IOCBULKW, down to FEC0h
+;   FEC0h  CBIOS_ISR_STACK_TOP      SIO interrupt (xing_isr), down to FE82h
+;   FE80h  CBIOS_ISR_SP_SAVE        the interrupted SP, two bytes
 ;
 ; Console backend calls use a lower private top so boot-time BIOS stack frames
 ; near FFF0h stay intact when CONOUT is called during BOOT.
@@ -981,12 +1007,24 @@ CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 ; deepest thing that used to nest inside it was the transport, and that now
 ; runs here instead.
 ;
-; Stack grows downward and should not cross FE80h.
+; The ISR stack is the lower half of what was the transport's 128-byte run.
+; Interrupts used to push their frames onto whatever stack they interrupted,
+; including the transport's, which measured 16-22 bytes deep on rom-services
+; with those frames in it.  Later in Phase 1 ZSDOS runs in bank 7 on its own
+; small stack, so interrupt work switches to its own stack first (plan F2).
+; The deepest SIO interrupt path is about 16 bytes: the call from xing_isr,
+; four register pushes, the RX read and the SERCON sink.  Measure both runs
+; with STKCHK before relying on these sizes.
+;
+; Stack grows downward and should not cross FE80h; the ISR stack stops at
+; FE82h, above its saved SP.
 
 CBIOS_STACK_GUARD               = CBIOS_WORK_AREA_LIMIT            ; FE80h
 CBIOS_STACK_TOP                 = 0xfff0
 CBIOS_CONSOLE_STACK_TOP         = 0xff80
 CBIOS_XPORT_STACK_TOP           = 0xff00
+CBIOS_ISR_STACK_TOP             = 0xfec0
+CBIOS_ISR_SP_SAVE               = CBIOS_STACK_GUARD                ; FE80h
 
 CBIOS_AREA_LIMIT                = 0x10000
 CBIOS_AREA_END                  = 0xffff

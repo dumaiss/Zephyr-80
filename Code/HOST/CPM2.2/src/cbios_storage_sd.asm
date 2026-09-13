@@ -31,6 +31,7 @@
 	.globl stg_a_settrk,stg_a_setsec
 	.globl stg_a_read,stg_a_write,stg_a_sectran
 	.globl storage_caller_sp
+	.globl xing_select_ram_bank
 	.globl SD_STORAGE_CODE_START,SD_STORAGE_CODE_END
 	.globl SD_PROBE_CODE_START,SD_PROBE_CODE_END
 	.globl SD_PROBE2_CODE_END
@@ -211,12 +212,13 @@ sd_copy_from_dma:
 	ld a,(sd_storage_saved_bank)
 	jr sd_select_bank
 
+; Storage runs on the console/storage stack in common memory, so the latch can
+; change here.  xing_select_ram_bank keeps mode 11 when the BIOS was called from
+; bank 7.  A returns the latch value written, as it always has.
 sd_select_bank:
 	and #BANK_MASK
 	ld (CURRENT_BANK),a
-	or #ROMDIS_BIT
-	out (BANK_PORT),a
-	ret
+	jp xing_select_ram_bank
 
 ; ---------------------------------------------------------------------------
 ; READ one record
