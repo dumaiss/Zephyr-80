@@ -339,7 +339,17 @@ $(SYMBOLS_FILE): $(FIRMWARE_REL)
 # images/zephyr80-vdrip2.cpm, which is a separate user-owned volume.
 rom-disk: $(ROM_DISK_IMAGE)
 
-$(ROM_DISK_IMAGE): $(ROM_DISK_TOOL) $(CPMTOOLS_DISKDEF) $(ROM_DISK_INPUTS) | $(BUILD_DIR)
+# The sibling projects are built from here, every time.  Their binaries used to
+# be picked up as found, so a clean build here could still ship tools compiled
+# against a different BIOS: after a branch switch, A: carried SDDIR, SDGET and
+# PING calling IOCALL at a stale fixed address, and every one failed with a
+# transport error.  Their own makefiles decide what is out of date.
+.PHONY: sibling-builds
+sibling-builds:
+	$(MAKE) -C $(dir $(UTILITIES_BUILD))
+	$(MAKE) -C $(dir $(MONITOR_BUILD))
+
+$(ROM_DISK_IMAGE): sibling-builds $(ROM_DISK_TOOL) $(CPMTOOLS_DISKDEF) $(ROM_DISK_INPUTS) | $(BUILD_DIR)
 	$(PYTHON) $(ROM_DISK_TOOL) \
 		--profile "$(ROM_DISK_PROFILE)" \
 		--diskdef "$(CPMTOOLS_DISKDEF)" \
@@ -370,3 +380,5 @@ $(FINAL_IMAGE): check-inputs $(IMAGE_PREREQS) $(IMAGE_TOOL) $(SRC_DIR)/cbios_def
 
 clean:
 	rm -rf "$(BUILD_DIR)"
+	$(MAKE) -C $(dir $(UTILITIES_BUILD)) clean
+	$(MAKE) -C $(dir $(MONITOR_BUILD)) clean

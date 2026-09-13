@@ -755,6 +755,8 @@ The baseline builds from a clean tree with `make CCP=zcpr2 BDOS=zsdos`, using th
 
 Confirmed on hardware: it boots, and SC2 and a TM2 build work.
 
+Correction: that build was not fully clean. The CPM2.2 Makefile packed whatever was in `../Utilities/build` without rebuilding it, so A: carried SDDIR, SDGET, PING and SDREAD from `rom-services`, calling `IOCALL` at `E23Fh`. They failed with transport error kind 01. The ROM build now runs the Utilities and Monitor builds itself, and `make clean` cleans them.
+
 Carry the rest forward from `rom-services` as each becomes relevant. They are independent of ROM execution:
 
 | Change | Files on `rom-services` |
