@@ -84,3 +84,5 @@ Code/MODERN/VirtualDrip/CMakeCache.txt
 # Windows path baked into the filename, e.g. "C:\Users\User\Desktop\kleplace.log"
 *kleplace.log
 Code/HOST/CPM2.2/images/zephyr80-vdrip2.cpm
+Code/HOST/Zephyr80Lib/BUILD/**
+Code/HOST/SNTrackerTM2/BUILD/**
