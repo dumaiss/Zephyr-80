@@ -10,25 +10,12 @@ editing sources on the Zephyr therefore requires no filename mapping.
 ## Modules
 
 ```text
-SRC/SNTRACK.MOD   application and rate-limited key polling
-SRC/ZTR.DEF       bounded ZTR v1 reader interface
-SRC/ZTR.MOD       binary loading and structural validation
-SRC/PLAYER.DEF    tracker playback interface
-SRC/PLAYER.MOD    typed channel state, sequencing, effects and rendering
-SRC/SOUND.DEF     logical 16-channel sound interface
-SRC/SOUND.MOD     Afternoon Blend/SN76489 implementation
-SRC/TIMER.DEF     pending-tick timer interface
-SRC/TIMER.MOD     timer ownership and TM2-facing state
-SRC/CTCLOW.DEF    private foreign-module definition
-SRC/CTCLOW.Z80    CTC0, private IM2 table and minimal ISR
-SRC/TRKUI.DEF     compact status interface
-SRC/TRKUI.MOD     order-boundary CP/M console updates
+SRC/SNTRACK.MOD   command line, UI, clock wiring and rate-limited key polling
 ```
 
-`PLAYER.MOD` implements the current ZTR v1 behavior, including typed channel
-state, instrument sequences, release points, legacy Furnace effects,
-envelope-preserving legato, persistent notation arpeggios, hairpins and
-notation reset events.
+All playback, ZTR loading, sound and timer implementation comes from the
+sibling `../Zephyr80Lib` project. This directory intentionally keeps no copies
+of those modules.
 
 ## Building on the PC
 
@@ -39,20 +26,19 @@ physical Zephyr's smaller TPA.  From this directory run:
 make
 ```
 
-The Makefile creates an isolated temporary CP/M drive, stages uppercase CRLF
-copies of all sources, and then:
+The Makefile first rebuilds `../Zephyr80Lib/BUILD/ZEPHYR80.LIB`. It then creates
+an isolated temporary CP/M drive, stages the library and uppercase CRLF copies
+of the standalone tracker source, and:
 
-1. assembles `CTCLOW.Z80` with ZMAC;
-2. compiles all definition modules;
-3. runs the TM2 REL converter in a fresh IDE session;
-4. compiles all implementation and main modules;
-5. builds `TLINK.COM` and links outside the IDE;
-6. runs the ZTR and complete-song regression tests; and
-7. publishes five executables in `BUILD`.
+1. selects `SYSLIB ZEPHYR80` as the TM2 archive search path;
+2. compiles `SNTRACK.MOD` against the public library definitions;
+3. extracts the required implementation members from `ZEPHYR80.LIB`;
+4. builds `TLINK.COM` and links outside the IDE;
+5. checks the usage and missing-file command paths; and
+6. publishes only `BUILD/SNTRACK.COM`.
 
-The default uses the verified x86-64 Linux `TOOLS/RUNCPM` executable and the
-TM2 distribution already under `Code/HOST/Software`.  All inputs can be
-overridden, for example on a different host:
+The default uses the toolchain embedded in `../Zephyr80Lib/TOOLS`. All inputs
+can be overridden, for example on a different host:
 
 ```text
 make RUNCPM=/opt/runcpm/RunCPM
@@ -62,119 +48,78 @@ See `TOOLS/README.MD` and `make help` for the complete list.
 
 ## Building on the Zephyr
 
-Place the source files, Turbo Modula-2 system files, `SYSLIB.LIB`, `ZMAC.COM`
-and the songs on a CP/M work drive.  In the TM2 Options menu enable Native and
-Extensions.  Native is an IDE option and cannot be enabled from source.
+Place `SNTRACK.MOD`, `ZEPHYR80.LIB`, Turbo Modula-2 system files and
+the desired ZTR songs on a CP/M work drive. In the TM2 Options menu enable
+Native and Extensions. Native is an IDE option and cannot be enabled from
+source.
 
-Compile definition modules before implementations:
+Choose `Path to search` and append `ZEPHYR80` to the default path:
 
 ```text
-CTCLOW.DEF
-TIMER.DEF
-SOUND.DEF
-ZTR.DEF
-PLAYER.DEF
-TRKUI.DEF
+SYSLIB ZEPHYR80
 ```
 
-Assemble and convert the private CTC module:
+Compile the application modules in this order:
 
 ```text
-ZMAC CTCLOW.Z80
-```
-
-Then use TM2's Run command:
-
-```text
-REL CTCLOW CTCLOW
-```
-
-This combines `CTCLOW.SYM` and `CTCLOW.REL` into `CTCLOW.MCD`.  REL public
-symbols are limited to six characters, which is why only the private shim uses
-short procedure names.
-
-Compile the implementation and main modules:
-
-```text
-TIMER.MOD
-SOUND.MOD
-ZTR.MOD
-PLAYER.MOD
-TRKUI.MOD
 SNTRACK.MOD
 ```
 
-The physical Zephyr may run out of memory while compiling `PLAYER.MOD`, running
-`REL CTCLOW CTCLOW`, or performing the final link.  This is tool workspace
-pressure, not necessarily an oversized final program.  When memory permits,
-build a standalone linker from the TM2 Link menu:
+The integrated linker may run out of memory on the complete program. Use the
+TM2 Librarian to copy these members from `ZEPHYR80.LIB` to the work disk:
 
 ```text
-main module: LINK
-output file: TLINK.COM
-include all needed modules: Y
+PLAYER.MCD  ZTR.MCD  PLYCORE.MCD
+SOUND.MCD   TIMER.MCD  CTCLOW.MCD
 ```
 
-Run `TLINK.COM`, select `SNTRACK` as the main module, `SNTRACK.COM` as the
-output, and include all needed modules.  The PC build links the original
-single-module player without relying on the physical Zephyr's available TPA.
+Build a standalone linker from the TM2 Link menu with `LINK` as the main
+module and `TLINK.COM` as output. Run it with `SNTRACK` as the main module,
+`SNTRACK.COM` as output, and include all needed modules.
 
 The PC Makefile is the reproducible full build when either operation exceeds
-the Zephyr's TPA.  The resulting COM files can then be copied to the SD card for
+the Zephyr's TPA. The resulting COM file can then be copied to the SD card for
 hardware acceptance.
 
 ## RunCPM during the port
 
 RunCPM is useful for native compilation, linking and hardware-independent
-tests.  Its directory-backed drives are case-sensitive on Linux, so stage CP/M
-filenames in uppercase.  The TM2 compiler and ZMAC also require CP/M CRLF text
-when used in that environment.
+tests. Its directory-backed drives are case-sensitive on Linux, so stage CP/M
+filenames in uppercase. The TM2 compiler also requires CP/M CRLF text when used
+in that environment.
 
-RunCPM can validate:
-
-- ZTR loading and bounds checks;
-- typed player state and complete song traversal;
-- TM2/REL symbol resolution;
-- final COM linking and command-line handling.
-
-RunCPM does not validate Zephyr CTC interrupts or Afternoon Blend writes.  Use
-the physical Zephyr for `TIMTEST.COM`, `SNDTEST.COM` and audible playback.
-
-## Tests
-
-```text
-TEST/TIMTEST.MOD  600 logical ticks at 60 Hz
-TEST/SNDTEST.MOD  tones/noise on all four PSGs
-TEST/ZTRTEST.MOD  loads NIGHT.ZTR and prints its structure
-TEST/PLYTEST.MOD  traverses NIGHT.ZTR and RUNAWAY.ZTR without a timer
-```
-
-The RunCPM player traversal currently completes with:
-
-```text
-NIGHT.ZTR    11518 ticks, 3:11, 34496 PSG writes
-RUNAWAY.ZTR  13056 ticks, 3:30, 43363 PSG writes
-```
-
-Runaway Circuit uses 62 Hz, explaining the relationship between its tick count
-and elapsed time.
+RunCPM validates archive resolution, compilation, linking, usage handling and
+the missing-file path. The library's own build validates ZTR loading and
+complete-song traversal. Neither can validate live CTC interrupts or Afternoon
+Blend writes; those checks require the physical Zephyr.
 
 ## Runtime ownership
 
-While active, `Timer` exclusively owns CTC0 and a dynamically aligned private
-IM2 page allocated in its TM2 data.  It copies the active BIOS SIO handler into
-the private page, changes I only while active, and restores the previous I
-value on stop.  CTC registers are write-only, so a prior CTC0 configuration
-cannot be restored; callers must treat CTC0 as an exclusive application
-resource.
+`SNTRACK.MOD` owns the standalone clock policy. After `Player.Load`, it starts
+`Timer` at `Player.TickRate` and passes every consumed timer event to exactly
+one `Player.Tick` call. `Player` itself never owns CTC0.
+
+The library's private `CTCLow` bridge follows the current BIOS-owned IM2
+contract. It registers CTC0 through Zephyr BDOS function 200, keeps its callback
+at `E3C0h-E3F6h` and state at `E3F8h-E3FEh`, and resets and
+unregisters through function 201.
+
+TM2 retains its stock `LD SP,(0006h)` startup, giving the tracker a stack at
+`EC06h`. The callback's high placement avoids the tracker's data/heap tail and
+leaves about 2 KiB for the descending player stack before the callback area.
+
+The callback only publishes pending ticks in the program-owned common
+reservation and returns with `RET`; the BIOS dispatcher supplies the common
+interrupt stack, register preservation, `EI`, and `RETI`. Callers must still
+treat CTC0 as an exclusive application resource.
 
 The pending counter saturates at 255.  `QueueOverflows` counts ticks rejected
 at that boundary.  It cannot detect hardware expirations lost while interrupts
 were disabled.
 
-`Sound` exclusively owns all four Afternoon Blend PSGs while the application
-runs.  It mutes them on initialization, normal stop and shutdown.  The PSGs are
-write-only, so their prior state cannot be restored.
+`Player` owns all four Afternoon Blend PSGs during playback and mutes them on
+normal completion or user stop. The PSGs are write-only, so prior state cannot
+be restored.
 
 Console polling occurs once per logical second and only in foreground code.
 The ISR performs no BDOS, parsing, rendering, or PSG work.
@@ -183,10 +128,7 @@ The ISR performs no BDOS, parsing, rendering, or PSG work.
 
 Before replacing the assembly executable in normal use, verify on Zephyr:
 
-1. `TIMTEST.COM` reaches 600 ticks in approximately ten seconds and returns to
-   CP/M with the console still working.
-2. Repeated timer start/stop leaves BIOS SIO input operational.
-3. `SNDTEST.COM` addresses all four PSGs and mutes cleanly.
-4. Night Market and Runaway Circuit play at the expected pitch and tempo.
-5. The status line advances once per order and queue overflows remain zero.
-6. Natural completion and Q/Escape both stop CTC0 and mute every PSG.
+1. Night Market and Runaway Circuit play at the expected pitch and tempo.
+2. The status line advances once per order and queue overflows remain zero.
+3. Natural completion and Q/Escape both stop CTC0 and mute every PSG.
+4. Repeated runs return to CP/M with BIOS console interrupts still working.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build SNTracker TM2 with the original CP/M tools under RunCPM."""
+"""Build the standalone TM2 tracker against ZEPHYR80.LIB under RunCPM."""
 
 from __future__ import annotations
 
@@ -16,36 +16,10 @@ import time
 from pathlib import Path
 
 
-DEF_MODULES = (
-    "CTCLOW.DEF",
-    "TIMER.DEF",
-    "SOUND.DEF",
-    "ZTR.DEF",
-    "PLAYER.DEF",
-    "TRKUI.DEF",
-)
-
-MOD_MODULES = (
-    "TIMER.MOD",
-    "SOUND.MOD",
-    "ZTR.MOD",
-    "PLAYER.MOD",
-    "TRKUI.MOD",
-    "SNTRACK.MOD",
-    "TIMTEST.MOD",
-    "SNDTEST.MOD",
-    "ZTRTEST.MOD",
-    "PLYTEST.MOD",
-)
-
-LINK_TARGETS = (
-    ("SNTRACK", "SNTRACK.COM"),
-    ("TIMTEST", "TIMTEST.COM"),
-    ("SNDTEST", "SNDTEST.COM"),
-    ("ZTRTEST", "ZTRTEST.COM"),
-    ("PLYTEST", "PLYTEST.COM"),
-)
-
+MOD_MODULES = ("SNTRACK.MOD",)
+LIBRARY_MODULES = ("CTCLOW", "TIMER", "SOUND", "ZTR", "PLYCORE", "PLAYER")
+LIBRARY_NAME = "ZEPHYR80.LIB"
+OUTPUT_NAME = "SNTRACK.COM"
 ANSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -65,17 +39,13 @@ class CPM:
         self.verbose = verbose
         self.pending = bytearray()
         self.process = subprocess.Popen(
-            [str(executable)],
-            cwd=work,
-            stdin=slave,
-            stdout=slave,
-            stderr=slave,
-            close_fds=True,
+            [str(executable)], cwd=work, stdin=slave, stdout=slave,
+            stderr=slave, close_fds=True,
         )
         os.close(slave)
 
-    def send(self, text: str) -> None:
-        os.write(self.master, text.encode("ascii"))
+    def send(self, value: str) -> None:
+        os.write(self.master, value.encode("ascii"))
 
     def expect_any(
         self, markers: tuple[bytes, ...], timeout: float = 120.0
@@ -191,14 +161,12 @@ def stage(args: argparse.Namespace, work: Path) -> Path:
             shutil.copy2(source, drive / source.name.upper())
 
     project = Path(__file__).resolve().parent.parent
-    for directory in (project / "SRC", project / "TEST"):
-        for source in sorted(directory.iterdir()):
-            if source.is_file():
-                validate_83(source)
-                copy_text(source, drive / source.name.upper())
+    for source in sorted((project / "SRC").iterdir()):
+        if source.is_file():
+            validate_83(source)
+            copy_text(source, drive / source.name.upper())
 
-    shutil.copy2(require_file(args.night, "Night Market ZTR"), drive / "NIGHT.ZTR")
-    shutil.copy2(require_file(args.runaway, "Runaway Circuit ZTR"), drive / "RUNAWAY.ZTR")
+    shutil.copy2(require_file(args.library, "Zephyr80 library"), drive / LIBRARY_NAME)
     shutil.copy2(require_file(args.ccp, "RunCPM CCP"), work / "CCP-ZCP3.60K")
     return drive
 
@@ -213,93 +181,94 @@ def check_output(data: bytes, label: str, required: tuple[str, ...]) -> None:
             raise BuildError(label + " did not report {!r}:\n{}".format(marker, text[-8000:]))
 
 
+def select_library_path(cpm: CPM) -> None:
+    cpm.send("o")
+    cpm.expect(b"\n>", 30.0)
+    cpm.send("p")
+    cpm.expect(b"New search path:", 30.0)
+    cpm.send("ZEPHYR80\r")
+    result = cpm.expect(b"\n>", 30.0)
+    check_output(result, "TM2 library path", ("SYSLIB ZEPHYR80",))
+    cpm.send("q")
+    cpm.expect(b"\n>", 30.0)
+
+
+def extract_library_code(cpm: CPM) -> None:
+    cpm.send("b")
+    cpm.expect(b"Select library:", 30.0)
+    cpm.send(LIBRARY_NAME + "\r")
+    cpm.expect(b"*", 30.0)
+    for module in LIBRARY_MODULES:
+        member = module + ".MCD"
+        cpm.send("c")
+        cpm.expect(b"Copy module:", 30.0)
+        cpm.send(member + "\r")
+        cpm.expect(b"Copy to drive or library:", 30.0)
+        cpm.send("A:\r")
+        result = cpm.expect(b"*", 60.0)
+        check_output(result, "extract " + member, ("Copying " + member,))
+    cpm.send("q")
+    cpm.expect(b"\n>", 30.0)
+
+
 def build(args: argparse.Namespace, work: Path, drive: Path) -> None:
-    print("[1/7] Assemble CTCLOW.Z80")
     cpm = CPM(args.runcpm, work, args.verbose)
     try:
         cpm.expect(b"A0>", 60.0)
-        result = cpm.cpm("ZMAC CTCLOW.Z80", 120.0)
-        check_output(result, "ZMAC", ("NO ERRORS", "CTCLOW.REL"))
-
-        print("[2/7] Compile definition modules")
         cpm.enter_m2()
-        for name in DEF_MODULES:
-            print("      " + name)
-            cpm.compile(name)
-        cpm.leave_m2()
+        select_library_path(cpm)
 
-        print("[3/7] Convert the Microsoft REL bridge in a fresh TM2 session")
-        cpm.enter_m2()
-        cpm.send("rREL CTCLOW CTCLOW\r")
-        result = cpm.expect(b"\n>", 120.0)
-        check_output(result, "REL", ("undefined symbols:", "none", "CTCLOW.MCD produced"))
-        cpm.leave_m2()
-
-        print("[4/7] Compile implementation and main modules")
-        cpm.enter_m2()
+        print("[1/4] Compile standalone tracker against " + LIBRARY_NAME)
         for name in MOD_MODULES:
             print("      " + name)
             cpm.compile(name)
-        cpm.leave_m2()
 
-        print("[5/7] Build the low-memory standalone linker")
-        cpm.enter_m2()
-        cpm.send("lLINK\rTLINK.COM\ry")
+        print("[2/4] Build low-memory linker and extract library code")
+        cpm.send("wLINK.MCD\r")
+        cpm.expect(b"\n>", 30.0)
+        cpm.send("l\r")
+        cpm.expect(b"Output File:", 30.0)
+        cpm.send("TLINK.COM\r")
+        cpm.expect(b"Include all needed modules", 30.0)
+        cpm.send("y")
         result = cpm.expect(b"\n>", 120.0)
         check_output(result, "TM2 linker bootstrap", ("TLINK.COM produced",))
+        extract_library_code(cpm)
         cpm.leave_m2()
 
-        print("[6/7] Link application and test programs")
-        for module, output in LINK_TARGETS:
-            print("      " + output)
-            cpm.send("TLINK\r")
-            cpm.expect(b"Link main module:", 30.0)
-            cpm.send(module + "\r")
-            cpm.expect(b"Output File:", 30.0)
-            cpm.send(output + "\r")
-            cpm.expect(b"Include all needed modules", 30.0)
-            cpm.send("y")
-            result = cpm.expect(b"A0>", 180.0)
-            check_output(
-                result,
-                "link " + output,
-                ("Unresolved External References: None", "Missing Modules: None", output + " produced"),
-            )
+        print("[3/4] Link " + OUTPUT_NAME)
+        cpm.send("TLINK\r")
+        cpm.expect(b"Link main module:", 30.0)
+        cpm.send("SNTRACK\r")
+        cpm.expect(b"Output File:", 30.0)
+        cpm.send(OUTPUT_NAME + "\r")
+        cpm.expect(b"Include all needed modules", 30.0)
+        cpm.send("y")
+        result = cpm.expect(b"A0>", 180.0)
+        check_output(
+            result,
+            "link " + OUTPUT_NAME,
+            ("Unresolved External References: None", "Missing Modules: None", OUTPUT_NAME + " produced"),
+        )
 
-        print("[7/7] Run hardware-independent regressions")
-        result = cpm.cpm("ZTRTEST", 120.0)
-        check_output(result, "ZTRTEST", ("Title: Night Market", "Bytes:", "20234"))
-        ztr_text = display(result)
-        for line in ztr_text.splitlines():
-            if line.startswith(("Title:", "Bytes:", "Rate:", "Orders:")):
-                print("      " + line.strip())
-
-        result = cpm.cpm("PLYTEST", 300.0)
-        check_output(result, "PLYTEST", ("NIGHT.ZTR:", "RUNAWAY.ZTR:"))
-        player_text = display(result)
-        for line in player_text.splitlines():
-            if line.startswith(("NIGHT.ZTR:", "RUNAWAY.ZTR:")):
-                print("      " + line.strip())
-
+        print("[4/4] Run command-line regressions")
         result = cpm.cpm("SNTRACK", 60.0)
-        check_output(result, "SNTRACK command line", ("Usage: SNTRACK file.ZTR",))
+        check_output(result, "SNTRACK usage", ("Usage: SNTRACK file.ZTR",))
+        result = cpm.cpm("SNTRACK NOFILE.ZTR", 60.0)
+        check_output(result, "SNTRACK missing file", ("Cannot load ZTR file; error",))
     finally:
         cpm.close()
 
     output_dir = args.output.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    for _, name in LINK_TARGETS:
-        source = drive / name
-        if not source.is_file():
-            raise BuildError("linked output is missing: " + str(source))
-        temporary = output_dir / (name + ".NEW")
-        shutil.copy2(source, temporary)
-        os.replace(temporary, output_dir / name)
-
+    source = drive / OUTPUT_NAME
+    if not source.is_file():
+        raise BuildError("linked output is missing: " + str(source))
+    temporary = output_dir / (OUTPUT_NAME + ".NEW")
+    shutil.copy2(source, temporary)
+    os.replace(temporary, output_dir / OUTPUT_NAME)
     print("Published:")
-    for _, name in LINK_TARGETS:
-        result = output_dir / name
-        print("  {:12s} {:6d} bytes".format(name, result.stat().st_size))
+    print("  {:12s} {:6d} bytes".format(OUTPUT_NAME, (output_dir / OUTPUT_NAME).stat().st_size))
 
 
 def parse_args() -> argparse.Namespace:
@@ -307,8 +276,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--runcpm", type=Path, required=True)
     parser.add_argument("--tm2-dir", type=Path, required=True)
     parser.add_argument("--ccp", type=Path, required=True)
-    parser.add_argument("--night", type=Path, required=True)
-    parser.add_argument("--runaway", type=Path, required=True)
+    parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--keep", action="store_true", help="retain the temporary CP/M drive")
     parser.add_argument("--verbose", action="store_true", help="show raw compiler output")

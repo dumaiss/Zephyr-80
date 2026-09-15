@@ -1,32 +1,33 @@
 .DEFAULT_GOAL := all
 
-PYTHON    ?= python3
-RUNCPM    ?= TOOLS/RUNCPM
-TM2DIR    ?= ../Software/disk1/4
-CCPFILE   ?= ../CPM2.2/zcpr2/tools/runcpm-ccp/CCP-ZCP3.60K
-NIGHTZTR  ?= ../SNTracker/songs/night-market.ztr
-RUNAWAY   ?= ../SNTracker/songs/RunawayCircuit.ztr
+PYTHON   ?= python3
+LIBPROJ  ?= ../Zephyr80Lib
+LIBFILE  ?= $(LIBPROJ)/BUILD/ZEPHYR80.LIB
+RUNCPM   ?= $(LIBPROJ)/TOOLS/RUNCPM
+TM2DIR   ?= $(LIBPROJ)/TOOLS/TM2
+CCPFILE  ?= $(LIBPROJ)/TOOLS/CCP-ZCP3.60K
 
-.PHONY: all build test clean help
+.PHONY: all library build test clean help
 
 all: build
 
-build:
+library:
+	$(MAKE) -C "$(LIBPROJ)" build
+
+build: library
 	$(PYTHON) TOOLS/TM2BUILD.PY \
 		--runcpm "$(RUNCPM)" \
 		--tm2-dir "$(TM2DIR)" \
 		--ccp "$(CCPFILE)" \
-		--night "$(NIGHTZTR)" \
-		--runaway "$(RUNAWAY)" \
+		--library "$(LIBFILE)" \
 		--output BUILD
 
 test: build
 
 clean:
-	$(RM) BUILD/SNTRACK.COM BUILD/TIMTEST.COM BUILD/SNDTEST.COM \
-		BUILD/ZTRTEST.COM BUILD/PLYTEST.COM
+	$(RM) BUILD/SNTRACK.COM
 
 help:
-	@echo "make          Build and run the host-independent regression tests"
-	@echo "make clean    Remove generated COM files"
-	@echo "Override RUNCPM, TM2DIR, CCPFILE, NIGHTZTR, or RUNAWAY as needed"
+	@echo "make          Rebuild Zephyr80Lib, then build SNTRACK.COM"
+	@echo "make clean    Remove the generated standalone tracker"
+	@echo "Overrides: PYTHON, LIBPROJ, LIBFILE, RUNCPM, TM2DIR, CCPFILE"

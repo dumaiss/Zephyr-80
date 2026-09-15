@@ -1,4 +1,9 @@
-# Port status and remaining gates
+# Historical port status
+
+This plan records the original monolithic TM2 port. It is superseded by the
+thin standalone application in this directory and the reusable implementation
+in `../Zephyr80Lib`. The tracker no longer carries local copies of `Sound`,
+`Timer`, `CTCLow`, `ZTR`, or `Player`.
 
 The port is implemented end-to-end as native Turbo Modula-2 modules.  Building
 on the Zephyr is the primary development workflow; RunCPM is an optional
@@ -20,10 +25,10 @@ Completed implementation stages:
 Remaining acceptance work requires the physical Zephyr:
 
 1. Verify the TM2 foreign-call parameter convention under live timer use.
-2. Verify private IM2 SIO mirroring and restoration with the configured BIOS.
+2. Verify CTC callback registration, dispatch from `E000h`, and unregistration
+   with the configured BIOS-owned IM2 setup.
 3. Measure timer queue high-water behavior during dense 16-channel playback.
 4. Compare Night Market and Runaway Circuit audibly with the assembly player.
-5. Promote stable Timer and Sound interfaces into a shared TM2 platform tree.
 
 No BIOS jump-table entry, memory allocation, console driver, disk geometry, or
 existing assembly tracker source is changed by this port.

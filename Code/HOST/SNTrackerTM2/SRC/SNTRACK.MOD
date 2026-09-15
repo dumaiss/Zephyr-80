@@ -2,13 +2,13 @@ MODULE SNTrack;
 
 FROM SYSTEM IMPORT BDOS, IORESULT;
 FROM ComLine IMPORT commandLine, RedirectInput, RedirectOutput;
-IMPORT ZTR, Player, Sound, Timer, TrkUI;
+IMPORT Player, Timer;
 
 VAR
   fileName : ARRAY [0..20] OF CHAR;
-  loadResult : ZTR.LoadResult;
+  loadResult : Player.Result;
   timerResult, stopResult : Timer.Result;
-  keyTicks, key : CARDINAL;
+  keyTicks, idleSpins, key : CARDINAL;
 
 PROCEDURE PollKey;
 BEGIN
@@ -21,6 +21,23 @@ BEGIN
   END
 END PollKey;
 
+PROCEDURE InitUI;
+VAR title : ARRAY [0..63] OF CHAR;
+BEGIN
+  Player.Title(title);
+  WRITELN('Playing: ', title);
+  WRITELN('Q/Esc: stop; one update per pattern block')
+END InitUI;
+
+PROCEDURE ServiceUI;
+BEGIN
+  IF Player.TakeOrderChange() THEN
+    WRITELN('Order ', Player.CurrentOrder(),
+            '  time ', Player.Minutes(), ':', Player.Seconds(),
+            '  queue overflows ', Timer.QueueOverflows())
+  END
+END ServiceUI;
+
 BEGIN
   RedirectInput;
   RedirectOutput;
@@ -29,35 +46,45 @@ BEGIN
   IF fileName[0] = CHR(0) THEN
     WRITELN('Usage: SNTRACK file.ZTR')
   ELSE
-    loadResult := ZTR.Load(fileName);
-    IF loadResult # ZTR.loadOK THEN
+    Player.SetLooping(FALSE);
+    loadResult := Player.Load(fileName);
+    IF loadResult # Player.ok THEN
       WRITELN('Cannot load ZTR file; error ', ORD(loadResult))
     ELSE
-      Sound.Init;
-      Player.Init;
-      Player.Start;
-      TrkUI.Init;
-      timerResult := Timer.Start(ZTR.TickRate());
+      timerResult := Timer.Start(Player.TickRate());
       IF timerResult # Timer.ok THEN
         Player.Stop;
         WRITELN('Timer start failed; error ', ORD(timerResult))
       ELSE
-        keyTicks := ZTR.TickRate();
+        InitUI;
+        ServiceUI;
+        keyTicks := Player.TickRate();
+        idleSpins := 0;
         WHILE Player.Playing() DO
           IF Timer.TakeTick() THEN
+            idleSpins := 0;
             Player.Tick;
-            TrkUI.Service;
+            ServiceUI;
             IF keyTicks <= 1 THEN
               PollKey;
-              keyTicks := ZTR.TickRate()
+              keyTicks := Player.TickRate()
             ELSE
               DEC(keyTicks)
             END
+          ELSE
+            (* Keep abort input reachable if logical ticks stop.  The large
+               foreground divider keeps CONST/CONIN well below 10 Hz. *)
+            IF idleSpins = 65535 THEN
+              idleSpins := 0;
+              PollKey
+            ELSE
+              INC(idleSpins)
+            END
           END
         END;
-        stopResult := Timer.Stop()
+        stopResult := Timer.Stop();
+        Player.Stop
       END;
-      Sound.Shutdown;
       WRITELN;
       WRITELN('Playback stopped.')
     END
