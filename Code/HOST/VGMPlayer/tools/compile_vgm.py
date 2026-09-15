@@ -12,13 +12,15 @@ from pathlib import Path
 
 VGM_SAMPLE_RATE = 44100
 MAGIC = b"ZVGC"
-VERSION = 1
+VERSION = 2
 HEADER_SIZE = 16
 
 OP_END = 0x00
 OP_WRITE = 0x01
 OP_WAIT16 = 0x02
 OP_SHORT_BASE = 0x3F
+OP_WRITE_RUN_BASE = 0x80
+OP_WRITE_RUN_MAX = 16
 
 
 class VgmError(ValueError):
@@ -205,13 +207,32 @@ def compile_stream(
 ) -> tuple[bytes, int]:
     stream = bytearray()
     current_tick = 0
-    for sample, value in events:
+    event_index = 0
+    while event_index < len(events):
+        sample = events[event_index][0]
         event_tick = (sample * tick_rate + VGM_SAMPLE_RATE // 2) // VGM_SAMPLE_RATE
         if event_tick < current_tick:
             raise VgmError("event time moved backwards")
         emit_wait(stream, event_tick - current_tick)
         current_tick = event_tick
-        stream.extend((OP_WRITE, value))
+
+        # All PSG writes quantized to this tick are one ordered burst.  V2
+        # stores up to sixteen values under one 80h-8Fh run opcode instead of
+        # repeating the two-byte V1 WRITE opcode for every value.
+        values = bytearray()
+        while event_index < len(events):
+            next_sample, value = events[event_index]
+            next_tick = (
+                next_sample * tick_rate + VGM_SAMPLE_RATE // 2
+            ) // VGM_SAMPLE_RATE
+            if next_tick != event_tick:
+                break
+            values.append(value)
+            event_index += 1
+        for run_start in range(0, len(values), OP_WRITE_RUN_MAX):
+            run = values[run_start : run_start + OP_WRITE_RUN_MAX]
+            stream.append(OP_WRITE_RUN_BASE + len(run) - 1)
+            stream.extend(run)
 
     end_tick = (end_sample * tick_rate + VGM_SAMPLE_RATE // 2) // VGM_SAMPLE_RATE
     emit_wait(stream, max(0, end_tick - current_tick))
