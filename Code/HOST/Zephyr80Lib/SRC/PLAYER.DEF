@@ -1,0 +1,29 @@
+DEFINITION MODULE Player;
+
+TYPE
+  Result = (ok, noFileName, fileNotFound, fileTooLarge,
+            unsupported, malformed);
+
+(* Load a ZTR file, claim Sound, and prepare playback at order zero. *)
+PROCEDURE Load(name : ARRAY OF CHAR) : Result;
+
+(* Advance playback by exactly one tracker tick. The application supplies time. *)
+PROCEDURE Tick;
+
+(* Stop playback and mute the sound hardware. *)
+PROCEDURE Stop;
+
+PROCEDURE Playing() : BOOLEAN;
+PROCEDURE SetLooping(enabled : BOOLEAN);
+PROCEDURE Looping() : BOOLEAN;
+PROCEDURE Finished() : BOOLEAN;
+PROCEDURE TakeFinished() : BOOLEAN;
+PROCEDURE TickRate() : CARDINAL;
+PROCEDURE Title(VAR text : ARRAY OF CHAR);
+PROCEDURE CurrentOrder() : CARDINAL;
+PROCEDURE CurrentRow() : CARDINAL;
+PROCEDURE Minutes() : CARDINAL;
+PROCEDURE Seconds() : CARDINAL;
+PROCEDURE TakeOrderChange() : BOOLEAN;
+
+END Player.

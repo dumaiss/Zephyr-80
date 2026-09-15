@@ -1,0 +1,36 @@
+DEFINITION MODULE ZTR;
+
+CONST
+  ChannelCount = 16;
+  NoteCount = 96;
+  MaxFileSize = 20480;
+  NoPattern = 255;
+
+TYPE
+  LoadResult = (loadOK, noFileName, fileNotFound, fileTooLarge,
+                unsupported, malformed);
+
+PROCEDURE Load(name : ARRAY OF CHAR) : LoadResult;
+PROCEDURE Loaded() : BOOLEAN;
+PROCEDURE TickRate() : CARDINAL;
+PROCEDURE Speed() : CARDINAL;
+PROCEDURE PatternLength() : CARDINAL;
+PROCEDURE OrderCount() : CARDINAL;
+PROCEDURE PatternCount() : CARDINAL;
+PROCEDURE InstrumentCount() : CARDINAL;
+PROCEDURE FileSize() : CARDINAL;
+PROCEDURE Title(VAR text : ARRAY OF CHAR);
+
+(* Bounds-checked validation occurs during Load.  These accessors are used by
+   PLAYER.MOD after a successful load and keep packed disk records out of TM2
+   record layout. *)
+PROCEDURE ByteAt(offset : CARDINAL) : CARDINAL;
+PROCEDURE WordAt(offset : CARDINAL) : CARDINAL;
+PROCEDURE OrderPattern(order, channel : CARDINAL) : CARDINAL;
+PROCEDURE FindPattern(channel, pattern : CARDINAL;
+                      VAR streamOffset, streamLength : CARDINAL) : BOOLEAN;
+PROCEDURE FindInstrument(number : CARDINAL;
+                         VAR entryOffset : CARDINAL) : BOOLEAN;
+PROCEDURE NotePeriod(note : CARDINAL) : CARDINAL;
+
+END ZTR.

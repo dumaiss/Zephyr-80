@@ -1,0 +1,235 @@
+; CTCLOW.Z80 -- Turbo Modula-2 CTC callback bridge for Zephyr-80.
+;
+; Assemble with ZMAC.  Convert CTCLOW.REL plus compiled CTCLOW.SYM with the
+; Turbo Modula-2 REL utility.  Parameters use TM2's normal stack convention;
+; every entry removes its parameters and leaves the return address on stack.
+;
+; The BIOS owns IM2.  LSTART copies the callback and its state into the
+; top of the program-owned common reservation at E3C0h-E3FEh, registers CTC0 through
+; Zephyr BDOS function 200, and only then starts the channel.  The callback
+; returns with RET; the BIOS dispatcher preserves registers and issues RETI.
+; Foreground counter access is atomic and restores the caller's IFF state.
+
+        .Z80
+
+        PUBLIC  LSTART, LSTOP, ISACT
+        PUBLIC  PEND, TAKE, OVER, INTS
+
+CTC0PORT        EQU     040H
+CTCCONTROL      EQU     0A7H
+CTCSTOP         EQU     003H
+CTCTIME         EQU     217
+CTCBASERATE     EQU     180
+BDOS            EQU     0005H
+REGISR          EQU     200
+UNREGISR        EQU     201
+
+; Leave E000h-E3BFh available to the TM2 runtime.  The copied callback is
+; 55 bytes (E3C0h-E3F6h), followed by one spare byte and seven state bytes.
+CALLBACK        EQU     0E3C0H
+CBSTATE         EQU     0E3F8H
+OVERFLOW        EQU     CBSTATE+0
+INTCOUNT        EQU     CBSTATE+2
+TICKRATE        EQU     CBSTATE+4
+TICKPHASE       EQU     CBSTATE+5
+PENDING         EQU     CBSTATE+6
+
+        CSEG
+
+; PROCEDURE LSTART(rate : CARDINAL)
+LSTART:
+        POP     DE
+        POP     HL
+        PUSH    DE
+        LD      A,L
+        LD      (TICKRATE),A
+        XOR     A
+        LD      (TICKPHASE),A
+        LD      (PENDING),A
+        LD      (OVERFLOW),A
+        LD      (OVERFLOW+1),A
+        LD      (INTCOUNT),A
+        LD      (INTCOUNT+1),A
+
+        LD      HL,CTCISR
+        LD      DE,CALLBACK
+        LD      BC,CTCEND-CTCISR
+        LDIR
+
+        LD      B,0
+        LD      DE,CALLBACK
+        LD      C,REGISR
+        CALL    BDOS
+        OR      A
+        JR      NZ,CTSTARTFAIL
+        LD      A,CTCCONTROL
+        OUT     (CTC0PORT),A
+        LD      A,CTCTIME
+        OUT     (CTC0PORT),A
+        LD      A,1
+        LD      (ACTIVE),A
+        RET
+CTSTARTFAIL:
+        XOR     A
+        LD      (ACTIVE),A
+        RET
+
+; PROCEDURE LSTOP
+LSTOP:
+        LD      A,(ACTIVE)
+        OR      A
+        RET     Z
+        LD      A,CTCSTOP
+        OUT     (CTC0PORT),A
+        LD      B,0
+        LD      C,UNREGISR
+        CALL    BDOS
+        XOR     A
+        LD      (ACTIVE),A
+        RET
+
+; PROCEDURE ISACT(VAR value : CARDINAL)
+ISACT:
+        POP     DE
+        POP     HL
+        PUSH    DE
+        LD      A,(ACTIVE)
+        LD      (HL),A
+        INC     HL
+        XOR     A
+        LD      (HL),A
+        RET
+
+; PROCEDURE PEND(VAR value : CARDINAL)
+PEND:
+        POP     DE
+        POP     HL
+        PUSH    DE
+        LD      A,I
+        JP      PE,PENDIFF
+        LD      A,I
+PENDIFF:
+        PUSH    AF
+        DI
+        LD      A,(PENDING)
+        LD      (HL),A
+        INC     HL
+        XOR     A
+        LD      (HL),A
+        POP     AF
+        RET     PO
+        EI
+        RET
+
+; PROCEDURE TAKE(VAR value : CARDINAL)
+TAKE:
+        POP     DE
+        POP     HL
+        PUSH    DE
+        LD      A,I
+        JP      PE,TAKEIFF
+        LD      A,I
+TAKEIFF:
+        PUSH    AF
+        DI
+        LD      A,(PENDING)
+        OR      A
+        JR      Z,CTTAKENONE
+        DEC     A
+        LD      (PENDING),A
+        LD      A,1
+        JR      CTTAKESTORE
+CTTAKENONE:
+        XOR     A
+CTTAKESTORE:
+        LD      (HL),A
+        INC     HL
+        XOR     A
+        LD      (HL),A
+        POP     AF
+        RET     PO
+        EI
+        RET
+
+; PROCEDURE OVER(VAR value : CARDINAL)
+OVER:
+        POP     DE
+        POP     HL
+        PUSH    DE
+        LD      A,I
+        JP      PE,OVERIFF
+        LD      A,I
+OVERIFF:
+        PUSH    AF
+        DI
+        LD      A,(OVERFLOW)
+        LD      (HL),A
+        LD      A,(OVERFLOW+1)
+        INC     HL
+        LD      (HL),A
+        POP     AF
+        RET     PO
+        EI
+        RET
+
+; PROCEDURE INTS(VAR value : CARDINAL)
+INTS:
+        POP     DE
+        POP     HL
+        PUSH    DE
+        LD      A,I
+        JP      PE,INTSIFF
+        LD      A,I
+INTSIFF:
+        PUSH    AF
+        DI
+        LD      A,(INTCOUNT)
+        LD      (HL),A
+        LD      A,(INTCOUNT+1)
+        INC     HL
+        LD      (HL),A
+        POP     AF
+        RET     PO
+        EI
+        RET
+
+; Copied to CALLBACK.  Publish logical ticks only.  All absolute data operands
+; refer to common memory, all control transfers are relative, and no TM2, BDOS,
+; parsing or PSG routine is called.
+CTCISR:
+        LD      HL,(INTCOUNT)
+        INC     HL
+        LD      (INTCOUNT),HL
+
+        LD      A,(TICKPHASE)
+        LD      HL,TICKRATE
+        ADD     A,(HL)
+        JR      C,CTPHOVER
+        CP      CTCBASERATE
+        JR      C,CTPHSTORE
+        SUB     CTCBASERATE
+        JR      CTTICKDUE
+CTPHOVER:
+        ADD     A,256-CTCBASERATE
+CTTICKDUE:
+        LD      (TICKPHASE),A
+        LD      A,(PENDING)
+        CP      0FFH
+        JR      Z,CTQUEUEFULL
+        INC     A
+        LD      (PENDING),A
+        JR      CTISRDONE
+CTQUEUEFULL:
+        LD      HL,(OVERFLOW)
+        INC     HL
+        LD      (OVERFLOW),HL
+        JR      CTISRDONE
+CTPHSTORE:
+        LD      (TICKPHASE),A
+CTISRDONE:
+        RET
+CTCEND:
+
+ACTIVE:         DEFB    0
+
+        END

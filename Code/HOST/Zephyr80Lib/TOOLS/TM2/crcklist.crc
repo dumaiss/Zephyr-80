@@ -1,0 +1,21 @@
+
+--> FILE:  COMPILE .MCD		CRC = 75 8D
+--> FILE:  ERRMSGS .OVR		CRC = 9D 2E
+--> FILE:  GENZ80  .MCD		CRC = 28 B4
+--> FILE:  HELLO   .MOD		CRC = 63 B4
+--> FILE:  INSTM2  .COM		CRC = 9A 22
+--> FILE:  INSTM2  .DTA		CRC = 4A 9D
+--> FILE:  INSTM2  .MSG		CRC = 01 AD
+--> FILE:  LIBRARY .MCD		CRC = 56 DB
+--> FILE:  LINK    .MCD		CRC = 04 A8
+--> FILE:  M2      .COM		CRC = 12 CB
+--> FILE:  M2      .OVR		CRC = 02 02
+--> FILE:  PARSER1 .MOD		CRC = 4F 6D
+--> FILE:  PRIME   .MOD		CRC = 60 94
+--> FILE:  PROFILE .MCD		CRC = 64 5A
+--> FILE:  READ    .ME 		CRC = 70 C8
+--> FILE:  REL     .MCD		CRC = EE 12
+--> FILE:  SHELL   .MCD		CRC = CF AF
+--> FILE:  STRTEXTS.MOD		CRC = A1 48
+--> FILE:  SYSLIB  .LIB		CRC = B2 D7
+                                           
