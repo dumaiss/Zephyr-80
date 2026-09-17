@@ -102,9 +102,16 @@ static void platform_init(void)
 
     /* The PIC does not currently implement the manual NMI request.  Leave its
      * /NMI connection high-impedance so it cannot fight another card driving
-     * the shared bus signal.  Preload the latch for any future use. */
+     * the shared bus signal.  Preload the latch for any future use.
+     *
+     * The weak pull-up is not optional: nothing else on the net holds it, and
+     * the Z80's NMI input is edge-triggered, so without it the host takes
+     * spurious NMIs -- measured with the CTC endurance ROM, and the reason a
+     * program could appear to restart itself.  Input plus pull-up keeps the
+     * net deasserted while leaving any card free to pull it low. */
     HOST_NMI_LAT  = HOST_NMI_IDLE;
     HOST_NMI_TRIS = 1;
+    HOST_NMI_WPU  = 1;
 
     /* /PWR_OFF was taken to its idle level above, deliberately early.
      * /SHUTDOWN_RQ is set up by power_init(); it is an input and nothing is

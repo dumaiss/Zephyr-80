@@ -340,6 +340,17 @@
  *
  * /NMI is a shared active-low bus signal.  Until manual NMI support is
  * implemented, RF5 must remain an input so the PIC cannot drive that net.
+ *
+ * It does, however, have to HOLD that net.  The board netlists give /NMI four
+ * pins in total -- the Z80's NMI input, this pin, and the two bus connector
+ * pins -- and no pull-up resistor, so with RF5 an input and nothing else
+ * connected the Z80's edge-triggered NMI input floats.  It fired on its own on
+ * the host: the standalone CTC endurance ROM
+ * (Code/HOST/CTCEnduranceROM) recorded spurious NMIs whenever CTC interrupts
+ * were being delivered, and none with the same channel running and its
+ * interrupt disabled.  A weak pull-up is the same fail-safe that the power
+ * pair below documents -- hold your own input at the deasserted level, and let
+ * any card still pull the net low.
  * --------------------------------------------------------------------------- */
 #define NMI_RQ_TRIS          TRISFbits.TRISF4
 #define NMI_RQ_ANSEL         ANSELFbits.ANSELF4
@@ -349,6 +360,7 @@
 #define HOST_NMI_TRIS        TRISFbits.TRISF5
 #define HOST_NMI_ANSEL       ANSELFbits.ANSELF5
 #define HOST_NMI_LAT         LATFbits.LATF5
+#define HOST_NMI_WPU         WPUFbits.WPUF5
 #define HOST_NMI_ASSERTED    0
 #define HOST_NMI_IDLE        1
 
