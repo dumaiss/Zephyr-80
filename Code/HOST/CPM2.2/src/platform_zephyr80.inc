@@ -31,8 +31,10 @@ V9958_CONFIG_INT_ROUTE      = 0x01
 V9958_CONFIG_PORCH_OFF      = 0x02
 
 CTC0_CTRL                   = 0x40
-CTC1_CTRL                   = 0x41
-CTC2_CTRL                   = 0x42
+; PCB swaps CPU address lines for physical CTC channels 1 and 2.
+; These names are logical/physical channel ids, not consecutive CPU ports.
+CTC1_CTRL                   = 0x42
+CTC2_CTRL                   = 0x41
 CTC3_CTRL                   = 0x43
 
 ; Afternoon Blend PSG0 is the Coleco-compatible SN76489 used by ColecoGo.
@@ -80,7 +82,6 @@ SIO_WR1_RX_INT_ALL_PARITY_VECTOR     = 0x10
 SIO_WR1_RX_INT_ALL_NO_PARITY_VECTOR  = 0x18
 SIO_WR1_RX_INT_ALL          = SIO_WR1_RX_INT_ALL_NO_PARITY_VECTOR
 SIO_WR1_TX_INT_ENABLE       = 0x02
-SIO_WR9_MIE                 = 0x08
 
 ; --- Dependent Aliases & Composites ---
 COPY_LATCH0                 = SHADOW_BIT

@@ -431,10 +431,8 @@ ioc_command_send_frame:
 	; to a second.  Masking the transfers and leaving the WAIT interruptible
 	; is the contract; see the response scan below.
 	;
-	; Assumes the caller had interrupts enabled, which every current caller
-	; does.  Preserving the entry state properly needs ld a,i with the Z80
-	; erratum retry, and is required before this ships.
-	di
+	; The core token retains the entry IFF through send, arm, wait and body.
+	call ioc_cmd_irq_save
 
 	; PRELOAD, THEN GRANT.  The preamble goes into the transmitter and the
 	; underrun latch is cleared BEFORE RTS is asserted, so the very first clock
@@ -562,7 +560,7 @@ IOC_CMD_SEND_TRAIL_NEXT:
 	ret
 
 IOC_CMD_SEND_ERROR:
-	ei
+	call ioc_cmd_irq_restore
 	ret
 
 ; ---------------------------------------------------------------------------
@@ -653,7 +651,7 @@ IOC_CMD_RECV_DRAINED:
 
 	; Receiver is armed and hunting; the reply can no longer be missed.
 	; Everything from here to the preamble match is the WAIT, so unmask.
-	ei
+	call ioc_cmd_irq_restore
 
 	push de
 	pop hl				; HL = RX buffer pointer
@@ -697,7 +695,7 @@ IOC_CMD_RECV_BAD_FRAME_READY:
 ; From here the bytes are streaming and the MCU will not pause, so the body is
 ; masked.  The longest command packet body is 33 bytes, about 1 ms.
 IOC_CMD_RECV_PACKET:
-	di
+	call irq_disable
 	ld hl,#ioc_packet_header
 	ld b,#5				; LEN_LO LEN_HI TYPE SEQ STATUS
 IOC_CMD_RECV_HEADER:
@@ -792,7 +790,7 @@ IOC_CMD_RECV_VERIFY:
 	; established.  Never issue Enter Hunt again until explicit link recovery.
 	ld a,#1
 	ld (ioc_rx_synced),a
-	ei
+	call ioc_cmd_irq_restore
 	xor a
 	ret
 
@@ -801,14 +799,7 @@ IOC_CMD_RECV_VERIFY:
 ; only filled in on one of four paths is worse than none: it reads as current
 ; whichever failure actually happened.
 ;
-; The exits carry only their status code and fall into the shared tail, which
-; costs exactly what the four separate ei/ld/ret exits cost before.  Slot 4 ends
-; at F41Ah and sd_storage_probe starts at F41Bh, so this section cannot grow by
-; even one byte.
-;
-; ei is in the shared tail rather than at each exit.  The marker-scan path
-; reaches here with interrupts already enabled -- it is the WAIT -- and a
-; redundant ei is a no-op, so one instruction serves both entry conditions.
+; Both marker-scan and masked-body exits restore the original command token.
 IOC_CMD_RECV_BAD_CRC:
 	ld a,#IOC_XPORT_BAD_CRC
 	jr IOC_CMD_RECV_FAIL
@@ -828,7 +819,7 @@ IOC_CMD_RECV_BODY_TIMEOUT:
 ; jump rather than a call and return.  Capture lives with the Bulk transport in
 ; slot 3, which is where deleting the old traces made room for it.
 IOC_CMD_RECV_FAIL:
-	ei
+	call ioc_cmd_irq_restore
 	jp ioc_diag_capture
 
 ; ---------------------------------------------------------------------------
@@ -921,11 +912,8 @@ IOCBULK_ARM:
 	; COALESCE across it, which matters if the tick is used for accounting
 	; rather than just scheduling.
 	;
-	; Assumes the caller had interrupts enabled, which every current caller
-	; does.  The fix that removes even this assumption is burst transfer: the
-	; MCU stops the clock every N bytes so the host can service interrupts in
-	; the gaps, bounding the blackout to ~192 us for 32-byte bursts.
-	di
+	; Restore the caller's IFF on every completion/error path.
+	call ioc_bulk_irq_save
 
 	ld a,#SIO_WR0_RESET_ERROR
 	out (SIO_BULK_CTRL_PORT),a
@@ -1106,11 +1094,11 @@ IOCBULK_CTS_WAIT:
 	ld a,d
 	or e
 	jr nz,IOCBULK_CTS_WAIT
-	ei
+	call ioc_bulk_irq_restore
 	ld a,#IOC_XPORT_HW_ERROR
 	ret
 IOCBULK_OK:
-	ei
+	call ioc_bulk_irq_restore
 
 	; Bind the packet to the READY reply that authorized this phase.  This is
 	; deliberately after reception: the MCU does not stop after the header, so
@@ -1176,7 +1164,7 @@ ioc_bulk_crc:
 
 IOCBULK_TIMEOUT:
 	call IOCBULK_RTS_OFF
-	ei
+	call ioc_bulk_irq_restore
 	ld a,#IOC_XPORT_TIMEOUT
 	ret
 
@@ -1184,7 +1172,7 @@ IOCBULK_BAD_PACKET:
 	call IOCBULK_RTS_OFF
 	ld a,#IOC_XPORT_BAD_FRAME
 	call ioc_bulk_diag_capture	; reads both SIO pointers; still masked
-	ei
+	call ioc_bulk_irq_restore
 	ret
 
 	; Rejected before RTS was asserted, so there is no handshake to unwind.
@@ -1236,6 +1224,32 @@ IOCBULK_RTS_OFF:
 ;   - OUTI, not OTIR: OTIR has no timeout, so a stalled MCU would hang the
 ;     machine with no way back to CP/M.
 ; ---------------------------------------------------------------------------
+; Foreground-only transport tokens. The two lanes cannot overlap or recurse.
+; Save clobbers AF; restore preserves all registers/status. Neither blocks or
+; emits traffic. Separate command/bulk tokens cannot overwrite one another.
+ioc_cmd_irq_save:
+	call irq_save_disable
+	ld (ioc_cmd_iff),a
+	ret
+ioc_cmd_irq_restore:
+	push af
+	ld a,(ioc_cmd_iff)
+	call irq_restore
+	pop af
+	ret
+ioc_bulk_irq_save:
+	call irq_save_disable
+	ld (ioc_bulk_iff),a
+	ret
+ioc_bulk_irq_restore:
+	push af
+	ld a,(ioc_bulk_iff)
+	call irq_restore
+	pop af
+	ret
+ioc_cmd_iff: .db 0
+ioc_bulk_iff: .db 0
+
 IOC_CMD_CODE_END:
 
 ; ---------------------------------------------------------------------------
@@ -1324,7 +1338,7 @@ IOCBULKW_ARM:
 
 	; Interrupts off for the transfer: the MCU is clock master and does not
 	; wait, so a stall here is lost data rather than latency.
-	di
+	call ioc_bulk_irq_save
 
 	; Arm channel A for transmit without touching the persistent RX boundary.
 	; The full-duplex idle bytes received while we send are drained by IOCBULK
@@ -1520,7 +1534,7 @@ IOCBULKW_SENT:
 	jp c,IOCBULKW_STALL
 
 	call IOCBULK_RTS_OFF
-	ei
+	call ioc_bulk_irq_restore
 
 	; /CTSA is held by the MCU for the whole bulk phase -- and for a write it
 	; stays asserted until the card commit finishes, so this also waits out
@@ -1554,13 +1568,13 @@ IOCBULKW_STALL_POP:
 	pop de
 IOCBULKW_STALL:
 	call IOCBULK_RTS_OFF
-	ei
+	call ioc_bulk_irq_restore
 	ld a,#IOC_XPORT_TIMEOUT
 	ret
 
 IOCBULKW_UNDERRUN:
 	call IOCBULK_RTS_OFF
-	ei
+	call ioc_bulk_irq_restore
 	ld a,#IOC_XPORT_HW_ERROR
 	ret
 

@@ -20,28 +20,7 @@
 
 XING_CODE_START:
 
-; xing_isr -- IM2 entry for the SIO interrupt.
-; Purpose:
-;   Take interrupt work off the interrupted stack.  The Z80 has already pushed
-;   the return address there; nothing else lands on it.  That matters once
-;   ZSDOS runs in bank 7 on its own small stack (plan F2).
-; Entry:
-;   Interrupts disabled by the acknowledge; any RAM mode; any SP.
-; Exit:
-;   RETI with interrupts enabled.
-; Invariants:
-;   One saved-SP slot, so not reentrant.  The body runs with interrupts
-;   disabled, and EI's one-instruction delay keeps RETI from nesting.
-;   EI before RETI is required: accepting the interrupt cleared IFF1 and IFF2,
-;   and RETI does not set them.  The handler used to end in a bare RETI, which
-;   left interrupts disabled until foreground code next ran EI.
-xing_isr:
-	ld (CBIOS_ISR_SP_SAVE),sp
-	ld sp,#CBIOS_ISR_STACK_TOP
-	call sio_core_isr
-	ld sp,(CBIOS_ISR_SP_SAVE)
-	ei
-	reti
+; SIO IM2 entry now belongs to cbios_irq.asm.
 
 ; xing_select_ram_bank
 ; Purpose:

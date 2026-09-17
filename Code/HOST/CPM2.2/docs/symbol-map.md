@@ -11,8 +11,8 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | ROM page 0: reset vector and common memory | `build/firmware.bin` | 65536 bytes |
 | Bank 7 payload | `build/bank7.bin` | 49152 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Assembler listing | `build/firmware.lst` | 916469 bytes |
-| Linker symbol map | `build/firmware.map` | 46676 bytes |
+| Assembler listing | `build/firmware.lst` | 921525 bytes |
+| Linker symbol map | `build/firmware.map` | 48550 bytes |
 | Layout manifest | `build/layout.manifest` | 1081 bytes |
 
 ## System Addresses
@@ -48,8 +48,8 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 
 | Entry | Address | Target |
 |---|---:|---|
-| `BOOT` | `F000h` | `F0ADh` `boot` |
-| `WBOOT` | `F003h` | `F0FDh` `wboot` |
+| `BOOT` | `F000h` | `F0AFh` `boot` |
+| `WBOOT` | `F003h` | `F101h` `wboot` |
 | `CONST` | `F006h` | `F550h` `gate_const` |
 | `CONIN` | `F009h` | `F55Fh` `gate_conin` |
 | `CONOUT` | `F00Ch` | `F56Eh` `gate_conout` |
@@ -111,9 +111,9 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | 02h | `FD02h` | `F73Bh` `ctc1_isr` |
 | 04h | `FD04h` | `F747h` `ctc2_isr` |
 | 06h | `FD06h` | `F753h` `ctc3_isr` |
-| 08h-0Eh | `FD08h` | `F788h` `irq_unexpected` |
-| 10h-1Eh | `FD10h` | `F510h` `xing_isr` |
-| 20h-FEh | `FD20h` | `F788h` `irq_unexpected` |
+| 08h-0Eh | `FD08h` | `F7A7h` `irq_unexpected` |
+| 10h-1Eh | `FD10h` | `F75Fh` `xing_isr` |
+| 20h-FEh | `FD20h` | `F7A7h` `irq_unexpected` |
 
 ## Common Implementation Symbols
 
@@ -121,13 +121,13 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 |---|---:|---|
 | `reset_vector` | `0000h` | ROM reset entry. |
 | `cpm_rom_entry_high` / `shadow_copy_rom_to_ram` | `F04Bh` | ROM-to-RAM copy of every page. |
-| `cbios_boot_after_rom_copy` | `F099h` | Cold boot handoff after the copy. |
-| `boot` | `F0ADh` | Cold boot: enters mode 11, checks bank 7, initializes, enters the CCP in mode 10. |
-| `wboot` | `F0FDh` | Warm boot trampoline. |
-| `wboot_resident` | `F100h` | Warm boot: resets the CTC, clears registrations, restores the CCP. |
-| `restore_ccp_from_rom` | `F13Bh` | Copies `CBASE` through `FBASE-1` from ROM page 0. |
-| `prepare_runnable_bank` | `F153h` | Page zero and default DMA. |
-| `init_page_zero` | `F15Dh` | Installs `JP WBOOT` and `JP FBASE`. |
+| `cbios_boot_after_rom_copy` | `F09Bh` | Cold boot handoff after the copy. |
+| `boot` | `F0AFh` | Cold boot: enters mode 11, checks bank 7, initializes, enters the CCP in mode 10. |
+| `wboot` | `F101h` | Warm boot trampoline. |
+| `wboot_resident` | `F104h` | Warm boot: resets the CTC, clears registrations, restores the CCP. |
+| `restore_ccp_from_rom` | `F14Ah` | Copies `CBASE` through `FBASE-1` from ROM page 0. |
+| `prepare_runnable_bank` | `F162h` | Page zero and default DMA. |
+| `init_page_zero` | `F16Ch` | Installs `JP WBOOT` and `JP FBASE`. |
 | `ctc_disable_interrupts` | `F288h` | Resets the CTC and programs its vector base. |
 | `boot_print_banner` | `F2A9h` | Prints the boot banner. |
 | `SELMEM` | `F1B0h` | Selects a program bank, keeping the RAM mode. |
@@ -136,12 +136,12 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | `MOVE` | `F1F0h` | Same-bank or cross-bank move through the staging buffer. |
 | `sio_core_init` | `F2F3h` | Initializes SIO0/B and clears receive sinks. |
 | `sio1_ioc_init` | `F322h` | Initializes SIO1 for the IO Controller link; cold boot only. |
-| `sio_core_enable_interrupts` | `F366h` | Loads `I`, enters IM2, programs SIO0/B WR2. |
-| `sio_register_rx_sink` | `F3B9h` | Registers a receive sink for a BIOS-owned SIO channel. |
-| `sio_send_byte` | `F3CEh` | Blocking send on a BIOS-owned SIO channel. |
-| `sio_core_isr` | `F47Dh` | SIO interrupt body, called on the ISR stack. |
-| `xing_isr` | `F510h` | SIO IM2 entry: ISR stack, `sio_core_isr`, `EI`/`RETI`. |
-| `xing_select_ram_bank` | `F521h` | Selects a RAM bank while keeping mode 10 or mode 11. |
+| `sio_core_enable_interrupts` | `F35Fh` | Loads `I`, enters IM2, programs SIO0/B WR2. |
+| `sio_register_rx_sink` | `F3B4h` | Registers a receive sink for a BIOS-owned SIO channel. |
+| `sio_send_byte` | `F3C9h` | Blocking send on a BIOS-owned SIO channel. |
+| `sio_core_isr` | `F477h` | SIO interrupt body, called on the ISR stack. |
+| `xing_isr` | `F75Fh` | SIO IM2 entry under the shared IRQ dispatcher. |
+| `xing_select_ram_bank` | `F510h` | Selects a RAM bank while keeping mode 10 or mode 11. |
 | `xing_os_call_ix` | `F538h` | Calls a bank 7 routine in mode 11 and restores the latch. |
 | `gate_const` | `F550h` | `CONST` gate for programs. |
 | `gate_conin` | `F55Fh` | `CONIN` gate for programs. |
@@ -153,15 +153,15 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | `bios_inert_seldsk` | `F675h` | Inert `SELDSK`: returns `HL = 0`. |
 | `bios_inert_error` | `F679h` | Inert `READ`/`WRITE`: returns an error. |
 | `wbtrap` | `F67Eh` | Warm-boot trap: common stack, mode 10, `JP 0000h`. |
-| `xing_rom_copy_record` | `F68Fh` | Drive A: shadow/copy window; keeps its state in common variables. |
-| `bank7_check` | `F6BBh` | Verifies the `BANK7OS1` marker at cold boot. |
+| `xing_rom_copy_record` | `F693h` | Drive A: shadow/copy window; keeps its state in common variables. |
+| `bank7_check` | `F6B4h` | Verifies the `BANK7OS1` marker at cold boot. |
 | `ctc0_isr` | `F730h` | CTC channel 0 entry. |
-| `irq_register` | `F78Bh` | BDOS function 200. |
-| `irq_unregister` | `F7AEh` | BDOS function 201. |
-| `irq_program_exit` | `F7CAh` | BDOS function 202; ZCPR2 calls it when a transient returns. |
-| `irq_reset` | `F7F0h` | Clears every registration; cold and warm boot. |
-| `irq_unexpected` | `F788h` | `EI`/`RETI` stub for unprogrammed vectors. |
-| `irq_ctc_slots` | `F823h` | Callback entry per CTC channel; zero is unregistered. |
+| `irq_register` | `FF60h` | BDOS function 200. |
+| `irq_unregister` | `FFB3h` | BDOS function 201. |
+| `irq_program_exit` | `F7FAh` | BDOS function 202; ZCPR2 calls it when a transient returns. |
+| `irq_reset` | `F7B1h` | Clears user registrations; cold and warm boot. |
+| `irq_unexpected` | `F7A7h` | `EI`/`RETI` stub for unprogrammed vectors. |
+| `irq_ctc_slots` | `F7BCh` | Callback entry per CTC channel; zero is unregistered. |
 | `facade_entry` | `EC09h` | BDOS facade entry, reached from `FBASE`. |
 | `facade_reset` | `EF25h` | Resets the facade's DMA tracking. |
 | `zephyr_sysinfo` | `EF69h` | System information block returned by function 203. |
@@ -192,7 +192,7 @@ Visible at these addresses only in operating-system mode.
 | `IOCALL` | `32F2h` | IO Controller command/reply. |
 | `IOCBULK` | `3900h` | IO Controller bulk receive. |
 | `IOCBULKW` | `390Fh` | IO Controller bulk transmit. |
-| `ioc_link_bringup` | `3B68h` | Establishes command-lane sync at cold boot. |
+| `ioc_link_bringup` | `3B70h` | Establishes command-lane sync at cold boot. |
 | `console_backend_cold_init` | `480Eh` | Selected console backend cold init. |
 | `STORAGE_A_DPH` | `6000h` | Drive A: DPH. |
 | `SD_STORAGE_DPH` | `6020h` | B: DPH. |

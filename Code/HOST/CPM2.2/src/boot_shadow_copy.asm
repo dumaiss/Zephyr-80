@@ -11,7 +11,8 @@
 
 cpm_rom_entry_high:
 shadow_copy_rom_to_ram:
-	di
+	jp irq_rom_entry
+shadow_copy_masked:
 
 	; Normal ROM mode reads C000h-FFFFh from ROM and writes SRAM underneath.
 	; Copy the common window first so execution remains safe after copy mode.

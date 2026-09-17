@@ -24,18 +24,22 @@ Code regions, each bounded by the limit `cbios_defs.inc` declares for it. Used a
 
 | Region | Owner | Used | Free | Contents |
 |---|---|---:|---:|---|
-| `EC00h-EFFFh` | BDOS facade | 914 | 110 | `CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-217, system information block. |
-| `F000h-F1AFh` | BIOS tables, ROM copy, boot | 411 | 21 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero. |
+| `EC00h-EF9Fh` | BDOS facade | 914 | 14 | `CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-217, system information block. |
+| `EFA0h-EFFFh` | SIO ownership return | 34 | 62 | Quiesces application-owned SIO0/A at boot and application exit. |
+| `F000h-F1AFh` | BIOS tables, ROM copy, boot | 426 | 6 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero. |
 | `F1B0h-F287h` | Banking services | 210 | 6 | `SELMEM`, `SETBNK`, `XMOVE`, `MOVE`. |
 | `F288h-F297h` | CTC reset | 15 | 1 | `ctc_disable_interrupts`: CTC reset and vector base. |
 | `F298h-F2A8h` | IOC link failure record | 16 | 1 | Read by the CP/M tools through BDOS function 203. |
 | `F2A9h-F2EFh` | Boot banner printer | 56 | 15 | Prints the banner text kept in bank 7. |
-| `F2F0h-F50Fh` | SIO core | 537 | 7 | SIO0/B and SIO1 initialization, receive sinks, SIO interrupt body. |
-| `F510h-F52Fh` | Crossing layer | 32 | 0 | `xing_isr`, the SIO IM2 entry, and mode-preserving bank select. |
+| `F2F0h-F50Fh` | SIO core | 523 | 21 | SIO0/B and SIO1 initialization, receive sinks, SIO interrupt body. |
+| `F510h-F52Fh` | Crossing layer | 15 | 17 | Mode-preserving bank select; SIO IM2 entry belongs to the IRQ core. |
 | `F530h-F537h` | Transport level | 1 | 7 | The BIOS IO Controller transport level byte. |
-| `F538h-F72Fh` | Crossing gates | 493 | 11 | Console and IOC/video gates into bank 7, inert disk entries, warm-boot trap, ROM-disk copy window, bank 7 check. |
-| `F730h-F82Fh` | Interrupt dispatch | 251 | 5 | CTC entries, callback dispatcher, registration. |
-| `F830h-F957h` | Serial console | 291 | 5 | Serial console tee and input switch. |
+| `F538h-F72Fh` | Crossing gates | 488 | 16 | Console and IOC/video gates into bank 7, inert disk entries, warm-boot trap, ROM-disk copy window, bank 7 check. |
+| `F730h-F82Fh` | Interrupt dispatch | 238 | 18 | CTC/SIO entries, complete context preservation, dispatch and boot policy. |
+| `F830h-F957h` | Serial console | 295 | 1 | Serial console tee and input switch. |
+| `FC98h-FCDFh` | IRQ policy | 64 | 8 | Interrupt tokens, stackless boot policy and polling context preservation. |
+| `FCE0h-FCFFh` | CTC channel mapping | 21 | 11 | Logical-channel stop using the platform port mapping. |
+| `FF60h-FFFFh` | IRQ registration | 121 | 39 | Atomic user/kernel callback registration. |
 
 Data and stacks:
 
@@ -43,7 +47,6 @@ Data and stacks:
 |---|---|---|
 | `F958h-FB57h` | Staging buffer | 512 bytes, shared by facade DMA/FCB/console/time staging, gate mailboxes and payloads, and cross-bank `MOVE` chunks. Users never overlap in time. |
 | `FB58h-FC97h` | Facade copies | Search-first FCB, DPB copy (function 31), register block (functions 210-217), ALV copy (function 27). |
-| `FC98h-FCFFh` | Unallocated | |
 | `FD00h-FDFFh` | IM2 vector page | `I` = `FDh`; programmed even entries point into common memory. |
 | `FE00h` | IM2 `FFh` guard | Second byte of the pointer fetched at `FDFFh`; completes the safe `F7F7h` target. |
 | `FE01h-FE7Fh` | BIOS runtime state | Bank, DMA, console, banking, storage, SIO and serial console state. |
@@ -51,9 +54,8 @@ Data and stacks:
 | `FE82h-FEBFh` | ISR stack | SIO and CTC interrupts; registered callbacks run here. |
 | `FEC0h-FEFFh` | Gate stack | Program calls through the crossing gates. |
 | `FF00h-FF5Fh` | Facade stack | BDOS facade, warm-boot trap, final boot switch to mode 10. |
-| `FF60h-FFFFh` | Unallocated | |
 
-System common code ends at `F952h`.
+System common code ends at `FFD8h`.
 
 ## SRAM Bank 7 (mode 11 only)
 
@@ -61,13 +63,13 @@ System common code ends at `F952h`.
 |---|---|---:|---:|---|
 | `2000h-2FFFh` | ZSDOS | — | — | Installed from `build/bdos-zsdos.bin` by `tools/split_banked_image.py`. |
 | `3000h-303Fh` | ZSDOS's BIOS table | 59 | 5 | The table ZSDOS calls, and the `BANK7OS1` image marker. |
-| `3040h-30FFh` | Console facade | 71 | 121 | CP/M console entries; dispatch on the console stack. |
+| `3040h-30FFh` | Console facade | 125 | 67 | CP/M console entries; dispatch on the console stack. |
 | `3100h-31FFh` | Storage facade | 26 | 230 | CP/M disk entries; jumps into the drive dispatcher. |
 | `3200h-327Fh` | VIDEO_SEND | 40 | 88 | Raw video request through the selected console backend. |
 | `3280h-33FFh` | IOCALL | 131 | 253 | 32-byte mailbox transaction. |
-| `3400h-38FFh` | IOC command lane | 1045 | 235 | Common-packet command-lane transport. |
+| `3400h-38FFh` | IOC command lane | 1101 | 179 | Common-packet command-lane transport. |
 | `3900h-39FFh` | Bulk entries | 34 | 222 | `IOCBULK` and `IOCBULKW`. |
-| `3A00h-3CFFh` | IOC bulk lane | 573 | 195 | Common-packet bulk-lane transport and link bring-up. |
+| `3A00h-3CFFh` | IOC bulk lane | 581 | 187 | Common-packet bulk-lane transport and link bring-up. |
 | `3D00h-3DFFh` | USB keyboard input | 186 | 70 | Doorbell-gated keyboard fetch. |
 | `3E00h-3FFFh` | USB keyboard state | 57 | 455 | Mailboxes and keyboard queue. |
 | `4000h-42FFh` | SD-card backend | 450 | 318 | Record read and write through the IO Controller cache. |

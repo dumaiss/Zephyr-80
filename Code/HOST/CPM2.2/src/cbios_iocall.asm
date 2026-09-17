@@ -181,10 +181,7 @@ IOCALL_FAIL_STACKED:
 ;   WR7 0xFF  TX underrun fill (sync is via /SYNC pin)
 ;   WR3 0xC0  8-bit RX format, receiver disabled before first establishment
 ;   WR5 0x68  8-bit TX, TX enable, TX CRC disabled, RTS inactive
-;   WR9 via SIO1B_CTRL: SIO1 master interrupt disabled (chip-wide, already 0)
-;
-; SIO1 master interrupt (WR9 via SIO1B_CTRL port 33h) is already disabled by
-; sio1_ioc_init which runs during sio_core_init.  Not rewritten here.
+; Interrupts are disabled locally in each channel's WR1; Z80 SIO has no WR9.
 ;
 ; Out: A = 0.
 ; Clobbers: AF.

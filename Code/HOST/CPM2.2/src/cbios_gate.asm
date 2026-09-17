@@ -290,13 +290,14 @@ bios_inert_listst:
 ; 0000h then gets control in the mode it expects, and otherwise WBOOT runs.
 ; ---------------------------------------------------------------------------
 wbtrap:
-	di
+	jp irq_wbtrap_entry
+trap_masked:
 	ld sp,#FAC_STACK_TOP
 	ld a,(CURRENT_BANK)
 	and #BANK_MASK
 	or #ROMDIS_BIT
 	out (BANK_PORT),a
-	ei
+	call irq_enable
 	jp 0x0000
 
 ; ---------------------------------------------------------------------------
@@ -317,18 +318,10 @@ wbtrap:
 ;   accepted interrupt reports IFF2 clear).
 ; ---------------------------------------------------------------------------
 xing_rom_copy_record:
-	ld a,i
-	jp pe,xing_rom_copy_iff
-	ld a,i
-xing_rom_copy_iff:
-	ld a,#0x00			; LD leaves P/V alone
-	jp po,xing_rom_copy_iff_known
-	inc a
-xing_rom_copy_iff_known:
+	call irq_save_disable
 	ld (xing_rom_iff),a
 	in a,(BANK_PORT)
 	ld (xing_rom_latch),a
-	di
 	ld a,b
 	out (BANK_PORT),a
 	ld bc,#ROMDISK_RECORD_BYTES
@@ -336,10 +329,8 @@ xing_rom_copy_iff_known:
 	ld a,(xing_rom_latch)
 	out (BANK_PORT),a
 	ld a,(xing_rom_iff)
-	or a
-	ld a,#BIOS_OK			; LD leaves Z alone
-	ret z
-	ei
+	call irq_restore
+	ld a,#BIOS_OK
 	ret
 
 ; ---------------------------------------------------------------------------
@@ -374,7 +365,7 @@ bank7_fail_loop:
 	inc hl
 	jr bank7_fail_loop
 bank7_halt:
-	di
+	call irq_disable
 	halt
 
 bank7_expect:

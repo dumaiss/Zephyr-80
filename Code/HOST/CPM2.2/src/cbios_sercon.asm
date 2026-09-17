@@ -251,21 +251,23 @@ sercon_conin_serial:
 sercon_conin_dequeue:
 	; Dequeue.  Masked: the sink runs from the SIO ISR and touches the same
 	; three bytes.
-	di
+	call irq_save_disable
+	push af
 	ld hl,#SERCON_RX_HEAD
 	ld e,(hl)
 	ld a,e
 	inc a
 	and #(SERCON_RX_BUFFER_SIZE - 1)
 	ld (hl),a
-	ld a,(SERCON_RX_COUNT)
-	dec a
-	ld (SERCON_RX_COUNT),a
+	ld hl,#SERCON_RX_COUNT
+	dec (hl)
 	ld d,#0x00
 	ld hl,#sercon_rx_buffer
 	add hl,de
-	ld a,(hl)
-	ei
+	ld e,(hl)
+	pop af
+	call irq_restore
+	ld a,e
 	ret
 
 ; SIO0/B RX sink, called from the interrupt frame.

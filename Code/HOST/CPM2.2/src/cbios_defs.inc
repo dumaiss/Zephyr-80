@@ -123,11 +123,19 @@ BIOS7_BASE                      = ZSDOS_ORG + ZSDOS_SIZE        ; 3000h
 
 PROGRAM_ISR_AREA                = 0xe000                        ; E000h-E3FFh
 CBIOS_FACADE_BASE               = 0xec00                        ; CBASE + 800h
-FACADE_CODE_LIMIT               = 0xf000                        ; CBIOS_BASE
+CBIOS_SIO_QUIESCE_BASE          = 0xefa0 ; unused facade tail
+FACADE_CODE_LIMIT               = CBIOS_SIO_QUIESCE_BASE                        ; CBIOS_BASE
 CBIOS_GATE_CODE_BASE            = 0xf538
 CBIOS_GATE_CODE_LIMIT           = 0xf730
 CBIOS_IRQ_CODE_BASE             = 0xf730
 CBIOS_IRQ_CODE_LIMIT            = 0xf830
+CBIOS_IRQ_POLICY_BASE           = 0xfc98 ; formerly unallocated, below IM2
+CBIOS_IRQ_POLICY_LIMIT          = 0xfce0
+CBIOS_CTC_HELPER_BASE            = 0xfce0
+CBIOS_CTC_HELPER_LIMIT           = 0xfd00
+CBIOS_IRQ_REG_BASE              = 0xff60 ; formerly unallocated, above facade stack
+CBIOS_IRQ_REG_LIMIT             = 0x10000
+IRQ_SOURCE_SIO0                 = 0x04
 IRQ_SOURCE_COUNT                = 0x04                          ; CTC channels 0-3
 CTC_VECTOR_BASE                 = 0x00
 
@@ -1014,9 +1022,8 @@ VDRIP_STORAGE_ALV_BUFFER_SIZE         = 0x0200
 ; ------------------------------------------------------------------------------
 ; IM2 Interrupt Vectors
 ; ------------------------------------------------------------------------------
-; FD10h-FD11h = SIO-core-owned exact IM2 vector table entry.
-;
-; The SIO core emits ".dw sio_core_isr" at this address.
+; FD10h-FD11h = IRQ-core-owned SIO0 dispatch entry.
+; The core emits the entire vector page, including the registered SIO path.
 CBIOS_IM2_VECTOR_TABLE          = 0xfd00                               ; cbios_irq.asm
 CBIOS_IM2_VECTOR_PAGE           = 0xfd
 CBIOS_IM2_VECTOR_ENTRY          = CBIOS_IM2_VECTOR_TABLE
@@ -1082,8 +1089,10 @@ CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 ; common variables rather than on the stack.
 ;
 ; Interrupts moved to their own stack in Phase 1 so their frames never land on
-; the interrupted stack (plan F2).  None of these runs is measured on this
-; layout: measure with STKCHK before relying on the sizes.
+; the interrupted stack (plan F2). The ISR saves 20 context bytes plus a
+; two-byte callback return: user callbacks have 40 bytes for their call tree.
+; Instruction-level regression observes 28 bytes for the SIO paths; hardware
+; high-water checks with STKCHK remain useful. See docs/irq-core-cleanup.md.
 
 CBIOS_STACK_GUARD               = CBIOS_WORK_AREA_LIMIT            ; FE80h
 CBIOS_STACK_TOP                 = 0xc100                           ; bank 7 runtime

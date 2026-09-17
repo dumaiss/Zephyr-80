@@ -112,6 +112,7 @@ SIO_CONSOLE_CONST_NONE:
 ;   AF only. BC/DE/HL are preserved for direct BIOS callers that keep live
 ;   foreground state in those registers.
 sio_console_conin:
+	push bc
 	push de
 	push hl
 SIO_CONSOLE_CONIN_WAIT:
@@ -123,6 +124,7 @@ SIO_CONSOLE_CONIN_WAIT:
 	jr SIO_CONSOLE_CONIN_WAIT
 SIO_CONSOLE_CONIN_HAVE_CHAR:
 	call sio_core_rx_lock
+	push af
 	ld hl,#CONSOLE_RX_BUFFER
 	ld a,(CONSOLE_RX_TAIL)
 	ld e,a
@@ -141,10 +143,13 @@ SIO_CONSOLE_CONIN_TAIL_OK:
 	dec a
 	ld (CONSOLE_RX_COUNT),a
 	call console_rx_maybe_assert_rts
-	call sio_core_rx_unlock
-	pop af
+	pop bc			; B = dequeued byte
+	pop af			; caller interrupt token
+	call irq_restore
+	ld a,b
 	pop hl
 	pop de
+	pop bc
 	ret
 
 ; CONOUT backend.

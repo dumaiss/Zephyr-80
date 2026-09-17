@@ -58,6 +58,13 @@ Warm boot restores the CCP range from ROM page 0, reinitializes the console,
 resets the CTC and clears interrupt registrations. ZSDOS and the BIOS in bank 7
 are left intact.
 
+Reinitializing the console clears the screen, so warm boot first prints
+`[any key]` and waits, leaving the ending program's output — or its graphics
+screen — up to be read. Only programs that warm boot are affected: a transient
+that returns to the CCP does not come this way, and neither does ZCPR2's ^C.
+The wait polls about a hundred times a second and gives up after roughly thirty
+seconds, so a program that breaks console input cannot strand the machine.
+
 ## Program Interface
 
 Programs call the operating system in three ways.

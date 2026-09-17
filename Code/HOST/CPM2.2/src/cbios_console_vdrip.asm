@@ -523,7 +523,8 @@ vdrip_console_conin_usb:
 
 vdrip_console_conin_have_char:
 	; Dequeue one byte from the console input queue.
-	di
+	call irq_save_disable
+	push af
 	ld hl,#textq_buffer
 	ld a,(textq_tail)
 	ld e,a
@@ -542,8 +543,10 @@ vdrip_console_conin_have_char:
 	ld (textq_count),a
 
 	call app_maybe_resume_rts
-	ei
-	pop af
+	pop bc			; B = dequeued byte
+	pop af			; caller interrupt token
+	call irq_restore
+	ld a,b
 	pop hl
 	pop de
 	pop bc

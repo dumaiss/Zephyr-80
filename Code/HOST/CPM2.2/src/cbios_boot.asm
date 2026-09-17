@@ -16,6 +16,7 @@
 	.ifeq VDRIP_TRANSPORT_LINKED
 	.globl sercon_init,sercon_install
 	.endif
+	.globl console_wait_key
 	.globl sio_core_init,sio1_ioc_init,ioc_link_bringup,ctc_disable_interrupts,sio_core_enable_interrupts
 	.globl BOOT_BANNER_CODE_START,BOOT_BANNER_CODE_END
 	.globl BOOT_BANNER_TEXT,BOOT_BANNER_TEXT_END
@@ -40,7 +41,8 @@
 ;   establishes the build-selected display/input backend. Interrupts are enabled
 ;   only after console state, banking state, and page zero are coherent.
 boot:
-	di
+	jp irq_boot_entry
+boot_masked:
 	; Boot runs in mode 11: the drivers it initialises are in bank 7, and so
 	; is the BIOS stack.  This code is common and page zero is in the caller
 	; window, so both are visible there too.  Latch first, then stack.
@@ -49,8 +51,7 @@ boot:
 	ld sp,#CBIOS_STACK_TOP
 	xor a
 	ld (CURRENT_BANK),a
-	call ctc_disable_interrupts
-	call irq_reset
+	call irq_boot_prepare
 	call sound_silence_psgs
 	call sio_core_init
 
@@ -89,6 +90,7 @@ boot:
 	ld (TDRIVE),a
 	ld (DMA_BANK), a
 	call sio_core_enable_interrupts
+	call irq_enable
 
 	; Back to application execution for the CCP.  The BIOS stack is in bank 7,
 	; so move to a common stack first: an interrupt between the switch and the
@@ -132,7 +134,8 @@ WBOOT_RESIDENT_START:
 ;   WBOOT when it is entered from an arbitrary application bank. Bank 0 and the
 ;   protected firmware stack are established before any normal subroutine call.
 wboot_resident:
-	di
+	jp irq_wboot_entry
+wboot_masked:
 
 	; No stack or helper calls before the latch is set.  Mode 11 with bank 0:
 	; the caller window is bank 0's page zero, bank 7 holds the drivers this
@@ -145,10 +148,20 @@ wboot_resident:
 
 	; Protected stack handoff happens immediately after the latch is set.
 	ld sp,#CBIOS_STACK_TOP
-	call ctc_disable_interrupts
-	; Interrupt callbacks belonged to the program that just ended (plan F5).
-	call irq_reset
+	; Return application devices and callbacks to CP/M ownership.
+	call irq_boot_prepare
 	call sound_silence_psgs
+
+	; Hold the screen before console_init clears it, so the operator can read
+	; what the program left.  Interrupts are on for the wait: SIO0/B receive
+	; and its sink are still live here, which is what lets a serial console
+	; answer, and the CTC and program callbacks are already reset above.  The
+	; wait gives up on its own, so a program that broke console input cannot
+	; strand the machine.
+	call irq_enable
+	call console_wait_key
+	call irq_disable
+
 	; Rebuild the console only.  SIO1/A deliberately retains its receiver state
 	; and persistent External-Sync character boundary across CP/M warm boots.
 	call sio_core_init
@@ -168,6 +181,7 @@ wboot_resident:
 	call sercon_install
 	.endif
 	call sio_core_enable_interrupts
+	call irq_enable
 
 	; Back to application execution for the CCP.  The BIOS stack is in bank 7,
 	; so move to a common stack first: an interrupt between the switch and the

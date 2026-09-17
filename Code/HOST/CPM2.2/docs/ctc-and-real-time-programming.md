@@ -15,8 +15,8 @@ The Z80 CTC occupies four consecutive I/O ports:
 | Channel | Port | External `CLK/TRG` input | Other connection |
 | ---: | ---: | ---: | --- |
 | 0 | `40h` | 1.8432 MHz | `TO0` clocks the application-owned SIO0/A user port |
-| 1 | `41h` | 3.6864 MHz | `TO1` is routed outward |
-| 2 | `42h` | 7.3728 MHz | `TO2` is routed outward |
+| 1 | `42h` | 3.6864 MHz | `TO1` is routed outward |
+| 2 | `41h` | 7.3728 MHz | `TO2` is routed outward |
 | 3 | `43h` | 7.3728 MHz | General application timer/counter |
 
 The CTC's Z80 bus and internal timer clock run from the 10 MHz system clock.
@@ -96,6 +96,19 @@ case and has no alternating interval pattern.
 
 ## What has been verified on hardware
 
+**Read the dates.** The per-channel results below were measured while the
+machine was taking stray NMIs, which is fixed as of 2026-09-17 (see "The
+machine takes an NMI" further down). After the fix, `TIMTEST 0` through
+`TIMTEST 3` all pass, `MANDEL` reports interrupts on every channel, and
+ColecoGo's NMI route works. The channel-by-channel failures recorded here were
+symptoms of the NMI, not of the channels -- with one exception that is a real
+bug and still unfixed: the BIOS resets the wrong channel for sources 1 and 2,
+described below.
+
+The observations below predate the [IRQ core cleanup](irq-core-cleanup.md).
+That cleanup fixes BIOS channel shutdown mapping and SIO0/A ownership, but
+the physical TIMTEST restart regression has not yet been rerun.
+
 During VGM player bring-up, CTC0 at port `40h` produced stable periodic IM2
 interrupts using timer mode, `/256`, automatic trigger, and a constant of 217.
 It is the currently verified application time source. That bring-up predates
@@ -103,15 +116,162 @@ the banked operating system and used a private IM2 table; `SDSOAK` now drives
 CTC0 through callback registration.
 
 Attempts to obtain usable playback interrupts from CTC1 and CTC2 did not
-succeed during that bring-up. This is an unresolved observation, not proof that
-either channel or its clock is defective. Before assigning those channels to a
-game, use a minimal counter-only ISR and verify the channel's vector, daisy-chain
-acknowledgement, control word, and board routing on the actual hardware.
+succeed during that bring-up.
+
+Measured again on 2026-09-15 with `ZephyrC/tests/timtest.c`, which registers a
+callback through BDOS 200, programs the channel for 180 Hz, and reports both the
+interrupt count and the channel's own down-counter:
+
+| Channel | Counts | Interrupts | Notes |
+|---|---|---|---|
+| 0 | yes | yes | The machine restarts part way through a run, after a varying number of samples. |
+| 1 | — | **none** | Timer programmed identically to CTC3. |
+| 2 | once | **none** | The down-counter readback moves once, then stays put, when the control word has its interrupt enabled. With the interrupt **disabled** (`MONITOR`: `O 42 27`, `O 42 D9`), `I 42` returns changing values, so the channel does count. |
+| 3 | yes | yes | Ten one-second samples complete normally. |
+
+**The CTC chip was replaced and the behaviour is identical**, so this is not a
+defective part.
+
+Zero callback counts do not prove that CTC1/CTC2 never vector. Source inspection
+on 2026-09-15 found that both the schematic and PCB wire IC1 CS0 (pin 18) to A1
+and CS1 (pin 19) to A0. If the running board matches, ports 41h and 42h address
+physical channels 2 and 1 respectively, whose vectors are 04h and 02h. The
+software assumes the opposite mapping and therefore dispatches to the wrong
+callback slots. See issue 4 in `../../ZephyrC/DOC/KNOWN-ISSUES.md` for evidence
+and the confirmation still needed. The ownership and port tables above describe
+the current software assumptions; no mapping fix has been applied. CTC3 avoids
+this mismatch, but its long-run stability has not been established.
+
+After the test-local port correction, the operator reports that `TIMTEST 1`,
+`TIMTEST 2`, and `TIMTEST 3` work most of the time, while `TIMTEST 0` works only
+sometimes. This supports the channel-select diagnosis but leaves intermittent
+warm boots unresolved. `MANDEL` still uses the uncorrected shared library;
+its channel 1/2 results therefore still include the mapping fault. The latest
+test results and a separate chime tick-backlog issue are recorded in
+`../../ZephyrC/DOC/KNOWN-ISSUES.md`.
+
+CTC0 delivers interrupts, but starting it makes the machine restart part way
+through a run. Note that masking SIO0/A first, which the paragraph below
+suggested as the cause, does **not** stop it: `zep_timer_start` does that and
+`TIMTEST 0` still restarts. The BIOS write described below is real and worth
+fixing, but it is not the whole explanation. `TO0` is SIO0/A's clock, and that channel's `WR1` holds `08h` --
+"interrupt on first received character" -- because `sio_core_enable_interrupts`
+writes its chip-wide enable to `SIO_MASTER_CTRL_PORT`, which is SIO0/A's own
+control port, and a Z80 SIO has no `WR9`: pointer 9 selects `WR1`. Once `TO0`
+clocks the channel it receives whatever its unconnected input floats to and
+raises interrupts that vector to the console handler, which reads only channel
+B and so never clears them. `zep_timer_start` masks SIO0/A before starting
+CTC0; the BIOS write itself has not been changed.
+
+### The BIOS resets the wrong channel for sources 1 and 2
+
+Because A0/A1 reach the CTC's CS0/CS1 in reverse, `CTC0_CTRL + channel` is the
+wrong port for channels 1 and 2. Two places in `cbios_irq.asm` do that
+arithmetic:
+
+- `irq_stop_channel` (line 246), used by `irq_unregister` and by the
+  program-exit sweep, stops the neighbouring channel instead.
+- `ctc_isr_unowned` (line 81), which exists to shut a channel off when it
+  interrupts with no registration, disables the neighbour. The unregistered
+  channel keeps its interrupt asserted and the dispatcher is re-entered
+  indefinitely.
+
+A four-entry port table fixes both; `ZephyrC/src/zep_timer.c` carries the same
+table. `ctc_disable_interrupts` needs no change, since it resets all four ports.
+
+The open symptoms, what has been ruled out, and the experiments worth running
+next are kept in `../../ZephyrC/DOC/KNOWN-ISSUES.md`. The operator clarified on
+2026-09-15 that spontaneous restarts are warm boots; full hardware resets are
+manual. The earlier IOC-reset hypothesis does not fit that observation.
+Register, SP and return-address corruption remain hypotheses. `TICKTEST` tests
+the callback directly, not IM2 entry, the BIOS stack switch or `RETI`.
 
 The VGM player also proved that a compact ISR can coexist with the BIOS SIO
 console and foreground SD streaming. Moving stream decoding, PSG writes and
 BDOS reads into the ISR caused instability; moving all of that work back to
 foreground code made playback reliable.
+
+### Standalone ROM test: the fault survives removing CP/M
+
+`../../CTCEnduranceROM/` is a bare-metal ROM that runs one CTC channel, one
+IM2 vector and a six-byte ISR with no CP/M, no BIOS, no banking and no other
+interrupt source. Two builds are identical except that one never enables
+interrupts. On 2026-09-17:
+
+| Image | Result |
+|---|---|
+| `control.rom` (interrupts never enabled) | runs indefinitely, no failure |
+| `ctc0.rom` | `FAIL 05: REGISTER MISMATCH`: `reg=BC found=0000 expected=1357`, `sp=EFF6`, after 36 interrupts |
+| `ctc0t.rom` | `FAIL 02: SP MISMATCH`, `sp=EFFC`, after 17 interrupts; all eight traced interrupts clean |
+
+The foreground stress, the stack guards, the register checks and the memory map
+are the same in both, so the corruption follows interrupt activity rather than
+the CPU, the SRAM or the test loop. **Both failures decode to an NMI.** Each leaves a pushed PC that nothing popped
+and the foreground resumed at 0066h, the Z80's NMI entry: in one run the pushed
+word was `copy4`'s own entry address with `BC`/`DE` holding that routine's
+`LDIR` residue, in the other it was an address inside the register verifier.
+The traced build's eight recorded interrupts were all clean, so the CTC, the
+daisy chain and the IM2 acknowledge are working. Under CP/M nothing sits at
+0066h, so a stray NMI runs off through page zero and the 0080h DMA buffer into
+the TPA at 0100h -- the restart that has been reported since the beginning. Two
+bytes at 0066h (`ED 45`, `RETN`) would make it harmless; what pulls /NMI is not
+yet known, and the ROM now counts NMIs to find out.
+
+**/NMI is floating.** `Code/MCU/IOController/src/main.c` leaves the PIC's /NMI
+pin (RF5) high-impedance (`HOST_NMI_TRIS = 1`, "the PIC does not currently
+implement the manual NMI request"), and the IPC netlists give the /NMI net
+exactly four pins across both boards -- the Z80's NMI input (U3-17), that PIC
+pin (U15-13) and the two bus connector pins (J2-A12, J4-A12). No pull-up
+appears on it. An edge-triggered CMOS input with no driver and no pull-up is
+free to fire on coupled noise; the coupling itself has not been measured.
+
+That also answers why the control build never failed and why CTC3 is the one
+channel that works: the Z80 CTC has ZC/TO output pins on channels 0, 1 and 2
+only. `control.rom` starts no channel, and a running channel 3 switches nothing
+outside the chip. CTC0's TO0 drives the UART baud clock net.
+
+Two fixes, independent of each other:
+
+- **Hold /NMI.** A pull-up on the net, or the PIC's weak pull-up on RF5
+  (`WPUFbits.WPUF5`) with the pin left an input so a card can still pull it
+  low. Driving it push-pull would fight the bus and is what the current comment
+  avoids.
+- **Make a stray NMI harmless.** Two bytes at 0066h (`ED 45`, `RETN`) in
+  whatever page zero a program runs under. Worth doing regardless: under CP/M
+  0066h lands inside the default FCB (005Ch-007Fh), so what a stray NMI
+  executes depends on the command line -- which is why the same fault has
+  appeared as a restart, a warm boot and a hang.
+
+**It is interrupt delivery, not the channel running.** A timer-only image
+(`ctc0o.rom`: channel 0 counting at 180 Hz, driving TO0, interrupt never
+enabled) collects no NMIs, while `ctc0t.rom` on the same channel does. So the
+aggressor is /INT being asserted and the M1+IORQ acknowledge cycle, not the
+channel or its ZC/TO output. On the Z80 those two nets meet at adjacent package
+pins -- /INT on 16, /NMI on 17 -- which is a plausible coupling site, though
+that is read off the pinout and has not been measured. Why CTC3 has always
+worked under CP/M is still unexplained; `ctc3t.rom` tests it.
+
+**Applied 2026-09-17:** the IOC now enables the weak pull-up on RF5
+(`HOST_NMI_WPU = 1` in `Code/MCU/IOController/src/main.c`), keeping the pin an
+input so any card can still pull /NMI low. IOC_FW_LEVEL is deliberately
+unchanged, so no host utility needs rebuilding; the check is behavioural --
+the endurance ROM's `nmi=` count should stay at zero.
+
+**Confirmed fixed 2026-09-17.** With `HOST_NMI_WPU = 1` flashed on the IOC,
+`ctc0t.rom` and `ctc3t.rom` collect no NMIs at all. Before that the CTC chip
+and then the Z80 itself had both been swapped with no change: the fault was a
+bus signal nothing was holding, not a failing part. What remains to be re-run
+is the CP/M-level evidence -- `TIMTEST 0`-`3`, `MANDEL`, `TONETEST`, `PCTRACE`
+-- and the BIOS channel-port defect below, which is a real bug independent of
+the NMI.
+
+`sp=EFF6` is the load-bearing part: the verifier that
+reported it is called from the main loop, where SP must be EFFE, and EFF6 is
+four words deeper -- the depth inside the nested stress routine. So control
+reached the check from somewhere it should not have, with the stack still
+holding registers the return path should have restored. The failure takes about
+a fifth of a second to appear, so it is cheap to reproduce. That ROM's README
+records the codes, the stack map and the reading procedure.
 
 ## Interrupts under CP/M
 
@@ -147,7 +307,8 @@ A program gets a channel's interrupt this way:
    channel and clears the slot.
 
 When the channel fires, the BIOS saves the interrupted `SP` and switches to its
-own interrupt stack. It saves `AF`, `BC`, `DE` and `HL`, `CALL`s the callback,
+own interrupt stack. It saves `AF`, `BC`, `DE`, `HL`, `IX`, `IY` and the
+alternate registers, calls the callback,
 restores everything, and ends with `EI` / `RETI`. `SDSOAK`
 (`../../Utilities/src/ioc_sdsoak.asm`) is a small complete example.
 
@@ -185,8 +346,8 @@ while the operating system's bank is mapped. It must:
 
 - keep its code, callees and data in `E000h-E3FFh`, and touch no memory below
   `E000h`
-- use only `AF`, `BC`, `DE` and `HL`, which the BIOS saves, and preserve `IX`,
-  `IY` and the alternate register set
+- use the general, index and alternate registers saved by the BIOS; keep
+  callback pushes and callee return addresses within the 40-byte stack budget
 - end with `RET`; the BIOS issues `EI` / `RETI`
 - never enable interrupts
 - never call BDOS or the BIOS, write the banking latch, access the disk, print

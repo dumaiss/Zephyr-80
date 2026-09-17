@@ -25,7 +25,7 @@
 ; caller stack before returning.
 
 	.globl const,conin,conout,list,punch,reader,listst
-	.globl console_init,console_set_driver
+	.globl console_init,console_set_driver,console_wait_key
 	.globl console_backend_driver,console_backend_init
 	.globl CONSOLE_CODE_START,CONSOLE_CODE_END
 	.globl CONSOLE_STATE_START,CONSOLE_STATE_END
@@ -113,6 +113,77 @@ CONSOLE_CALL_RETURN:
 	pop hl
 	pop de
 	ret
+
+; ---------------------------------------------------------------------------
+; console_wait_key -- hold the screen until a key is pressed.
+;
+; Warm boot reinitialises the console, and that clears the screen, so whatever a
+; program printed on its way out would be gone before it could be read.  WBOOT
+; calls this first.
+;
+; Only programs that warm boot come here.  A transient that returns to the CCP
+; does not, and neither does ZCPR2's own ^C, which restarts the command
+; processor without a warm boot.
+;
+; It runs on the driver the ending program left installed, before console_init
+; rebuilds it, so a graphics screen is still on display while the operator
+; reads it.  The caller enables interrupts first so a serial console can answer;
+; the CTC and every program callback have already been reset by then.
+;
+; The wait is bounded.  A program that wrecks console input must not leave the
+; machine needing a power cycle, so after about thirty seconds the warm boot
+; goes ahead anyway.
+;
+; The spin between polls is register-only and looks at the console about a
+; hundred times a second, the rate the V9958 CONIN idle loop settled on: this
+; machine has no regulators, and a faster idle loop is audible on the rail.
+;
+; Clobbers: AF, BC, DE, HL.
+; ---------------------------------------------------------------------------
+CONSOLE_WAIT_SPIN	= 3800		; 26 T-states each: about 9.9 ms at 10 MHz
+CONSOLE_WAIT_POLLS	= 3000		; about 30 seconds
+
+console_wait_key:
+	ld hl,#console_wait_prompt
+console_wait_text:
+	ld a,(hl)
+	or a
+	jr z,console_wait_start
+	push hl
+	ld c,a
+	call conout
+	pop hl
+	inc hl
+	jr console_wait_text
+
+console_wait_start:
+	ld de,#CONSOLE_WAIT_POLLS
+console_wait_poll:
+	ld hl,#CONSOLE_WAIT_SPIN
+console_wait_spin:
+	dec hl
+	ld a,h
+	or l
+	jr nz,console_wait_spin
+
+	; CONST also publishes pending output on this machine's consoles, so the
+	; prompt appears on the first pass.
+	call const
+	or a
+	jr nz,console_wait_key_ready
+	dec de
+	ld a,d
+	or e
+	jr nz,console_wait_poll
+	ret				; timed out; warm boot anyway
+
+console_wait_key_ready:
+	jp conin			; consume the key and return
+
+console_wait_prompt:
+	.db 13,10
+	.ascii "[any key]"
+	.db 0
 
 CONSOLE_CODE_END:
 

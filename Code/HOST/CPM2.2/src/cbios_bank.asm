@@ -320,3 +320,26 @@ IOC_DIAG_RECORD_END:
 ; only evidence its character boundary was established.  Cleared by LINK_SYNC.
 ; Lives here rather than in slot 4, which is full to the byte.
 ioc_bulk_synced:	.db 0
+
+	.area CODE (ABS)
+	.org CBIOS_CTC_HELPER_BASE
+CTC_HELPER_START:
+; CTC-local shutdown: A=logical channel 0..3. Preserves BC/DE/HL, clobbers AF.
+; Bounded, no VDrip traffic, ISR-safe. Mapping constants belong to platform.
+ctc_stop_channel:
+irq_stop_channel:
+	push bc
+	push hl
+	ld l,a
+	ld h,#0
+	ld bc,#ctc_ports
+	add hl,bc
+	ld c,(hl)
+	ld a,#CTC_RESET_DISABLE
+	out (c),a
+	pop hl
+	pop bc
+	ret
+ctc_ports:
+	.db CTC0_CTRL,CTC1_CTRL,CTC2_CTRL,CTC3_CTRL
+CTC_HELPER_END:

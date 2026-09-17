@@ -64,12 +64,13 @@ vdrip_transport_set_raw_callback:
 
 ; Register the common receive sink with SIO0/B.
 vdrip_transport_register_sink:
-	di
+	call irq_save_disable
+	push af
 	ld a,#SIO_CH_CONSOLE
 	ld hl,#vdrip_rx_sink
 	call sio_register_rx_sink
-	ei
-	ret
+	pop af
+	jp irq_restore
 
 ; Input: A = idle receive mode (RAW or PACKET).
 vdrip_transport_set_idle_mode:

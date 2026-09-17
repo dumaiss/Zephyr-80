@@ -79,6 +79,8 @@ class Region:
 
 
 COMMON_REGIONS = [
+    Region("SIO ownership return", "SIO_QUIESCE_START", "SIO_QUIESCE_END", "CBIOS_BASE",
+           "Quiesces application-owned SIO0/A at boot and application exit."),
     Region("BDOS facade", "FACADE_CODE_START", "FACADE_CODE_END", "FACADE_CODE_LIMIT",
            "`CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-217, system information block."),
     Region("BIOS tables, ROM copy, boot", "BIOS_CODE_START", None, "CBIOS_BANKING_CODE_BASE",
@@ -94,13 +96,19 @@ COMMON_REGIONS = [
     Region("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END", "CBIOS_XING_CODE_BASE",
            "SIO0/B and SIO1 initialization, receive sinks, SIO interrupt body."),
     Region("Crossing layer", "XING_CODE_START", "XING_CODE_END", "CBIOS_XING_CODE_LIMIT",
-           "`xing_isr`, the SIO IM2 entry, and mode-preserving bank select."),
+           "Mode-preserving bank select; SIO IM2 entry belongs to the IRQ core."),
     Region("Transport level", "ZBIOS_XPORT_LEVEL_ADDR", None, "CBIOS_GATE_CODE_BASE",
            "The BIOS IO Controller transport level byte."),
     Region("Crossing gates", "GATE_CODE_START", "GATE_CODE_END", "CBIOS_GATE_CODE_LIMIT",
            "Console and IOC/video gates into bank 7, inert disk entries, warm-boot trap, ROM-disk copy window, bank 7 check."),
     Region("Interrupt dispatch", "IRQ_CODE_START", "IRQ_CODE_END", "CBIOS_IRQ_CODE_LIMIT",
-           "CTC entries, callback dispatcher, registration."),
+           "CTC/SIO entries, complete context preservation, dispatch and boot policy."),
+    Region("IRQ policy", "IRQ_POLICY_START", "IRQ_POLICY_END", "CBIOS_IRQ_POLICY_LIMIT",
+           "Interrupt tokens, stackless boot policy and polling context preservation."),
+    Region("CTC channel mapping", "CTC_HELPER_START", "CTC_HELPER_END", "CBIOS_CTC_HELPER_LIMIT",
+           "Logical-channel stop using the platform port mapping."),
+    Region("IRQ registration", "IRQ_REG_START", "IRQ_REG_END", "CBIOS_IRQ_REG_LIMIT",
+           "Atomic user/kernel callback registration."),
     Region("Serial console", "SERCON_CODE_START", "SERCON_CODE_END", "CBIOS_SERCON_CODE_LIMIT",
            "Serial console tee and input switch.", optional=True),
 ]
@@ -167,7 +175,7 @@ COMMON_IMPLEMENTATION = [
     (("sio_register_rx_sink",), "Registers a receive sink for a BIOS-owned SIO channel."),
     (("sio_send_byte",), "Blocking send on a BIOS-owned SIO channel."),
     (("sio_core_isr",), "SIO interrupt body, called on the ISR stack."),
-    (("xing_isr",), "SIO IM2 entry: ISR stack, `sio_core_isr`, `EI`/`RETI`."),
+    (("xing_isr",), "SIO IM2 entry under the shared IRQ dispatcher."),
     (("xing_select_ram_bank",), "Selects a RAM bank while keeping mode 10 or mode 11."),
     (("xing_os_call_ix",), "Calls a bank 7 routine in mode 11 and restores the latch."),
     (("gate_const",), "`CONST` gate for programs."),
@@ -186,7 +194,7 @@ COMMON_IMPLEMENTATION = [
     (("irq_register",), "BDOS function 200."),
     (("irq_unregister",), "BDOS function 201."),
     (("irq_program_exit",), "BDOS function 202; ZCPR2 calls it when a transient returns."),
-    (("irq_reset",), "Clears every registration; cold and warm boot."),
+    (("irq_reset",), "Clears user registrations; cold and warm boot."),
     (("irq_unexpected",), "`EI`/`RETI` stub for unprogrammed vectors."),
     (("irq_ctc_slots",), "Callback entry per CTC channel; zero is unregistered."),
     (("facade_entry",), "BDOS facade entry, reached from `FBASE`."),
@@ -468,8 +476,8 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
         layout.error("FACADE_CODE_START is not CBIOS_FACADE_BASE")
     if s("FBASE") != s("CBIOS_FACADE_BASE") + 6:
         layout.error(f"FBASE = {h4(s('FBASE'))} is not six bytes into the facade")
-    if s("FACADE_CODE_LIMIT") != s("CBIOS_BASE"):
-        layout.error("FACADE_CODE_LIMIT is not CBIOS_BASE")
+    if s("FACADE_CODE_LIMIT") != s("CBIOS_SIO_QUIESCE_BASE"):
+        layout.error("facade limit does not meet the SIO ownership-return region")
     if s("BIOS7_BASE") != s("ZSDOS_ORG") + s("ZSDOS_SIZE"):
         layout.error("BIOS7_BASE is not ZSDOS_ORG + ZSDOS_SIZE; ZSDOS computes its BIOS as ZSDOS+1000h")
 
@@ -536,7 +544,7 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
         if start < cursor:
             layout.error(f"{name} at {h4(start)} overlaps {previous}")
         cursor, previous = start + size, name
-    if cursor > im2_start:
+    if cursor > s("CBIOS_IRQ_POLICY_BASE") or s("CBIOS_CTC_HELPER_LIMIT") > im2_start:
         layout.error(f"{previous} ends at {h4(cursor - 1)}, inside the IM2 vector page")
     facts["staging_end"] = cursor
 
@@ -558,6 +566,9 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
     tops = [state_limit, isr_save, s("CBIOS_ISR_STACK_TOP"), s("GATE_STACK_TOP"), s("FAC_STACK_TOP")]
     if isr_save < state_limit or tops != sorted(tops) or s("FAC_STACK_TOP") > 0x10000:
         layout.error("common stacks are not ordered state < ISR SP save < ISR stack < gate stack < facade stack <= FFFFh")
+
+    if s("FAC_STACK_TOP") > s("CBIOS_IRQ_REG_BASE"):
+        layout.error("facade stack overlaps IRQ registration code")
 
     private = [OS_IMAGE_LIMIT, s("CBIOS_STACK_TOP"), s("CBIOS_CONSOLE_STACK_TOP"), s("CBIOS_XPORT_STACK_TOP")]
     if private != sorted(private):
@@ -752,7 +763,7 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         "|---|---|---|",
         f"| `{xspan(bulk, bulk + bulk_size)}` | Staging buffer | {bulk_size} bytes, shared by facade DMA/FCB/console/time staging, gate mailboxes and payloads, and cross-bank `MOVE` chunks. Users never overlap in time. |",
         f"| `{xspan(s('FAC_SFCB_BUF'), facts['staging_end'])}` | Facade copies | Search-first FCB, DPB copy (function 31), register block (functions 210-217), ALV copy (function 27). |",
-        f"| `{xspan(facts['staging_end'], im2)}` | Unallocated | |",
+
         f"| `{xspan(im2, im2 + IM2_PAGE_SIZE)}` | IM2 vector page | `I` = `{h2(s('CBIOS_IM2_VECTOR_PAGE'))}`; programmed even entries point into common memory. |",
         f"| `{h4(s('IM2_VECTOR_FF_HIGH'))}` | IM2 `FFh` guard | Second byte of the pointer fetched at `FDFFh`; completes the safe `{h4(s('irq_ff_unexpected'))}` target. |",
         f"| `{xspan(runtime_data_start, state_limit)}` | BIOS runtime state | Bank, DMA, console, banking, storage, SIO and serial console state. |",
@@ -760,7 +771,7 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         f"| `{xspan(isr_save + 2, s('CBIOS_ISR_STACK_TOP'))}` | ISR stack | SIO and CTC interrupts; registered callbacks run here. |",
         f"| `{xspan(s('CBIOS_ISR_STACK_TOP'), s('GATE_STACK_TOP'))}` | Gate stack | Program calls through the crossing gates. |",
         f"| `{xspan(s('GATE_STACK_TOP'), s('FAC_STACK_TOP'))}` | Facade stack | BDOS facade, warm-boot trap, final boot switch to mode 10. |",
-        f"| `{xspan(s('FAC_STACK_TOP'), 0x10000)}` | Unallocated | |",
+
         "",
         f"System common code ends at `{h4(last_common_code - 1)}`.",
         "",

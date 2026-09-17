@@ -1,67 +1,61 @@
-; Zephyr-80 interrupt ownership (banked OS, Phase 1 step 7; plan section 18).
-;
-; IM2 belongs to the BIOS.  I always selects the page at CBIOS_IM2_VECTOR_TABLE,
-; every programmed even entry in it leads to common code, and a program that
-; wants a timer interrupt registers a callback through the BDOS facade rather
-; than loading I itself.  FE00h supplies the second byte for a floating FFh
-; vector and sends that case to irq_ff_unexpected in common code.
-;
-; Programmable sources are CTC channels 0-3.  SIO0/B and SIO1 belong to the BIOS.
-;
-; A callback:
-;   - lives, with everything it touches, in E000h-E3FFh (PROGRAM_ISR_AREA);
-;     only the entry address is checked
-;   - runs in mode 10 or mode 11, on the ISR stack, with interrupts disabled
-;   - may use AF, BC, DE, HL; preserves IX, IY and the alternate set
-;   - ends with RET, never enables interrupts, never calls BDOS or the BIOS
-; Registrations are cleared by WBOOT and by the program-exit call ZCPR2 makes
-; when a transient returns (plan F5).
+; IRQ core: CPU interrupt policy, full context, IM2 and source ownership.
+; User callbacks live in E000h-E3FFh; kernel callbacks live in common BIOS.
+; All callbacks return with RET, never enable interrupts or call BDOS, and
+; must be bounded. AF/BC/DE/HL/IX/IY and both alternate sets are preserved.
+; I, IM and interrupt policy remain core-owned. No NMI service is installed.
 
-	.globl irq_register,irq_unregister,irq_program_exit,irq_reset
-	.globl IRQ_CODE_START,IRQ_CODE_END
+	.globl irq_init,irq_reset,irq_register,irq_register_kernel,irq_unregister
+	.globl irq_unregister_kernel,irq_program_exit,irq_save_disable,irq_restore,irq_disable,irq_enable
 	.globl xing_isr
-
 	.area CODE (ABS)
 	.org CBIOS_IRQ_CODE_BASE
-
 IRQ_CODE_START:
 
-; ---------------------------------------------------------------------------
-; CTC channel entries.  Each moves to the ISR stack before pushing anything, so
-; only the return address lands on the interrupted stack (plan F2).
-; ---------------------------------------------------------------------------
+; Hardware entry: only the CPU's return PC lands on the foreground stack.
+; IFF1/IFF2 are already clear. No callback/helper may enable interrupts.
 ctc0_isr:
 	ld (CBIOS_ISR_SP_SAVE),sp
 	ld sp,#CBIOS_ISR_STACK_TOP
 	push af
 	xor a
-	jr ctc_isr_dispatch
-
+	jr irq_dispatch
 ctc1_isr:
 	ld (CBIOS_ISR_SP_SAVE),sp
 	ld sp,#CBIOS_ISR_STACK_TOP
 	push af
 	ld a,#1
-	jr ctc_isr_dispatch
-
+	jr irq_dispatch
 ctc2_isr:
 	ld (CBIOS_ISR_SP_SAVE),sp
 	ld sp,#CBIOS_ISR_STACK_TOP
 	push af
 	ld a,#2
-	jr ctc_isr_dispatch
-
+	jr irq_dispatch
 ctc3_isr:
 	ld (CBIOS_ISR_SP_SAVE),sp
 	ld sp,#CBIOS_ISR_STACK_TOP
 	push af
 	ld a,#3
-
-; A = channel.
-ctc_isr_dispatch:
+	jr irq_dispatch
+xing_isr:
+	ld (CBIOS_ISR_SP_SAVE),sp
+	ld sp,#CBIOS_ISR_STACK_TOP
+	push af
+	ld a,#IRQ_SOURCE_SIO0
+irq_dispatch:
 	push bc
 	push de
 	push hl
+	push ix
+	push iy
+	ex af,af'
+	push af
+	ex af,af'
+	exx
+	push bc
+	push de
+	push hl
+	exx
 	ld c,a
 	add a,a
 	ld e,a
@@ -73,148 +67,46 @@ ctc_isr_dispatch:
 	ld h,(hl)
 	ld l,a
 	or h
-	jr z,ctc_isr_unowned
-	ld de,#ctc_isr_done
+	jr z,irq_unowned
+	ld de,#irq_isr_done
 	push de
 	jp (hl)
-
-ctc_isr_unowned:
-	; Enabled without a registration: shut the channel off instead of taking
-	; this interrupt forever.
+irq_unowned:
 	ld a,c
-	add a,#CTC0_CTRL
-	ld c,a
-	ld a,#CTC_RESET_DISABLE
-	out (c),a
-ctc_isr_done:
+	cp #IRQ_SOURCE_COUNT
+	call c,ctc_stop_channel
+irq_isr_done:
+	exx
+	pop hl
+	pop de
+	pop bc
+	exx
+	ex af,af'
+	pop af
+	ex af,af'
+	pop iy
+	pop ix
 	pop hl
 	pop de
 	pop bc
 	pop af
 	ld sp,(CBIOS_ISR_SP_SAVE)
-	; Accepting the interrupt cleared IFF1 and IFF2 and RETI does not set them;
-	; EI's one-instruction delay keeps RETI from nesting.
-	ei
-	reti
-
-; Any vector no BIOS device is programmed to supply.
 irq_unexpected:
 	ei
 	reti
 
-; ---------------------------------------------------------------------------
-; irq_register -- BDOS facade function ZEXT_REGISTER_ISR.
-; In:  B = source, 0-3 for CTC channel 0-3.  DE = callback entry.
-; Out: A = 00h registered.
-;      A = FFh refused: no such source, callback outside E000h-E3FFh, or the
-;          source is already registered.
-; Clobbers: F, HL.  The slot is written with interrupts masked; the caller's
-; interrupt state is restored.
-; The program programs the channel itself afterwards, and must not write the
-; CTC vector byte: the BIOS owns it.
-; ---------------------------------------------------------------------------
-irq_register:
-	call irq_slot_for_b
-	jr nz,irq_refuse
-	ld a,d
-	and #0xfc
-	cp #(PROGRAM_ISR_AREA >> 8)
-	jr nz,irq_refuse
-	ld a,(hl)
-	inc hl
-	or (hl)
-	dec hl
-	jr nz,irq_refuse
-	ld a,i
-	jp pe,irq_register_iff
-	ld a,i
-irq_register_iff:
-	push af
-	di
-	ld (hl),e
-	inc hl
-	ld (hl),d
-	jr irq_restore_ok
-
-irq_refuse:
-	ld a,#0xff
+; Boot only, IRQs already masked. Reinstalls IM2 without changing enables.
+; Clobbers AF. No traffic, no wait; not a callback API.
+irq_init:
+	ld a,#CBIOS_IM2_VECTOR_PAGE
+	ld i,a
+	im 2
 	ret
 
-; ---------------------------------------------------------------------------
-; irq_unregister -- BDOS facade function ZEXT_UNREGISTER_ISR.
-; In:  B = source.
-; Out: A = 00h: channel reset and slot cleared; A = FFh: no such source.
-; Clobbers: F, HL.
-; ---------------------------------------------------------------------------
-irq_unregister:
-	call irq_slot_for_b
-	jr nz,irq_refuse
-	ld a,i
-	jp pe,irq_unregister_iff
-	ld a,i
-irq_unregister_iff:
-	push af
-	di
-	ld a,b
-	call irq_stop_channel
-	xor a
-	ld (hl),a
-	inc hl
-	ld (hl),a
-irq_restore_ok:
-	pop af
-	ld a,#0x00			; LD leaves P/V alone
-	ret po
-	ei
-	ret
-
-; ---------------------------------------------------------------------------
-; irq_program_exit -- BDOS facade function ZEXT_PROGRAM_EXIT.
-; Stops every registered channel and clears its slot.  ZCPR2 calls it when a
-; transient returns, because that path never reaches WBOOT (plan F5).
-; Out: A = 00h.  Clobbers: F, BC, HL.
-; ---------------------------------------------------------------------------
-irq_program_exit:
-	ld a,i
-	jp pe,irq_exit_iff
-	ld a,i
-irq_exit_iff:
-	push af
-	di
-	ld hl,#irq_ctc_slots
-	ld b,#0
-irq_exit_loop:
-	ld a,(hl)
-	inc hl
-	or (hl)
-	jr z,irq_exit_next
-	ld (hl),#0
-	dec hl
-	ld (hl),#0
-	inc hl
-	ld a,b
-	call irq_stop_channel
-irq_exit_next:
-	inc hl
-	inc b
-	ld a,b
-	cp #IRQ_SOURCE_COUNT
-	jr c,irq_exit_loop
-	jr irq_restore_ok
-
-; ---------------------------------------------------------------------------
-; irq_reset -- clear every registration.  Cold boot and WBOOT, with interrupts
-; already disabled and the CTC already reset by ctc_disable_interrupts.
-; Clobbers: AF, B, HL.
-; ---------------------------------------------------------------------------
+; User slots are cleared at cold/WBOOT. Kernel ownership survives WBOOT's
+; screen hold, so the existing SIO sink can still receive its dismissal key.
+; In: IRQs masked. Clobbers AF/B/HL; bounded, no traffic.
 irq_reset:
-	; Keep F7F7h available for the cross-page FFh vector described below.
-	jr irq_reset_body
-	.ds 5
-irq_ff_unexpected:
-	ei
-	reti
-irq_reset_body:
 	ld hl,#irq_ctc_slots
 	ld b,#IRQ_SOURCE_COUNT * 2
 	xor a
@@ -223,12 +115,211 @@ irq_reset_loop:
 	inc hl
 	djnz irq_reset_loop
 	ret
+irq_ctc_slots:
+	.dw 0,0,0,0
+irq_sio_slot:
+	.dw 0
 
-; HL = slot for source B.  Z if B is a registerable source.  Preserves BC, DE.
-irq_slot_for_b:
+; Keep the floating FFh vector target fixed, independent of code growth.
+	.ifgt (. - IRQ_CODE_START) - 0xc7
+	.error 1
+	.endif
+	.ds 0xc7 - (. - IRQ_CODE_START)
+irq_ff_unexpected:
+	jp irq_unexpected
+
+; PROGRAM_EXIT also returns the application-owned serial channel to CP/M.
+; In: any IFF. Out: A=0. Clobbers F/BC/HL. Foreground only, no traffic.
+irq_program_exit:
+	call irq_save_disable
+	push af
+	ld b,#0
+irq_exit_loop:
+	call irq_unregister
+	inc b
 	ld a,b
 	cp #IRQ_SOURCE_COUNT
-	jr nc,irq_slot_bad
+	jr c,irq_exit_loop
+	call sio0a_quiesce
+	pop af
+	call irq_restore
+	xor a
+	ret
+; Boot ownership transition; caller has masked IRQs and installed its stack.
+; Clobbers AF/B/HL, no traffic or wait. Delegates device-local reset to drivers.
+irq_boot_prepare:
+	call irq_init
+	call irq_reset
+	call ctc_disable_interrupts
+	jp sio0a_quiesce
+IRQ_CODE_END:
+	.ifgt (IRQ_CODE_END - IRQ_CODE_START) - (CBIOS_IRQ_CODE_LIMIT - CBIOS_IRQ_CODE_BASE)
+	.error 1
+	.endif
+
+; CPU-global policy helpers in previously unallocated common memory.
+	.org CBIOS_IRQ_POLICY_BASE
+IRQ_POLICY_START:
+; In: any IFF. Out: A=0 (disabled) or 1 (enabled), IRQs disabled.
+; Clobbers AF only. Nestable: each caller retains its own token. Bounded,
+; no device traffic; ISR-safe (token is zero inside a maskable ISR).
+; Retry the NMOS LD A,I false-negative window once, as in the old facade.
+irq_save_disable:
+	ld a,i
+	jp pe,irq_save_known
+	ld a,i
+irq_save_known:
+	di
+	ld a,#0
+	ret po
+	inc a
+	ret
+; In: A=token. Clobbers F only. No wait/traffic. ISR callers must use only
+; their own zero token; never pass an enabled foreground token from an ISR.
+irq_restore:
+	di
+	or a
+	ret z
+irq_enable:
+	ei
+	ret
+irq_disable:
+	di
+	ret
+
+; Stackless boot entries: policy remains here even before a valid SP exists.
+irq_rom_entry:
+	di
+	jp shadow_copy_masked
+irq_boot_entry:
+	di
+	jp boot_masked
+irq_wboot_entry:
+	di
+	jp wboot_masked
+irq_wbtrap_entry:
+	di
+	jp trap_masked
+
+; Polling sink call: caller already saved BC/DE/HL and masked IRQs.
+; Preserve index/alternate context even though no hardware ISR frame exists.
+irq_sink_context:
+	push ix
+	push iy
+	ex af,af'
+	push af
+	ex af,af'
+	exx
+	push bc
+	push de
+	push hl
+	exx
+	call SIO_RX_KICK_READ
+	exx
+	pop hl
+	pop de
+	pop bc
+	exx
+	ex af,af'
+	pop af
+	ex af,af'
+	pop iy
+	pop ix
+	ret
+IRQ_POLICY_END:
+	.ifgt (IRQ_POLICY_END - IRQ_POLICY_START) - (CBIOS_IRQ_POLICY_LIMIT - CBIOS_IRQ_POLICY_BASE)
+	.error 1
+	.endif
+
+	.org CBIOS_IRQ_REG_BASE
+IRQ_REG_START:
+; Public user API, unchanged: B=CTC source 0..3, DE=E000h-E3FFh entry.
+; Out: A=0 or FFh. Preserves BC/DE, clobbers F/HL. No wait/traffic.
+irq_register:
+	ld a,b
+	cp #IRQ_SOURCE_COUNT
+	jr nc,irq_refuse
+	ld a,d
+	and #0xfc
+	cp #(PROGRAM_ISR_AREA >> 8)
+	jr nz,irq_refuse
+	jr irq_register_slot
+; Private kernel API: only SIO0, entry in resident BIOS code F000h-F957h.
+; Trusted kernel may rebind its slot after SIO reinitialization. Atomic install
+; uses the same slot mechanism. Not exposed through BDOS.
+irq_register_kernel:
+	ld a,b
+	cp #IRQ_SOURCE_SIO0
+	jr nz,irq_refuse
+	ld a,d
+	cp #(CBIOS_BASE >> 8)
+	jr c,irq_refuse
+	cp #(FAC_BULK_BUF >> 8)
+	jr c,irq_kernel_slot
+	jr nz,irq_refuse
+	ld a,e
+	cp #(FAC_BULK_BUF & 0xff)
+	jr nc,irq_refuse
+irq_kernel_slot:
+	call irq_slot_for_b
+	call irq_save_disable
+	push af
+	jr irq_write_slot
+irq_register_slot:
+	call irq_slot_for_b
+	call irq_save_disable
+	push af
+	ld a,(hl)
+	inc hl
+	or (hl)
+	dec hl
+	jr nz,irq_register_busy
+irq_write_slot:
+	ld (hl),e
+	inc hl
+	ld (hl),d
+	jr irq_restore_ok
+irq_register_busy:
+	pop af
+	call irq_restore
+irq_refuse:
+	ld a,#0xff
+	ret
+
+; Private kernel unregister: B=SIO0; driver must mask its local sources first.
+; Same atomic clear and caller-IFF restoration as user removal. No traffic/wait.
+irq_unregister_kernel:
+	ld a,b
+	cp #IRQ_SOURCE_SIO0
+	jr nz,irq_refuse
+	call irq_slot_for_b
+	call irq_save_disable
+	push af
+	jr irq_clear_slot
+
+; User unregister: B=0..3. Stops the mapped hardware channel before clearing
+; its callback. Preserves BC/DE, clobbers AF/HL, restores caller's IFF.
+irq_unregister:
+	ld a,b
+	cp #IRQ_SOURCE_COUNT
+	jr nc,irq_refuse
+	call irq_slot_for_b
+	call irq_save_disable
+	push af
+	ld a,b
+	call ctc_stop_channel
+irq_clear_slot:
+	xor a
+	ld (hl),a
+	inc hl
+	ld (hl),a
+irq_restore_ok:
+	pop af
+	call irq_restore
+	xor a
+	ret
+irq_slot_for_b:
+	ld a,b
 	add a,a
 	ld l,a
 	ld h,#0
@@ -236,64 +327,29 @@ irq_slot_for_b:
 	ld de,#irq_ctc_slots
 	add hl,de
 	pop de
-	xor a
 	ret
-irq_slot_bad:
-	or #0x01
-	ret
-
-; A = channel.  Reset it with its interrupt disabled.  Preserves BC.
-irq_stop_channel:
-	push bc
-	add a,#CTC0_CTRL
-	ld c,a
-	ld a,#CTC_RESET_DISABLE
-	out (c),a
-	pop bc
-	ret
-
-; Callback entry per CTC channel; zero means unregistered.
-irq_ctc_slots:
-	.dw 0,0,0,0
-
-IRQ_CODE_END:
-	.ifgt (IRQ_CODE_END - IRQ_CODE_START) - (CBIOS_IRQ_CODE_LIMIT - CBIOS_IRQ_CODE_BASE)
-	.error 1			; interrupt code overflows its region
+IRQ_REG_END:
+	.ifgt (IRQ_REG_END - IRQ_REG_START) - (CBIOS_IRQ_REG_LIMIT - CBIOS_IRQ_REG_BASE)
+	.error 1
 	.endif
 
-; ---------------------------------------------------------------------------
-; The IM2 vector page.  Programmed device vectors are even.  A floating bus may
-; supply FFh, whose pointer straddles the end of this page: FDFFh supplies F7h
-; below and IM2_VECTOR_FF_HIGH at FE00h supplies F7h, producing the safe F7F7h
-; irq_ff_unexpected target.  The BIOS programs the CTC vector base
-; (CTC_VECTOR_BASE, in ctc_disable_interrupts) and SIO0/B WR2 (CBIOS_SIO_VECTOR,
-; in sio_core_enable_interrupts).
-; ---------------------------------------------------------------------------
-	.area CODE (ABS)
 	.org CBIOS_IM2_VECTOR_TABLE
-
 IM2_VECTOR_TABLE_START:
-	.dw ctc0_isr			; 00h  CTC channel 0
-	.dw ctc1_isr			; 02h  CTC channel 1
-	.dw ctc2_isr			; 04h  CTC channel 2
-	.dw ctc3_isr			; 06h  CTC channel 3
+	.dw ctc0_isr,ctc1_isr,ctc2_isr,ctc3_isr
 	.rept 4
-	.dw irq_unexpected		; 08h-0Eh
+	.dw irq_unexpected
 	.endm
 	.rept 8
-	.dw xing_isr			; 10h-1Eh  SIO0: 10h is live; the rest
-	.endm				;          cover status-affects-vector
+	.dw xing_isr
+	.endm
 	.rept 112
-	.dw irq_unexpected		; 20h-FEh
+	.dw irq_unexpected
 	.endm
 IM2_VECTOR_TABLE_END:
-
 	.ifne (IM2_VECTOR_TABLE_END - IM2_VECTOR_TABLE_START) - CBIOS_IM2_VECTOR_SIZE
-	.error 1			; the vector page must be exactly 256 bytes
+	.error 1
 	.endif
-	.ifne CTC_VECTOR_BASE
-	.error 1			; the page above assumes CTC vectors at 00h-06h
-	.endif
-	.ifne CBIOS_SIO_VECTOR - 0x10
-	.error 1			; the page above assumes the SIO vector is 10h
+; The high byte of every trailing default entry must remain F7h for FFh.
+	.ifne ((irq_unexpected - IRQ_CODE_START + (CBIOS_IRQ_CODE_BASE & 0xff)) / 256)
+	.error 1
 	.endif

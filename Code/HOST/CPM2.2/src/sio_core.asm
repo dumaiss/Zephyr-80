@@ -8,10 +8,8 @@
 ; What this module owns:
 ;   - SIO0/B asynchronous setup for the console / Virtual Drip serial link.
 ;   - The SIO1/A synchronous setup entry used once by cold boot.
-;   - IM2 setup for the current SIO RX interrupt path.
-;   - The exact IM2 vector table word consumed by the Z80 during interrupt
-;     acknowledge.
-;   - SIO WR1/WR2/WR9 interrupt enable/disable for BIOS-owned channels.
+;   - A registered SIO0 callback under the IRQ core.
+;   - SIO WR1/WR2 interrupt enable/disable for BIOS-owned channels.
 ;   - One registered RX byte sink per BIOS-owned channel.
 ;   - Foreground byte send/receive helpers for BIOS clients.
 ;
@@ -30,14 +28,8 @@
 ;   In:
 ;     A = SIO channel id, for example SIO_CH_CONSOLE.
 ;     C = received byte.
-;   The registered sink may clobber AF/BC/DE/HL but MUST NOT clobber IX/IY. The
-;   SIO ISR saves AF/BC/DE/HL before dispatching and restores them before RETI;
-;   it does NOT save IX/IY (sio_core has no free ROM bytes for the extra
-;   push/pop), so the sink contract forbids their use. This invariant holds
-;   today: no sink-reachable code uses IX/IY, and the only IX user in the BIOS,
-;   v9958_write_vram_small, saves/restores IX itself and is never reached from a
-;   sink. Foreground sio_rx_kick likewise preserves BC/DE/HL (not IX/IY) around
-;   the sink call for callers that may keep live values in those registers.
+;   Sinks may clobber AF/BC/DE/HL/IX/IY and alternate registers. The IRQ
+;   core preserves full foreground context. The polling kick does likewise.
 ;
 ; Hardware RX interrupt path:
 ;     SIO receives byte
@@ -67,9 +59,8 @@
 ;
 ; Ownership rules:
 ;   BIOS owns SIO0/B and the SIO1/A IO Controller transport.
-;   Applications own SIO0/A. This code does not configure SIO0/A as a channel,
-;   but it masks SIO0/A WR1 interrupts before enabling the chip-wide SIO0 WR9
-;   master interrupt bit used by the SIO0/B console.
+;   Applications own SIO0/A. Boot and program-exit quiesce it; normal SIO0/B
+;   operations never reconfigure the application's channel.
 ;   CTC remains application-owned and is not required by this module.
 ;
 ; SIO1 IO Controller link:
@@ -96,6 +87,7 @@
 	.globl CONIRQ,sio_console_enable_interrupts,sio_console_disable_interrupts
 	.globl SIO_CORE_CODE_START,SIO_CORE_CODE_END
 	.globl SIO_CORE_STATE_START,SIO_CORE_STATE_END
+	.globl SIO_QUIESCE_START,SIO_QUIESCE_END,sio0a_quiesce
 	.globl SIO0B_RX_SINK,SIO1_RX_SINK
 	.if VDRIP_TRANSPORT_LINKED
 	.globl SIO0B_LAST_RR1,SIO0B_LAST_RX_ERROR
@@ -152,9 +144,7 @@ sio_init:
 ;   until the console client is ready.
 ; Clobbers: AF.
 ; Important invariants:
-;   This does not configure application-owned SIO0/A as a channel and does not
-;   require or program the CTC. It only masks SIO0/A WR1 interrupts so SIO0/B
-;   can own the chip-wide SIO0 interrupt path.
+;   Does not configure SIO0/A or program CTC/CPU interrupt state.
 sio_core_init:
 	xor a
 	ld (SIO0B_RX_SINK),a
@@ -214,11 +204,6 @@ sio1_ioc_init:
 	out (SIO1_IOC_CTRL_PORT),a
 	xor a
 	out (SIO1_IOC_CTRL_PORT),a
-	; WR9: SIO1 master interrupts disabled.
-	ld a,#0x09
-	out (SIO1_IOC_CTRL_PORT),a
-	xor a
-	out (SIO1_IOC_CTRL_PORT),a
 
 	; WR4: synchronous external sync, x1 clock, no parity.
 	ld a,#0x04
@@ -260,46 +245,24 @@ sio_console_enable_interrupts:
 sio_console_disable_interrupts:
 	jp sio_core_disable_interrupts
 
-; Enable BIOS-owned SIO interrupts.
-; Purpose:
-;   Program the Z80 for IM2, program SIO0/B WR2 with vector 00h, enable SIO0/B
-;   receive interrupts on all received characters without parity-vector
-;   modification, and enable the SIO master interrupt bit.
-;
-; Interrupt setup trace:
-;   1. Load I with CBIOS_IM2_VECTOR_PAGE and enter interrupt mode 2.
-;   2. Mask SIO0/A WR1 interrupts. WR9 MIE is chip-wide for SIO0, while this
-;      module only owns SIO0/B.
-;   3. Write SIO0/B WR2 with CBIOS_SIO_VECTOR. The Z80 forms the IM2 vector
-;      table address from I plus the SIO-supplied vector byte.
-;   4. Issue Reset Highest IUS / Return-from-Interrupt through channel A, the
-;      SIO master channel for WR0 commands that affect interrupt state.
-;   5. Program SIO0/B WR1 RX mode.
-;   6. Program WR9 MIE through the SIO0 master control port.
-;
-; SIO WR1 receive interrupt mode bits are D4:D3:
-;   00 -> RX interrupts disabled
-;   01 -> interrupt on first received character / special condition
-;   10 -> interrupt on all received characters, parity affects vector
-;   11 -> interrupt on all received characters, parity does not affect vector
-;
-; The desired console mode is "all receive characters, parity does not affect
-; vector." Stable vector behavior matters because CONSOLE_IM2_VECTOR_ENTRY is an
-; exact two-byte table entry, not a table of status-modified vectors.
-; Outputs:
-;   SIO_CORE_IRQ_ENABLED = 1, A = BIOS_OK.
-; Clobbers: AF.
+; Enable SIO0/B-local interrupts and register its common callback.
+; In: any caller IFF. Out: A=BIOS_OK. Clobbers AF only. Bounded, no VDrip
+; traffic. Foreground only; CPU IM2/I/global enable remain IRQ-core policy.
+; WR1 requests every received character without parity-vector modification.
+; Z80 SIO has WR0-WR7 only: 09h would select WR1 on channel A, not a
+; chip-wide enable. Do not configure application-owned A here.
 sio_core_enable_interrupts:
-	di
-	ld a,#CBIOS_IM2_VECTOR_PAGE
-	ld i,a
-	im 2
-
-	; SIO0 WR9 MIE is chip-wide; keep channel A masked before enabling it.
-	ld a,#0x01
-	out (SIO0A_CTRL_PORT),a
-	xor a
-	out (SIO0A_CTRL_PORT),a
+	call irq_save_disable
+	push af
+	push bc
+	push de
+	push hl
+	ld b,#IRQ_SOURCE_SIO0
+	ld de,#sio_core_isr
+	call irq_register_kernel
+	pop hl
+	pop de
+	pop bc
 
 	ld a,#0x02
 	out (SIO0B_CTRL_PORT),a
@@ -315,26 +278,23 @@ sio_core_enable_interrupts:
 	; status not affecting the interrupt vector.
 	ld a,#SIO_WR1_RX_INT_ALL
 	out (SIO0B_CTRL_PORT),a
-	ld a,#0x09
-	out (SIO_MASTER_CTRL_PORT),a
-	ld a,#SIO_WR9_MIE
-	out (SIO_MASTER_CTRL_PORT),a
 	ld a,#0x01
 	ld (SIO_CORE_IRQ_ENABLED),a
-	ei
+	pop af
+	call irq_restore
 	xor a
 	ret
 
 ; Disable BIOS-owned SIO interrupts.
 ; Purpose:
-;   Clear SIO0/B and SIO1/A WR1 interrupt enables, clear SIO master interrupt
-;   enable, and mark SIO IRQ mode inactive for foreground ring-buffer lock
-;   helpers.
+;   Clear BIOS-owned SIO0/B and SIO1/A WR1 enables and mark SIO IRQ mode
+;   inactive. Preserve the caller's CPU interrupt state and application SIO0/A.
 ; Outputs:
 ;   SIO_CORE_IRQ_ENABLED = 0, A = BIOS_OK.
 ; Clobbers: AF.
 sio_core_disable_interrupts:
-	di
+	call irq_save_disable
+	push af
 	ld a,#0x01
 	out (SIO0B_CTRL_PORT),a
 	xor a
@@ -343,15 +303,16 @@ sio_core_disable_interrupts:
 	out (SIO1_IOC_CTRL_PORT),a
 	xor a
 	out (SIO1_IOC_CTRL_PORT),a
-	ld a,#0x09
-	out (SIO1_IOC_CTRL_PORT),a
-	xor a
-	out (SIO1_IOC_CTRL_PORT),a
-	ld a,#0x09
-	out (SIO_MASTER_CTRL_PORT),a
-	xor a
-	out (SIO_MASTER_CTRL_PORT),a
 	ld (SIO_CORE_IRQ_ENABLED),a
+	push bc
+	push hl
+	ld b,#IRQ_SOURCE_SIO0
+	call irq_unregister_kernel
+	pop hl
+	pop bc
+	pop af
+	call irq_restore
+	xor a
 	ret
 
 ; Register one RX byte sink for a BIOS-owned SIO channel.
@@ -364,10 +325,8 @@ sio_core_disable_interrupts:
 ;     return quickly, never call BDOS, never block, never perform disk I/O, and
 ;     never do heavy rendering. Recommended behavior is to enqueue C into the
 ;     owning driver's RX buffer, set a flag if needed, and return.
-;   Register preservation:
-;     The callback may clobber AF/BC/DE/HL but MUST NOT clobber IX/IY. The ISR
-;     preserves AF/BC/DE/HL around the whole interrupt frame; IX/IY are not
-;     saved, so a sink that uses them would corrupt foreground state.
+;   Register preservation: the IRQ core and foreground kick preserve all
+;   main/index/alternate registers around sink execution.
 ;
 ; In:  A = SIO channel id, HL = callback address.
 ; Out: A = BIOS_OK / BIOS_ERR.
@@ -501,7 +460,7 @@ sio1_ioc_get_byte:
 ;   If keyboard input works only when sio_rx_kick is called, the Virtual Drip
 ;   parser, vdrip_rx_sink, and textq FIFO may be functioning, but the true
 ;   interrupt-fed hardware path may still be broken. sio_rx_kick does not prove
-;   that WR1/WR2/WR9, IM2 entry, IUS reset, or RX interrupt delivery are correct.
+;   that WR1/WR2, IM2 entry, IUS reset, or RX interrupt delivery are correct.
 ;
 ; Final console input design:
 ;   Hot CONST loops should not call sio_rx_kick. CONST should be a cheap queue
@@ -527,6 +486,7 @@ SIO_RX_KICK_NOOP:
 	ret
 SIO_RX_KICK_CONSOLE:
 	call sio_core_rx_lock
+	push af
 	xor a
 	out (SIO0B_CTRL_PORT),a
 	in a,(SIO0B_CTRL_PORT)
@@ -535,33 +495,30 @@ SIO_RX_KICK_CONSOLE:
 	push bc
 	push de
 	push hl
+	call irq_sink_context
+	jr SIO_RX_KICK_RESTORE
+SIO_RX_KICK_READ:
 	in a,(SIO0B_DATA_PORT)
 	ld c,a
 	call sio0b_clear_rx_error
 	; sio0b_clear_rx_error returns A=0, matching SIO_CH_CONSOLE.
-	call sio_core_dispatch_rx
+	jp sio_core_dispatch_rx
+SIO_RX_KICK_RESTORE:
 	pop hl
 	pop de
 	pop bc
 SIO_RX_KICK_DONE:
+	pop af
 	call sio_core_rx_unlock
 	xor a
 	ret
 
-; Foreground helpers for clients that update RX buffers also touched by sinks.
+; Token API: lock returns A=prior IFF, unlock takes that token in A.
+; Clobbers AF only; no blocking/traffic. Nestable and ISR-safe for own token.
 sio_core_rx_lock:
-	ld a,(SIO_CORE_IRQ_ENABLED)
-	or a
-	ret z
-	di
-	ret
-
+	jp irq_save_disable
 sio_core_rx_unlock:
-	ld a,(SIO_CORE_IRQ_ENABLED)
-	or a
-	ret z
-	ei
-	ret
+	jp irq_restore
 
 ; SIO interrupt service routine.
 ;
@@ -570,17 +527,10 @@ sio_core_rx_unlock:
 ;   - Called from xing_isr, already on CBIOS_ISR_STACK_TOP.
 ;   - SIO0/B WR2 selects CONSOLE_IM2_VECTOR_ENTRY.
 ;   - SIO0/B WR1 RX interrupts are enabled for all received characters.
-;   - SIO0 WR9 MIE is enabled.
 ;   - The active console driver has registered SIO0B_RX_SINK.
 ;
-; Register preservation:
-;   The ISR pushes AF, BC, DE, and HL before touching SIO state or dispatching to
-;   a registered sink. The sink callback may clobber those registers but MUST NOT
-;   clobber IX/IY, which the ISR does not save (sio_core has no free bytes for the
-;   extra push/pop). This invariant holds today: no sink-reachable code uses
-;   IX/IY, and the sole IX user, v9958_write_vram_small, preserves IX itself. The
-;   ISR restores AF/BC/DE/HL and returns to xing_isr, which re-enables
-;   interrupts and issues the RETI on the interrupted stack.
+; Register preservation: owned entirely by the IRQ dispatcher. This callback
+; returns with RET and never enables interrupts or switches stacks.
 ;
 ; Channel serviced:
 ;   This ISR services BIOS-owned SIO0/B console RX. SIO1/A is polled by the
@@ -623,10 +573,6 @@ sio_core_rx_unlock:
 ;   not switch banks, resets highest IUS, and returns to xing_isr, which issues
 ;   EI and RETI.
 sio_core_isr:
-	push af
-	push bc
-	push de
-	push hl
 
 	call sio_core_isr_rx_once
 
@@ -643,11 +589,7 @@ SIO_CORE_ISR_DONE:
 	out (SIO_MASTER_CTRL_PORT),a
 
 SIO_CORE_ISR_EXIT:
-	pop hl
-	pop de
-	pop bc
-	pop af
-	ret				; xing_isr: EI, RETI
+	ret				; IRQ core restores context and issues RETI
 
 sio_core_isr_rx_once:
 	xor a
@@ -804,3 +746,29 @@ SIO0B_LAST_RX_ERROR:
 SIO_CORE_STATE_END:
 
 	.area CODE (ABS)
+
+; SIO-local ownership return, called only by cold/WBOOT and PROGRAM_EXIT.
+; In: IRQs disabled. Clobbers AF. Bounded, no VDrip traffic, foreground only.
+	.org CBIOS_SIO_QUIESCE_BASE
+SIO_QUIESCE_START:
+sio0a_quiesce:
+	ld a,#0x18			; reset channel A (not channel B)
+	out (SIO0A_CTRL_PORT),a
+	ld a,#1			; WR1: all interrupt sources off
+	out (SIO0A_CTRL_PORT),a
+	xor a
+	out (SIO0A_CTRL_PORT),a
+	ld a,#3			; WR3: RX disabled
+	out (SIO0A_CTRL_PORT),a
+	xor a
+	out (SIO0A_CTRL_PORT),a
+	ld a,#5			; WR5: TX disabled, modem outputs inactive
+	out (SIO0A_CTRL_PORT),a
+	xor a
+	out (SIO0A_CTRL_PORT),a
+	ld a,#SIO_WR0_RESET_ERROR
+	out (SIO0A_CTRL_PORT),a
+	ld a,#0x10			; reset external/status latch
+	out (SIO0A_CTRL_PORT),a
+	ret
+SIO_QUIESCE_END:
