@@ -5,7 +5,7 @@
 # diagnostic that speaks the IO Controller protocol -- so all of it is versioned
 # with the BIOS and the controller firmware, not with the user's software.
 #
-# Two sets:
+# Three sets:
 #
 #   normal      the ROM rescue disk (A:) -- non-destructive, or destructive
 #               only where there is no other way to provision a card (SDFMT).
@@ -14,6 +14,8 @@
 #               whatever card is inserted, with no drive letter to get wrong.
 #               They are never put on the ROM disk; copy one to a work drive
 #               when it is needed.
+#   tools       everyday tools that drive machine hardware but are not rescue
+#               tools.  Also never on the ROM disk.
 #
 # `make` builds both.
 
@@ -50,7 +52,11 @@ DIAG := ioc_bulk ioc_sdblk ioc_sdwrite ioc_sdsoak ioc_sdrec ioc_sdbench
 # display test, IO Controller HID status pages, sound card test.
 DIAG += ioc_rts_probe ioc_diagchk v9958tst hidstat sndtest
 
-TARGETS := $(NORMAL) $(DIAG)
+# --- tools -------------------------------------------------------------------
+# X/Y/ZMODEM file transfer over the serial console port.
+TOOLS := xfer
+
+TARGETS := $(NORMAL) $(DIAG) $(TOOLS)
 
 INCS := $(wildcard $(SRC_DIR)/*.inc)
 RELS := $(addprefix $(BUILD_DIR)/,$(addsuffix .rel,$(TARGETS)))
@@ -65,13 +71,14 @@ DIAG_RECORD_AUTHORITY ?= ../CPM2.2/src/cbios_defs.inc
 DIAG_RECORD_CHECK     ?= ../CPM2.2/tools/check_diag_record.py
 
 .DEFAULT_GOAL := all
-.PHONY: all normal diagnostic clean check-diag-record list
+.PHONY: all normal diagnostic tools clean check-diag-record list
 .SECONDARY: $(RELS) $(IHXS)
 
 all: check-diag-record $(COMS)
 
 normal:     check-diag-record $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(NORMAL)))
 diagnostic: check-diag-record $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(DIAG)))
+tools:      $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(TOOLS)))
 
 check-diag-record:
 	@if [ -f "$(DIAG_RECORD_CHECK)" ] && [ -f "$(DIAG_RECORD_AUTHORITY)" ]; then \
@@ -96,6 +103,7 @@ $(BUILD_DIR)/%.com: $(BUILD_DIR)/%.ihx $(IHX_TO_COM)
 list:
 	@echo "normal:     $(NORMAL)"
 	@echo "diagnostic: $(DIAG)"
+	@echo "tools:      $(TOOLS)"
 
 clean:
 	rm -rf "$(BUILD_DIR)"

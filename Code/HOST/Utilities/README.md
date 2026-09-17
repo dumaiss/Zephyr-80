@@ -11,9 +11,10 @@ experiments and bring-up sketches belong in `../HelloWorld`.
 ## Building
 
 ```sh
-make              # both sets
+make              # every set
 make normal       # just the ROM rescue set
 make diagnostic   # just the diagnostics
+make tools        # just the tools
 make list         # show which is which
 ```
 
@@ -43,7 +44,7 @@ A tool that needs a timer interrupt registers a CTC callback with BDOS function
 200. The callback, and everything it touches, must be copied into
 `E000h-E3FFh` first. `SDSOAK` is the worked example.
 
-## The two sets
+## The sets
 
 **`normal`** is the ROM rescue disk: what you want present when the machine is
 in trouble and A: is the only volume you can trust.
@@ -72,6 +73,60 @@ copy one to a work drive when you need it.
 The ROM disk also carries prebuilt Z-System tools from `zsys/`: `CD`, `PWD` and
 `MKDIR` for named directories, `MCOPY`, `CRC` and `NSWP`. The ROM build installs
 them for this machine as it stages them; the files here are the originals.
+
+**`tools`** are everyday tools that drive machine hardware but are not rescue
+tools. They are not on the ROM disk either; copy one to a work drive.
+
+| | |
+|---|---|
+| `XFER` | X/Y/ZMODEM file transfer with the PC over the serial console port. |
+
+## `XFER`: file transfer over the serial console
+
+```
+XFER ZR [d:]        ZMODEM receive; the sender names the files
+XFER ZS [d:]afn     ZMODEM send, wildcards allowed
+XFER YR [d:]        YMODEM batch receive
+XFER YS [d:]afn     YMODEM batch send
+XFER XR [d:]name    XMODEM receive (CRC or checksum, 128 or 1K blocks)
+XFER XS [d:]name    XMODEM send (1K blocks with CRC, 128 with checksum)
+```
+
+The PC side can be any program that speaks the protocol — `lrzsz` (`sz`/`rz`,
+`sb`/`rb`, `sx`/`rx`), TeraTerm, minicom — **with RTS/CTS flow control on the
+port**. ESC or ^C on the keyboard aborts; a failed receive deletes its partial
+file. An existing file of the same name is replaced.
+
+It works in the default V9958 build only. A VDrip build uses SIO0/B for VDrip
+itself and would need a file transport of its own.
+
+**How it takes the port.** The BDOS console cannot carry binary data: the
+serial console fallback has an 8-byte ring with no flow control, reads three
+ESCs as its takeover gesture, and mirrors console output onto the same wire.
+For the length of a transfer XFER turns off SIO0/B's receive interrupt (WR1
+only — not SIO1, the CTC or WR9), clears the sercon tee and input bits, and
+polls the port itself. On exit it restores the sercon flags and warm boots,
+and warm boot re-registers the sink and re-enables the interrupt. Whichever
+way the program ends, the console comes back as it was.
+
+**How it keeps up.** The SIO buffers 3 bytes and a disk write masks interrupts
+for milliseconds. XFER writes only where the sender is waiting for an answer
+(an X/YMODEM ACK, a ZMODEM ZCRCW), and releases RTS around every disk write and
+console call. ZRINIT advertises a 4K receive buffer, so a sender that honours
+it stops at least that often; anything that still slips through is resent after
+ZRPOS.
+When sending, every 1K ZMODEM block waits for its ZACK.
+
+**Limits.**
+
+- CP/M 2.2 stores whole 128-byte records, so a received file is padded with ^Z
+  to the next record, and a sent file's size is its record count times 128.
+- XMODEM, and YMODEM without a size, cannot tell block padding from data:
+  trailing ^Z bytes are dropped before the last record is padded again.
+- ZMODEM uses CRC-16 only; ZRINIT does not offer CRC-32. There is no crash
+  recovery: an interrupted file starts over.
+- File names from the PC keep the last path component, truncated to 8.3, with
+  characters CP/M rejects replaced by `_`.
 
 ## `src/ioc_diag_record.inc` is a mirror, not an original
 
