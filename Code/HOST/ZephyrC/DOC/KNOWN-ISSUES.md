@@ -10,7 +10,7 @@ labelled as such and are **not** established fact.
 line, not anything in the CTC, the BIOS or this library. The IOC now holds the
 net with a weak pull-up (`HOST_NMI_WPU = 1`); with that flashed, `TIMTEST 0`-`3`,
 `MANDEL` on every channel, `TONETEST` and `PCTRACE 0`/`1` all pass, ColecoGo
-runs, and the standalone endurance ROM records no NMIs at all. The reasoning and
+runs, and the standalone endurance ROM recorded no NMIs at all. The reasoning and
 the evidence are below, kept because the method is worth more than the answer:
 the CTC chip and the Z80 were each replaced along the way, and neither changed
 anything.
@@ -145,7 +145,8 @@ configuration latch) rather than a CTC one.
 
 ### Standalone ROM, 2026-09-17
 
-`../../CTCEnduranceROM/` reproduces a fault with CP/M removed entirely: no
+A standalone bare-metal ROM (written for this hunt, since removed) reproduced
+the fault with CP/M removed entirely: no
 BDOS, no BIOS, no banking after startup, no library, one CTC channel, one IM2
 vector, and an ISR that pushes AF and HL, bumps a counter and `RETI`s.
 

@@ -101,9 +101,8 @@ machine was taking stray NMIs, which is fixed as of 2026-09-17 (see "The
 machine takes an NMI" further down). After the fix, `TIMTEST 0` through
 `TIMTEST 3` all pass, `MANDEL` reports interrupts on every channel, and
 ColecoGo's NMI route works. The channel-by-channel failures recorded here were
-symptoms of the NMI, not of the channels -- with one exception that is a real
-bug and still unfixed: the BIOS resets the wrong channel for sources 1 and 2,
-described below.
+symptoms of the NMI, not of the channels. The separate BIOS channel-port defect
+described below has since been corrected as part of the IRQ core cleanup.
 
 The observations below predate the [IRQ core cleanup](irq-core-cleanup.md).
 That cleanup fixes BIOS channel shutdown mapping and SIO0/A ownership, but
@@ -163,7 +162,12 @@ raises interrupts that vector to the console handler, which reads only channel
 B and so never clears them. `zep_timer_start` masks SIO0/A before starting
 CTC0; the BIOS write itself has not been changed.
 
-### The BIOS resets the wrong channel for sources 1 and 2
+### The BIOS resets the wrong channel for sources 1 and 2 (fixed)
+
+**Corrected in the IRQ core cleanup.** `ctc_stop_channel` / `irq_stop_channel`
+in `cbios_bank.asm` now index a four-entry `ctc_ports` table, and
+`tests/irq_core.cpp` asserts the port written for each source, so a regression
+here fails the test rather than the machine. The original finding follows.
 
 Because A0/A1 reach the CTC's CS0/CS1 in reverse, `CTC0_CTRL + channel` is the
 wrong port for channels 1 and 2. Two places in `cbios_irq.asm` do that
@@ -176,8 +180,8 @@ arithmetic:
   channel keeps its interrupt asserted and the dispatcher is re-entered
   indefinitely.
 
-A four-entry port table fixes both; `ZephyrC/src/zep_timer.c` carries the same
-table. `ctc_disable_interrupts` needs no change, since it resets all four ports.
+A four-entry port table fixes both, which is what the BIOS now does;
+`ZephyrC/src/zep_timer.c` carries the same table. `ctc_disable_interrupts` needs no change, since it resets all four ports.
 
 The open symptoms, what has been ruled out, and the experiments worth running
 next are kept in `../../ZephyrC/DOC/KNOWN-ISSUES.md`. The operator clarified on
@@ -193,7 +197,7 @@ foreground code made playback reliable.
 
 ### Standalone ROM test: the fault survives removing CP/M
 
-`../../CTCEnduranceROM/` is a bare-metal ROM that runs one CTC channel, one
+A standalone bare-metal ROM (written for this hunt, since removed) was that runs one CTC channel, one
 IM2 vector and a six-byte ISR with no CP/M, no BIOS, no banking and no other
 interrupt source. Two builds are identical except that one never enables
 interrupts. On 2026-09-17:
@@ -270,8 +274,9 @@ reported it is called from the main loop, where SP must be EFFE, and EFF6 is
 four words deeper -- the depth inside the nested stress routine. So control
 reached the check from somewhere it should not have, with the stack still
 holding registers the return path should have restored. The failure takes about
-a fifth of a second to appear, so it is cheap to reproduce. That ROM's README
-records the codes, the stack map and the reading procedure.
+a fifth of a second to appear, so it is cheap to reproduce. It ran one CTC
+channel, one IM2 vector and a six-byte ISR with no CP/M, no BIOS and no banking
+after startup.
 
 ## Interrupts under CP/M
 
