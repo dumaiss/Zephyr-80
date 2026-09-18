@@ -60,7 +60,7 @@ in trouble and A: is the only volume you can trust.
 | `SERCON` | Arms or disarms the serial console tee — what you reach for when the screen is dark. |
 | `NOWRAP` / `WRAPON` | Console line-wrap configuration. |
 | `VOLINFO` | Which addressing mode each storage unit is really using: an image file on a FAT card, or the raw card. |
-| `SDDIR` `SDGET` `SDPUT` `SDDEL` | The `/SHARED/` folder tools. With a FAT card in the socket, these are how a file gets off this machine or onto it when nothing else works. |
+| `SDDIR` `SDGET` `SDPUT` `SDDEL` | The `/SHARED/` folder tools. With a FAT card in the socket, these are how a file gets off this machine or onto it when nothing else works. `SDGET` and `SDPUT` accept an ambiguous name (`SDGET *.MOD`) and copy every match. |
 
 **`diagnostic`** is bring-up and benchmark work, and much of it is
 **destructive**: `SDWRITE`, `SDREC`, `SDSOAK` and `SDBENCH` act on whatever card

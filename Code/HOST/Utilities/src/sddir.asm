@@ -56,6 +56,11 @@ dir_loop:
 
 	; Pad the name out to a column, so sizes line up without a format
 	; routine.  print_name emitted at most twelve characters.
+	;
+	; The same routine is in sdwild.inc for SDGET and SDPUT.  It is duplicated
+	; on purpose: sdfs.inc is included by SDDEL and VOLINFO too, and putting it
+	; there put SDDEL over 1024 bytes -- a whole extra block on a 140-block
+	; volume that has already had tools cut from it for space.
 	ld hl,#rx_frame + 4
 	call name_width
 	ld a,#14

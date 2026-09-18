@@ -2,6 +2,9 @@
 ;
 ;   SDPUT NAME.EXT        copy verbatim, padded to a record boundary
 ;   SDPUT NAME.EXT /T     trim the trailing 1Ah padding from the last record
+;   SDPUT *.MOD /T        every match on the current drive and user
+;
+; /T applies to the whole run, so do not mix text and binary in one pattern.
 ;
 ; THE /T SWITCH IS WHY CMD_FS_CLOSE TAKES A LENGTH.
 ;
@@ -50,7 +53,77 @@ put_named:
 	; not tidiness, it is the only moment it still exists.
 	call scan_switch
 	call user_switch_apply
+	call save_pattern
 
+	call name_is_ambiguous
+	jr c,put_many
+
+	call put_one
+	ret
+
+; ---------------------------------------------------------------------------
+; A wildcard run.
+;
+; collect_cpm walks the directory first and fills a table, because FCB1 is the
+; search FCB: nothing may touch it or the DMA buffer between F_SFIRST and the
+; last F_SNEXT, and copying a file does both.
+;
+; The tail at 0080h is already spent by then -- scan_switch and
+; user_switch_apply read it above, and F_SFIRST writes the first directory
+; entry straight over it.
+; ---------------------------------------------------------------------------
+put_many:
+	call crlf
+	call collect_cpm
+
+	ld a,(match_count)
+	or a
+	jr nz,pm_go
+	ld de,#msg_nomatch
+	call puts
+	ld a,#1
+	ret
+pm_go:
+	ld b,a
+	ld c,#0
+pm_loop:
+	push bc
+	ld a,c
+	call match_entry
+	push hl
+	call set_fcb_name
+	pop hl
+	call print_name_col
+	call put_one
+	pop bc
+	or a
+	ret nz
+	inc c
+	djnz pm_loop
+
+	ld a,(match_over)
+	or a
+	jr z,pm_tally
+	ld de,#msg_cut
+	call puts
+pm_tally:
+	ld a,(match_count)
+	ld (dec_val + 0),a
+	xor a
+	ld (dec_val + 1),a
+	ld (dec_val + 2),a
+	ld (dec_val + 3),a
+	call print_dec32
+	ld de,#msg_files
+	call puts
+	xor a
+	ret
+
+; ---------------------------------------------------------------------------
+; Copy the one file FCB1 names.  A = 0 on success, non-zero after the failure
+; has been reported.
+; ---------------------------------------------------------------------------
+put_one:
 	; ---- open the CP/M file ----
 	call reset_fcb
 	ld de,#FCB1
@@ -278,3 +351,4 @@ trim_pos:	.ds 4
 
 	.include "sdfs.inc"
 	.include "zbdos.inc"		; IOCALL/IOCBULK/IOCBULKW, which sdfs.inc calls
+	.include "sdwild.inc"		; LAST: its match table must end the image

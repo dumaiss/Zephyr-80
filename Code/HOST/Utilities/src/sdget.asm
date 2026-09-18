@@ -2,11 +2,14 @@
 ;
 ;   SDGET NAME.EXT        writes to the current drive and user
 ;   SDGET B:NAME.EXT      writes to drive B
+;   SDGET *.MOD           every match in /SHARED/
+;   SDGET B:*.*           all of it, onto drive B
 ;
 ; The name is not parsed here.  The CCP has already dropped it into FCB1 at
 ; 005Ch in packed 8.3 -- which is byte for byte the form the controller wants
 ; on the wire and the form BDOS wants for F_MAKE, so the same eleven bytes serve
-; both ends of the copy.
+; both ends of the copy.  The CCP also expands * into ?, so a wildcard needs no
+; parsing either: it is the same eleven bytes with 3Fh in them.
 ;
 ;   OPEN(name) -> handle, size
 ;   READ(handle, offset, 128) -> READY(len) then len bytes on the bulk lane
@@ -47,7 +50,120 @@ got_name:
 	; /U<n> BEFORE anything touches the DMA buffer at 0080h, which is where
 	; the command tail lives and where the first record will land.
 	call user_switch_apply
+	call save_pattern
 
+	call name_is_ambiguous
+	jr c,copy_many
+
+	; One named file: the output is what it has always been.
+	call copy_one
+	or a
+	ret nz
+	ld de,#msg_done
+	call puts
+	xor a
+	ret
+
+; ---------------------------------------------------------------------------
+; A wildcard run.
+;
+; The directory is walked to the end and the matches collected BEFORE the first
+; file is opened.  The controller keeps ONE DIR object and READDIR closes it at
+; end of listing, so copying as the walk went would interleave a file handle
+; with a directory handle on the same session.  Two passes cost a table and
+; nothing else.
+;
+; A failure stops the run rather than skipping to the next name.  The failure
+; has already been reported by then, and the usual causes -- the link down, the
+; card gone, the disk full -- apply just as much to the file after it.
+; ---------------------------------------------------------------------------
+copy_many:
+	call crlf
+	call collect_sd
+	or a
+	jp nz,fail
+
+	ld a,(match_count)
+	or a
+	jr nz,cm_go
+	ld de,#msg_nomatch
+	call puts
+	ld a,#1
+	ret
+cm_go:
+	ld b,a
+	ld c,#0
+cm_loop:
+	push bc
+	ld a,c
+	call match_entry
+	push hl
+	call set_fcb_name
+	pop hl
+	call print_name_col
+	call copy_one
+	pop bc
+	or a
+	ret nz
+	inc c
+	djnz cm_loop
+
+	ld a,(match_over)
+	or a
+	jr z,cm_tally
+	ld de,#msg_cut
+	call puts
+cm_tally:
+	ld a,(match_count)
+	ld (dec_val + 0),a
+	xor a
+	ld (dec_val + 1),a
+	ld (dec_val + 2),a
+	ld (dec_val + 3),a
+	call print_dec32
+	ld de,#msg_files
+	call puts
+	xor a
+	ret
+
+; Walk /SHARED/ and collect every entry matching (pattern).  Uses the command
+; mailboxes only, so it is safe before the DMA buffer is touched.
+collect_sd:
+	xor a
+	ld (match_count),a
+	ld (match_over),a
+
+	call zero_frames
+	ld a,#CMD_FS_OPENDIR
+	ld (tx_frame + 0),a
+	ld a,#RSP_FS_OPENDIR
+	call fs_xact
+	ret nz
+cs_loop:
+	call zero_frames
+	ld a,#CMD_FS_READDIR
+	ld (tx_frame + 0),a
+	ld a,#RSP_FS_READDIR
+	call fs_xact
+	ret nz
+	ld a,(rx_frame + 4 + 16)	; MORE: zero ends the listing
+	or a
+	jr z,cs_done
+	ld hl,#rx_frame + 4
+	call name_match
+	jr nz,cs_loop
+	ld hl,#rx_frame + 4
+	call match_add
+	jr cs_loop
+cs_done:
+	xor a
+	ret
+
+; ---------------------------------------------------------------------------
+; Copy the one file FCB1 names.  A = 0 on success, non-zero after the failure
+; has been reported.
+; ---------------------------------------------------------------------------
+copy_one:
 	; ---- OPEN on the controller ----
 	call zero_frames
 	ld a,#CMD_FS_OPEN
@@ -191,8 +307,6 @@ copy_done:
 	call fs_xact
 	jp nz,fail
 
-	ld de,#msg_done
-	call puts
 	xor a
 	ret
 
@@ -290,3 +404,4 @@ remaining:	.ds 4
 
 	.include "sdfs.inc"
 	.include "zbdos.inc"		; IOCALL/IOCBULK/IOCBULKW, which sdfs.inc calls
+	.include "sdwild.inc"		; LAST: its match table must end the image
