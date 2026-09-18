@@ -16,8 +16,9 @@ MCU-based I/O Controller for storage and human-interface devices. The same
 firmware is also used by the project's MAME implementation.
 
 Zephyr-80 is an active hobby project and a hardware/software development
-platform, not a finished consumer product. Some subsystems are working on the
-physical machine, while others remain under bring-up or development.
+platform, not a finished consumer product. The machine runs CP/M on real
+hardware with video, sound, storage and USB input working; what remains under
+development is mostly tooling and the emulation targets.
 
 ## Current status
 
@@ -29,13 +30,14 @@ physical machine, while others remain under bring-up or development.
 | SIO serial console at 115200 baud | Working |
 | Virtual Drip V9958 console | Working development backend |
 | Virtual Drip 8 MiB CP/M disk | Working development backend |
-| MAME machine and V9958 video | Boots the Zephyr firmware; active development |
-| ColecoVision compatibility mode | V9958-based target architecture defined; machine initialization and loader integration in development |
-| IOCALL fixed-frame transport | Implemented in the BIOS and MCU firmware; hardware integration in progress |
-| Percolator Lunch Crema V9958 card | Hardware and firmware bring-up |
-| SD-card and USB HID services through the I/O Controller | In progress |
+| MAME machine and V9958 video | Boots the Zephyr firmware; development on hold |
+| ColecoVision compatibility mode | Working on physical hardware |
+| IOCALL fixed-frame transport | Working on physical hardware |
+| Percolator Lunch Crema V9958 card | Working on physical hardware |
+| SD-card storage through the I/O Controller | Working on physical hardware |
+| USB HID keyboard and gamepad through the I/O Controller | Working on physical hardware |
 | CP/M images as files on a FAT card | Working on physical hardware |
-| Percolator Afternoon Blend four-chip SN76489 card | Hardware subsystem; software integration in progress |
+| Percolator Afternoon Blend four-chip SN76489 card | Working on physical hardware |
 
 ## Hardware architecture
 

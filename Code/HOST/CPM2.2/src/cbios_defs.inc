@@ -657,9 +657,14 @@ CBIOS_VDRIP_TRANSPORT_CODE_BASE       = CBIOS_DRIVER_SLOT5_BASE              ; F
 CBIOS_SD_PROBE_CODE_SIZE              = 0x30
 
 	.if VDRIP_TRANSPORT_LINKED
-; The transport occupies F680h-F908h -- 649 bytes, not the 633 recorded in
-; docs/phase0-storage-restoration.md, which is stale.  F909h is the first byte
-; clear of it.
+; The transport occupies F680h-F90Dh -- 654 bytes, measured.  Earlier comments
+; said 649 and docs/phase0-storage-restoration.md said 633; both are stale.
+;
+; THIS PLACEMENT NO LONGER WORKS.  F730h-F82Fh is the interrupt dispatcher and
+; F830h-F957h the serial console tee, so a transport starting at F680h lands on
+; both and CONSOLE=vdrip fails in check_overlap.  These constants are kept
+; because the storage backend still references the slot; they do not describe a
+; buildable configuration.  See docs/vdrip-backend-restoration.md.
 ;
 ; With STORAGE_A=rom the run ends well short of FA7Fh.  With STORAGE_A=vdrip it
 ; does not fit: 649 + 41 + 356 = 1046 bytes in a 1024-byte slot, and that build

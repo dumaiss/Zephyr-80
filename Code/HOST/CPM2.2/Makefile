@@ -21,8 +21,13 @@ CPMTOOLS_DISKDEF ?= config/diskdef
 #            *** CURRENTLY DOES NOT BUILD -- see below ***
 #   ramdisk  banked RAM disk, retained but not maintained
 #
-# STORAGE_A=vdrip overflows driver slot 5 by 29 bytes and fails layout
-# validation with a precise message naming STORAGE_A_CODE_END.  This is
+# CONSOLE=vdrip DOES NOT BUILD, with any STORAGE_A.  The VDrip transport is 654
+# bytes and common memory no longer has a hole that size: driver slot 5 was
+# reallocated to the crossing gates, the interrupt dispatcher and the serial
+# console tee, so the build fails in check_overlap naming vdrip_tr, ctc0_isr and
+# irq_ff_u.  docs/vdrip-backend-restoration.md has the measurements and what
+# restoring it would take.  The note below is the older, narrower story and is
+# kept only because the arithmetic is still the arithmetic.  This is
 # arithmetic, not a regression to hunt: that configuration needs the VDrip
 # transport (649 bytes) plus the consolidated SD probe (41) plus the VDrip
 # storage backend (356) = 1046 bytes in a 1024-byte slot.
@@ -164,7 +169,7 @@ endif
 CPM22_CONVERT_TOOL := $(TOOLS_DIR)/convert_cpm22_asxxxx.py
 MEMORY_DOC_TOOL := $(TOOLS_DIR)/generate_memory_docs.py
 
-.PHONY: all image docs clean check-inputs runtime-sources-check rom-disk FORCE
+.PHONY: all image docs test clean check-inputs runtime-sources-check rom-disk FORCE
 
 FORCE:
 
@@ -206,6 +211,16 @@ docs: $(FINAL_IMAGE) $(FIRMWARE_LST) $(SYMBOLS_FILE) $(LAYOUT_MANIFEST) $(MEMORY
 		--final-image "$(FINAL_IMAGE)" \
 		--symbol-map "$(SYMBOL_MAP_DOC)" \
 		--memory-map "$(MEMORY_MAP_DOC)"
+
+# Runs the assembled IRQ core in libqkz80 with its ports mocked, and checks the
+# source-level rule the design rests on: no CPU-global interrupt instruction
+# outside cbios_irq.asm.  It is not a machine model and does not replace TIMTEST
+# on hardware; what it does catch is the class of fault that is expensive to
+# find there -- a lost IFF, an unbalanced token, a CTC channel stopped at the
+# wrong port, an ISR that outgrows its stack.  Needs a C++17 compiler and
+# libqkz80.
+test: $(FIRMWARE_LST) $(FIRMWARE_FLAT) $(SYMBOLS_FILE)
+	$(PYTHON) $(TOOLS_DIR)/test_irq_core.py --build-dir $(BUILD_DIR)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)

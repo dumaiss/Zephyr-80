@@ -11,7 +11,7 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | ROM page 0: reset vector and common memory | `build/firmware.bin` | 65536 bytes |
 | Bank 7 payload | `build/bank7.bin` | 49152 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Assembler listing | `build/firmware.lst` | 921525 bytes |
+| Assembler listing | `build/firmware.lst` | 922094 bytes |
 | Linker symbol map | `build/firmware.map` | 48550 bytes |
 | Layout manifest | `build/layout.manifest` | 1081 bytes |
 

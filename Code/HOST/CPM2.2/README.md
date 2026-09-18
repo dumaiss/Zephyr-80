@@ -269,6 +269,22 @@ Primary generated artifacts:
 
 `make` fails if the layout breaks a validated rule.
 
+### Testing the IRQ core
+
+```sh
+make test
+```
+
+Runs the assembled interrupt core in libqkz80 with its ports mocked, and checks
+the source-level rule the design rests on: no `di`, `ei`, `reti`, `retn`, `im`
+or `ld i,a` outside `cbios_irq.asm`. It covers the faults that are expensive to
+find on hardware -- a lost IFF across an IOC lane, an unbalanced save/restore
+token, a CTC channel stopped at the wrong port, an unsafe callback entry
+accepted, an ISR that outgrows its 62-byte stack -- and reports the stack
+high-water mark. It is not a machine model and does not replace running
+`TIMTEST` on the real machine. Needs a C++17 compiler and libqkz80, so it is
+deliberately not part of `make`.
+
 The ROM must be paired with memory decoder revision 11 from
 `../../HDL/WinCUPL`.
 

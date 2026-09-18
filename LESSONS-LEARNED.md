@@ -555,10 +555,9 @@ misrepresents the project.
 | Item | State |
 |---|---|
 | INDMEM SD cards fail ACMD41 startup | Selected trailing byte fixes cold boots and a 120 KiB VGM read; extended soak testing pending |
-| `CONSOLE=vdrip STORAGE_A=vdrip` | Deliberately left failing — 22 bytes over driver slot 5 |
+| `CONSOLE=vdrip` (any storage) | Does not build. The 654-byte VDrip transport has no hole left in common memory; driver slot 5 was reallocated to the IRQ dispatcher and the sercon tee. The older "22 bytes over slot 5" reading was measured before that relocation. See `Code/HOST/CPM2.2/docs/vdrip-backend-restoration.md` |
 | CTC1 / CTC2 interrupts | Unresolved observation from VGM bring-up; not proven defective |
-| `/USB_INT` input threshold at RA0 | Never checked; would present as "enumeration never starts" |
-| `/SHARED/` folder tools | Built and on A:, never exercised on hardware |
+| `/USB_INT` input threshold at RA0 | Never measured; enumeration works on hardware, so it is adequate in practice rather than confirmed by measurement |
 | `CMD_VOL_MOUNT` timeout | Can outrun the BIOS IOCALL timeout on a slow card |
 | Hardware call-stack depth | Unbounded by the toolchain; `STVREN` makes overflow visible, not impossible |
 
