@@ -10,7 +10,6 @@
 ;
 ;   rom      read-only CP/M volume in flash pages 1-3 (default)
 ;   vdrip    proxy storage over the host serial link
-;   ramdisk  banked RAM disk, retained but not maintained
 ;
 ; Two backends are linked -- A: and the SD card -- and the dispatcher routes on
 ; the drive SELDSK last selected, which is how CP/M sequences disk I/O: SELDSK

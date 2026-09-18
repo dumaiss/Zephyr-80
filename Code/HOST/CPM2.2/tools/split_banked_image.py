@@ -1,26 +1,9 @@
 #!/usr/bin/env python3
-"""Cut the linked Zephyr-80 address space into ROM page 0 and the bank 7 payload.
+"""Build full boot pages 0 and 7 from the linked address space.
 
-The BIOS is one assembly, and addresses decide which half of the system each
-byte belongs to (banked OS, Phase 1):
-
-  0000h-0002h  reset vector                      ROM page 0
-  2000h-BFFFh  OS image: ZSDOS, BIOS, drivers    bank 7 payload (ROM page 7)
-  C000h-DFFFh  nothing: bank 7's runtime range, and programs' memory in mode 10
-  E000h-FFFFh  common memory                     ROM page 0
-
-The cold-boot shadow copy loads ROM page N into SRAM bank N, so page 7 becomes
-bank 7 with no loader of its own.  It copies only 0000h-BFFFh, so the bank 7
-image has to end there.  Page 0's 2000h-DFFFh is TPA and is zeroed.
-
-This also installs the two separately built parts: ZCPR2 at CBASE in page 0,
-and ZSDOS at ZSDOS_ORG in bank 7.  Everything is checked rather than assumed,
-because the outputs go straight into the ROM:
-  - nothing is assembled into 0003h-1FFFh, the caller window, which is the
-    running program's memory in both RAM modes
-  - nothing is assembled where ZSDOS goes
-  - ZSDOS has its serial and entry jump, and its BIOS table follows it
-  - the CCP has its two-entry header, and FBASE is still a jump after it
+Page 0 holds common memory and the reset bootstrap. Page 7 holds the identical
+bootstrap, ZSDOS/BIOS at 2000h-DFFFh, and a pristine CCP at CCP_RESTORE_BASE.
+Only these boot pages seed SRAM; drive-A pages are independent ROM storage.
 """
 
 from __future__ import annotations
@@ -30,7 +13,7 @@ import re
 from pathlib import Path
 
 BODY_LO = 0x2000
-BODY_HI = 0xC000      # end of the bank 7 image (shadow/copy loads below it)
+BODY_HI = 0xE000      # end of the managed OS body; full physical page is copied
 COMMON_LO = 0xE000
 CCP_SLOT = 0x800
 
@@ -117,14 +100,18 @@ def main() -> None:
         raise SystemExit(f"{args.flat}: {len(flat)} bytes, expected 65536")
 
     used = emitted(args.ihx)
-    low = sorted(a for a in used if 0x0003 <= a < BODY_LO)
+    low = sorted(a for a in used if value(table, "BOOTSTRAP_LIMIT") <= a < BODY_LO)
     if low:
         raise SystemExit("bytes assembled into the caller window, which belongs to the "
                          f"running program: {spans(low)}")
-    runtime = sorted(a for a in used if BODY_HI <= a < COMMON_LO)
-    if runtime:
-        raise SystemExit("bytes assembled into C000h-DFFFh, which no ROM page loads "
-                         f"into bank 7 and programs own in mode 10: {spans(runtime)}")
+    restore = value(table, "CCP_RESTORE_BASE")
+    restore_size = value(table, "CCP_RESTORE_SIZE")
+    scratch_end = value(table, "MOVE_BUFFER") + value(table, "MOVE_BUFFER_SIZE")
+    if not scratch_end <= restore < restore + restore_size <= BODY_HI:
+        raise SystemExit("CCP restore asset overlaps scratch or leaves the OS body")
+    for start, end in [(0xc000, scratch_end), (restore, restore + restore_size)]:
+        if any(start <= a < end for a in used):
+            raise SystemExit(f"assembled bytes overlap private stacks/scratch or CCP restore: {start:04X}-{end:04X}")
     zs = sorted(a for a in used if zsdos_org <= a < zsdos_org + zsdos_size)
     if zs:
         raise SystemExit(f"bytes assembled where ZSDOS goes: {spans(zs)}")
@@ -134,8 +121,10 @@ def main() -> None:
 
     page0 = bytearray(flat)
     page0[BODY_LO:COMMON_LO] = bytes(COMMON_LO - BODY_LO)
-    bank7 = bytearray(flat[:BODY_HI])
-    bank7[:BODY_LO] = bytes(BODY_LO)
+    bank7 = bytearray(0x10000)
+    bank7[BODY_LO:BODY_HI] = flat[BODY_LO:BODY_HI]
+    bootstrap_limit = value(table, "BOOTSTRAP_LIMIT")
+    bank7[:bootstrap_limit] = page0[:bootstrap_limit]
 
     zsdos = args.zsdos.read_bytes()
     if len(zsdos) != zsdos_size:
@@ -150,6 +139,9 @@ def main() -> None:
     if len(ccp) != CCP_SLOT or ccp[0] != 0xC3 or ccp[3] != 0xC3:
         raise SystemExit(f"{args.ccp} is not a {CCP_SLOT}-byte CCP with a two-entry header")
     page0[cbase:cbase + CCP_SLOT] = ccp
+    if restore_size != len(ccp):
+        raise SystemExit("CCP restore slot size differs from the CCP")
+    bank7[restore:restore + restore_size] = ccp
     if page0[fbase] != 0xC3:
         raise SystemExit(f"FBASE at {fbase:04X}h is not a jump")
 

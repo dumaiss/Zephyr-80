@@ -1,7 +1,7 @@
 Name     Z80_MEM_DECODE;
 Partno   008;
-Date     2026-09-12;
-Revision 11;
+Date     2026-09-18;
+Revision 12;
 Designer Kitamura;
 Company  Z80 Project;
 Assembly Memory Board;
@@ -13,8 +13,8 @@ Pin 1  = A13;
 Pin 2  = A14;
 Pin 3  = A15;
 Pin 4  = MREQ;        /* Active Low */
-Pin 5  = RAM_SHADOW;  /* 1 = Shadow Mode */
-Pin 6  = ROM_DIS;     /* 1 = Disable ROM */
+Pin 5  = MEM_MODE0;   /* Banking latch D3 */
+Pin 6  = MEM_MODE1;   /* Banking latch D4 */
 Pin 9  = !WR;          /* Active Low */
 Pin 10 = !RD;          /* Active Low */
 
@@ -34,86 +34,17 @@ Pin 15 = RAM_A16;
 Pin 16 = RAM_A17;
 Pin 17 = RAM_A18;
 
-/* Address Definitions */
-BIOS_RANGE = !A15 & (!A14 # !A13);    /* $0000 - $5FFF */
-UPPER_32K  = A15;                     /* $8000 - $FFFF */
-RAM_ONLY   = !A15 & A14 & A13;        /* $6000 - $7FFF */
+/* D4:D3 = 00 ROM read / selected SRAM write; 01 flat selected SRAM;
+             10 application/common; 11 caller/OS/common. */
+COMMON_8K   = A15 & A14 & A13;               /* E000-FFFF */
+OS_BODY     = (A13 & !A14) # (A14 & !A15) # (A15 & !A13); /* 2000-DFFF */
+FORCE_BANK0 = MEM_MODE1 & COMMON_8K;
+FORCE_BANK7 = MEM_MODE1 & MEM_MODE0 & OS_BODY;
+ROM_READ    = !MEM_MODE1 & !MEM_MODE0;
 
-/* high safe/common area */
-SAFE_RAM   = A15 & A14;               /* $C000 - $FFFF */
-COPY_AREA  = !SAFE_RAM;               /* $0000 - $BFFF */
-
-/* Normal ROM-readable regions:
-   - boot/BIOS range at $0000-$5FFF
-   - common high protected range at $C000-$FFFF
-*/
-BOOT_ROM   = BIOS_RANGE # SAFE_RAM;   /* Normal ROM-readable regions */
-
-
-/* Logic Conditions */
-ALL_RAM_MODE = ROM_DIS;
-
-/* Shadow/copy mode only applies while ROM is enabled */
-EFFECTIVE_SHADOW = RAM_SHADOW & !ROM_DIS;
-
-/* Common memory (banked OS, Phase 2).
-   RAM-only mode 10 and OS mode 11 share only the top 8K, $E000-$FFFF; every
-   application bank keeps $C000-$DFFF as its own memory.  Shadow/copy mode 01
-   still forces the top 16K, because it loads ROM pages into 0000h-BFFFh and
-   runs from common memory while it does.  Boot mode 00 forces nothing.
-   Revisions 10 and earlier forced the top 16K in all three modes. */
-COMMON_8K   = A15 & A14 & A13;               /* $E000 - $FFFF */
-FORCE_BANK0 = (SAFE_RAM & RAM_SHADOW & !ROM_DIS)
-            # (COMMON_8K & ROM_DIS);
-
-/* OS execution mode (ROM_DIS & RAM_SHADOW, latch D4:D3 = 11).
-     $0000-$1FFF  latch bank    (caller window: the running program's page zero)
-     $2000-$DFFF  RAM bank 7    (OS body)
-     $E000-$FFFF  RAM bank 0    (common, via FORCE_BANK0)
-   The latch bank bits keep the application bank while the OS runs.
-   FORCE_BANK7 and FORCE_BANK0 never overlap (OS_BODY excludes COMMON_8K).
-   Chip selects are unchanged: ROM_DIS already selects SRAM for every access. */
-OS_MODE     = ROM_DIS & RAM_SHADOW;
-
-/* $2000-$DFFF: neither the low 8K nor COMMON_8K -- the three address bits are
-   not all equal -- written as three product terms. */
-OS_BODY     = (A13 & !A14) # (A14 & !A15) # (A15 & !A13);
-FORCE_BANK7 = OS_MODE & OS_BODY;
-
-
-/* Equations */
-/* Force RAM Address to 0 in forced/common area, otherwise pass latch.
-   FORCE_BANK7 sets all three lines, so it needs no term in the latch path. */
 RAM_A16 = (BANK_Q0 & !FORCE_BANK0) # FORCE_BANK7;
 RAM_A17 = (BANK_Q1 & !FORCE_BANK0) # FORCE_BANK7;
 RAM_A18 = (BANK_Q2 & !FORCE_BANK0) # FORCE_BANK7;
 
-
-/* ROM select:
-   Normal mode:
-     $0000-$5FFF and $E000-$FFFF reads select ROM.
-   Shadow/copy mode:
-     $0000-$DFFF reads select ROM.
-     $E000-$FFFF reads select SRAM safe zone.
-   RAM-only:
-     ROM never selected.
-*/
-ROM_CS = !MREQ & RD & !ROM_DIS & (
-           (RAM_SHADOW & !SAFE_RAM)
-         # (!RAM_SHADOW & BOOT_ROM)
-         );
-
-
-/* SRAM select:
-   - all memory writes go to SRAM
-   - RAM-only mode reads go to SRAM everywhere
-   - normal mode reads go to SRAM only in $6000-$DFFF
-   - shadow/copy mode reads go to SRAM only in high safe 8K
-*/
-SRAM_CS = !MREQ & (
-            WR
-          # (RD & ROM_DIS)
-          # (RD & !ROM_DIS & !RAM_SHADOW & RAM_ONLY)
-          # (RD & !ROM_DIS & !RAM_SHADOW & UPPER_32K & !SAFE_RAM)
-          # (RD & !ROM_DIS & RAM_SHADOW & SAFE_RAM)
-          );
+ROM_CS  = !MREQ & RD & ROM_READ;
+SRAM_CS = !MREQ & (WR # (RD & !ROM_READ));

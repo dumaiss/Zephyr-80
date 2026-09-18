@@ -38,7 +38,7 @@ space, so code goes there only when it has to.
 
 ```text
 src/zephyr.asm
--> boot_shadow_copy.asm      reset copy                                common
+-> boot_rom_copy.asm         reset ROM-to-RAM copy                     common
 -> cbios_bank_select.asm     low-level bank helpers                    common
 -> cbios_boot.asm            cold boot, warm boot, CCP restore         common
 -> cbios_console.asm         console facade                            bank 7
@@ -52,7 +52,7 @@ src/zephyr.asm
 -> cbios_sercon.asm          serial console fallback (direct console)  common
 -> cbios_console_<backend>   v9958 or vdrip, from CONSOLE              bank 7
 -> cbios_storage.asm         storage facade                            bank 7
--> cbios_storage_<backend>   rom, vdrip or ramdisk, from STORAGE_A     bank 7
+-> cbios_storage_<backend>   rom or vdrip, from STORAGE_A              bank 7
 -> cbios_storage_sd.asm      SD backend and drive dispatcher           bank 7
 -> cbios_bank.asm            SELMEM, SETBNK, XMOVE, MOVE               common
 -> cbios_gate.asm            crossing gates, warm-boot trap            common
@@ -127,7 +127,7 @@ program, mode 10
   v
 BDOS facade (common)          save SP, facade stack
   | stage hidden FCB / DMA / buffers into common memory
-  | latch |= SHADOW_BIT       mode 11
+  | latch mode field = 11     mode 11
   v
 ZSDOS (bank 7)
   | its own BIOS table at BIOS7_BASE
@@ -214,10 +214,13 @@ Every interrupt entry saves the interrupted SP at `FE80h` and switches to the IS
 stack before pushing anything, so only the return address lands on the
 interrupted stack.
 
-Shadow/copy mode forces `C000h-FFFFh` to bank 0. The drive A: ROM-disk read runs
-in that mode with the storage stack's address in bank 7's `C000h-DFFFh`, so
-`xing_rom_copy_record` keeps its saved latch and interrupt state in common
-variables and does no stack operation inside the window.
+The drive A: ROM-disk read runs in mode 00, where every read — including a stack
+read — comes from ROM. `xing_rom_copy_record` therefore keeps its saved latch and
+interrupt state in common variables, and the seven-byte primitive it calls does no
+stack operation inside the window, restoring the caller's latch before its `RET`.
+The primitive is mirrored into the unused tail of each drive-A page so instruction
+fetches stay valid after the switch. Mode 00 forces no bank, so a DMA destination
+in bank 7's `C000h-DFFFh` is permitted.
 
 ## Interrupts
 
@@ -312,7 +315,7 @@ into the dispatcher in `cbios_storage_sd.asm`, which routes on the drive
 
 | Drive | Backend |
 |---|---|
-| A: | build-selected (`STORAGE_A`): `rom` (default), `vdrip` or `ramdisk` |
+| A: | build-selected (`STORAGE_A`): `rom` (default) or `vdrip` |
 | B: | SD unit 0, through the IO Controller record cache |
 | C: | SD unit 1, when the controller reports it mounted |
 
@@ -325,7 +328,7 @@ ZSDOS, mode 11
 -> SELDSK: dispatcher; B:/C: probe the card first
 -> SETTRK / SETSEC / SETDMA
 -> READ or WRITE: backend on the storage stack
--> ROM A: one LDIR in shadow/copy mode (xing_rom_copy_record)
+-> ROM A: one LDIR in mode 00 (xing_rom_copy_record)
    SD B:/C: CMD_SD_READ_REC / CMD_SD_WRITE_REC, 128 bytes on the bulk lane
 -> return CP/M BIOS status in A
 ```
@@ -333,8 +336,8 @@ ZSDOS, mode 11
 The DMA is ZSDOS's view of it. For a program's staged call that is the facade's
 staging buffer in common memory; for a DMA in the caller window it is the
 program's own memory. The ROM-disk read writes a DMA below `2000h` into the
-program's bank, and one in `2000h-BFFFh` into bank 7. A DMA in `C000h-DFFFh` is
-refused, because shadow/copy mode maps that range to bank 0.
+program's bank, one in `2000h-DFFFh` into bank 7, and one at `E000h` or above into
+common bank 0. Mode 00 forces no bank, so no destination range has to be refused.
 
 The drive A: ROM volume is read only: `stg_a_write` returns an error. The SD
 backend uses `MOVE_BUFFER`, in bank 7's runtime range, as transaction scratch.

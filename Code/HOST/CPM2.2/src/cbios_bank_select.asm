@@ -19,7 +19,7 @@ BANK_HELPERS_START:
 bank_select_internal:
 	and #RAM_BANK_MASK
 	ld (CURRENT_BANK),a
-	or #ROMDIS_BIT
+	or #MEM_MODE_APPLICATION
 	out (BANK_PORT),a
 	ret
 

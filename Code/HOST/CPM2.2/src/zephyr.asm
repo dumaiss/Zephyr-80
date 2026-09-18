@@ -117,7 +117,7 @@ ZBIOS_EXT_BASE:
 	jp gate_iocbulk
 	jp gate_iocbulkw
 
-	.include "boot_shadow_copy.asm"
+	.include "boot_rom_copy.asm"
 	.include "cbios_bank_select.asm"
 	.include "cbios_boot.asm"
 	.include "cbios_console.asm"

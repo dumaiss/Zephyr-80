@@ -26,9 +26,8 @@
 ;   6. Wait for common dispatch to validate type, length, sequence, and status.
 ;   7. Restore raw/PTY idle receive mode and saved RTS state.
 ;
-; The backend is deliberately not a RAM disk. The old banked RAM disk backend
-; is preserved separately in cbios_storage_ramdisk.asm and is not linked by the
-; active VDrip build.
+; The backend is deliberately not a RAM disk. The banked RAM disk backend that
+; once shared this slot was retired; drive A: is now rom or vdrip.
 
 	.globl STORAGE_A_DPH,STORAGE_A_DPB,STORAGE_A_ALV
 	.globl stg_a_selected_drive,stg_a_track,stg_a_sector
@@ -361,7 +360,7 @@ vdrip_storage_wait_reply:
 vdrip_storage_select_bank_a:
 	and #BANK_MASK
 	ld (CURRENT_BANK),a
-	or #ROMDIS_BIT
+	or #MEM_MODE_APPLICATION
 	out (BANK_PORT),a
 	ret
 
@@ -378,9 +377,9 @@ STORAGE_A_CODE_END:
 ; transfer then overwrote the DPH ALV pointer and the DPB geometry, wrecking
 ; BDOS as soon as it re-read the DPH after the directory login.
 ;
-; The boot shadow copy mirrors the whole C000h-FFFFh window from ROM to RAM, so
-; these initializers load correctly just like code, the same as VDRIP_STORAGE_ALV and
-; the storage state block below.
+; Cold boot installs the whole 64 KiB page, so these initializers load
+; correctly just like code, the same as VDRIP_STORAGE_ALV and the storage state
+; block below.
 ;
 ; CKS is zero for fixed-disk behavior, so VDRIP_STORAGE_CSV is a zero-length label.
 	.area WORK (ABS)

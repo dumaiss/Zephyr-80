@@ -9,11 +9,11 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | Artifact | Path | Size |
 |---|---|---:|
 | ROM page 0: reset vector and common memory | `build/firmware.bin` | 65536 bytes |
-| Bank 7 payload | `build/bank7.bin` | 49152 bytes |
+| Bank 7 payload | `build/bank7.bin` | 65536 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Assembler listing | `build/firmware.lst` | 922094 bytes |
-| Linker symbol map | `build/firmware.map` | 48550 bytes |
-| Layout manifest | `build/layout.manifest` | 1081 bytes |
+| Assembler listing | `build/firmware.lst` | 915902 bytes |
+| Linker symbol map | `build/firmware.map` | 48956 bytes |
+| Layout manifest | `build/layout.manifest` | 1445 bytes |
 
 ## System Addresses
 
@@ -34,11 +34,10 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | Symbol | Value | Notes |
 |---|---:|---|
 | `BANK_PORT` | `00h` | Banking latch I/O port. |
-| `SHADOW_BIT` | `08h` | D3: shadow/copy with ROM enabled, operating-system mode with ROM disabled. |
-| `ROMDIS_BIT` | `10h` | D4: disables ROM. |
-| `ROM_VISIBLE_BANK0` | `00h` | Boot mode, ROM page 0 over bank 0; the warm-boot CCP restore. |
-| `COPY_LATCH0` | `08h` | Shadow/copy mode, page 0 into bank 0. |
-| `RAM_ONLY_BANK0` | `10h` | Application mode, bank 0. |
+| `MEM_MODE_ROM` | `00h` | 00: selected ROM reads / selected SRAM writes. |
+| `MEM_MODE_FLAT` | `08h` | 01: full selected SRAM bank. |
+| `MEM_MODE_APPLICATION` | `10h` | 10: application and bank-0 common. |
+| `MEM_MODE_OS` | `18h` | 11: caller, bank-7 OS and bank-0 common. |
 | `OS_EXEC_LATCH` | `18h` | Operating-system mode, bank 0. |
 | `OS_BANK` | `07h` | The operating system's SRAM bank. |
 
@@ -48,8 +47,8 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 
 | Entry | Address | Target |
 |---|---:|---|
-| `BOOT` | `F000h` | `F0AFh` `boot` |
-| `WBOOT` | `F003h` | `F101h` `wboot` |
+| `BOOT` | `F000h` | `F05Ch` `boot` |
+| `WBOOT` | `F003h` | `F0AEh` `wboot` |
 | `CONST` | `F006h` | `F550h` `gate_const` |
 | `CONIN` | `F009h` | `F55Fh` `gate_conin` |
 | `CONOUT` | `F00Ch` | `F56Eh` `gate_conout` |
@@ -120,14 +119,15 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | Symbol | Address | Notes |
 |---|---:|---|
 | `reset_vector` | `0000h` | ROM reset entry. |
-| `cpm_rom_entry_high` / `shadow_copy_rom_to_ram` | `F04Bh` | ROM-to-RAM copy of every page. |
-| `cbios_boot_after_rom_copy` | `F09Bh` | Cold boot handoff after the copy. |
-| `boot` | `F0AFh` | Cold boot: enters mode 11, checks bank 7, initializes, enters the CCP in mode 10. |
-| `wboot` | `F101h` | Warm boot trampoline. |
-| `wboot_resident` | `F104h` | Warm boot: resets the CTC, clears registrations, restores the CCP. |
-| `restore_ccp_from_rom` | `F14Ah` | Copies `CBASE` through `FBASE-1` from ROM page 0. |
-| `prepare_runnable_bank` | `F162h` | Page zero and default DMA. |
-| `init_page_zero` | `F16Ch` | Installs `JP WBOOT` and `JP FBASE`. |
+| `cpm_rom_entry_high` | `F04Bh` | Reset lands here in common memory and masks interrupts. |
+| `rom_copy_masked` | `0003h` | Stackless bootstrap: ROM pages 0 and 7 seed SRAM banks 0 and 7. |
+| `cbios_boot_after_rom_copy` | `0025h` | Cold boot handoff after the copy. |
+| `boot` | `F05Ch` | Cold boot: enters mode 11, checks bank 7, initializes, enters the CCP in mode 10. |
+| `wboot` | `F0AEh` | Warm boot trampoline. |
+| `wboot_resident` | `F0B1h` | Warm boot: resets the CTC, clears registrations, restores the CCP. |
+| `restore_ccp_from_os` | `F0F7h` | Copies `CBASE` through `FBASE-1` from the pristine CCP in bank 7. |
+| `prepare_runnable_bank` | `F103h` | Page zero and default DMA. |
+| `init_page_zero` | `F10Dh` | Installs `JP WBOOT` and `JP FBASE`. |
 | `ctc_disable_interrupts` | `F288h` | Resets the CTC and programs its vector base. |
 | `boot_print_banner` | `F2A9h` | Prints the boot banner. |
 | `SELMEM` | `F1B0h` | Selects a program bank, keeping the RAM mode. |
@@ -153,8 +153,8 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | `bios_inert_seldsk` | `F675h` | Inert `SELDSK`: returns `HL = 0`. |
 | `bios_inert_error` | `F679h` | Inert `READ`/`WRITE`: returns an error. |
 | `wbtrap` | `F67Eh` | Warm-boot trap: common stack, mode 10, `JP 0000h`. |
-| `xing_rom_copy_record` | `F693h` | Drive A: shadow/copy window; keeps its state in common variables. |
-| `bank7_check` | `F6B4h` | Verifies the `BANK7OS1` marker at cold boot. |
+| `xing_rom_copy_record` | `F693h` | Drive A: stackless ROM-read primitive with exact latch restoration. |
+| `bank7_check` | `F6A9h` | Verifies the `BANK7OS1` marker at cold boot. |
 | `ctc0_isr` | `F730h` | CTC channel 0 entry. |
 | `irq_register` | `FF60h` | BDOS function 200. |
 | `irq_unregister` | `FFB3h` | BDOS function 201. |

@@ -45,17 +45,7 @@ SOUND_PSG_MUTE_TONE0        = 0x9f
 
 ; --- Memory & Bank Configuration ---
 MEM                         = 56
-RAM_BANK_MASK               = 0x07
-ROM_PAGE_SHIFT              = 5
-ROM_VISIBLE_BANK0           = 0x00
-ROMDIS_BIT                  = 0x10
-SHADOW_BIT                  = 0x08
-SHADOW_COPY_BANK_VAR        = 0xfffe
-
-HIGH_COPY_START             = 0xc000
-HIGH_COPY_LEN               = 0x4000
-PAGE_COPY_START             = 0x0000
-PAGE_COPY_LEN               = 0xc000
+.include "memory_modes.inc"
 
 ; --- SIO & CTC Commands / Bitmasks ---
 ;
@@ -84,6 +74,4 @@ SIO_WR1_RX_INT_ALL          = SIO_WR1_RX_INT_ALL_NO_PARITY_VECTOR
 SIO_WR1_TX_INT_ENABLE       = 0x02
 
 ; --- Dependent Aliases & Composites ---
-COPY_LATCH0                 = SHADOW_BIT
-RAM_ONLY_BANK0              = ROMDIS_BIT
 SIO_WR1_RX_TX_INT           = SIO_WR1_RX_INT_ALL | SIO_WR1_TX_INT_ENABLE

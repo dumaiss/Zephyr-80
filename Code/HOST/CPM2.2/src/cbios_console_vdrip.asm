@@ -2631,27 +2631,31 @@ v9958_cursor_store_y:
 ; the font data at VDRIP_FONT_ROM_BASE (0x8000) in SRAM bank 0 from ROM.
 ; Transient programs may have overwritten the TPA area containing the font.
 ;
-; Uses COPY_LATCH0 (= SHADOW_BIT): reads come from ROM bank 0 low area,
-; writes go to SRAM bank 0. This is the same technique used by the shadow
-; copy and restore_ccp_from_rom for their respective ROM regions.
+; Uses MEM_MODE_ROM (page 0 over bank 0): every read comes from ROM page 0 and
+; every write lands in SRAM bank 0.  Instruction fetches inside the window are
+; safe only because this code is part of the page-0 image that seeded bank 0, so
+; ROM and SRAM hold identical bytes at this address -- the same property the
+; cold-boot bootstrap relies on.  The window is stackless and the latch is
+; restored before RET, because a stack read in mode 00 would come from ROM.
+; Callers must have interrupts masked.
 ;
 ; Inputs:  None.
 ; Outputs: SRAM bank 0 [VDRIP_FONT_ROM_BASE .. +FONT_BYTES-1] refreshed.
 ; Clobbers: AF, BC, DE, HL.
 ; Interrupts: Safe to call with interrupts disabled (wboot context); matches
-;   the convention of restore_ccp_from_rom which is called without di/ei.
+;   the convention of restore_ccp_from_os which is called without di/ei.
 ; VDrip traffic: None.
 ; ---------------------------------------------------------------------------
 
 console_backend_restore_font_from_rom:
 restore_font_from_rom:
-	ld a,#COPY_LATCH0		; ROM bank 0 low area visible, writes to SRAM
+	ld a,#MEM_MODE_ROM		; reads from ROM page 0, writes to SRAM bank 0
 	out (BANK_PORT),a
 	ld hl,#VDRIP_FONT_ROM_BASE	; ROM bank 0 source (0x8000)
 	ld de,#VDRIP_FONT_ROM_BASE	; SRAM bank 0 destination (0x8000)
 	ld bc,#FONT_BYTES
 	ldir
-	ld a,#RAM_ONLY_BANK0
+	ld a,#MEM_MODE_APPLICATION
 	out (BANK_PORT),a
 	ret
 
@@ -2991,8 +2995,8 @@ VDRIP_CONSOLE_CODE_END:
 ;
 ; Placed in a separate absolute area so the driver CODE area ends cleanly at
 ; VDRIP_CONSOLE_CODE_END. The 256-glyph CP850 font lands in the bank 0
-; firmware image at 0x8000. The boot shadow copy transfers it to SRAM bank 0.
-; restore_font_from_rom refreshes it from ROM using COPY_LATCH0 at warm boot.
+; firmware image at 0x8000, and the cold-boot page copy transfers it to SRAM
+; bank 0. restore_font_from_rom refreshes it in mode 00 at warm boot.
 ; Programs may overwrite this TPA address after init; the warm-boot restore
 ; always refreshes it before the G6 atlas upload is performed.
 ; ---------------------------------------------------------------------------

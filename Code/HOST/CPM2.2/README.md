@@ -180,10 +180,11 @@ both memory modes, or when an interrupt arrives, belongs in common memory:
 Common memory is 8 KiB, and a byte moved there comes out of every program's
 address space.
 
-Bank 7's `C000h-DFFFh` holds only zero-initialized runtime state: the ROM copy
-loads just `0000h-BFFFh` of each page. Nothing a drive A: read can target may
-live there either, because the ROM-disk read uses shadow/copy mode, which maps
-that range to bank 0.
+Cold boot installs a complete 64 KiB page into bank 7, so `C000h-DFFFh` may hold
+initialized content. It currently holds the BIOS private stacks and SD scratch at
+`C000h-C3BFh` and the pristine warm-boot CCP at `C400h-CBFFh`. A drive A: read may
+target that range as well: the ROM-disk read runs in mode 00, which forces no bank
+and so honours the selected bank across the whole address space.
 
 ## Interrupt Model
 
@@ -253,8 +254,8 @@ make CONSOLE=vdrip
 ```
 
 Supported console values are `v9958` (default) and `vdrip`. `STORAGE_A`
-selects the drive A backend: `rom` (default), `vdrip` or `ramdisk`. The
-Makefile documents the limits on each.
+selects the drive A backend: `rom` (default) or `vdrip`. The Makefile documents
+the limits on each. The banked RAM disk backend was retired.
 
 Primary generated artifacts:
 

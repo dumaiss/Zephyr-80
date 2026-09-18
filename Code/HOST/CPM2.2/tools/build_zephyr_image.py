@@ -10,12 +10,14 @@ from pathlib import Path
 import re
 import sys
 
+from split_banked_image import constants, value
+
 
 APP_BASE = 0x0100
-COMMON_BASE = 0xC000
+COMMON_BASE = 0xE000
 BANK_SIZE = 0x10000
 MAX_BANK = 7
-IMAGE_BANK_COUNT = 2  # bank 0 = firmware/CP/M; banks 1-7 empty
+IMAGE_BANK_COUNT = 8  # physical ROM pages; only explicitly declared boot pages seed SRAM
 REQUIRED_SYMBOLS = ("MOVE", "XMOVE", "SELMEM", "SETBNK")
 DEFAULT_DEFS_PATH = Path("src/cbios_defs.inc")
 
@@ -27,6 +29,8 @@ class Payload:
     bank: int
     path: Path
     entry: int = APP_BASE
+    kind: str = "data"
+    ram_bank: int | None = None
 
     @property
     def data(self) -> bytes:
@@ -41,44 +45,6 @@ class Payload:
         return self.entry + self.size
 
 
-@dataclass(frozen=True)
-class RamDiskGeometry:
-    first_bank: int
-    last_bank: int
-    bank_base: int
-    bank_limit: int
-    bank_bytes: int
-
-    @property
-    def bank_count(self) -> int:
-        return self.last_bank - self.first_bank + 1
-
-    @property
-    def total_bytes(self) -> int:
-        return self.bank_count * self.bank_bytes
-
-
-@dataclass(frozen=True)
-class RamDiskImage:
-    name: str
-    path: Path
-    fill: int
-    data: bytes
-    geometry: RamDiskGeometry
-
-    @property
-    def size(self) -> int:
-        return len(self.data)
-
-    @property
-    def pad_size(self) -> int:
-        return self.geometry.total_bytes - self.size
-
-    @property
-    def prepared(self) -> bytes:
-        return self.data + bytes([self.fill]) * self.pad_size
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--firmware", required=True, type=Path)
@@ -91,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--symbols", type=Path)
     parser.add_argument("--defs", default=DEFAULT_DEFS_PATH, type=Path)
     parser.add_argument("--console", choices=("v9958", "vdrip"), default="v9958")
-    parser.add_argument("--storage-a", choices=("rom", "vdrip", "ramdisk"), default="rom")
+    parser.add_argument("--storage-a", choices=("rom", "vdrip"), default="rom")
     return parser.parse_args()
 
 
@@ -108,79 +74,6 @@ def parse_int(value: str, label: str) -> int:
         return int(raw, 0)
     except ValueError as exc:
         raise SystemExit(f"Invalid {label}: {value}") from exc
-
-
-def parse_asm_int(value: str, label: str, raw_values: dict[str, str], seen: set[str] | None = None) -> int:
-    seen = seen or set()
-    raw = value.split(";", 1)[0].strip()
-    if not raw:
-        raise SystemExit(f"Invalid empty assembly value for {label}")
-    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", raw):
-        if raw in seen:
-            raise SystemExit(f"Recursive assembly constant reference: {raw}")
-        if raw not in raw_values:
-            raise SystemExit(f"Unknown assembly constant in {label}: {raw}")
-        return parse_asm_int(raw_values[raw], raw, raw_values, seen | {raw})
-    if re.fullmatch(r"[0-9A-Fa-f]+h", raw):
-        return int(raw[:-1], 16)
-    if re.fullmatch(r"0x[0-9A-Fa-f]+|[0-9]+", raw):
-        return int(raw, 0)
-
-    parts = re.split(r"(\+|-)", raw)
-    total = parse_asm_int(parts[0], label, raw_values, seen)
-    index = 1
-    while index < len(parts):
-        op = parts[index]
-        rhs = parse_asm_int(parts[index + 1], label, raw_values, seen)
-        total = total + rhs if op == "+" else total - rhs
-        index += 2
-    return total
-
-
-def parse_ramdisk_geometry(path: Path) -> RamDiskGeometry:
-    require_file(path, "CBIOS definitions")
-
-    raw_values: dict[str, str] = {}
-    equate_pattern = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$")
-    for line in path.read_text().splitlines():
-        match = equate_pattern.match(line)
-        if match:
-            raw_values[match.group(1)] = match.group(2).split(";", 1)[0].strip()
-
-    required = (
-        "RAMDISK_FIRST_BANK",
-        "RAMDISK_LAST_BANK",
-        "RAMDISK_BANK_BASE",
-        "RAMDISK_BANK_LIMIT",
-        "RAMDISK_BANK_BYTES",
-    )
-    missing = [name for name in required if name not in raw_values]
-    if missing:
-        raise SystemExit("Missing RAM disk geometry constants: " + ", ".join(missing))
-
-    geometry = RamDiskGeometry(
-        first_bank=parse_asm_int(raw_values["RAMDISK_FIRST_BANK"], "RAMDISK_FIRST_BANK", raw_values),
-        last_bank=parse_asm_int(raw_values["RAMDISK_LAST_BANK"], "RAMDISK_LAST_BANK", raw_values),
-        bank_base=parse_asm_int(raw_values["RAMDISK_BANK_BASE"], "RAMDISK_BANK_BASE", raw_values),
-        bank_limit=parse_asm_int(raw_values["RAMDISK_BANK_LIMIT"], "RAMDISK_BANK_LIMIT", raw_values),
-        bank_bytes=parse_asm_int(raw_values["RAMDISK_BANK_BYTES"], "RAMDISK_BANK_BYTES", raw_values),
-    )
-    if geometry.first_bank < 0 or geometry.last_bank > MAX_BANK or geometry.first_bank > geometry.last_bank:
-        raise SystemExit(
-            "RAM disk bank range is outside supported banks: "
-            f"{geometry.first_bank}-{geometry.last_bank}, supported 0-{MAX_BANK}"
-        )
-    if geometry.bank_base < 0 or geometry.bank_limit > COMMON_BASE or geometry.bank_base >= geometry.bank_limit:
-        raise SystemExit(
-            "RAM disk bank address range overlaps common memory or is invalid: "
-            f"{geometry.bank_base:04X}h-{geometry.bank_limit:04X}h"
-        )
-    if geometry.bank_bytes != geometry.bank_limit - geometry.bank_base:
-        raise SystemExit(
-            "RAMDISK_BANK_BYTES does not match RAMDISK_BANK_LIMIT - RAMDISK_BANK_BASE: "
-            f"{geometry.bank_bytes} != {geometry.bank_limit - geometry.bank_base}"
-        )
-    return geometry
 
 
 def payload_key(name: str) -> str:
@@ -212,7 +105,9 @@ def payloads_from_config(path: Path) -> list[Payload]:
 
         bank = parse_int(values["bank"], f"{section}.bank")
         entry = parse_int(values.get("entry", f"{APP_BASE:04X}h"), f"{section}.entry")
-        payload = Payload(key=key, name=name, bank=bank, path=Path(values["path"]), entry=entry)
+        payload = Payload(key=key, name=name, bank=bank, path=Path(values["path"]), entry=entry,
+                          kind=values.get("kind", "data"),
+                          ram_bank=parse_int(values["ram_bank"], f"{section}.ram_bank") if "ram_bank" in values else None)
         if key in seen_keys:
             raise SystemExit(f"Duplicate payload section key: {key}")
         if bank in seen_banks:
@@ -222,36 +117,6 @@ def payloads_from_config(path: Path) -> list[Payload]:
         payloads.append(payload)
 
     return payloads
-
-
-def ramdisk_from_config(path: Path, geometry: RamDiskGeometry) -> RamDiskImage:
-    require_file(path, "payload configuration")
-
-    config = configparser.ConfigParser()
-    config.optionxform = str
-    config.read(path)
-
-    if "ramdisk" not in config:
-        raise SystemExit(f"Missing required [ramdisk] section in {path}")
-
-    values = config["ramdisk"]
-    if "path" not in values:
-        raise SystemExit("Missing path in [ramdisk] section")
-
-    name = values.get("name", "RAM disk").strip()
-    image_path = Path(values["path"])
-    fill = parse_int(values.get("fill", "E5h"), "ramdisk.fill")
-    if fill < 0 or fill > 0xFF:
-        raise SystemExit(f"RAM disk fill byte is outside 00h-FFh: {fill}")
-    require_file(image_path, "RAM disk image")
-
-    data = image_path.read_bytes()
-    if len(data) > geometry.total_bytes:
-        raise SystemExit(
-            f"RAM disk image is too large: {len(data)} bytes, "
-            f"capacity is {geometry.total_bytes} bytes"
-        )
-    return RamDiskImage(name=name, path=image_path, fill=fill, data=data, geometry=geometry)
 
 
 def config_has_section(path: Path, section: str) -> bool:
@@ -276,22 +141,18 @@ def validate_payload(payload: Payload) -> None:
         raise SystemExit(f"{payload.name} payload bank is outside 0-{MAX_BANK}: {payload.bank}")
     if payload.entry < 0 or payload.entry >= BANK_SIZE:
         raise SystemExit(f"{payload.name} payload entry is outside bank address space: {payload.entry:04X}h")
-    if payload.end_exclusive > COMMON_BASE:
+    if payload.kind not in ("boot", "romdisk", "data"):
+        raise SystemExit(f"Unknown ROM page kind: {payload.kind}")
+    if payload.bank == 0:
+        raise SystemExit("ROM page 0 is reserved for the common boot image")
+    if payload.kind != "boot" and payload.ram_bank is not None:
+        raise SystemExit("Only boot pages may specify an initial SRAM destination")
+    if payload.end_exclusive > BANK_SIZE:
         raise SystemExit(
-            f"{payload.name} payload overlaps common memory: "
+            f"{payload.name} payload exceeds physical ROM page: "
             f"entry={payload.entry:04X}h size={payload.size} "
-            f"end={payload.end_exclusive:04X}h limit={COMMON_BASE:04X}h"
+            f"end={payload.end_exclusive:04X}h limit={BANK_SIZE:04X}h"
         )
-
-
-def validate_ramdisk_conflicts(payloads: list[Payload], ramdisk: RamDiskImage | None) -> None:
-    if ramdisk is None:
-        return
-    reserved = set(range(ramdisk.geometry.first_bank, ramdisk.geometry.last_bank + 1))
-    conflicts = [payload for payload in payloads if payload.bank in reserved]
-    if conflicts:
-        names = ", ".join(f"{payload.name} bank {payload.bank}" for payload in conflicts)
-        raise SystemExit(f"Payload bank conflicts with RAM disk reserved banks: {names}")
 
 
 def parse_symbols(path: Path | None) -> set[str]:
@@ -335,24 +196,11 @@ def place_payload(image: bytearray, payload: Payload) -> None:
     image[start:end] = payload.data
 
 
-def place_ramdisk(image: bytearray, ramdisk: RamDiskImage) -> None:
-    prepared = ramdisk.prepared
-    offset = 0
-    for bank in range(ramdisk.geometry.first_bank, ramdisk.geometry.last_bank + 1):
-        start = bank * BANK_SIZE + ramdisk.geometry.bank_base
-        end = start + ramdisk.geometry.bank_bytes
-        if end > len(image):
-            raise SystemExit(f"RAM disk bank {bank} exceeds image size")
-        image[start:end] = prepared[offset : offset + ramdisk.geometry.bank_bytes]
-        offset += ramdisk.geometry.bank_bytes
-
-
 def write_manifest(
     path: Path,
     output: Path,
     firmware: Path,
     payloads: list[Payload],
-    ramdisk: RamDiskImage | None,
     symbol_status: dict[str, str],
     console: str,
     storage_a: str,
@@ -364,32 +212,21 @@ def write_manifest(
         f"common.base={COMMON_BASE:04X}h",
         f"console.backend={console}",
         f"storage.backend={storage_a}",
+        "boot.page0.ram_bank=0",
+        "boot.copy_bytes=65536",
+        "romdisk.trampoline=ROM_ACCESS_BASE:ROM_ACCESS_SIZE",
     ]
     for payload in payloads:
         lines.extend(
             [
                 f"payload.{payload.key}.name={payload.name}",
+                f"payload.{payload.key}.kind={payload.kind}",
+                f"payload.{payload.key}.ram_bank={payload.ram_bank if payload.ram_bank is not None else 'none'}",
                 f"payload.{payload.key}.path={payload.path}",
                 f"payload.{payload.key}.bank={payload.bank}",
                 f"payload.{payload.key}.entry={payload.entry:04X}h",
                 f"payload.{payload.key}.size={payload.size}",
                 f"payload.{payload.key}.end={payload.end_exclusive:04X}h",
-            ]
-        )
-    if ramdisk is not None:
-        lines.extend(
-            [
-                f"ramdisk.name={ramdisk.name}",
-                f"ramdisk.path={ramdisk.path}",
-                f"ramdisk.fill={ramdisk.fill:02X}h",
-                f"ramdisk.first_bank={ramdisk.geometry.first_bank}",
-                f"ramdisk.last_bank={ramdisk.geometry.last_bank}",
-                f"ramdisk.bank_base={ramdisk.geometry.bank_base:04X}h",
-                f"ramdisk.bank_limit={ramdisk.geometry.bank_limit:04X}h",
-                f"ramdisk.bank_bytes={ramdisk.geometry.bank_bytes}",
-                f"ramdisk.total_bytes={ramdisk.geometry.total_bytes}",
-                f"ramdisk.image_size={ramdisk.size}",
-                f"ramdisk.pad_size={ramdisk.pad_size}",
             ]
         )
     for symbol, status in symbol_status.items():
@@ -403,7 +240,6 @@ def write_report(
     output: Path,
     firmware: Path,
     payloads: list[Payload],
-    ramdisk: RamDiskImage | None,
     symbol_status: dict[str, str],
     console: str,
     storage_a: str,
@@ -419,47 +255,32 @@ def write_report(
         "",
         "## Payloads",
         "",
-        "| Payload | Bank | Entry | Size | End | Source |",
-        "|---|---:|---:|---:|---:|---|",
+        "| Payload | ROM page | Role | Entry | Size | End | Source |",
+        "|---|---:|---|---:|---:|---:|---|",
     ]
     for payload in payloads:
         lines.append(
-            f"| {payload.name} | {payload.bank} | `{payload.entry:04X}h` | "
+            f"| {payload.name} | {payload.bank} | {payload.kind}"
+            f"{f' -> SRAM bank {payload.ram_bank}' if payload.ram_bank is not None else ' (not copied)'} | "
+            f"`{payload.entry:04X}h` | "
             f"{payload.size} | `{payload.end_exclusive:04X}h` | `{payload.path}` |"
         )
-    if ramdisk is not None:
-        lines.extend(
-            [
-                "",
-                "## RAM Disk",
-                "",
-                "| Name | Banks | Range per Bank | Image Size | Capacity | Pad | Fill | Source |",
-                "|---|---:|---:|---:|---:|---:|---:|---|",
-                (
-                    f"| {ramdisk.name} | {ramdisk.geometry.first_bank}-{ramdisk.geometry.last_bank} | "
-                    f"`{ramdisk.geometry.bank_base:04X}h-{ramdisk.geometry.bank_limit - 1:04X}h` | "
-                    f"{ramdisk.size} | {ramdisk.geometry.total_bytes} | {ramdisk.pad_size} | "
-                    f"`{ramdisk.fill:02X}h` | `{ramdisk.path}` |"
-                ),
-            ]
+    rom_disk = [payload for payload in payloads
+                if payload.key.startswith("romdisk_page")]
+    if rom_disk:
+        banks = ", ".join(str(payload.bank) for payload in rom_disk)
+        total = sum(payload.size for payload in rom_disk)
+        storage = (
+            f"- Drive A is a read-only CP/M volume in ROM pages {banks} "
+            f"({total} bytes); each page contributes 48 KiB of filesystem data. "
+            "The unused tail carries only the ROM-read primitive, never a bootstrap."
         )
     else:
-        rom_disk = [payload for payload in payloads
-                    if payload.key.startswith("romdisk_page")]
-        if rom_disk:
-            banks = ", ".join(str(payload.bank) for payload in rom_disk)
-            total = sum(payload.size for payload in rom_disk)
-            storage = (
-                f"- Drive A is a read-only CP/M volume in ROM pages {banks} "
-                f"({total} bytes); each page contributes 48 KiB because shadow/copy "
-                "mode only exposes ROM at 0000h-BFFFh."
-            )
-        else:
-            storage = (
-                "- No ROM disk payload is embedded; drive A comes from whichever "
-                "backend was linked (see STORAGE_A in the Makefile)."
-            )
-        lines.extend(["", "## Storage", "", storage])
+        storage = (
+            "- No ROM disk payload is embedded; drive A comes from whichever "
+            "backend was linked (see STORAGE_A in the Makefile)."
+        )
+    lines.extend(["", "## Storage", "", storage])
     lines.extend(
         [
             "",
@@ -495,26 +316,54 @@ def main() -> int:
     else:
         payloads = []
     if args.payload_config and config_has_section(args.payload_config, "ramdisk"):
-        raise SystemExit("RAM disk embedding has been replaced by VDrip proxy storage; remove [ramdisk]")
-    ramdisk = None
+        raise SystemExit("The RAM disk backend was retired; remove the [ramdisk] section")
     for payload in payloads:
         require_file(payload.path, f"{payload.name} payload")
         validate_payload(payload)
-    validate_ramdisk_conflicts(payloads, ramdisk)
 
     symbol_status = validate_symbols(args.symbols)
 
     firmware = args.firmware.read_bytes()
     max_payload_bank = max((payload.bank for payload in payloads), default=-1)
     image_size = max(BANK_SIZE * IMAGE_BANK_COUNT, BANK_SIZE * (max_payload_bank + 1), len(firmware))
-    if ramdisk is not None:
-        image_size = max(image_size, BANK_SIZE * (ramdisk.geometry.last_bank + 1))
     image = bytearray([0x00] * image_size)
     image[: len(firmware)] = firmware
     for payload in payloads:
         place_payload(image, payload)
-    if ramdisk is not None:
-        place_ramdisk(image, ramdisk)
+    # Classify by declared role, never by a coincident SRAM bank number.
+    defs = constants([args.defs])
+    boot_page = value(defs, "BOOT_OS_ROM_PAGE")
+    boot_limit = value(defs, "BOOTSTRAP_LIMIT")
+    access = value(defs, "ROM_ACCESS_BASE")
+    access_size = value(defs, "ROM_ACCESS_SIZE")
+    disk_bytes = value(defs, "ROMDISK_PAGE_BYTES")
+    disk_pages = set(range(value(defs, "ROMDISK_FIRST_PAGE"),
+                           value(defs, "ROMDISK_FIRST_PAGE") + value(defs, "ROMDISK_PAGE_COUNT")))
+    if len(firmware) != BANK_SIZE:
+        raise SystemExit("Page-0 firmware must be exactly 64 KiB")
+    boots = [x for x in payloads if x.kind == "boot"]
+    if len(boots) != 1 or (boots[0].bank, boots[0].ram_bank) != (boot_page, value(defs, "OS_BANK")):
+        raise SystemExit("Boot page/destination configuration differs from the assembled bootstrap")
+    for payload in boots:
+        if payload.entry != 0 or payload.size != BANK_SIZE:
+            raise SystemExit("Boot source must be a complete 64 KiB image at offset zero")
+        if payload.data[:boot_limit] != firmware[:boot_limit]:
+            raise SystemExit("Boot pages do not have identical zero-page bootstraps")
+    disks = [x for x in payloads if x.kind == "romdisk"]
+    if args.storage_a == "rom" and {x.bank for x in disks} != disk_pages:
+        raise SystemExit("ROM disk pages differ from BIOS geometry")
+    if not disk_bytes <= access < access + access_size <= BANK_SIZE:
+        raise SystemExit("ROM-access primitive overlaps filesystem data or exceeds the page")
+    primitive = firmware[access:access + access_size]
+    if primitive != bytes([0x01, 0x80, 0x00, 0xed, 0xb0, 0xd3, 0x00]):
+        raise SystemExit("Unexpected ROM primitive; review its stackless/latch contract")
+    for payload in disks:
+        if payload.bank not in disk_pages or payload.entry != 0 or payload.size != disk_bytes:
+            raise SystemExit("ROM disk payload differs from BIOS page format")
+        start = payload.bank * BANK_SIZE
+        image[start + access:start + access + access_size] = primitive
+        if image[start:start + disk_bytes] != payload.data:
+            raise SystemExit("ROM primitive changed filesystem bytes")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(image)
@@ -523,7 +372,6 @@ def main() -> int:
         args.output,
         args.firmware,
         payloads,
-        ramdisk,
         symbol_status,
         args.console,
         args.storage_a,
@@ -533,7 +381,6 @@ def main() -> int:
         args.output,
         args.firmware,
         payloads,
-        ramdisk,
         symbol_status,
         args.console,
         args.storage_a,

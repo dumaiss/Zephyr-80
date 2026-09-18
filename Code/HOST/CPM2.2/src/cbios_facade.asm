@@ -305,7 +305,7 @@ fac_copy_back:
 fac_os_enter_call:
 	in a,(BANK_PORT)
 	ld (fac_latch),a
-	or #SHADOW_BIT
+	or #MEM_MODE0
 	out (BANK_PORT),a
 	ld a,(fac_flags)
 	and #F_DMA_IN | F_DMA_OUT
@@ -625,7 +625,7 @@ zephyr_sysinfo_end:
 	.endif
 
 ; ---------------------------------------------------------------------------
-; State.  RAM at run time: the cold-boot shadow copy puts this image in SRAM.
+; State.  RAM at run time: the cold-boot page copy puts this image in SRAM.
 ; ---------------------------------------------------------------------------
 fac_caller_sp:		.dw 0
 fac_de:			.dw 0

@@ -19,7 +19,11 @@ CPMTOOLS_DISKDEF ?= config/diskdef
 #   rom      read-only CP/M volume in flash pages 1-3 (default)
 #   vdrip    proxy storage over the host serial link (the previous default)
 #            *** CURRENTLY DOES NOT BUILD -- see below ***
-#   ramdisk  banked RAM disk, retained but not maintained
+#
+# The banked RAM disk backend was retired.  It had not been maintained, its
+# geometry assumed RAM banks 2-7 (which the current bank model assigns to
+# applications and the OS), and the image builder's support for embedding its
+# payload had already become unreachable.
 #
 # CONSOLE=vdrip DOES NOT BUILD, with any STORAGE_A.  The VDrip transport is 654
 # bytes and common memory no longer has a hole that size: driver slot 5 was
@@ -43,6 +47,10 @@ CPMTOOLS_DISKDEF ?= config/diskdef
 # backend or give it a two-way split probe.  CONSOLE=vdrip STORAGE_A=rom and
 # the default CONSOLE=v9958 STORAGE_A=rom both build normally.
 STORAGE_A ?= rom
+VALID_STORAGE_A := rom vdrip
+ifeq ($(filter $(STORAGE_A),$(VALID_STORAGE_A)),)
+$(error Unsupported STORAGE_A='$(STORAGE_A)'; choose one of: $(VALID_STORAGE_A))
+endif
 STORAGE_A_SRC ?= $(SRC_DIR)/cbios_storage_$(STORAGE_A).asm
 
 # Console backend linked into the fixed BIOS console slots:
@@ -78,8 +86,9 @@ MAKEBIN_FLAGS ?= -s $(ROM_SIZE)
 RUNTIME_SRCS ?= \
 	$(SRC_DIR)/zephyr.asm \
 	$(SRC_DIR)/platform_zephyr80.inc \
+	$(SRC_DIR)/memory_modes.inc \
 	$(SRC_DIR)/cbios_defs.inc \
-	$(SRC_DIR)/boot_shadow_copy.asm \
+	$(SRC_DIR)/boot_rom_copy.asm \
 	$(SRC_DIR)/cbios_boot.asm \
 	$(SRC_DIR)/cbios_console.asm \
 	$(SRC_DIR)/sio_core.asm \
@@ -126,8 +135,8 @@ DIAG_RECORD_MIRROR ?= ../Utilities/src/ioc_diag_record.inc
 IMAGE_TOOL := $(TOOLS_DIR)/build_zephyr_image.py
 ROM_DISK_TOOL := $(TOOLS_DIR)/build_rom_disk.py
 
-# ROM disk inputs and outputs.  Only used when STORAGE_A=rom; a vdrip or ramdisk
-# build embeds no payloads and produces the same 128 KiB image it always did.
+# ROM disk inputs and outputs.  Only used when STORAGE_A=rom; a vdrip build
+# embeds no payloads.
 
 PAYLOAD_CONFIG ?= config/banks.ini
 ROM_DISK_PAGES ?= 3

@@ -26,15 +26,15 @@ Code regions, each bounded by the limit `cbios_defs.inc` declares for it. Used a
 |---|---|---:|---:|---|
 | `EC00h-EF9Fh` | BDOS facade | 914 | 14 | `CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-217, system information block. |
 | `EFA0h-EFFFh` | SIO ownership return | 34 | 62 | Quiesces application-owned SIO0/A at boot and application exit. |
-| `F000h-F1AFh` | BIOS tables, ROM copy, boot | 426 | 6 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero. |
+| `F000h-F1AFh` | BIOS tables, ROM copy, boot | 331 | 101 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero. |
 | `F1B0h-F287h` | Banking services | 210 | 6 | `SELMEM`, `SETBNK`, `XMOVE`, `MOVE`. |
 | `F288h-F297h` | CTC reset | 15 | 1 | `ctc_disable_interrupts`: CTC reset and vector base. |
 | `F298h-F2A8h` | IOC link failure record | 16 | 1 | Read by the CP/M tools through BDOS function 203. |
 | `F2A9h-F2EFh` | Boot banner printer | 56 | 15 | Prints the banner text kept in bank 7. |
 | `F2F0h-F50Fh` | SIO core | 523 | 21 | SIO0/B and SIO1 initialization, receive sinks, SIO interrupt body. |
-| `F510h-F52Fh` | Crossing layer | 15 | 17 | Mode-preserving bank select; SIO IM2 entry belongs to the IRQ core. |
+| `F510h-F52Fh` | Crossing layer | 26 | 6 | Mode-preserving bank select; SIO IM2 entry belongs to the IRQ core. |
 | `F530h-F537h` | Transport level | 1 | 7 | The BIOS IO Controller transport level byte. |
-| `F538h-F72Fh` | Crossing gates | 488 | 16 | Console and IOC/video gates into bank 7, inert disk entries, warm-boot trap, ROM-disk copy window, bank 7 check. |
+| `F538h-F72Fh` | Crossing gates | 476 | 28 | Console and IOC/video gates into bank 7, inert disk entries, warm-boot trap, ROM-disk copy window, bank 7 check. |
 | `F730h-F82Fh` | Interrupt dispatch | 238 | 18 | CTC/SIO entries, complete context preservation, dispatch and boot policy. |
 | `F830h-F957h` | Serial console | 295 | 1 | Serial console tee and input switch. |
 | `FC98h-FCDFh` | IRQ policy | 64 | 8 | Interrupt tokens, stackless boot policy and polling context preservation. |
@@ -74,7 +74,7 @@ System common code ends at `FFD8h`.
 | `3E00h-3FFFh` | USB keyboard state | 57 | 455 | Mailboxes and keyboard queue. |
 | `4000h-42FFh` | SD-card backend | 450 | 318 | Record read and write through the IO Controller cache. |
 | `4300h-432Fh` | B: select probe | 20 | 28 | Card availability, then the B: DPH. |
-| `4330h-43FFh` | Drive A: backend | 169 | 39 | The build-selected A: backend. |
+| `4330h-43FFh` | Drive A: backend | 164 | 44 | The build-selected A: backend. |
 | `4400h-47FFh` | Drive dispatcher | 155 | 869 | Routes A: to its backend and B:/C: to SD units; C: select probe. |
 | `4800h-5FFFh` | V9958 console | 3191 | 2953 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
 
@@ -92,9 +92,7 @@ Data:
 | `8000h-87FFh` | Console font | CP850 6x8. |
 | `8800h-883Fh` | Boot banner text | |
 
-The bank 7 image ends at `883Fh`; shadow/copy mode loads `0000h-BFFFh`, so `8840h-BFFFh` is free for image growth.
-
-Runtime only, never loaded from ROM:
+The last resident asset ends at `CBFFh`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.
 
 | Range | Use |
 |---|---|
@@ -102,7 +100,11 @@ Runtime only, never loaded from ROM:
 | `C100h-C1FFh` | Console and storage dispatch stack |
 | `C200h-C2FFh` | IO Controller transport stack |
 | `C300h-C3BFh` | SD transaction scratch (`MOVE_BUFFER`) |
-| `C3C0h-DFFFh` | Unallocated |
+| `C3C0h-C3FFh` | Unallocated |
+| `C400h-CBFFh` | Pristine CCP restore asset |
+| `CC00h-DFFFh` | Unallocated |
+
+All eight physical SRAM banks include E000h-FFFFh, visible in flat mode 01. Modes 10/11 overlay that range with bank 0.
 
 ## Image
 
@@ -112,7 +114,7 @@ Runtime only, never loaded from ROM:
 | 1 | ROM disk page 1 | 49152 | `build/romdisk.p1.bin` |
 | 2 | ROM disk page 2 | 49152 | `build/romdisk.p2.bin` |
 | 3 | ROM disk page 3 | 49152 | `build/romdisk.p3.bin` |
-| 7 | OS bank 7 | 49152 | `build/bank7.bin` |
+| 7 | OS bank 7 | 65536 | `build/bank7.bin` |
 
 The burnable image `build/zephyr80.bin` is 524288 bytes. Console backend: `v9958`. Drive A: backend: `rom`.
 
@@ -124,8 +126,8 @@ Checked:
 
 - Every declared region starts at its base symbol and ends at or below its limit.
 - Declared regions do not overlap.
-- Nothing is assembled into the caller window `0003h-1FFFh`, the ZSDOS slot, bank 7's runtime-only `C000h-DFFFh`, the program reservation, or the CCP slot.
-- The bank 7 image ends below `C000h`, the end of what shadow/copy mode loads.
+- No assembled bytes overlap the caller window beyond the disposable bootstrap, ZSDOS, private stacks/scratch, pristine CCP, program reservation or live CCP.
+- Bank 7 resident contents fit below `E000h`; the full 64 KiB boot page is installed.
 - `FBASE` is six bytes into the facade, which follows the 2 KiB CCP slot; the facade ends below `CBIOS_BASE`.
 - ZSDOS's BIOS table is at `ZSDOS_ORG + ZSDOS_SIZE`, and ends with the `BANK7OS1` marker.
 - The CP/M BIOS table and the Zephyr extension table are jumps, in order.

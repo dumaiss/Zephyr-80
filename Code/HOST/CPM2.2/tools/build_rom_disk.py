@@ -5,10 +5,12 @@ The volume is an ordinary CP/M filesystem, so the CCP, DIR, STAT and PIP all wor
 on it unmodified -- which is the point: once B: is healthy, `PIP B:=A:*.*`
 populates the card from flash with no host proxy involved.
 
-The hardware only exposes ROM at 0000h-BFFFh while shadow/copy mode is on, so the
-volume is emitted as one 48 KiB chunk per ROM page rather than a single blob.
+Each ROM page contributes 48 KiB of filesystem data at 0000h-BFFFh, so the volume
+is emitted as one 48 KiB chunk per page rather than a single blob.
 cbios_storage_rom.asm maps a CP/M record back to (page, offset) with the same
-stride.
+stride.  The unused 16 KiB tail of each page is outside the volume; the image
+builder mirrors the seven-byte ROM-read primitive there and re-checks that the
+filesystem bytes below it are unchanged.
 
 This writes only inside the build directory and the staging tree.  It must never
 touch images/zephyr80-vdrip2.cpm, which is the separate, user-owned VDrip volume.

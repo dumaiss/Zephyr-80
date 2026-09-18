@@ -190,7 +190,7 @@ irq_disable:
 ; Stackless boot entries: policy remains here even before a valid SP exists.
 irq_rom_entry:
 	di
-	jp shadow_copy_masked
+	jp rom_copy_masked
 irq_boot_entry:
 	di
 	jp boot_masked

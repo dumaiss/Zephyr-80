@@ -137,9 +137,9 @@ backend on the BIOS-owned stack. The backend copies between caller DMA and
 `MOVE_BUFFER` while temporarily selecting the requested DMA bank, then restores
 the previous bank.
 
-## Active VDrip Disk vs Inactive RAM Disk
+## VDrip Disk Geometry
 
-The active VDrip disk is:
+The VDrip disk is:
 
 ```text
 proxy-backed flat image
@@ -149,15 +149,7 @@ proxy-backed flat image
 4096-byte allocation blocks
 ```
 
-The inactive legacy RAM disk source is:
-
-```text
-RAM banks 2-7
-294912 bytes
-0900h records
-48 sectors/track
-2048-byte allocation blocks
-```
-
-Those two geometries are deliberately different. Do not mix `RAMDISK_*`
-constants into the active VDrip storage path.
+A banked RAM disk backend once shared the drive A: slot with its own, different
+geometry (RAM banks 2-7, 294912 bytes, 2048-byte allocation blocks). It has been
+retired, along with its `RAMDISK_*` constants and the image builder's support for
+embedding its payload. Drive A: is now `rom` or `vdrip`.

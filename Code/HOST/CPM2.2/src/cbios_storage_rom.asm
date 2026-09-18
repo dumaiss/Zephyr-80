@@ -10,21 +10,11 @@
 ;   nothing to diagnose with.  A ROM-backed A: is always present, carries the
 ;   diagnostic utilities, and can populate a fresh card with PIP.
 ;
-; The transfer relies on the memory decoder rather than on a staging buffer.
-; From MEM_DECODER.pld (Rev 09), with shadow/copy mode set and ROM enabled:
-;
-;   0000h-BFFFh   reads select ROM page D7:D5, writes select SRAM bank D2:D0
-;   C000h-FFFFh   reads and writes both select SRAM bank 0 (FORCE_BANK0)
-;
-; So one LDIR reads flash and writes SRAM in the same instruction, and the two
-; ends cannot alias because they are physically different chips.  The RAM disk
-; backend needs two LDIRs through MOVE_BUFFER only because both of its ends are
-; SRAM; this backend needs no scratch buffer at all.
-;
-; This code executes from F910h, inside the C000h-FFFFh window that shadow mode
-; leaves as ordinary SRAM, so it keeps running while ROM covers the low 48 KiB.
-; That is the same technique restore_ccp_from_rom and restore_font_from_rom
-; already use at runtime.
+; Each page contains filesystem bytes only at 0000h-BFFFh. The unused tail
+; holds a seven-byte ROM-read primitive mirrored from common SRAM. Mode 00
+; reads ROM everywhere and writes the selected SRAM bank everywhere. The
+; common crossing wrapper enters that primitive with IRQs masked, leaves the
+; return latch in A, and touches no stack until SRAM is visible again.
 ;
 ; Geometry assumptions (see the ROMDISK_* block in cbios_defs.inc):
 ;   3 pages * 48 KiB/page = 147456 bytes.
@@ -125,44 +115,16 @@ stg_a_sectran:
 ;   A = BIOS_OK on success, BIOS_ERR on invalid drive/track/sector.
 ; Clobbers:
 ;   AF, BC, DE, HL.
-; Important invariants:
-;   The latch is restored exactly as found before this returns: mode 10, or
-;   mode 11 when the BIOS is called from bank 7.  CURRENT_BANK is never
-;   changed: shadow mode only alters what the decoder selects, not which bank
-;   the BIOS considers active.
-;
-;   A record never straddles the shadow window.  The highest source address is
-;   record 383 at 0BF80h, whose last byte is 0BFFFh, so the copy stays clear of
-;   the forced-bank-0 region at C000h.
-;
-;   The destination may legitimately be at or above C000h.  FORCE_BANK0 sends
-;   those writes to common bank 0, which is exactly right for a DMA buffer in
-;   the protected common TPA.
-; Interrupts:
-;   Masked across the LDIR, because an interrupt handler fetching from below
-;   C000h would read flash instead of its own code.  The window is one record,
-;   about 2700 T-states, roughly seven character times at 115200 against a
-;   3-deep SIO RX FIFO.  Never widen this to a whole block.
-;
-;   The caller's interrupt state is restored, not forced on.  It is captured
-;   with LD A,I before the window opens, retried once for the NMOS erratum
-;   (a read that coincides with an accepted interrupt reports IFF2 clear).
+; Called in OS mode. A record must remain within one physical destination
+; region (caller, OS, common); the facade uses an aligned common DMA buffer.
+; No VDP traffic. Not ISR-safe; IRQ masking is limited to one record.
 stg_a_read:
 	call rom_map_current
 	or a
 	ret nz
 
-	; Build the shadow/copy latch value: ROM page in D7:D5 supplies the read
-	; side, SHADOW_BIT opens the window, and D2:D0 name the bank that takes
-	; the writes.  ROM_DIS stays clear; that is what makes ROM visible.
-	;
-	; The window unmaps bank 7, so the copy itself runs from common memory, in
-	; xing_rom_copy_record.  Inside it SRAM writes to 0000h-BFFFh go to the
-	; latch's bank, so that bank is the one the DMA address means in mode 11:
-	; the caller window's bank below 2000h, bank 7 for 2000h-BFFFh.  At C000h
-	; and above the write is forced to bank 0 whatever the bits say, which is
-	; right for common memory and wrong for bank 7's runtime range, so a DMA
-	; in C000h-DFFFh is refused.  Nothing the OS reads into lives there.
+	; D7:D5 choose the ROM page; D2:D0 choose the physical DMA bank.
+	; Mode 00 has no forced regions, including at C000h-DFFFh.
 	ld a,c
 	add a,a
 	add a,a
@@ -174,12 +136,9 @@ stg_a_read:
 	ld a,d
 	cp #0x20
 	jr c,stg_a_read_caller
-	cp #0xc0
-	jr c,stg_a_read_os
 	cp #0xe0
-	jr nc,stg_a_read_common
-	ld a,#BIOS_ERR
-	ret
+	jr c,stg_a_read_os
+	jr stg_a_read_common
 stg_a_read_os:
 	ld a,#OS_BANK
 	jr stg_a_read_bank
@@ -191,8 +150,8 @@ stg_a_read_common:
 	xor a
 stg_a_read_bank:
 	or b
-	or #SHADOW_BIT
-	ld b,a				; B = shadow latch value
+	or #MEM_MODE_ROM
+	ld b,a				; B = ROM page and destination bank
 	jp xing_rom_copy_record
 
 ; WRITE backend.

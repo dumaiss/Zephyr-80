@@ -202,32 +202,33 @@ It belongs to the running program and does not persist across a program exit: a 
 ## 7. Memory Modes
 
 ```text
-D4 D3
- 0  0    00   boot / ROM-visible
- 0  1    01   shadow / load
+D4 D3  MEM_MODE1:MEM_MODE0
+ 0  0    00   ROM access / RAM destination
+ 0  1    01   flat selected SRAM
  1  0    10   application execution
  1  1    11   OS execution
 ```
 
-**Mode 00 and mode 01 do not change in either phase.** Mode 00 is reset and bootstrap. Mode 01 loads ROM images into SRAM by reading ROM at `0000h-BFFFh` and writing the selected bank, which is enough to load bank 7 **provided the canonical bank-7 image fits within `2000h-BFFFh`**.
+The mode field is two plain selector bits, `MEM_MODE1:MEM_MODE0`. Neither bit means "disable ROM" or "enable copying" on its own; each combination is a complete mapping. See [Memory Management](../../../Memory%20Management.md) for the authoritative description.
 
-That is a layout rule for the OS image, not a limitation: `C000h-DFFFh` of bank 7 is used in Phase 2 for zero-initialised runtime state — stacks, buffers, work areas — which needs clearing rather than loading. Keeping the image inside the range mode 01 already exposes means neither phase touches the reset or load equations.
+Mode 00 reads the selected ROM page and writes the selected SRAM bank across the whole address space, with no split and no forced region. That makes cold boot a mapping operation — page 0 into bank 0, page 7 into bank 7, a full 64 KiB each — and it is also the mode a drive-A record read runs in.
 
-Only modes 10 and 11 change: mode 11 in Phase 1, both in Phase 2.
+Because a full page is installed, there is no longer a rule that the bank-7 image must end below `C000h`. `C000h-DFFFh` still holds the private stacks and scratch that need clearing rather than loading, but initialized content may sit above them; the pristine warm-boot CCP does.
+
+Mode 01 is a flat 64 KiB view of the selected bank, with no ROM and no common region. It is general-purpose — personality loaders, diagnostics, whole-bank initialization — and is the only mode that reaches `E000h-FFFFh` in banks 1-7.
 
 ---
 
 ## 8. Decoder Changes
 
-The memory GAL already receives `A13`, `A14`, `A15`, `RAM_SHADOW` (`D3`), `ROM_DIS` (`D4`) and `BANK_Q0..2`, and it drives `RAM_A16..18` directly. The regions are within its decode granularity:
+The memory GAL receives `A13`, `A14`, `A15`, `MEM_MODE0` (`D3`), `MEM_MODE1` (`D4`) and `BANK_Q0..2`, and it drives `RAM_A16..18` directly. The regions are within its decode granularity:
 
 ```text
-LOW_8K      = !A15 & !A14 & !A13      ; 0000-1FFF
-COMMON_8K   =  A15 &  A14 &  A13      ; E000-FFFF    (Phase 2)
-SAFE_RAM    =  A15 &  A14             ; C000-FFFF    (Phase 1, existing)
+COMMON_8K   =  A15 &  A14 &  A13                            ; E000-FFFF
+OS_BODY     = (A13 & !A14) # (A14 & !A15) # (A15 & !A13)    ; 2000-DFFF
 ```
 
-Only `RAM_A16..18` change. `SRAM_CS` already selects SRAM for every read and write when `ROM_DIS` is set, and `ROM_CS` is already suppressed by `ROM_DIS`, so mode 11 needs no chip-select changes.
+Only `MEM_MODE1` can force a bank, which is what gives modes 10 and 11 a common region and leaves modes 00 and 01 with none. Chip selects reduce to one term each: `ROM_CS` on a read in mode 00, `SRAM_CS` on any write or on a read outside mode 00.
 
 Bank selection in mode 11, conceptually:
 
@@ -244,9 +245,9 @@ address in common      ->  bank 0
 otherwise              ->  BANK_Q0..2
 ```
 
-In Phase 2, "common" is `COMMON_8K` for modes 10 and 11 while mode 01 keeps `SAFE_RAM`, so the force-to-bank-0 term becomes mode-dependent.
+"Common" is `COMMON_8K` and applies only to modes 10 and 11; modes 00 and 01 force nothing at all, so `FORCE_BANK0` reduces to `MEM_MODE1 & COMMON_8K`.
 
-These are conceptual equations. Compile and fit the WinCUPL source for the ATF22V10 before treating any of them as hardware logic.
+These are conceptual equations. `src/MEM_DECODER.pld` revision 12 is the implementation; it compiles and fits the ATF22V10 with the worst output at 7 of 10 available product terms.
 
 ---
 
@@ -767,7 +768,7 @@ Carry the rest forward from `rom-services` as each becomes relevant. They are in
 | `CBASE_ADDR` derived from `MEM` | Makefile |
 | `CCPBUF` range derived from `CBASE` | `tools/gen_zsdos_bios.py`, `zsdos/src/zsdos.z80` |
 | Self-locating SYSID | `../Utilities/src/sysid.asm` |
-| Stack probe and `STKCHK` — revert to three stacks | `src/boot_shadow_copy.asm`, `src/sio_core.asm`, `src/cbios_defs.inc`, `../Utilities/src/stkchk.asm` |
+| Stack probe and `STKCHK` — revert to three stacks | `src/boot_rom_copy.asm`, `src/sio_core.asm`, `src/cbios_defs.inc`, `../Utilities/src/stkchk.asm` |
 | IOC transport interrupt-state capture | `src/cbios_iocall.asm`, `src/cbios_ioc_command.asm` |
 | Extended-entry literal check, until section 10 | `tools/check_ext_entries.py` |
 | Documentation edits | `docs/ctc-and-real-time-programming.md`, `docs/zephyr80_bios_walkthrough.md` |
@@ -795,7 +796,7 @@ Work:
    - To make room, `ccp_clear_redraw` moved from core BIOS to `ECD0h` in slot 3, and banking now starts at `DBDDh`.
 4. **Done.** Latch writers (F3):
    - **Converted:** SD record staging (`sd_select_bank`); the drive A read, which now restores the latch and the interrupt state it found instead of forcing mode 10 and `EI`; `SELMEM`, which keeps mode 11; and cross-bank `MOVE`, which copies in mode 10 from common memory and restores the latch it found.
-   - **Left forcing mode 10, by design:** cold boot's `bank_select_internal`, `WBOOT`'s entry, `restore_ccp_from_rom`, the font restore (warm boot only) and the boot shadow copy. These run only where section 19 says to force mode 10.
+   - **Left forcing mode 10, by design:** cold boot's `bank_select_internal`, `WBOOT`'s entry and the cold-boot ROM copy. These run only where section 19 says to force mode 10. `restore_ccp_from_os` no longer changes the mode at all: it copies from bank 7, which mode 11 already maps.
    - **Unchanged because not linked:** the RAM-disk and VDrip storage backends.
 5. **Done.** `SELMEM`, `SETBNK` and `XMOVE` refuse bank 7 with `A = FFh` and return `A = 00h` on success. A refused `XMOVE` leaves an earlier one armed.
    - Validation is `XING.COM` (`../Utilities/src/xing.asm`), which passes on hardware along with boot, drives A-C, SC2, TM2, SDDIR and SERCON: bank-7 refusal; `SELMEM` and `MOVE` in both modes; drive A and B reads in mode 11 matching mode 10; and the drive A read preserving interrupts off and on.
@@ -810,7 +811,7 @@ Work:
    How it is built and what stayed common:
    - **One assembly, two outputs.** `tools/split_banked_image.py` cuts the link into ROM page 0 and a bank 7 payload in ROM page 7, which the existing cold-boot copy loads. The ROM image is 512 KiB.
    - **Common interrupt path.** The SIO core and serial console stay common. So do the IM2 page at `FD00h` (CTC `00h`-`06h`, SIO `10h`-`1Eh`, other programmed even entries `EI`/`RETI`, plus an `FFh` cross-page guard), the CTC dispatcher and registration slots (`src/cbios_irq.asm`) and the ISR stack. Every active handler switches stacks first and ends `EI`/`RETI`.
-   - **Drive A:** its shadow/copy window runs from common memory (`xing_rom_copy_record`). The destination bank comes from the DMA address as mode 11 sees it. SD record copies need no bank selection.
+   - **Drive A:** its ROM window runs in mode 00 through `xing_rom_copy_record`, which calls a seven-byte primitive mirrored into each drive-A page so instruction fetches survive the switch. The destination bank comes from the DMA address as mode 11 sees it, and mode 00 forces no bank, so `C000h-DFFFh` destinations are permitted. SD record copies need no bank selection.
    - **Stock CP/M removed.** `cpm22.asm`'s CCP and BDOS are no longer assembled. `ccp_clear_redraw` and `ccp_read_up_sequence`, which served only the stock BDOS, are gone, and warm boot no longer restores the font from ROM.
    - **Boot check.** Boot checks a signature in bank 7 (`bank7_check`) before calling into it, and reports over SIO0/B if the signature is missing.
    - **Deviation:** the BIOS private stacks, `MOVE_BUFFER` and the runtime state stay in common memory through Phase 1. Phase 2 moves what it must.
@@ -835,7 +836,7 @@ Work:
 
     Bulk transfers are staged through a 512-byte common buffer, so no transfer crosses the mapping (F4).
     - **Deviation:** the fixed extended table at `DA33h` stays live as staging gates, so this tree's utilities work unchanged. They are retrofitted to functions 210-217 when Phase 2 moves the table.
-11. **Done.** `WBOOT` runs in mode 11 on bank 0. It resets the CTC and its vector, clears registrations and restores the CCP through a mode-00 window, then returns to mode 10 for the CCP (F5). Bank 7 is not reinstalled on warm boot.
+11. **Done.** `WBOOT` runs in mode 11 on bank 0. It resets the CTC and its vector, clears registrations and restores the CCP, then returns to mode 10 for the CCP (F5). Bank 7 is not reinstalled on warm boot. Under revision 12 the restore reads the pristine CCP from bank 7 and opens no memory-mode window at all.
 12. **Done**, as part of steps 7 and 8.
 13. **Done.** `DU2` is dropped from A:. The other third-party tools are checked in step 14.
 14. **Done.** On hardware: cold and warm boot, `DIR` on A:-C:, `^R`/`^L`, `SYSID`, `BANKOS.COM` from B: (PASS), SD utilities, SC2, a TM2 build, WordStar, PIP, STAT, SERCON and `MAP11` all pass. `BANKOS.COM` (`../Utilities/src/bankos.asm`) automates section 27's tests 3, 5 and 6, and the file I/O part of test 8. The rest, including the third-party tools, is run by hand.
@@ -846,10 +847,13 @@ At the end of Phase 1 the OS is out of the application's body.
 
 1. **Done.** `MEM_DECODER.pld` revision 11: common is `E000h-FFFFh` in modes 10 and 11, and the OS body is `2000h-DFFFh`. The WinCUPL product terms match this map for all 2,048 inputs; the chip selects are unchanged from revision 10. Each address line uses 8 of its 10 terms.
 2. **Done.** Modes 00 and 01 decode exactly as in revision 10: shadow/copy still forces `C000h-FFFFh` to bank 0. The bank 7 image ends at `883Fh`, and `tools/split_banked_image.py` refuses any byte assembled into `C000h-DFFFh`.
+   - **Superseded by revision 12.** Mode 00 now reads ROM and writes the selected bank across the whole address space, mode 01 is a flat selected bank, and neither forces a bank. Cold boot installs complete 64 KiB pages, so the bank-7 image is no longer required to end below `C000h`; `split_banked_image.py` now guards only the private stacks, the scratch buffer and the pristine CCP slot.
 3. **Done.** Boot review. Boot and `WBOOT` set mode 11 before loading the bank-7 stack, and switch to a common stack before the final switch to mode 10. `restore_ccp_from_rom` does no stack operation between its two latch writes.
    - **Found:** drive A:'s shadow/copy window popped its saved latch from the stack while the window was open. With the storage stack in `C000h-DFFFh`, mode 01 maps that stack to bank 0, so `xing_rom_copy_record` now keeps the saved latch and interrupt state in common variables.
    - **Found:** a DMA in `C000h-DFFFh` cannot take a shadow/copy write, so the ROM-disk read refuses one. Nothing the OS reads into lives there.
+   - **Superseded by revision 12.** The ROM window is mode 00, where every read comes from ROM, so the primitive is stackless by construction and is mirrored into each drive-A page to keep instruction fetches valid. Mode 00 forces no bank, so a DMA in `C000h-DFFFh` is now accepted and the refusal was removed.
 4. **Done.** Bank 7's `C000h-DFFFh` holds the BIOS private stacks (`C100h`, `C200h`, `C300h`) and the SD scratch buffer. Nothing there is loaded or initialised.
+   - **Superseded by revision 12.** The full-page copy can initialise this range. The stacks and scratch still occupy `C000h-C3BFh`, and the pristine warm-boot CCP is loaded at `C400h-CBFFh`.
    - The ISR, gate and facade stacks stay common, at `FE80h-FF5Fh`.
    - Cross-bank `MOVE` uses the common staging buffer.
 5. **Done.** `CBASE` is `E400h`, `FBASE` is `EC06h` and `CBIOS_BASE` is `F000h`; `TPA` is `0100h-EC05h`. Common memory holds 3,491 bytes plus the CCP in `E000h-FFFFh`, with `E000h-E3FFh` left for program interrupt callbacks.

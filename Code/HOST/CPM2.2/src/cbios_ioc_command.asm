@@ -380,7 +380,7 @@ IOC_PACKET_MAILBOX_BAD:
 	ret
 
 ; Rolling transaction sequence.  Lives in the code region, which is RAM at
-; runtime after the shadow copy.
+; runtime after the cold-boot page copy.
 ioc_seq:
 	.db 0
 
@@ -1154,7 +1154,7 @@ IOCBULK_OK:
 IOCBULK_CRC_FAIL:
 	jp IOC_BULK_REJECT_CRC
 
-; Bulk transfer scratch.  In the code region, which is RAM after the shadow copy.
+; Bulk transfer scratch.  In the code region, RAM after the cold-boot copy.
 ioc_bulk_ptr:
 	.dw 0
 ioc_bulk_len:
@@ -1284,7 +1284,7 @@ IOCBULKW:
 	ret
 
 ; Caller stack pointers, parked while a transfer runs.  Code region, which is
-; RAM at runtime after the shadow copy.
+; RAM at runtime after the cold-boot page copy.
 xport_iocbulk_sp:
 	.dw 0
 xport_iocbulkw_sp:

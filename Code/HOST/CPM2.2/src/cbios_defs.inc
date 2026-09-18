@@ -83,9 +83,9 @@ BANK_REJECTED                   = 0xff
 ; Banked OS layout (Phase 2)
 ; ------------------------------------------------------------------------------
 ; The OS runs in SRAM bank 7, visible at 2000h-DFFFh in latch mode 11.  Common
-; memory is E000h-FFFFh in modes 10 and 11; shadow/copy mode 01 still forces
-; C000h-FFFFh to bank 0.  docs/Zephyr-80_OS_Execution_Memory_Architecture.md is
-; the plan.
+; memory is E000h-FFFFh in modes 10 and 11; modes 00 and 01 have no common
+; region at all.  docs/Zephyr-80_OS_Execution_Memory_Architecture.md is the
+; architecture.
 ;
 ; Nothing here is published.  Programs reach the OS through CALL 5, and through
 ; the CP/M BIOS table that page zero's JP WBOOT points into.  Everything else --
@@ -97,11 +97,10 @@ BANK_REJECTED                   = 0xff
 ;   3000h  ZSDOS's BIOS jump table: ZSDOS computes its BIOS as ZSDOS+1000h
 ;   3040h  console dispatch, storage stubs, VIDEO_SEND, IOC transport, HID,
 ;          SD and ROM-disk backends, V9958 console; 6000h disk structures;
-;          8000h font; 8800h boot banner.  The image must end below C000h:
-;          shadow/copy mode loads only 0000h-BFFFh.
-;   C000h  runtime only, never loaded: the BIOS private stacks and SD scratch.
-;          Nothing a drive A: read can target may live in C000h-DFFFh, because
-;          shadow/copy mode forces writes there to bank 0.
+;          8000h font; 8800h boot banner.  Cold boot installs the whole 64 KiB
+;          page, so initialized content may extend to DFFFh.
+;   C000h  BIOS private stacks and SD scratch, then the pristine CCP at
+;          CCP_RESTORE_BASE, which WBOOT restores without mapping ROM.
 ; Common:
 ;   E000h  program interrupt callbacks (PROGRAM_ISR_AREA): nothing assembled
 ;   E400h  CCP (ZCPR2)
@@ -115,7 +114,7 @@ BANK_REJECTED                   = 0xff
 ; still give old common addresses and slot numbers for regions that moved; the
 ; values assigned here and below are authoritative.
 
-OS_EXEC_LATCH                   = ROMDIS_BIT | SHADOW_BIT       ; mode 11, bank 0
+OS_EXEC_LATCH                   = MEM_MODE_OS       ; mode 11, bank 0
 ZSDOS_ORG                       = 0x2000
 ZSDOS_SIZE                      = 0x1000
 ZSDOS_ENTRY                     = ZSDOS_ORG + 0x0006
@@ -476,8 +475,7 @@ SIO_COMMAND_TIMEOUT_OUTER       = 0x08
 ; headroom.
 ;
 ; MOVE_BUFFER was NOT reclaimed for this.  Despite looking idle it is live
-; scratch for the VDrip storage backend, cbios_bank's cross-bank MOVE and the
-; ramdisk path.
+; scratch for the VDrip storage backend and cbios_bank's cross-bank MOVE.
 CBIOS_IOC_COMMAND_CODE_BASE     = BIOS7_BASE + 0x0400                  ; 3400h, bank 7
 
 ; Overflow half of the unified IOC transport.  The active VDrip console image
@@ -678,11 +676,11 @@ CBIOS_SD_PROBE_CODE_BASE              = BIOS7_BASE + 0x1300            ; 4300h, 
 
 ; Neutral name for the drive A: backend code slot.  Exactly one A: backend links
 ; per build (see STORAGE_A in the Makefile); they are mutually exclusive because
-; the common window has no room for two.  cbios_storage_rom.asm, the retained
-; cbios_storage_vdrip.asm, and the older cbios_storage_ramdisk.asm all .org here.
+; the common window has no room for two.  cbios_storage_rom.asm and the retained
+; cbios_storage_vdrip.asm both .org here.
 CBIOS_STORAGE_A_CODE_BASE             = CBIOS_SD_PROBE_CODE_BASE + CBIOS_SD_PROBE_CODE_SIZE
 
-; Compatibility alias.  The VDrip and ramdisk backends still name this.
+; Compatibility alias.  The VDrip backend still names this.
 CBIOS_STORAGE_VDRIP_CODE_BASE         = CBIOS_STORAGE_A_CODE_BASE
 ; Core BIOS tail: DCB1h to the SIO core, which is pinned at DD10h.  95 bytes
 ; between the banking module and a fixed address, originally belonging to
@@ -898,11 +896,9 @@ ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_BASE + 0x0530                  ; F530h; 
 
 ; VDrip CP850 font placement in bank 0 TPA.
 ; Font data lives at VDRIP_FONT_ROM_BASE in the firmware binary (bank 0 ROM).
-; The boot shadow copy writes it to SRAM bank 0. text_load_font reads from
-; this address in bank 0 SRAM. restore_font_from_rom uses COPY_LATCH0 to
-; re-copy from ROM to SRAM bank 0 at warm boot (same technique as CCP restore).
-; Programs may overwrite this TPA address after boot; the warm-boot restore
-; refreshes it from ROM before text_load_font is called.
+; The cold-boot page copy writes it to SRAM bank 0. text_load_font reads from
+; this address in bank 0 SRAM. Programs may overwrite this TPA address after
+; boot; the warm-boot restore refreshes it before text_load_font is called.
 ; Boot banner printer, in the core-BIOS space freed by removing the IOC
 ; bring-up trace block and the ISR counter.  It cannot stay where the old
 ; ten-byte banner was: that slot is packed against the console facade at
@@ -1089,9 +1085,9 @@ CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 ;   FF60h  FAC_STACK_TOP            BDOS facade and the warm-boot trap
 ;
 ; Cold boot and WBOOT move to FAC_STACK_TOP before their final switch to mode
-; 10.  The drive A: shadow/copy window runs with the storage stack in
-; C000h-DFFFh, which that mode maps to bank 0, so it keeps its saved state in
-; common variables rather than on the stack.
+; 10.  A drive A: read runs in mode 00, where every fetch comes from ROM, so the
+; primitive is stackless and the crossing wrapper holds its return latch in a
+; register rather than on the stack.
 ;
 ; Interrupts moved to their own stack in Phase 1 so their frames never land on
 ; the interrupted stack (plan F2). The ISR saves 20 context bytes plus a
@@ -1290,10 +1286,9 @@ VDRIP_STORAGE_ALV_SIZE                = 0x0100
 ; ------------------------------------------------------------------------------
 ; ROM disk backend geometry (drive A:, read-only)
 ; ------------------------------------------------------------------------------
-; Flash pages 1-3 hold one CP/M volume.  MEM_DECODER.pld only exposes ROM at
-; 0000h-BFFFh while shadow/copy mode is on -- C000h-FFFFh is forced to SRAM
-; bank 0 -- so each page contributes 48 KiB and the top 16 KiB of every page is
-; unreachable and unused.
+; Flash pages 1-3 hold one CP/M volume.  Each page contributes 48 KiB of
+; filesystem data at 0000h-BFFFh; the top 16 KiB is outside the volume and
+; carries only the mirrored ROM_ACCESS primitive, never bootstrap code.
 ;
 ;   3 pages * 0C000h bytes  = 147456 bytes
 ;   0180h records/page      = 0480h records total
@@ -1380,3 +1375,13 @@ VDRIP_STORAGE_SLOT_LAST        = 5
 
 LEGACY_CONSOLE_SLOT_FIRST       = 1
 LEGACY_CONSOLE_SLOT_LAST        = 1
+
+; Cold-boot sources are independent of the destination SRAM selectors.
+BOOT_OS_ROM_PAGE                = 7
+BOOTSTRAP_LIMIT                 = 0x0080
+CCP_RESTORE_BASE                = 0xc400
+CCP_RESTORE_SIZE                = 0x0800
+; Common crossing primitive; only these seven bytes are mirrored into the
+; non-filesystem tails of drive-A ROM pages. No bootstrap is placed there.
+ROM_ACCESS_BASE                 = 0xf522
+ROM_ACCESS_SIZE                 = 7

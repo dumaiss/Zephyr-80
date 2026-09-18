@@ -44,7 +44,7 @@ xing_os_call_ix:
 	push af
 	in a,(BANK_PORT)
 	ld (xing_saved_latch),a
-	or #SHADOW_BIT
+	or #MEM_MODE0
 	out (BANK_PORT),a
 	pop af
 	call xing_jp_ix
@@ -295,39 +295,23 @@ trap_masked:
 	ld sp,#FAC_STACK_TOP
 	ld a,(CURRENT_BANK)
 	and #BANK_MASK
-	or #ROMDIS_BIT
+	or #MEM_MODE_APPLICATION
 	out (BANK_PORT),a
 	call irq_enable
 	jp 0x0000
 
 ; ---------------------------------------------------------------------------
-; xing_rom_copy_record -- drive A:'s shadow/copy window, for the bank 7 backend.
-; Shadow/copy mode puts ROM at 0000h-BFFFh, which unmaps bank 7, so the window
-; runs from common memory.
-; In:  B  = shadow/copy latch value: ROM page, SHADOW_BIT, destination bank
-;      HL = ROM source, DE = destination, one 128-byte record
-; Out: A = BIOS_OK.  Latch and interrupt state restored as found.
-; Invariants:
-;   The caller's stack is the storage stack, in bank 7's runtime range
-;   C000h-DFFFh, which shadow/copy mode maps to bank 0.  So the latch and
-;   interrupt state found are kept in common variables, and nothing touches the
-;   stack between the two latch writes.
-;   Interrupts are masked across the window, because a handler fetching from
-;   below C000h would read flash.  The caller's state is captured with LD A,I
-;   and retried once for the NMOS erratum (a read that coincides with an
-;   accepted interrupt reports IFF2 clear).
-; ---------------------------------------------------------------------------
+; xing_rom_copy_record: one drive-A record via the ROM-resident primitive.
+; In: B=page/mode-00/destination-bank latch, HL=source, DE=destination.
+; Out: A=BIOS_OK, BC/DE/HL clobbered; original latch and IFF restored.
+; No stack or SRAM reads while ROM is selected. Not ISR-safe, no VDP traffic.
+; IRQs are masked only for the bounded 128-byte transfer.
 xing_rom_copy_record:
 	call irq_save_disable
 	ld (xing_rom_iff),a
 	in a,(BANK_PORT)
-	ld (xing_rom_latch),a
-	ld a,b
-	out (BANK_PORT),a
-	ld bc,#ROMDISK_RECORD_BYTES
-	ldir
-	ld a,(xing_rom_latch)
-	out (BANK_PORT),a
+	ld c,#BANK_PORT
+	call xing_rom_read
 	ld a,(xing_rom_iff)
 	call irq_restore
 	ld a,#BIOS_OK
@@ -377,8 +361,6 @@ bank7_fail_text:
 gate_caller_sp:
 	.dw 0
 xing_saved_latch:
-	.db 0
-xing_rom_latch:
 	.db 0
 xing_rom_iff:
 	.db 0

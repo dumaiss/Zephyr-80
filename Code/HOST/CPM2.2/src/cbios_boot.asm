@@ -7,7 +7,7 @@
 	.globl boot,wboot,wboot_resident
 	.globl init_page_zero
 	.globl prepare_runnable_bank
-	.globl restore_ccp_from_rom
+	.globl restore_ccp_from_os
 	.globl facade_reset,irq_reset,bank7_check
 	.globl runtime_set_default_dma
 	.globl runtime_clear_default_dma
@@ -26,7 +26,7 @@
 
 ; BOOT
 ; Purpose:
-;   Cold boot entry after the ROM image has been shadow-copied into RAM. This
+;   Cold boot entry after the ROM image has been copied into RAM. This
 ;   path establishes the firmware stack, initializes core hardware, prepares
 ;   bank 0 as a runnable CP/M environment, and enters the CCP.
 ; Inputs:
@@ -96,7 +96,7 @@ boot_masked:
 	; so move to a common stack first: an interrupt between the switch and the
 	; CCP setting its own would otherwise push onto bank 0's C000h-DFFFh.
 	ld sp,#FAC_STACK_TOP
-	ld a,#RAM_ONLY_BANK0
+	ld a,#MEM_MODE_APPLICATION
 	out (BANK_PORT),a
 	ld sp,#APP_STACK_TOP
 	ld hl,#WBOOT
@@ -165,7 +165,7 @@ wboot_masked:
 	; Rebuild the console only.  SIO1/A deliberately retains its receiver state
 	; and persistent External-Sync character boundary across CP/M warm boots.
 	call sio_core_init
-	call restore_ccp_from_rom
+	call restore_ccp_from_os
 	call prepare_runnable_bank
 	call facade_reset
 	; The font is in bank 7, where no program can overwrite it, so console
@@ -187,41 +187,21 @@ wboot_masked:
 	; so move to a common stack first: an interrupt between the switch and the
 	; CCP setting its own would otherwise push onto bank 0's C000h-DFFFh.
 	ld sp,#FAC_STACK_TOP
-	ld a,#RAM_ONLY_BANK0
+	ld a,#MEM_MODE_APPLICATION
 	out (BANK_PORT),a
 	ld a,(TDRIVE)
 	ld c,a
 	jp CCP_CLEARBUF_ENTRY
 WBOOT_RESIDENT_END:
 
-; Restore the CCP on warm boot. Large CP/M transient programs are allowed to
-; use memory from 0100h up to the BDOS base and may overwrite the CCP at CBASE.
-; WBOOT therefore reloads only CBASE..FBASE-1 from ROM before returning to the
-; CCP clear-buffer entry; BDOS and BIOS remain untouched.
-;
-; CBASE is E400h, just above the program interrupt reservation E000h-E3FFh,
-; which the restore leaves alone.
-;
-; This routine runs from protected high/common BIOS RAM after WBOOT has selected
-; bank 0 and installed CBIOS_STACK_TOP, so CALL/RET and LDIR are safe here.
-; The BIOS stack is in bank 7's C000h-DFFFh, which ROM-visible mode maps to ROM,
-; so nothing here touches it between the two latch writes.  In shadow/copy mode
-; C000h-FFFFh reads SRAM bank 0, not ROM, so use normal ROM-visible bank 0 for
-; this copy. Reads then come from ROM page 0 while writes update the
-; SRAM underneath; after LDIR, immediately return to RAM-only bank 0.
-restore_ccp_from_rom:
-	ld a,#ROM_VISIBLE_BANK0
-	out (BANK_PORT),a
-	ld hl,#CBASE
+ ; Restore the pristine CCP from protected OS SRAM. Called in mode 11 with
+; bank 7 and the common destination both visible. Clobbers BC/DE/HL; no mode
+; transition, no VDP traffic, not ISR-safe. The 2 KiB source is never TPA.
+restore_ccp_from_os:
+	ld hl,#CCP_RESTORE_BASE
 	ld de,#CBASE
-	ld bc,#FBASE-CBASE
+	ld bc,#CCP_RESTORE_SIZE
 	ldir
-
-	; Back to mode 11, where WBOOT runs, and record the selected bank.
-	ld a,#OS_EXEC_LATCH
-	out (BANK_PORT),a
-	xor a
-	ld (CURRENT_BANK),a
 	ret
 
 ; Reset all Z80 CTC channels with interrupt enable clear. The firmware and
@@ -359,7 +339,7 @@ BOOT_BANNER_CODE_END:
 ; Immediately after the 2 KiB font at 8000h, which sets the precedent: data the
 ; BIOS reads once at boot does not belong in the common window where drivers
 ; are fighting for bytes.  Read after select_ram_bank0 and the console cold
-; init, so bank 0 holds the shadow copy of this ROM page by then.
+; init, so bank 0 holds the installed OS image by then.
 ;
 ; The text is CP850, matching the console's atlas -- the e-acute is 82h, not
 ; UTF-8.  Writing it as source-file UTF-8 would put two bytes on the wire and

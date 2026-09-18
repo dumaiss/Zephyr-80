@@ -42,7 +42,8 @@ DEFS_PATTERN = re.compile(
 )
 
 OS_BODY_START = 0x2000
-OS_IMAGE_LIMIT = 0xC000        # shadow/copy mode loads only 0000h-BFFFh of a page
+OS_IMAGE_LIMIT = 0xE000        # managed OS body; boot installs a full physical page
+BANK7_PRIVATE_BASE = 0xC000    # bank 7 private stacks and scratch, below the OS body limit
 OS_BODY_LIMIT = 0xE000
 COMMON_START = 0xE000
 CCP_SLOT = 0x0800
@@ -155,12 +156,13 @@ CONSOLE_REGIONS = {
 
 COMMON_IMPLEMENTATION = [
     (("reset_vector",), "ROM reset entry."),
-    (("cpm_rom_entry_high", "shadow_copy_rom_to_ram"), "ROM-to-RAM copy of every page."),
+    (("cpm_rom_entry_high",), "Reset lands here in common memory and masks interrupts."),
+    (("rom_copy_masked",), "Stackless bootstrap: ROM pages 0 and 7 seed SRAM banks 0 and 7."),
     (("cbios_boot_after_rom_copy",), "Cold boot handoff after the copy."),
     (("boot",), "Cold boot: enters mode 11, checks bank 7, initializes, enters the CCP in mode 10."),
     (("wboot",), "Warm boot trampoline."),
     (("wboot_resident",), "Warm boot: resets the CTC, clears registrations, restores the CCP."),
-    (("restore_ccp_from_rom",), "Copies `CBASE` through `FBASE-1` from ROM page 0."),
+    (("restore_ccp_from_os",), "Copies `CBASE` through `FBASE-1` from the pristine CCP in bank 7."),
     (("prepare_runnable_bank",), "Page zero and default DMA."),
     (("init_page_zero",), "Installs `JP WBOOT` and `JP FBASE`."),
     (("ctc_disable_interrupts",), "Resets the CTC and programs its vector base."),
@@ -188,7 +190,7 @@ COMMON_IMPLEMENTATION = [
     (("bios_inert_seldsk",), "Inert `SELDSK`: returns `HL = 0`."),
     (("bios_inert_error",), "Inert `READ`/`WRITE`: returns an error."),
     (("wbtrap",), "Warm-boot trap: common stack, mode 10, `JP 0000h`."),
-    (("xing_rom_copy_record",), "Drive A: shadow/copy window; keeps its state in common variables."),
+    (("xing_rom_copy_record",), "Drive A: stackless ROM-read primitive with exact latch restoration."),
     (("bank7_check",), "Verifies the `BANK7OS1` marker at cold boot."),
     (("ctc0_isr",), "CTC channel 0 entry."),
     (("irq_register",), "BDOS function 200."),
@@ -271,8 +273,8 @@ RUNTIME_STATE = [
 VALIDATION_NOTES = [
     "Every declared region starts at its base symbol and ends at or below its limit.",
     "Declared regions do not overlap.",
-    "Nothing is assembled into the caller window `0003h-1FFFh`, the ZSDOS slot, bank 7's runtime-only `C000h-DFFFh`, the program reservation, or the CCP slot.",
-    "The bank 7 image ends below `C000h`, the end of what shadow/copy mode loads.",
+    "No assembled bytes overlap the caller window beyond the disposable bootstrap, ZSDOS, private stacks/scratch, pristine CCP, program reservation or live CCP.",
+    "Bank 7 resident contents fit below `E000h`; the full 64 KiB boot page is installed.",
     "`FBASE` is six bytes into the facade, which follows the 2 KiB CCP slot; the facade ends below `CBIOS_BASE`.",
     "ZSDOS's BIOS table is at `ZSDOS_ORG + ZSDOS_SIZE`, and ends with the `BANK7OS1` marker.",
     "The CP/M BIOS table and the Zephyr extension table are jumps, in order.",
@@ -452,9 +454,10 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
     facts: dict[str, int] = {}
 
     for label, start, limit in [
-        ("the caller window", 0x0003, OS_BODY_START),
+        ("the caller window beyond the disposable bootstrap", s("BOOTSTRAP_END"), OS_BODY_START),
         ("the ZSDOS slot", s("ZSDOS_ORG"), s("ZSDOS_ORG") + s("ZSDOS_SIZE")),
-        ("bank 7's runtime-only range", OS_IMAGE_LIMIT, OS_BODY_LIMIT),
+        ("private stacks and SD scratch", BANK7_PRIVATE_BASE, s("MOVE_BUFFER") + s("MOVE_BUFFER_SIZE")),
+        ("the pristine CCP slot", s("CCP_RESTORE_BASE"), s("CCP_RESTORE_BASE") + s("CCP_RESTORE_SIZE")),
         ("the program reservation", s("PROGRAM_ISR_AREA"), s("PROGRAM_ISR_AREA") + 0x400),
         ("the CCP slot", s("CBASE"), s("CBASE") + CCP_SLOT),
     ]:
@@ -463,10 +466,10 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
             layout.error(f"{len(inside)} bytes assembled into {label} ({xspan(start, limit)}), first at {h4(inside[0])}")
 
     body = layout.emitted_in(OS_BODY_START, OS_BODY_LIMIT)
-    image_end = body[-1] + 1 if body else OS_BODY_START
+    image_end = max(body[-1] + 1 if body else OS_BODY_START, s("CCP_RESTORE_BASE") + s("CCP_RESTORE_SIZE"))
     facts["bank7_image_end"] = image_end
     if image_end > OS_IMAGE_LIMIT:
-        layout.error(f"bank 7 image ends at {h4(image_end - 1)}, past what shadow/copy mode loads")
+        layout.error(f"bank 7 image ends at {h4(image_end - 1)}, past the managed OS body")
 
     if s("PROGRAM_ISR_AREA") != COMMON_START:
         layout.error(f"PROGRAM_ISR_AREA = {h4(s('PROGRAM_ISR_AREA'))}, expected {h4(COMMON_START)}")
@@ -570,12 +573,22 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
     if s("FAC_STACK_TOP") > s("CBIOS_IRQ_REG_BASE"):
         layout.error("facade stack overlaps IRQ registration code")
 
-    private = [OS_IMAGE_LIMIT, s("CBIOS_STACK_TOP"), s("CBIOS_CONSOLE_STACK_TOP"), s("CBIOS_XPORT_STACK_TOP")]
+    # The stacks climb from C000h independently of how far the installed image
+    # reaches: cold boot now writes all 64 KiB, so OS_IMAGE_LIMIT is no longer
+    # the floor of this region.
+    private = [BANK7_PRIVATE_BASE, s("CBIOS_STACK_TOP"), s("CBIOS_CONSOLE_STACK_TOP"), s("CBIOS_XPORT_STACK_TOP")]
     if private != sorted(private):
         layout.error("BIOS private stacks are not ordered upward from C000h")
     scratch = s("MOVE_BUFFER")
-    if scratch < s("CBIOS_XPORT_STACK_TOP") or scratch + s("MOVE_BUFFER_SIZE") > OS_BODY_LIMIT:
-        layout.error(f"MOVE_BUFFER ({xspan(scratch, scratch + s('MOVE_BUFFER_SIZE'))}) is not above the stacks in C000h-DFFFh")
+    scratch_end = scratch + s("MOVE_BUFFER_SIZE")
+    if scratch < s("CBIOS_XPORT_STACK_TOP") or scratch_end > OS_BODY_LIMIT:
+        layout.error(f"MOVE_BUFFER ({xspan(scratch, scratch_end)}) is not above the stacks in C000h-DFFFh")
+    ccp_restore = s("CCP_RESTORE_BASE")
+    ccp_restore_end = ccp_restore + s("CCP_RESTORE_SIZE")
+    if ccp_restore < scratch_end or ccp_restore_end > OS_BODY_LIMIT:
+        layout.error(f"the pristine CCP ({xspan(ccp_restore, ccp_restore_end)}) is not above the scratch in C000h-DFFFh")
+    if s("CCP_RESTORE_SIZE") != CCP_SLOT:
+        layout.error(f"CCP_RESTORE_SIZE = {h4(s('CCP_RESTORE_SIZE'))}, expected the {h4(CCP_SLOT)} CCP slot")
 
     return facts
 
@@ -678,11 +691,10 @@ def write_symbol_map(args: argparse.Namespace, layout: Layout) -> None:
     ]
     for name, notes in [
         ("BANK_PORT", "Banking latch I/O port."),
-        ("SHADOW_BIT", "D3: shadow/copy with ROM enabled, operating-system mode with ROM disabled."),
-        ("ROMDIS_BIT", "D4: disables ROM."),
-        ("ROM_VISIBLE_BANK0", "Boot mode, ROM page 0 over bank 0; the warm-boot CCP restore."),
-        ("COPY_LATCH0", "Shadow/copy mode, page 0 into bank 0."),
-        ("RAM_ONLY_BANK0", "Application mode, bank 0."),
+        ("MEM_MODE_ROM", "00: selected ROM reads / selected SRAM writes."),
+        ("MEM_MODE_FLAT", "01: full selected SRAM bank."),
+        ("MEM_MODE_APPLICATION", "10: application and bank-0 common."),
+        ("MEM_MODE_OS", "11: caller, bank-7 OS and bank-0 common."),
         ("OS_EXEC_LATCH", "Operating-system mode, bank 0."),
         ("OS_BANK", "The operating system's SRAM bank."),
     ]:
@@ -796,17 +808,19 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         f"| `{xspan(s('CONSOLE_FONT_ROM_BASE'), s('CONSOLE_FONT_ROM_BASE') + s('FONT_CP850_6X8_SIZE'))}` | Console font | CP850 6x8. |",
         f"| `{xspan(s('BOOT_BANNER_TEXT'), s('BOOT_BANNER_TEXT_END'))}` | Boot banner text | |",
         "",
-        f"The bank 7 image ends at `{h4(facts['bank7_image_end'] - 1)}`; shadow/copy mode loads `0000h-{h4(OS_IMAGE_LIMIT - 1)}`, so `{xspan(facts['bank7_image_end'], OS_IMAGE_LIMIT)}` is free for image growth.",
-        "",
-        "Runtime only, never loaded from ROM:",
+        f"The last resident asset ends at `{h4(facts['bank7_image_end'] - 1)}`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.",
         "",
         "| Range | Use |",
         "|---|---|",
-        f"| `{xspan(OS_IMAGE_LIMIT, s('CBIOS_STACK_TOP'))}` | Boot and warm-boot stack |",
+        f"| `{xspan(BANK7_PRIVATE_BASE, s('CBIOS_STACK_TOP'))}` | Boot and warm-boot stack |",
         f"| `{xspan(s('CBIOS_STACK_TOP'), s('CBIOS_CONSOLE_STACK_TOP'))}` | Console and storage dispatch stack |",
         f"| `{xspan(s('CBIOS_CONSOLE_STACK_TOP'), s('CBIOS_XPORT_STACK_TOP'))}` | IO Controller transport stack |",
         f"| `{xspan(s('MOVE_BUFFER'), s('MOVE_BUFFER') + s('MOVE_BUFFER_SIZE'))}` | SD transaction scratch (`MOVE_BUFFER`) |",
-        f"| `{xspan(s('MOVE_BUFFER') + s('MOVE_BUFFER_SIZE'), OS_BODY_LIMIT)}` | Unallocated |",
+        f"| `{xspan(s('MOVE_BUFFER') + s('MOVE_BUFFER_SIZE'), s('CCP_RESTORE_BASE'))}` | Unallocated |",
+        f"| `{xspan(s('CCP_RESTORE_BASE'), s('CCP_RESTORE_BASE') + s('CCP_RESTORE_SIZE'))}` | Pristine CCP restore asset |",
+        f"| `{xspan(s('CCP_RESTORE_BASE') + s('CCP_RESTORE_SIZE'), OS_BODY_LIMIT)}` | Unallocated |",
+        "",
+        "All eight physical SRAM banks include E000h-FFFFh, visible in flat mode 01. Modes 10/11 overlay that range with bank 0.",
         "",
         "## Image",
         "",

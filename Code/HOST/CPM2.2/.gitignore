@@ -2,3 +2,6 @@
 # should be committed -- the ROM staging tree used to be, and its checked-in
 # copies drifted from the projects that actually produce them.
 build/
+
+# Python bytecode from tools/ imports (build_zephyr_image imports split_banked_image).
+tools/__pycache__/

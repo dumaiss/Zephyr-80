@@ -2741,7 +2741,7 @@ V9958_CONSOLE_CODE_END:
 ;
 ; Placed in a separate absolute area so the driver CODE area ends cleanly at
 ; V9958_CONSOLE_CODE_END.  8000h is in the OS body, so the 256-glyph CP850 font
-; is part of the bank 7 image the cold-boot shadow copy loads, and no program
+; is part of the bank 7 image the cold-boot page copy loads, and no program
 ; can overwrite it.  v9958_upload_font_atlas reads it there, in mode 11.
 ; ---------------------------------------------------------------------------
 

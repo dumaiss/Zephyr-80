@@ -82,17 +82,25 @@ in the [pBITzPlatform repository](https://github.com/dumaiss/pBITzPlatform).
 
 ## Memory model
 
-The memory hardware provides four operating modes:
+Physical memory is eight 64 KiB SRAM banks and a ROM divided into 64 KiB pages.
+The banking latch carries three SRAM-bank bits, three ROM-page bits and two
+memory-mode bits, and the two mode bits select one of four mappings:
 
-| Mode | Read behavior |
+| Mode | Mapping |
 | --- | --- |
-| Boot | ROM at `0000h-5FFFh` and `C000h-FFFFh`; SRAM at `6000h-BFFFh` |
-| Shadow/copy | ROM at `0000h-BFFFh`; SRAM bank 0 at `C000h-FFFFh` |
-| Application | Selected SRAM bank at `0000h-DFFFh`; common SRAM bank 0 at `E000h-FFFFh` |
-| Operating system | Selected SRAM bank at `0000h-1FFFh`; SRAM bank 7 at `2000h-DFFFh`; common SRAM bank 0 at `E000h-FFFFh` |
+| `00` ROM access / RAM destination | Reads: selected ROM page at `0000h-FFFFh`. Writes: selected SRAM bank at `0000h-FFFFh` |
+| `01` Flat SRAM | Selected SRAM bank at `0000h-FFFFh`, reads and writes |
+| `10` Application | Selected SRAM bank at `0000h-DFFFh`; common SRAM bank 0 at `E000h-FFFFh` |
+| `11` Operating system | Selected SRAM bank at `0000h-1FFFh`; SRAM bank 7 at `2000h-DFFFh`; common SRAM bank 0 at `E000h-FFFFh` |
 
-Writes always reach SRAM. This permits the firmware to populate RAM underneath
-ROM-visible addresses before switching to RAM-only operation.
+Writes always reach SRAM. In mode 00 that makes a single `LDIR` copy ROM to SRAM,
+which is how cold boot seeds a bank and how drive A: is read. Flat mode 01 gives a
+true 64 KiB bank, including the `E000h-FFFFh` that modes 10 and 11 overlay with
+bank 0; that memory is present in every bank, hidden rather than absent.
+
+At cold boot only the ROM pages that are boot images seed SRAM: page 0 into bank 0
+and page 7 into bank 7. The pages backing CP/M drive A: stay in ROM as persistent
+immutable storage and are never copied.
 
 In the current CP/M build, a program's transient area is `0100h-EC05h`, 59 KiB.
 The common region holds a 1 KiB program reservation for interrupt callbacks, the

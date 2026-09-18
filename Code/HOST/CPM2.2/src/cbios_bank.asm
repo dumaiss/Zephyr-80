@@ -58,8 +58,8 @@ SELMEM:
 	push bc
 	ld b,a
 	in a,(BANK_PORT)
-	and #SHADOW_BIT			; mode 11 stays mode 11
-	or #ROMDIS_BIT
+	and #MEM_MODE0			; mode 11 stays mode 11
+	or #MEM_MODE_APPLICATION
 	or b
 	pop bc
 	out (BANK_PORT),a
@@ -179,7 +179,7 @@ MOVE_CROSS_HAVE_CHUNK:
 	ld a,(XMOVE_SRC_BANK)
 	and #BANK_MASK
 	ld (CURRENT_BANK),a
-	or #ROMDIS_BIT
+	or #MEM_MODE_APPLICATION
 	out (BANK_PORT),a
 	ld hl,(MOVE_SRC_PTR)
 	ld de,#MOVE_XBUF
@@ -190,7 +190,7 @@ MOVE_CROSS_HAVE_CHUNK:
 	ld a,(XMOVE_DST_BANK)
 	and #BANK_MASK
 	ld (CURRENT_BANK),a
-	or #ROMDIS_BIT
+	or #MEM_MODE_APPLICATION
 	out (BANK_PORT),a
 	ld hl,#MOVE_XBUF
 	ld de,(MOVE_DST_PTR)
