@@ -1,5 +1,11 @@
 # Zephyr-80 Banking Test
 
+> **Historical.** This test targets `MEM_DECODER.pld` revision 11 or earlier and
+> uses the old `ROM_DIS` / `RAM_SHADOW` latch semantics. Revision 12 replaced
+> those with two mode-selector bits (`MEM_MODE1:MEM_MODE0`), where `01` is a flat
+> SRAM bank with no ROM mapped, so this test's copy sequence does not work on
+> current hardware. See [Memory Management](../../../../Memory%20Management.md).
+
 Monitor-launched SRAM banking test for the Zephyr-80.
 
 Build:

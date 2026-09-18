@@ -26,8 +26,8 @@ all: $(PROGRAM) check
 $(BUILD_DIR):
 	mkdir -p $@
 
-$(OBJECT) $(LISTING) $(SYMBOLS) &: $(SOURCE) | $(BUILD_DIR)
-	$(SDASZ80) $(ASFLAGS) $(OBJECT) $<
+$(OBJECT) $(LISTING) $(SYMBOLS) &: $(SOURCE) ../CPM2.2/src/memory_modes.inc | $(BUILD_DIR)
+	$(SDASZ80) -I../CPM2.2/src $(ASFLAGS) $(OBJECT) $<
 
 $(IHX): $(OBJECT)
 	$(SDLDZ80) $(LDFLAGS) $@ $<

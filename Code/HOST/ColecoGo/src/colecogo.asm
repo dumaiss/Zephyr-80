@@ -46,12 +46,11 @@ ZSYSINFO_VERSION	= 1
 ; Zephyr hardware and takeover layout.
 ; ---------------------------------------------------------------------------
 BANK_PORT		= 0x00
-RAM_BANK_MASK		= 0x07
-ROMDIS_BIT		= 0x10
+.include "memory_modes.inc"
 ; Bank 7 belongs to the operating system. Bank 6 is sacrificed only after all
 ; fallible CP/M work has completed; takeover never returns to the OS.
 TARGET_BANK		= 0x06
-TARGET_BANK_LATCH	= ROMDIS_BIT | TARGET_BANK
+TARGET_BANK_LATCH	= MEM_MODE_APPLICATION | TARGET_BANK
 
 BIOS_BUFFER		= 0x1800
 BIOS_BYTES		= 0x2000
@@ -653,7 +652,7 @@ stage_a_palette_loop:
 	ld a,#V9958_CONFIG_NMI
 	out (V9958_CONFIG_PORT),a
 
-	; C000h remains physical bank 0 across this write. Do not touch the old
+	; E000h remains physical bank 0 across this write. Do not touch the old
 	; low-bank stack after switching; Stage B is stackless.
 	ld a,#TARGET_BANK_LATCH
 	out (BANK_PORT),a
@@ -715,13 +714,15 @@ stage_a_template_end:
 ; Stage B template -- installed at bank 6 address 5F80h.
 ;
 ; Public behavior: does not return. It copies the staged upper cartridge across
-; bank 6 at C000h-DFFFh and common bank 0 at E000h-FFFFh, restores the record
+; flat bank 6 at C000h-FFFFh, restores the record
 ; hidden by this code, clears the full Coleco RAM range, and jumps (never calls)
 ; to 0000h. It is stackless,
-; interrupt-disabled, not ISR-safe, and emits no I/O traffic.
+; interrupt-disabled, not ISR-safe, and changes only the bank latch.
 ; ===========================================================================
 
 stage_b_template:
+	ld a,#MEM_MODE_FLAT | TARGET_BANK
+	out (BANK_PORT),a
 	ld hl,#TARGET_UPPER_STAGE
 	ld de,#0xc000
 	ld bc,#TARGET_UPPER_PREFIX

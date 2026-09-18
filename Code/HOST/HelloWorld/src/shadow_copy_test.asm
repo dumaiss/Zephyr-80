@@ -1,3 +1,15 @@
+; ==========================================================================
+; HISTORICAL -- targets MEM_DECODER.pld revision 11 or earlier.
+;
+; This code uses the pre-revision-12 latch semantics, where D3 (RAM_SHADOW) and
+; D4 (ROM_DIS) were feature flags and shadow/copy mode left C000h-FFFFh as SRAM
+; bank 0.  Revision 12 replaced them with two mode-selector bits: D4:D3 = 01 is
+; now a flat SRAM bank with no ROM mapped at all, so the copy sequence here
+; reads SRAM instead of ROM and will not populate RAM.
+;
+; Kept as a record of the earlier hardware.  Do not run it on revision 12.
+; See Memory Management.md for the current four-mode model.
+; ==========================================================================
 ; Zephyr-80 shadow-copy memory decoder test.
 ; CPU: Z80
 ; Assembler: SDCC sdasz80 / ASxxxx Z80 syntax
