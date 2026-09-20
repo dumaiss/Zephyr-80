@@ -40,6 +40,11 @@
 /* Both directions use the transport-wide packet marker.  The MCU still searches
  * it at arbitrary bit phase when receiving because it supplies the clock but
  * cannot know which edge the Z80 transmitter began on. */
+/* The host's sacrificial lead-in.  It never arrives, but its Tx CRC generator
+ * is armed before it leaves, so it is inside the CRC and is seeded here.
+ * Mirrors IOC_BULK_LEADIN in the BIOS's cbios_defs.inc; the two must agree. */
+#define BULK_RX_LEADIN       0x00u
+
 #define BULK_RX_PREAMBLE_0   IOC_PACKET_SYNC0
 #define BULK_RX_PREAMBLE_1   IOC_PACKET_SYNC1
 

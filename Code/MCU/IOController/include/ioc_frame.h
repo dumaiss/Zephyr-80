@@ -153,6 +153,7 @@
  * bring-up tools that need to bypass the cache. */
 #define CMD_SD_READ_REC      0x08
 #define CMD_SD_WRITE_REC     0x09
+#define CMD_SD_READ_BLOCK    0x0F   /* one volume-relative 512-byte block */
 #define CMD_SD_FLUSH         0x0A
 #define CMD_PROFILE          0x0B
 #define CMD_LINK_SYNC        0x0C
@@ -192,6 +193,7 @@
 #define RSP_SD_WRITE_BULK    0x87
 #define RSP_SD_READ_REC      0x88
 #define RSP_SD_WRITE_REC     0x89
+#define RSP_SD_READ_BLOCK    0x8F
 #define RSP_SD_FLUSH         0x8A
 #define RSP_PROFILE          0x8B
 #define RSP_LINK_SYNC        0x8C
@@ -578,6 +580,19 @@
 #define IOC_PROFILE_PAGE_BULK_TX 0x01u
 #define IOC_PROFILE_BULK_TX_LEN  8u
 
+/* STORAGE_PROFILE temporary page, all multibyte fields little endian.
+ * Offsets are mailbox offsets; wire payload starts at mailbox byte 4. */
+#define IOC_PROFILE_PAGE_SD       0x02u
+#define IOC_PROFILE_SD_LEN        16u
+#define IOC_PROFILE_SD_VERSION    1u
+#define IOC_OFF_SDPROF_VERSION    4u
+#define IOC_OFF_SDPROF_FLAGS      5u /* bit 0: recovery/error, timing suspect */
+#define IOC_OFF_SDPROF_CALLS      6u /* uint32 */
+#define IOC_OFF_SDPROF_TICKS     10u /* uint32, nominal 31 kHz */
+#define IOC_OFF_SDPROF_MISSES    14u /* uint16, cumulative wrapping */
+#define IOC_OFF_SDPROF_RETRIES   16u /* uint16, cumulative saturating */
+#define IOC_OFF_SDPROF_REINITS   18u /* uint16, cumulative saturating */
+
 #define RSP_UNKNOWN_COMMAND  0xFE
 
 /* Firmware capability level, returned by PING.
@@ -677,8 +692,24 @@
  *  70  HID_STATUS page 6 adds passive, production-safe USB/F310 enumeration,
  *      first report-arm, report-count and decoded-latch state.  VID/PID output
  *      storage is persistent so XC8 cannot overlay it across tuh_vid_pid_get().
+ *  71  BULK LANE CRC MOVES INTO THE Z80 SIO, BOTH DIRECTIONS.  That hardware
+ *      consumes bits in wire order and the wire is LSB-first, so generator and
+ *      checker here are reflected (8408h).  Transmit covers the A5/5A marker
+ *      and sends its trailer LOW BYTE FIRST, then TWO trailing bytes so the
+ *      host's result is valid before it reads RR1.  Receive seeds the lead-in
+ *      and both preamble bytes.  A WIRE-FORMAT CHANGE: flash both together.
+ *      The command lane is unchanged, software and MSB-first on both ends.
+ *  72  CMD_SD_READ_BLOCK (0Fh): one 512-byte block, addressed by
+ *      VOLUME-RELATIVE logical block, mapped through the same volume layer and
+ *      served from the same cache as CMD_SD_READ_REC.  It exists so the host
+ *      BIOS can deblock: CP/M's record is 128 bytes and the card's block is
+ *      512, so a sequential read was paying a whole IOCALL + READY + IOCBULK
+ *      per quarter-block.  Deliberately NOT the raw-LBA CMD_SD_READ_BULK,
+ *      which is diagnostic-only and bypasses volume mapping.
+ *      Additive: a host that never sends 0Fh sees no change.
  */
-#define IOC_FW_LEVEL  70
+/* 73: STORAGE_PROFILE diagnostic page 2; no transport format change. */
+#define IOC_FW_LEVEL  73
 
 /* PING reply: a snapshot of the power handshake pins.
  *

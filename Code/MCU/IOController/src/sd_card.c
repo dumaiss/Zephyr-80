@@ -4,6 +4,20 @@
 #include "config.h"
 #include "spi1_bus.h"
 #include "sd_card.h"
+#include "timebase.h"
+
+/* STORAGE_PROFILE temporary instrumentation; removal: docs/storage-profiling.md. */
+#if IOC_DIAGNOSTIC_BUILD
+uint32_t sd_profile_read_calls, sd_profile_read_ticks;
+uint8_t sd_profile_flags;
+
+void sd_profile_reset(void)
+{
+    sd_profile_read_calls = 0uL;
+    sd_profile_read_ticks = 0uL;
+    sd_profile_flags = 0u;
+}
+#endif
 
 /* ---------------------------------------------------------------------------
  * SD card, SPI mode
@@ -724,6 +738,13 @@ SdStatus sd_card_read_block(uint32_t lba, uint8_t *buf)
     SdStatus st;
 
     uint8_t attempt;
+#if IOC_DIAGNOSTIC_BUILD
+    /* STORAGE_PROFILE: recovery can exceed one Timer3 period: flag it. */
+    uint16_t profile_start;
+    sd_profile_read_calls++;
+    if (!card_ready) sd_profile_flags |= 1u;
+    profile_start = timebase_us_now();
+#endif
 
 #if SD_BUSY_LED
     SD_BUSY_LAT = SD_BUSY_ASSERTED;
@@ -760,5 +781,10 @@ SdStatus sd_card_read_block(uint32_t lba, uint8_t *buf)
     SD_BUSY_LAT = SD_BUSY_IDLE;
 #endif
 
+#if IOC_DIAGNOSTIC_BUILD
+    /* STORAGE_PROFILE: inclusive of retries/init/CRC, no per-byte timing. */
+    sd_profile_read_ticks += (uint32_t)(uint16_t)(timebase_us_now() - profile_start);
+    if (attempt != 0u || st != SD_OK) sd_profile_flags |= 1u;
+#endif
     return st;
 }

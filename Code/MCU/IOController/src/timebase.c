@@ -2,6 +2,7 @@
 #include <stdbool.h>
 
 #include "timebase.h"
+#include "sd_card.h"
 
 static volatile uint16_t ticks;
 
@@ -54,6 +55,7 @@ static void uprof_clear(void)
 {
     uint8_t i;
 
+    sd_profile_reset(); /* STORAGE_PROFILE: same deferred reset boundary. */
     for (i = 0u; i < UPROF_SLOTS; i++)
         uprof_acc[i] = 0uL;
 }

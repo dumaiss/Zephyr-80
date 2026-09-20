@@ -65,6 +65,10 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
         return true;
 #endif
 
+    case CMD_SD_READ_BLOCK:
+        handler_sd_read_block(request, reply);
+        return true;
+
     case CMD_SD_READ_REC:
         handler_sd_read_rec(request, reply);
         return true;

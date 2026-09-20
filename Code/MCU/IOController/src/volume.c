@@ -156,6 +156,38 @@ uint8_t vol_read_record(uint8_t unit, uint32_t record, uint8_t *dst)
     return ioc_status_from_sd(sd_cache_read_record(abs_record, dst));
 }
 
+uint8_t vol_read_block(uint8_t unit, uint32_t block, uint8_t *dst)
+{
+    uint32_t abs_record;
+    SdStatus st;
+
+    st = vol_ensure_mounted();
+    if (st != SD_OK)
+        return ioc_status_from_sd(st);
+
+    /* Refuse a block that cannot be turned into a record without wrapping,
+     * before the shift rather than after it. */
+    if (block > (0xFFFFFFFFuL >> SD_CACHE_REC_SHIFT))
+        return map_failure(unit);
+
+    /* Mapped as the block's FIRST record, which is exactly what vol_map wants.
+     * Checking that one record is enough to bound the whole block: extents are
+     * counted in whole blocks, so a volume's record count is always a multiple
+     * of four and the other three records of this block are in range whenever
+     * this one is.
+     *
+     * The absolute block follows by shifting back, and that is exact rather
+     * than assumed: vol_map builds its answer as
+     * ((start_lba + lba) << SD_CACHE_REC_SHIFT) | (record & SD_CACHE_REC_MASK),
+     * so an absolute record's block number is aligned by construction and the
+     * low bits it drops here are the zero quarter it was just given. */
+    if (!vol_map(unit, block << SD_CACHE_REC_SHIFT, &abs_record))
+        return map_failure(unit);
+
+    return ioc_status_from_sd(
+        sd_cache_read_block(abs_record >> SD_CACHE_REC_SHIFT, dst));
+}
+
 uint8_t vol_write_record(uint8_t unit, uint32_t record, const uint8_t *src)
 {
     uint32_t abs_record;

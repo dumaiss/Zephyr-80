@@ -9,16 +9,18 @@
 	;
 	; -q --opt=none --chip=18f57q84 --dfp=/home/kitamura/Downloads/xc8 \
 	; -Iinclude -Ithird_party/tinyusb/src --output=+elf:multilocs \
-	; --stack=hybrid:512:0:0 -DIOC_DIAGNOSTIC_BUILD=1 src/main.c \
-	; src/external_sync.c src/dispatch.c src/handlers.c \
-	; src/controller_latch.c src/spi1_bus.c src/sd_card.c \
+	; --stack=hybrid:512:0:0 -DIOC_DIAGNOSTIC_BUILD=1 -DIOC_FS_COMMANDS=1 \
+	; -Ithird_party/fatfs src/main.c src/external_sync.c src/dispatch.c \
+	; src/handlers.c src/controller_latch.c src/spi1_bus.c src/sd_card.c \
 	; src/bulk_channel.c src/timebase.c src/sd_cache.c src/power.c \
-	; src/ioc_hid.c third_party/tinyusb/src/tusb.c \
+	; src/ioc_hid.c src/boot_guard.c src/ioc_status.c src/fatmap.c \
+	; src/volume.c third_party/tinyusb/src/tusb.c \
 	; third_party/tinyusb/src/common/tusb_fifo.c \
 	; third_party/tinyusb/src/host/usbh.c \
 	; third_party/tinyusb/src/host/hub.c \
 	; third_party/tinyusb/src/class/hid/hid_host.c \
 	; third_party/tinyusb/src/portable/analog/max3421/hcd_max3421.c \
+	; src/sdfs.c src/diskio.c src/fs_share.c third_party/fatfs/ff.c \
 	; -oio_controller --objdir=build-diagnostic --outdir=build-diagnostic \
 	; -L--fixupoverflow=error --std=c99 --rors --icl=auto --callgraph=none \
 	; --warn=-3 --errformat=%f:%l:%c: error: (%n) %s \
@@ -99,8 +101,8 @@ __accesstop EQU 1376
 
 ;Initialize the stack pointer (FSR1)
 	global stacklo, stackhi
-	stacklo	equ	02302h
-	stackhi	equ	02501h
+	stacklo	equ	02A54h
+	stackhi	equ	02C53h
 
 
 	psect	stack,class=STACK,space=2,noexec

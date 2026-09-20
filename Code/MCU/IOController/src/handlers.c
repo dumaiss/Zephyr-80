@@ -792,6 +792,41 @@ void handler_sd_read_rec(const IocFrame *request, IocFrame *reply)
                      IOC_STATUS_OK);
 }
 
+/* One volume-relative 512-byte block, for host-side deblocking.
+ *
+ * Deliberately the same shape as handler_sd_read_rec: same decoders, same
+ * volume layer, same cache, same READY/BULK lifecycle and metadata binding.
+ * The only differences are the addressing unit and the length.
+ *
+ * It reuses xfer_block, which already exists for the raw diagnostic paths and
+ * is allocated in every build -- so this costs no additional RAM on a part
+ * whose data stack is already full. */
+void handler_sd_read_block(const IocFrame *request, IocFrame *reply)
+{
+    uint32_t block = decode_record(request);   /* same payload shape */
+    uint8_t  unit  = decode_unit(request);
+    uint8_t  status;
+
+    status = vol_read_block(unit, block, xfer_block);
+
+    reply_header(request, reply, RSP_SD_READ_BLOCK,
+                 status, IOC_READY_PAYLOAD_LEN);
+
+    if (status != IOC_STATUS_OK)
+        return;                 /* no id, no length: host must not read */
+
+    reply->bytes[IOC_OFF_READY_XFER_ID]   = bulk_channel_next_xfer_id();
+    reply->bytes[IOC_OFF_READY_DIRECTION] = BULK_DIR_MCU_TO_Z80;
+    reply->bytes[IOC_OFF_READY_LEN_LO]    = (uint8_t)SD_BLOCK_SIZE;
+    reply->bytes[IOC_OFF_READY_LEN_HI]    = (uint8_t)(SD_BLOCK_SIZE >> 8);
+    reply_echo_lba(reply, block);   /* the host checks this against its own */
+
+    bulk_channel_arm(xfer_block, SD_BLOCK_SIZE,
+                     reply->bytes[IOC_OFF_READY_XFER_ID],
+                     RSP_SD_READ_BLOCK, request->bytes[IOC_OFF_SEQ],
+                     IOC_STATUS_OK);
+}
+
 static uint32_t pending_write_record;
 static uint8_t  pending_write_unit;
 
@@ -862,6 +897,26 @@ void handler_profile(const IocFrame *request, IocFrame *reply)
 
     if (request->bytes[IOC_OFF_LEN] >= 2u)
         page = request->bytes[IOC_OFF_PROFILE_PAGE];
+
+    /* STORAGE_PROFILE: default and bulk-TX pages retain their layouts. */
+    if (page == IOC_PROFILE_PAGE_SD) {
+        uint16_t value;
+        reply_header(request, reply, RSP_PROFILE, IOC_STATUS_OK, IOC_PROFILE_SD_LEN);
+        reply->bytes[IOC_OFF_SDPROF_VERSION] = IOC_PROFILE_SD_VERSION;
+        reply->bytes[IOC_OFF_SDPROF_FLAGS] = sd_profile_flags;
+        reply_put32(&reply->bytes[IOC_OFF_SDPROF_CALLS], sd_profile_read_calls);
+        reply_put32(&reply->bytes[IOC_OFF_SDPROF_TICKS], sd_profile_read_ticks);
+        value = sd_cache_misses();
+        reply->bytes[IOC_OFF_SDPROF_MISSES] = (uint8_t)value;
+        reply->bytes[IOC_OFF_SDPROF_MISSES + 1u] = (uint8_t)(value >> 8);
+        value = sd_card_read_retries();
+        reply->bytes[IOC_OFF_SDPROF_RETRIES] = (uint8_t)value;
+        reply->bytes[IOC_OFF_SDPROF_RETRIES + 1u] = (uint8_t)(value >> 8);
+        value = sd_card_reinits();
+        reply->bytes[IOC_OFF_SDPROF_REINITS] = (uint8_t)value;
+        reply->bytes[IOC_OFF_SDPROF_REINITS + 1u] = (uint8_t)(value >> 8);
+        return;
+    }
 
     if (page == IOC_PROFILE_PAGE_BULK_TX) {
         reply_header(request, reply, RSP_PROFILE, IOC_STATUS_OK,

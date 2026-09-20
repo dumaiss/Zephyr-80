@@ -227,4 +227,11 @@ uint16_t sd_card_reinits(void);
 #define SD_TRACE_BYTES 8u 
 const uint8_t *sd_card_trace(void);
 
+/* STORAGE_PROFILE: diagnostic builds only; see docs/storage-profiling.md. */
+#if IOC_DIAGNOSTIC_BUILD
+extern uint32_t sd_profile_read_calls, sd_profile_read_ticks;
+extern uint8_t sd_profile_flags;
+void sd_profile_reset(void);
+#endif
+
 #endif /* SD_CARD_H */

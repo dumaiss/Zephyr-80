@@ -138,6 +138,13 @@ void vol_invalidate(void);
  * as SD_ERR_READ would send somebody chasing a card problem that is not
  * there. */
 uint8_t vol_read_record(uint8_t unit, uint32_t record, uint8_t *dst);
+
+/* One whole 512-byte block, addressed by VOLUME-RELATIVE logical block.
+ *
+ * Same mapping and same cache as vol_read_record -- this is a different
+ * addressing unit, not a second way into the card.  The host uses it to
+ * deblock: four CP/M records come out of one transaction instead of four. */
+uint8_t vol_read_block(uint8_t unit, uint32_t block, uint8_t *dst);
 uint8_t vol_write_record(uint8_t unit, uint32_t record, const uint8_t *src);
 
 /* Reporting, for CMD_VOL_INFO.

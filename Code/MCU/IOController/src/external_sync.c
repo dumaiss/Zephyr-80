@@ -438,6 +438,7 @@ static bool is_command_class(uint8_t value)
            (value == CMD_SD_READ_BULK) ||
            (value == CMD_SD_WRITE_BULK) ||
            (value == CMD_SD_READ_REC) ||
+           (value == CMD_SD_READ_BLOCK) ||
            (value == CMD_SD_WRITE_REC) ||
            (value == CMD_SD_FLUSH) ||
            (value == CMD_PROFILE) ||

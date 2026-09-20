@@ -67,9 +67,13 @@ void spi1_bus_init(void)
     SPI1CON1 = 0x00;
     SPI1CON1bits.CKP = 0;     /* clock idles low                              */
     SPI1CON1bits.CKE = 1;     /* data changes on the falling edge -> Mode 0.  */
-    SPI1CON1bits.SMP = 0;     /* Both the 74HC595 and SD cards in SPI mode    */
+    SPI1CON1bits.SMP = 1;     /* Both the 74HC595 and SD cards in SPI mode    */
                               /* sample on the rising edge, so Mode 0 suits   */
                               /* every device on this bus.                    */
+
+    SLRCONCbits.SLRC3 = 0;   /* SCK  */
+SLRCONCbits.SLRC4 = 0;   /* MISO */
+SLRCONCbits.SLRC5 = 0;   /* MOSI */
 
     SPI1CON2 = 0x00;
     SPI1CON2bits.TXR = 1;     /* a write to SPI1TXB starts a transfer         */

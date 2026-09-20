@@ -75,6 +75,63 @@
  * than the command lane runs with.  Raise to 12 us if a long ISR ever lands
  * inside a transfer; overrun shows up as a corrupt frame, not a clean error.
  * --------------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------------
+ * Reflected CRC for the bulk lane, both directions
+ * ---------------------------------------------------------------------------
+ *
+ * The Z80's SIO computes this lane's CRC in hardware now, so what this end
+ * computes has to be what that hardware computes.
+ *
+ * The wire is LSB-first (SPI2CON0bits.LSBF = 1, because the Z80 SIO shifts bit
+ * 0 first).  The SIO's CRC logic consumes bits in wire order, so it sees b0..b7
+ * of each byte; sio_link_crc16_update walks bytes MSB-first.  Over the same
+ * data those differ -- measured 5B9Ch against A205h.  Feeding wire-order bits
+ * through the SIO's left-shifting 1021h register is exactly a reflected CRC
+ * with polynomial 8408h over the plain bytes, which is this table.
+ *
+ * BULK LANE ONLY.  sio_link_crc16_update stays MSB-first for the command lane,
+ * which is software on both ends and unchanged.
+ */
+static const uint16_t bulk_crc_table[256] = {
+    0x0000u, 0x1189u, 0x2312u, 0x329Bu, 0x4624u, 0x57ADu, 0x6536u, 0x74BFu,
+    0x8C48u, 0x9DC1u, 0xAF5Au, 0xBED3u, 0xCA6Cu, 0xDBE5u, 0xE97Eu, 0xF8F7u,
+    0x1081u, 0x0108u, 0x3393u, 0x221Au, 0x56A5u, 0x472Cu, 0x75B7u, 0x643Eu,
+    0x9CC9u, 0x8D40u, 0xBFDBu, 0xAE52u, 0xDAEDu, 0xCB64u, 0xF9FFu, 0xE876u,
+    0x2102u, 0x308Bu, 0x0210u, 0x1399u, 0x6726u, 0x76AFu, 0x4434u, 0x55BDu,
+    0xAD4Au, 0xBCC3u, 0x8E58u, 0x9FD1u, 0xEB6Eu, 0xFAE7u, 0xC87Cu, 0xD9F5u,
+    0x3183u, 0x200Au, 0x1291u, 0x0318u, 0x77A7u, 0x662Eu, 0x54B5u, 0x453Cu,
+    0xBDCBu, 0xAC42u, 0x9ED9u, 0x8F50u, 0xFBEFu, 0xEA66u, 0xD8FDu, 0xC974u,
+    0x4204u, 0x538Du, 0x6116u, 0x709Fu, 0x0420u, 0x15A9u, 0x2732u, 0x36BBu,
+    0xCE4Cu, 0xDFC5u, 0xED5Eu, 0xFCD7u, 0x8868u, 0x99E1u, 0xAB7Au, 0xBAF3u,
+    0x5285u, 0x430Cu, 0x7197u, 0x601Eu, 0x14A1u, 0x0528u, 0x37B3u, 0x263Au,
+    0xDECDu, 0xCF44u, 0xFDDFu, 0xEC56u, 0x98E9u, 0x8960u, 0xBBFBu, 0xAA72u,
+    0x6306u, 0x728Fu, 0x4014u, 0x519Du, 0x2522u, 0x34ABu, 0x0630u, 0x17B9u,
+    0xEF4Eu, 0xFEC7u, 0xCC5Cu, 0xDDD5u, 0xA96Au, 0xB8E3u, 0x8A78u, 0x9BF1u,
+    0x7387u, 0x620Eu, 0x5095u, 0x411Cu, 0x35A3u, 0x242Au, 0x16B1u, 0x0738u,
+    0xFFCFu, 0xEE46u, 0xDCDDu, 0xCD54u, 0xB9EBu, 0xA862u, 0x9AF9u, 0x8B70u,
+    0x8408u, 0x9581u, 0xA71Au, 0xB693u, 0xC22Cu, 0xD3A5u, 0xE13Eu, 0xF0B7u,
+    0x0840u, 0x19C9u, 0x2B52u, 0x3ADBu, 0x4E64u, 0x5FEDu, 0x6D76u, 0x7CFFu,
+    0x9489u, 0x8500u, 0xB79Bu, 0xA612u, 0xD2ADu, 0xC324u, 0xF1BFu, 0xE036u,
+    0x18C1u, 0x0948u, 0x3BD3u, 0x2A5Au, 0x5EE5u, 0x4F6Cu, 0x7DF7u, 0x6C7Eu,
+    0xA50Au, 0xB483u, 0x8618u, 0x9791u, 0xE32Eu, 0xF2A7u, 0xC03Cu, 0xD1B5u,
+    0x2942u, 0x38CBu, 0x0A50u, 0x1BD9u, 0x6F66u, 0x7EEFu, 0x4C74u, 0x5DFDu,
+    0xB58Bu, 0xA402u, 0x9699u, 0x8710u, 0xF3AFu, 0xE226u, 0xD0BDu, 0xC134u,
+    0x39C3u, 0x284Au, 0x1AD1u, 0x0B58u, 0x7FE7u, 0x6E6Eu, 0x5CF5u, 0x4D7Cu,
+    0xC60Cu, 0xD785u, 0xE51Eu, 0xF497u, 0x8028u, 0x91A1u, 0xA33Au, 0xB2B3u,
+    0x4A44u, 0x5BCDu, 0x6956u, 0x78DFu, 0x0C60u, 0x1DE9u, 0x2F72u, 0x3EFBu,
+    0xD68Du, 0xC704u, 0xF59Fu, 0xE416u, 0x90A9u, 0x8120u, 0xB3BBu, 0xA232u,
+    0x5AC5u, 0x4B4Cu, 0x79D7u, 0x685Eu, 0x1CE1u, 0x0D68u, 0x3FF3u, 0x2E7Au,
+    0xE70Eu, 0xF687u, 0xC41Cu, 0xD595u, 0xA12Au, 0xB0A3u, 0x8238u, 0x93B1u,
+    0x6B46u, 0x7ACFu, 0x4854u, 0x59DDu, 0x2D62u, 0x3CEBu, 0x0E70u, 0x1FF9u,
+    0xF78Fu, 0xE606u, 0xD49Du, 0xC514u, 0xB1ABu, 0xA022u, 0x92B9u, 0x8330u,
+    0x7BC7u, 0x6A4Eu, 0x58D5u, 0x495Cu, 0x3DE3u, 0x2C6Au, 0x1EF1u, 0x0F78u,
+};
+
+static uint16_t bulk_crc_update(uint16_t crc, uint8_t data)
+{
+    return (uint16_t)((crc >> 8) ^ bulk_crc_table[(uint8_t)((crc ^ data) & 0xFFu)]);
+}
+
 /* The bulk lane runs SPI2 faster than the command lane.  SCK = 64 MHz /
  * (2 * (BAUD+1)), so BAUD 15 gives 2 MHz and 4 us of clocking per byte, against
  * BAUD 31 / 1 MHz / 8 us on the command lane.
@@ -517,14 +574,23 @@ static bool bulk_run_send(void)
     uprof_add(UPROF_BULK_PREP, t);
     t = timebase_us_now();
 
-    /* Always send the complete marker as ordinary aligned packet bytes. */
+    /* Always send the complete marker as ordinary aligned packet bytes.
+     *
+     * Marker excluded from the CRC again, matching the software receive.  The host arms its checker while the
+     * clock is still gated, before any bit can arrive, so its coverage starts
+     * here.  It cannot arm later without the coverage depending on how far
+     * behind the wire it happens to be. */
+    /* Marker excluded from the CRC, and MSB-first below: THE HOST'S RECEIVE IS
+     * BACK ON SOFTWARE.  Only its transmit uses the SIO's hardware, and the two
+     * directions are independent -- changing them together is what took B: out
+     * twice. */
     ok = bulk_send_packet_byte(IOC_PACKET_SYNC0);
     if (ok) ok = bulk_send_packet_byte(IOC_PACKET_SYNC1);
+    crc = 0u;
 
-    /* CRC covers LEN through the payload, not the A5/5A marker.  Header setup
+    /* Header setup
      * is fixed cost; the 512-byte payload below updates CRC while SPI2 is
      * already shifting the same byte, removing the old complete pre-pass. */
-    crc = 0u;
     crc = sio_link_crc16_update(crc, (uint8_t)packet_length);
     if (ok) ok = bulk_send_packet_byte((uint8_t)packet_length);
     crc = sio_link_crc16_update(crc, (uint8_t)(packet_length >> 8));
@@ -566,11 +632,14 @@ static bool bulk_run_send(void)
         remaining--;
     }
 
+    /* MSB-first and high byte first: THE HOST'S RECEIVE IS STILL SOFTWARE.
+     * Only its transmit uses the SIO's hardware.  The two directions are
+     * independent and must not be changed together by reflex -- doing exactly
+     * that is what took B: out. */
     if (ok) ok = bulk_send_packet_byte((uint8_t)(crc >> 8));
     if (ok) ok = bulk_send_packet_byte((uint8_t)crc);
 
-    /* This flush byte becomes the harmless stale byte at the head of the next
-     * receive window.  Marker search, not payload positioning, consumes it. */
+    /* One flush byte: the software receive needs no settling time. */
     (void)sio_link_exchange(0xFFu, &discard);
     sio_link_pins_to_lat();
 
@@ -621,6 +690,11 @@ static bool bulk_run_receive(void)
     uint16_t length;
     uint16_t crc;
     uint16_t wire_crc;
+    /* Hoisted from the header-parse block so the CRC probe below can see them. */
+    uint16_t declared;
+    uint8_t  type;
+    uint8_t  sequence;
+    uint8_t  status;
     bool     ok = true;
 
     /* Hold the length locally.  armed_length is cleared during teardown below,
@@ -704,10 +778,6 @@ static bool bulk_run_receive(void)
 
     /* bit_index names LEN_LO, immediately after A5 5A. */
     {
-        uint16_t declared;
-        uint8_t type;
-        uint8_t sequence;
-        uint8_t status;
 
         declared = rx_wire_byte(bit_index);
         declared |= (uint16_t)rx_wire_byte((uint16_t)(bit_index + 8u)) << 8;
@@ -723,25 +793,46 @@ static bool bulk_run_receive(void)
             return false;
         }
 
+        /* The host arms its generator before its first byte leaves, so its
+         * coverage is the whole transmission: the sacrificial lead-in, both
+         * preamble bytes, then header and payload.  The lead-in never arrives
+         * -- that is what makes it sacrificial -- but all three are protocol
+         * constants, so they are seeded in.
+         *
+         * The host cannot arm later.  Its transmitter is two deep, its PUT
+         * returns when the buffer frees rather than when the wire is done, and
+         * RR1's All Sent reads "Sync: always 1", so it cannot tell which byte
+         * is shifting.  Arming before byte one is the only coverage both ends
+         * can agree on without a race. */
         crc = 0u;
-        crc = sio_link_crc16_update(crc, (uint8_t)declared);
-        crc = sio_link_crc16_update(crc, (uint8_t)(declared >> 8));
-        crc = sio_link_crc16_update(crc, type);
-        crc = sio_link_crc16_update(crc, sequence);
-        crc = sio_link_crc16_update(crc, status);
+        crc = bulk_crc_update(crc, BULK_RX_LEADIN);
+        crc = bulk_crc_update(crc, BULK_RX_PREAMBLE_0);
+        crc = bulk_crc_update(crc, BULK_RX_PREAMBLE_1);
+        crc = bulk_crc_update(crc, (uint8_t)declared);
+        crc = bulk_crc_update(crc, (uint8_t)(declared >> 8));
+        crc = bulk_crc_update(crc, type);
+        crc = bulk_crc_update(crc, sequence);
+        crc = bulk_crc_update(crc, status);
     }
 
     bit_index = (uint16_t)(bit_index + 40u);
     for (i = 0u; i < length; i++) {
         armed_rx_buf[i] = rx_wire_byte((uint16_t)(bit_index + (i * 8u)));
-        crc = sio_link_crc16_update(crc, armed_rx_buf[i]);
+        crc = bulk_crc_update(crc, armed_rx_buf[i]);
     }
 
-    /* CRC-16 trailer follows the payload, most significant byte first. */
-    wire_crc  = (uint16_t)rx_wire_byte((uint16_t)(bit_index + (length * 8u))) << 8;
-    wire_crc |= (uint16_t)rx_wire_byte((uint16_t)(bit_index + ((length + 1u) * 8u)));
+    /* Feed the trailer back through in the order it arrived and require a zero
+     * residue -- "An error-free block resolves to zero".  That is immune to
+     * whichever byte order the SIO's underrun append emits. */
+    {
+        uint8_t t0 = rx_wire_byte((uint16_t)(bit_index + (length * 8u)));
+        uint8_t t1 = rx_wire_byte((uint16_t)(bit_index + ((length + 1u) * 8u)));
+        crc = bulk_crc_update(crc, t0);
+        crc = bulk_crc_update(crc, t1);
+        wire_crc = crc;
+    }
 
-    if (wire_crc != crc) {
+    if (crc != 0u) {
         /* Do NOT commit.  A block that fails here reached the MCU intact
          * enough to be de-shifted but is not the block the host sent, and
          * writing it would be a silent wrong-data write to the card. */
