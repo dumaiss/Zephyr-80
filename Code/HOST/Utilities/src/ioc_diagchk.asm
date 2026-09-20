@@ -124,17 +124,27 @@ main:
 	ld a,IOC_DIAG_SEQ(iy)
 	call say_byte
 
-	; Reserved bytes are published as reading zero.  They are .db 0 in the
-	; BIOS rather than .ds precisely so that promise is true on a fresh
-	; image; check it rather than trusting it.
-	ld hl,#IOC_DIAG_RESERVED
-	ld b,#4
-chk_reserved:
-	ld a,(hl)
-	or a
-	jr nz,fail_reserved
-	inc hl
-	djnz chk_reserved
+	; The record's reserved span no longer reads zero.  It carries
+	; SD_DEBLOCK_HITS (+0Ch) and SD_DEBLOCK_MISSES (+0Eh), the BIOS deblock
+	; line's hit/miss tally: uint16 LE, saturating, and expected to be
+	; nonzero after any disk I/O.  They are reported here, not asserted -- a
+	; zero check would fail every healthy machine that has read a file.
+	; Read IY-relative, like every other field: these names are offsets,
+	; not addresses.
+	ld de,#msg_dhits
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,IOC_DIAG_RESERVED + 1(iy)	; high byte first: reads as a hex number
+	call print_hex_byte
+	ld a,IOC_DIAG_RESERVED(iy)
+	call print_hex_byte
+	ld de,#msg_dmisses
+	ld c,#BDOS_PRINT
+	call BDOS
+	ld a,IOC_DIAG_RESERVED + 3(iy)
+	call print_hex_byte
+	ld a,IOC_DIAG_RESERVED + 2(iy)
+	call print_hex_byte
 
 	; Verdict.  Each mismatch names the field so a failure says which part of
 	; the capture did not run, not merely that something is wrong.
@@ -165,9 +175,6 @@ fail_lane:
 	jp say_and_exit
 fail_stage:
 	ld de,#msg_fail_stage
-	jp say_and_exit
-fail_reserved:
-	ld de,#msg_fail_reserved
 	jp say_and_exit
 
 stale_bios:
@@ -255,10 +262,11 @@ msg_fail_stage:
 	.db 13,10
 	.ascii "FAIL - reject stage wrong; reason not stored."
 	.db 13,10,'$'
-msg_fail_reserved:
+msg_dhits:
 	.db 13,10
-	.ascii "FAIL - reserved bytes are not zero; contract is false."
-	.db 13,10,'$'
+	.ascii "  deblock hits (hex)    : $"
+msg_dmisses:
+	.ascii "  .. misses (hex)       : $"
 msg_stale_bios:
 	.ascii " - BIOS transport level below "
 	.db ZBIOS_XPORT_LEVEL_HEX_HI,ZBIOS_XPORT_LEVEL_HEX_LO

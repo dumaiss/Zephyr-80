@@ -13,7 +13,7 @@
 ; Both are read back from the running hardware, so a stale tool reports a
 ; mismatch rather than misbehaving -- which is why the check exists at all.
 
-IOC_FW_LEVEL		= 70		; 46h — controller firmware expected
+IOC_FW_LEVEL		= 73		; 49h — controller firmware expected
 ZBIOS_XPORT_LEVEL	= 0x08		; BIOS transport level expected
 ; The running BIOS's level: call zb_xport_level (zbdos.inc).
 
@@ -22,8 +22,8 @@ ZBIOS_XPORT_LEVEL	= 0x08		; BIOS transport level expected
 ; them here, in the same file, instead of hunting message strings across four
 ; programs -- which is exactly how "level 3E" outlived level 62.
 IOC_FW_LEVEL_HEX_HI	= '4
-IOC_FW_LEVEL_HEX_LO	= '6
+IOC_FW_LEVEL_HEX_LO	= '9
 ZBIOS_XPORT_LEVEL_HEX_HI = '0
 ZBIOS_XPORT_LEVEL_HEX_LO = '8
-IOC_FW_LEVEL_DEC_HI	= '6
-IOC_FW_LEVEL_DEC_LO	= '0
+IOC_FW_LEVEL_DEC_HI	= '7
+IOC_FW_LEVEL_DEC_LO	= '3

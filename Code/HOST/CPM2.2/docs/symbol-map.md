@@ -11,8 +11,8 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | ROM page 0: reset vector and common memory | `build/firmware.bin` | 65536 bytes |
 | Bank 7 payload | `build/bank7.bin` | 65536 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Assembler listing | `build/firmware.lst` | 915902 bytes |
-| Linker symbol map | `build/firmware.map` | 48956 bytes |
+| Assembler listing | `build/firmware.lst` | 991016 bytes |
+| Linker symbol map | `build/firmware.map` | 50687 bytes |
 | Layout manifest | `build/layout.manifest` | 1445 bytes |
 
 ## System Addresses
@@ -191,8 +191,8 @@ Visible at these addresses only in operating-system mode.
 | `VIDEO_SEND` | `3200h` | Raw video request. |
 | `IOCALL` | `32F2h` | IO Controller command/reply. |
 | `IOCBULK` | `3900h` | IO Controller bulk receive. |
-| `IOCBULKW` | `390Fh` | IO Controller bulk transmit. |
-| `ioc_link_bringup` | `3B70h` | Establishes command-lane sync at cold boot. |
+| `IOCBULKW` | `3918h` | IO Controller bulk transmit. |
+| `ioc_link_bringup` | `3B59h` | Establishes command-lane sync at cold boot. |
 | `console_backend_cold_init` | `480Eh` | Selected console backend cold init. |
 | `STORAGE_A_DPH` | `6000h` | Drive A: DPH. |
 | `SD_STORAGE_DPH` | `6020h` | B: DPH. |

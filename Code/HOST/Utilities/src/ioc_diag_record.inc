@@ -47,8 +47,21 @@ IOC_DIAG_SEQ			= IOC_DIAG_BASE + 0x08
 IOC_DIAG_BULK_TYPE		= IOC_DIAG_BASE + 0x09
 IOC_DIAG_BULK_SEQ		= IOC_DIAG_BASE + 0x0A
 IOC_DIAG_BULK_STATUS		= IOC_DIAG_BASE + 0x0B
-IOC_DIAG_RESERVED		= IOC_DIAG_BASE + 0x0C	; 4 bytes, read as zero
-
+IOC_DIAG_RESERVED		= IOC_DIAG_BASE + 0x0C	; +0C SD_DEBLOCK_HITS (uint16 LE,
+						; saturating), +0E SD_DEBLOCK_MISSES
+						; (uint16 LE, saturating).  NOT zeros.
+;
+; The span this offset opens no longer publishes the reserved-reading-zero
+; promise its name suggests: it carries the BIOS deblock line's hit/miss
+; tally.  The counters saturate rather than wrap because a wrapped count is
+; indistinguishable from a small one, and the /H benchmark's validity check
+; must be able to reject a saturated sample.  They live in common memory
+; rather than beside the line in bank 7 because a transient reads them in
+; latch mode 10, where bank 7 is not mapped.  DIAGNOSTIC AND TEMPORARY: they
+; revert to zeros on removal, and docs/storage-profiling.md is the removal
+; guide.  The record's length and every other offset are unchanged, which is
+; why the layout check still passes.
+;
 ; Lane codes for IOC_DIAG_LANE.
 IOC_DIAG_LANE_COMMAND		= 0x00		; SIO1/B
 IOC_DIAG_LANE_BULK		= 0x01		; SIO1/A

@@ -195,7 +195,7 @@ put_loop:
 	jp nz,bulk_fail
 
 	call fs_done
-	jp nz,fail
+	jp nz,done_fail
 
 	call advance_dword
 	jr put_loop
@@ -238,10 +238,132 @@ close_full:
 	xor a
 	ret
 
+; ---------------------------------------------------------------------------
+; Raw wire capture (diagnostic)
+; ---------------------------------------------------------------------------
+;
+; What the CONTROLLER actually received, before de-shifting.  For a Z80 -> MCU
+; bulk write that is a recording of what this machine's SIO put on the wire,
+; which is the only way to see what its CRC hardware emits: RR1 reports pass or
+; fail and never a value, so a wrong CRC is otherwise indistinguishable from a
+; wrong coverage or a wrong position.
+;
+; The chunk is 128 bytes and the preamble sits at raw byte 2, so the payload
+; ends near 0x84 and the trailer follows it.  The walk covers 0x78-0xA0, the
+; same tail range IOC_SDREC.COM uses, and the head as well so a transfer that
+; never started is distinguishable from one that ended wrong.
+;
+; NEEDS DIAGNOSTIC CONTROLLER FIRMWARE: a normal build leaves these reply bytes
+; zero.  Build it with `make IOC_PROFILE=diagnostic`.
+;
+; Diagnostic only -- remove with the CRC investigation it exists for.
+RAW_HEAD_END	= 0x18
+RAW_TAIL_START	= 0x78
+RAW_TAIL_END	= 0xa0
+
+dump_raw_window:
+	xor a
+	ld (raw_off),a
+draw_slice:
+	ld de,#msg_wire
+	call puts
+	ld a,(raw_off)
+	call print_hex_byte
+	ld e,#':'
+	ld c,#BDOS_CONOUT
+	call BDOS
+	call fetch_raw
+	or a
+	jr z,draw_ok
+	; Say WHY rather than stopping silently.  A walk that dies without a word
+	; is how the first attempt at this wasted a flash: "wire 00:" and nothing
+	; after it is indistinguishable from a tool that never ran.
+	ld de,#msg_wfail
+	call puts
+	ld a,(fetch_io)
+	call print_hex_byte
+	ld de,#msg_wcls
+	call puts
+	ld a,(rx_frame + 0)
+	call print_hex_byte
+	ld de,#msg_crlf
+	call puts
+	ret
+draw_ok:
+	ld hl,#rx_frame + 14		; IOC_OFF_DONE_RAW
+	ld b,#8
+draw_bytes:
+	ld e,#' '
+	push bc
+	push hl
+	ld c,#BDOS_CONOUT
+	call BDOS
+	pop hl
+	ld a,(hl)
+	push hl
+	call print_hex_byte
+	pop hl
+	inc hl
+	pop bc
+	djnz draw_bytes
+	ld de,#msg_crlf
+	call puts
+	ld a,(raw_off)
+	add a,#8
+	ld (raw_off),a
+	cp #RAW_HEAD_END
+	jr c,draw_slice
+	cp #RAW_TAIL_START
+	jr nc,draw_tail
+	ld a,#RAW_TAIL_START
+	ld (raw_off),a
+	jr draw_slice
+draw_tail:
+	cp #RAW_TAIL_END
+	jr c,draw_slice
+	ret
+
+; One XFER_STATUS asking for the eight raw bytes at raw_off.  A = 0 on success.
+fetch_raw:
+	call zero_frames
+	ld a,#CMD_XFER_STATUS
+	ld (tx_frame + 0),a
+	ld a,#1
+	ld (tx_frame + 3),a		; one payload byte: the raw offset
+	ld a,(raw_off)
+	ld (tx_frame + 4),a		; IOC_OFF_STATUS_RAW_OFF
+	ld a,#1
+	ld (tx_frame + 1),a
+	ld hl,#tx_frame
+	ld de,#rx_frame
+	call IOCALL
+	ld (fetch_io),a			; keep it: the caller reports it
+	or a
+	ret nz
+	; No class check.  IOC_SDREC.COM does not make one either, and the handler
+	; always answers RSP_XFER_STATUS with STATUS_OK -- so a check here can only
+	; throw away bytes that were worth seeing.
+	xor a
+	ret
+
+; A DONE that reports a bulk CRC failure is the case the wire dump exists for:
+; the bytes reached the controller and were rejected on their check, so what is
+; wanted is what the controller actually saw.  This is fail_kind 4, NOT 5 --
+; kind 5 is IOCBULKW giving up, which leaves nothing to look at.
+done_fail:
+	call print_fail
+	call dump_raw_window
+	ld a,#1
+	ret
+
 bulk_fail:
 	ld (fail_info),a
 	ld a,#5
 	ld (fail_kind),a
+	call print_fail
+	call dump_raw_window		; diagnostic: what the controller really saw
+	ld a,#1
+	ret
 fail:
 	call print_fail
 	ld a,#1
@@ -348,6 +470,12 @@ msg_nofile:	.ascii "no such file"
 handle:		.ds 1
 text_mode:	.ds 1
 trim_pos:	.ds 4
+
+msg_wire:	.ascii "  wire $"
+msg_wfail:	.ascii " XFER_STATUS failed, io=$"
+msg_wcls:	.ascii " cls=$"
+fetch_io:	.ds 1
+raw_off:	.ds 1
 
 	.include "sdfs.inc"
 	.include "zbdos.inc"		; IOCALL/IOCBULK/IOCBULKW, which sdfs.inc calls

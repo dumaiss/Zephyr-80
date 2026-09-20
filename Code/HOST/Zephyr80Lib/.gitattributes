@@ -1,0 +1,13 @@
+# FTL Modula-2 (MD.COM/M2.COM) and ZMAC are line-oriented.  LF-only source
+# collapses to a single line: MD.COM reports "ERROR 81 end of file reached
+# before program complete", ZMAC reports "INPUT LINE TOO LONG".
+#
+# These files are copied byte for byte onto an SD card and read on the
+# Zephyr-80 via SDGET, so the CRLF has to survive in the stored blob, not just
+# in a checkout.  -text stops git normalizing them in either direction.
+#
+# The RunCPM builds are unaffected: copy_text() in TOOLS normalizes to LF and
+# re-expands to CRLF while staging, so it is idempotent.
+
+SRC/**   -text
+TEST/**  -text

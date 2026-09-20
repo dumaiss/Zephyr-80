@@ -48,6 +48,8 @@ ZB_SYSINFO_DIAG		= 0x02		; .dw IOC link failure record
 ZB_SYSINFO_SERCON	= 0x04		; .dw serial console flags byte
 ZB_SYSINFO_BIOS		= 0x06		; .dw CP/M BIOS jump table
 ZB_SYSINFO_EXT		= 0x08		; .dw Zephyr extension table
+; STORAGE_PROFILE: only read this appended pointer when version >= 2.
+ZB_SYSINFO_STORAGE_PROFILE = 0x0a	; .dw two uint16 entry counters
 
 ; IOCALL: HL = TX frame, DE = RX frame.  Out: A = status; HL, DE unchanged.
 IOCALL:
