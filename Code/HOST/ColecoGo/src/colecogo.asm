@@ -40,7 +40,7 @@ ZEXT_SYSINFO		= 203
 ZEXT_MOVE		= 210
 ZEXT_XMOVE		= 211
 ZEXT_SETBNK		= 213
-ZSYSINFO_VERSION	= 1
+ZSYSINFO_VERSION	= 2
 
 ; ---------------------------------------------------------------------------
 ; Zephyr hardware and takeover layout.
