@@ -237,78 +237,80 @@ ioc_crc_continue:
 	ld a,b
 	or c
 	ret z
+
+; CRC-CCITT (1021h, preset 0) with NO TABLE, 175 T-states per byte.
+;
+; The nibble-table version this replaces cost 527 T -- 52.7 us per byte at
+; 10 MHz, which the storage benchmark measured as 81% of the bulk lane's whole
+; per-byte cost, larger than the wire and the card together.  A byte-wise table
+; would be faster still, but it needs 512 page-aligned bytes and common memory
+; has about a hundred free: E000h is the program ISR reservation, E400h the CCP,
+; F000h upward the BIOS.  It has to be common, not because the table is public
+; -- it is entirely private to this driver -- but because this code reads the
+; CALLER'S buffer, which for IOCBULK is CP/M's DMA address in the TPA.  That is
+; visible in latch mode 10 and displaced by bank 7 in mode 11, so anything that
+; touches it must be addressable in mode 10.
+;
+; The closed form needs no table at all:
+;
+;     x   = (crc >> 8) ^ data
+;     x  ^= x >> 4
+;     crc = (crc << 8) ^ (x << 12) ^ (x << 5) ^ x
+;
+; which for 8-bit registers is
+;
+;     high = (crc low) ^ ((x & 0x0F) << 4) ^ (x >> 3)
+;     low  = ((x & 0x07) << 5) ^ x
+;
+; RRCA three or four times is a left shift of five or four on a byte, and the
+; masks drop the bits that wrap.  D carries x through both halves; the new high
+; is parked in E until the low byte is built, because there is no third register
+; free with HL on the data and BC on the count.
+;
+; Verified against the reference on hardware, not by inspection: 1D03, FE3A and
+; E54F over three fixed vectors.
 IOC_CRC_BYTE:
 	ld a,(hl)
-	push bc
-	; high nibble: index = ((crc >> 12) ^ (data >> 4)) & 0x0F
-	rrca
-	rrca
-	rrca
-	rrca
-	and #0x0f
-	ld c,a
-	ld a,d
-	rrca
-	rrca
-	rrca
-	rrca
-	and #0x0f
-	xor c
-	call IOC_CRC_NIBBLE
-	; low nibble
-	ld a,(hl)
-	and #0x0f
-	ld c,a
-	ld a,d
-	rrca
-	rrca
-	rrca
-	rrca
-	and #0x0f
-	xor c
-	call IOC_CRC_NIBBLE
-	pop bc
 	inc hl
+	xor d				; A = x0 = (crc >> 8) ^ data
+	ld d,a
+	rrca
+	rrca
+	rrca
+	rrca
+	and #0x0f			; A = x0 >> 4
+	xor d				; A = x
+	ld d,a				; D = x, needed by both halves
+
+	and #0x0f
+	rrca
+	rrca
+	rrca
+	rrca				; A = (x & 0x0F) << 4
+	xor e				; ^ old crc low
+	ld e,a
+	ld a,d
+	rrca
+	rrca
+	rrca
+	and #0x1f			; A = x >> 3
+	xor e
+	ld e,a				; new high, parked
+
+	ld a,d
+	and #0x07
+	rrca
+	rrca
+	rrca				; A = (x & 0x07) << 5
+	xor d				; ^ x  -> new low
+	ld d,e				; D = new high
+	ld e,a				; E = new low
+
 	dec bc
 	ld a,b
 	or c
 	jr nz,IOC_CRC_BYTE
 	ret
-
-; crc = (crc << 4) ^ table[A].  A = 4-bit index.
-; Clobbers: AF, BC
-IOC_CRC_NIBBLE:
-	add a,a				; table entries are 16-bit
-	ld c,a
-	ld b,#0
-	push hl
-	ld hl,#ioc_crc_table
-	add hl,bc
-	ld c,(hl)
-	inc hl
-	ld b,(hl)			; BC = table entry
-	pop hl
-	; crc <<= 4
-	ex de,hl
-	add hl,hl
-	add hl,hl
-	add hl,hl
-	add hl,hl
-	ex de,hl
-	; crc ^= BC
-	ld a,d
-	xor b
-	ld d,a
-	ld a,e
-	xor c
-	ld e,a
-	ret
-
-ioc_crc_table:
-	.dw 0x0000, 0x1021, 0x2042, 0x3063
-	.dw 0x4084, 0x50a5, 0x60c6, 0x70e7
-	.dw 0x8108, 0x9129, 0xa14a, 0xb16b
-	.dw 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef
 
 ; Stamp only the rolling sequence into the compatibility mailbox.  CRC belongs
 ; to the packet on the wire and is prepared by ioc_packet_crc_mailbox.
@@ -985,6 +987,33 @@ IOCBULK_DCD_WAIT:
 	jr nz,IOCBULK_DCD_WAIT
 	jp IOCBULK_TIMEOUT
 IOCBULK_ADMITTED:
+.if IOC_BULK_HW_RX_CRC
+	; The quiet point.  /DCDA is asserted but the PIC has not opened SIO1/A's
+	; clock gate, so no bit can have arrived yet and the checker's coverage
+	; starts exactly at the preamble -- no dependence on FIFO depth, which is
+	; what an enable placed after the marker would have had.
+	; The reset is issued first; WR3 is rewritten after it in case the reset
+	; clears the enable along with the register.
+	;
+	; THAT REWRITE MUST PRESERVE THE HUNT BIT.  The arm above chooses Enter
+	; Hunt on the first transfer, because character sync has not been
+	; established yet; writing the no-hunt value here cancelled it before a
+	; single bit had arrived.  The receiver then never found a byte boundary,
+	; the CRC could not match, ioc_bulk_synced was never set -- so every later
+	; transfer hunted and had it cancelled in turn.  Self-sustaining, and it
+	; looked exactly like a CRC fault.
+	ld a,#SIO_WR0_RESET_RX_CRC
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#3
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,(ioc_bulk_synced)
+	or a
+	ld a,#SIO_WR3_BULK_RX_NO_HUNT
+	jr nz,IOCBULK_CRC_WR3
+	ld a,#SIO_WR3_BULK_RX_HUNT	; first transfer only, same as the arm
+IOCBULK_CRC_WR3:
+	out (SIO_BULK_CTRL_PORT),a
+.endif
 	; Locate the complete common marker.  A trailing FF from the preceding
 	; transaction can remain in the SIO receive pipeline until these clocks
 	; promote it into the FIFO, so the first visible byte is not a frame start.
@@ -1076,6 +1105,34 @@ IOCBULK_TRAILER:
 	jp c,IOCBULK_TIMEOUT
 	ld (ioc_bulk_crc),a		; low
 
+
+.if IOC_BULK_HW_RX_CRC
+	; TWO trailing bytes, not one.  The manual: "The CRC result is loaded into
+	; RR1 (D6) 16 bit times after the last character enters the FIFO (8 bits
+	; internal delay plus 8 bits CRC shifting)."  Those two delays add.  An
+	; earlier attempt consumed one byte and read RR1 a whole character early,
+	; so the bit it tested was never valid -- the controller now sends two.
+	; PAD1: its arrival means the checker has taken in the last of CRC2, so
+	; this is the moment to tell the checker the message is over.  Nothing
+	; else will: the receiver has no end-of-frame notion of its own.
+	call IOCBULK_GET
+	jp c,IOCBULK_TIMEOUT
+	ld a,#3
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#SIO_WR3_BULK_RX_CRC_OFF
+	out (SIO_BULK_CTRL_PORT),a
+
+	; PAD2: eight more bit times for the pipeline to settle, and only then is
+	; RR1 D6 the verdict on DATA + CRC1 + CRC2.
+	call IOCBULK_GET
+	jp c,IOCBULK_TIMEOUT
+	ld a,#0x01
+	out (SIO_BULK_CTRL_PORT),a
+	in a,(SIO_BULK_CTRL_PORT)
+	and #SIO_RR1_CRC_ERROR
+	ld (ioc_bulk_hw_crc),a
+.endif
+
 	; All bytes in.  Release RTS, then confirm the MCU ended the bulk phase.
 	; /CTSA is asserted for the duration of the transfer, so it should already
 	; be gone; checking it costs nothing and catches an MCU that died mid
@@ -1130,6 +1187,15 @@ IOCBULK_OK:
 
 	; Only now check integrity: the lane is already released, so a bad CRC
 	; costs one transfer rather than leaving the handshake half-done.
+	; Flat conditionals, not nested: sdasz80 does not nest .if.
+	; IOC_BULK_CRC_BYPASS = 1 suppresses BOTH blocks, so a transfer is
+	; accepted with its integrity never checked.  Measurement builds only.
+.if IOC_BULK_HW_RX_CRC * (1 - IOC_BULK_CRC_BYPASS)
+	ld a,(ioc_bulk_hw_crc)
+	or a
+	jr nz,IOCBULK_CRC_FAIL
+.endif
+.if (1 - IOC_BULK_HW_RX_CRC) * (1 - IOC_BULK_CRC_BYPASS)
 	ld hl,#ioc_packet_header
 	ld bc,#5
 	call ioc_crc_block
@@ -1143,6 +1209,8 @@ IOCBULK_OK:
 	ld a,h
 	cp d
 	jr nz,IOCBULK_CRC_FAIL
+.endif
+
 
 	; A CRC-verified transfer is the only evidence the bulk lane's character
 	; boundary was established.  From here the receiver is left alone: no more
@@ -1161,6 +1229,8 @@ ioc_bulk_len:
 	.dw 0
 ioc_bulk_crc:
 	.dw 0
+ioc_bulk_hw_crc:
+	.db 0
 
 IOCBULK_TIMEOUT:
 	call IOCBULK_RTS_OFF
@@ -1272,6 +1342,13 @@ XPORT_SHIM_CODE_START:
 IOCBULK:
 	ld (xport_iocbulk_sp),sp
 	ld sp,#CBIOS_XPORT_STACK_TOP
+	; STORAGE_PROFILE: count entries only, preserve inputs and flags.
+	.globl storage_profile_iocbulk
+	push hl
+	ld hl,(storage_profile_iocbulk)
+	inc hl
+	ld (storage_profile_iocbulk),hl
+	pop hl
 	call iocbulk_body
 	ld sp,(xport_iocbulk_sp)
 	ret
@@ -1326,6 +1403,9 @@ IOCBULKW_ARM:
 	ld (ioc_packet_header + 3),a
 	xor a
 	ld (ioc_packet_header + 4),a	; request status
+.if IOC_BULK_HW_TX_CRC
+	; The SIO accumulates it as the bytes shift out.
+.else
 	ld hl,#ioc_packet_header
 	ld bc,#5
 	call ioc_crc_block
@@ -1333,6 +1413,7 @@ IOCBULKW_ARM:
 	ld bc,(ioc_bulk_len)
 	call ioc_crc_continue		; DE = CRC(header + payload)
 	ld (ioc_bulk_crc),de
+.endif
 	ld hl,(ioc_bulk_ptr)
 	ld de,(ioc_bulk_len)
 
@@ -1354,6 +1435,18 @@ IOCBULKW_ARM:
 	; /RTSA.  Re-enable the transmitter for this preload without touching WR3
 	; or the receiver's persistent boundary; no clock exists yet, so it cannot
 	; shift until the PIC admits the transfer.
+.if IOC_BULK_HW_TX_CRC
+	; Give the fill a value of its own, so a trailer byte is never mistaken
+	; for a zeroed CRC register.
+	ld a,#6
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#IOC_BULK_SYNC_FILL
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#7
+	out (SIO_BULK_CTRL_PORT),a
+	ld a,#IOC_BULK_SYNC_FILL
+	out (SIO_BULK_CTRL_PORT),a
+.endif
 	ld a,#0x05
 	out (SIO_BULK_CTRL_PORT),a
 	ld a,#SIO_WR5_BULK_RTS_OFF
@@ -1384,13 +1477,32 @@ IOCBULKW_ARM:
 	; retained from the proven wire format; the real preamble follows only after
 	; admission, on a transmitter that is already running.
 	push de
+.if IOC_BULK_HW_TX_CRC
+	; Arm the generator before the first byte so its coverage is the whole
+	; transmission and no enable lands mid-stream.
+	ld a,#SIO_WR0_RESET_TX_CRC
+	out (SIO_BULK_CTRL_PORT),a
+.endif
 	ld a,#IOC_BULK_LEADIN
 	call IOCBULKW_PUT
 	jp c,IOCBULKW_STALL_POP
 
+.if IOC_BULK_HW_TX_CRC
+	; THE EOM RESET IS NOT ISSUED HERE ANY MORE.  The manual: with the latch
+	; reset, "an underrun causes the SIO to send the 16-bit accumulated CRC".
+	; The CTS admit wait below is an underrun -- the lead-in has shifted out
+	; and nothing has replaced it -- so resetting the latch here made the CRC
+	; go out right after the lead-in.  The latch then set itself, and the real
+	; end-of-payload underrun emitted sync characters instead of a trailer,
+	; which is why the controller waited forever for bytes that never came.
+	;
+	; It is issued after the last payload byte instead, where the underrun it
+	; arms is the one that should terminate the message.
+.else
 	; EOM reset still follows the first buffered byte, as it must.
 	ld a,#SIO_WR0_RESET_EOM
 	out (SIO_BULK_CTRL_PORT),a
+.endif
 
 	; Now say "go".  The transmitter has something to send.
 	ld a,#0x05
@@ -1475,6 +1587,77 @@ IOCBULKW_GOT:
 	jr IOCBULKW_CHUNK
 
 IOCBULKW_SENT:
+.if IOC_BULK_HW_TX_CRC
+	; Arm the terminating underrun NOW: the last payload byte is still in the
+	; shift register, so there is a full character time before the buffer runs
+	; dry.  The SIO then sends the accumulated CRC in place of a sync
+	; character, which is what the two filler bytes below were hand-rolling.
+	;
+	; Nothing may be written after this.  Any byte would be folded into the
+	; CRC and would land where the controller expects the trailer.
+	;
+	; No wait is needed either: "If disabled during CRC generation, the 16-bit
+	; CRC sequence completes" -- dropping RTS cannot truncate it.
+	ld a,#SIO_WR0_RESET_EOM
+	out (SIO_BULK_CTRL_PORT),a
+
+	; THEN WAIT FOR THE UNDERRUN BEFORE LETTING THE CALLER DROP RTS.
+	;
+	; IOCBULK_RTS_OFF disables the transmitter, and the manual is explicit
+	; about what that does: "Disabling the transmitter while sending data
+	; causes the character to finish normally, after which the line goes
+	; marking."  The character it finishes is the one in the SHIFT REGISTER.
+	; A byte still sitting in the BUFFER is thrown away.
+	;
+	; OUTI returns when the buffer frees, so at this point the last payload
+	; byte is in the buffer, not the shift register.  Disabling here loses it
+	; and no underrun ever occurs, so no CRC is appended either.  A wire
+	; capture showed exactly that: payload[0..126] intact, payload[127]
+	; replaced by marking, and FF to the end of the window.  The filler bytes
+	; this replaced were doing double duty -- they pushed the last real byte
+	; out of the buffer before the transmitter was shut down.
+	;
+	; RR0 D6 goes set when the transmitter runs dry, which is the moment the
+	; last payload byte has left the buffer AND the CRC has begun going out.
+	; Waiting for it needs no counted delay and no guess about the wire rate.
+	;
+	; Nothing more is needed after that: "If disabled during CRC generation,
+	; the 16-bit CRC sequence completes, but sync is sent instead of marking."
+	; So the CRC survives the shutdown once it has started.
+	ld de,#0
+IOCBULKW_EOM_WAIT:
+	in a,(SIO_BULK_CTRL_PORT)	; pointer is 0 after the WR0 write above
+	and #SIO_RR0_TX_UNDERRUN
+	jr nz,IOCBULKW_EOM_DONE
+	dec de
+	ld a,d
+	or e
+	jr nz,IOCBULKW_EOM_WAIT
+	jp IOCBULKW_STALL
+IOCBULKW_EOM_DONE:
+	; RR0 D6 sets as the transmitter runs dry, which is when the CRC BEGINS
+	; going out -- not when it has finished.  The previous capture showed one
+	; trailer byte then marking, i.e. the shutdown landed between the two.
+	;
+	; There is no status to wait on: RR1's All Sent reads "Sync: always 1", so
+	; this is counted -- but sized from a wire capture rather than from the
+	; controller's nominal pacing, which turned out to be the wrong number.
+	;
+	; At 16 iterations (41.6 us) the capture showed the first CRC byte plus
+	; two bits of the second, the rest overwritten by sync fill.  That is
+	; ~1.25 characters in 41.6 us, so the real byte period on this lane is
+	; about 33 us -- five times BULK_TARGET_BYTE_US, which is what the earlier
+	; throughput work measured too.  Two CRC characters therefore need ~66 us.
+	;
+	; 128 iterations is 333 us, five times the requirement, and still under
+	; six percent of the ~6 ms this transaction costs anyway.
+	ld de,#128
+IOCBULKW_CRC_OUT:
+	dec de
+	ld a,d
+	or e
+	jr nz,IOCBULKW_CRC_OUT
+.else
 	; CRC trailer, most significant byte first, matching the MCU.  It is
 	; transport, not payload: callers pass a payload-sized buffer.
 	ld a,(ioc_bulk_crc + 1)
@@ -1483,56 +1666,13 @@ IOCBULKW_SENT:
 	ld a,(ioc_bulk_crc)
 	call IOCBULKW_PUT
 	jp c,IOCBULKW_STALL
-
-	; Did the transmitter run dry?  RR1 bit 6 was cleared after the first
-	; preamble byte, so finding it set means fill went out in place of data.
-	; There is a small race -- it also sets legitimately once the final byte
-	; finishes shifting -- and erring toward a false alarm is the right side
-	; when the alternative is the MCU committing zeros.
-	ld a,#0x01
-	out (SIO_BULK_CTRL_PORT),a
-	in a,(SIO_BULK_CTRL_PORT)
-	and #SIO_RR1_TX_UNDERRUN
-	jp nz,IOCBULKW_UNDERRUN
-
-	; WAIT FOR THE LAST BYTE TO REACH THE WIRE.
-	;
-	; IOCBULKW_PUT returns when the transmit BUFFER is free, which is one byte
-	; earlier than the wire.  IOCBULK_RTS_OFF then writes WR5 = 00h and
-	; DISABLES the transmitter, so a byte still sitting in the buffer or shift
-	; register is simply discarded.
-	;
-	; Measured: the CRC trailer's second byte never reached the MCU.  The raw
-	; window showed the payload complete through its last byte, then the CRC
-	; MSB, then fill -- and the byte after a value with a clear MSB has to be
-	; even under the wire's one-bit shift, so the FFh there could only be fill.
-	; The MCU read fill as the CRC low byte and rejected the transfer.
-	;
-	; This is the bulk lane's version of the trailing filler the command lane
-	; clocks for exactly the same reason.
-	; PUSH THE LAST CRC BYTE ONTO THE WIRE with trailing filler.
-	;
-	; IOCBULKW_PUT returns when the transmit BUFFER is free, one byte before
-	; the wire, and IOCBULK_RTS_OFF then disables the transmitter -- discarding
-	; whatever is still in the shift register.  Measured: the CRC high byte
-	; arrived correctly and the low byte was replaced by fill.
-	;
-	; Two fillers, not one.  PUT waits for buffer-empty, so the first
-	; guarantees the CRC low byte has moved buffer -> shift register, and the
-	; second guarantees it has finished shifting.  This is what the command
-	; lane does; RR1's All Sent bit is an ASYNCHRONOUS-mode status and a
-	; synchronous transmitter never idles -- it shifts sync characters on
-	; underrun -- so waiting on it exits immediately and buys nothing.
-	;
-	; The MCU ignores these: it de-shifts exactly payload+CRC bytes from the
-	; preamble, and the fillers land past that inside the same window.
 	ld a,#IOC_BULK_LEADIN
 	call IOCBULKW_PUT
 	jp c,IOCBULKW_STALL
 	ld a,#IOC_BULK_LEADIN
 	call IOCBULKW_PUT
 	jp c,IOCBULKW_STALL
-
+.endif
 	call IOCBULK_RTS_OFF
 	call ioc_bulk_irq_restore
 

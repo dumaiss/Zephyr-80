@@ -24,7 +24,7 @@ Code regions, each bounded by the limit `cbios_defs.inc` declares for it. Used a
 
 | Region | Owner | Used | Free | Contents |
 |---|---|---:|---:|---|
-| `EC00h-EF9Fh` | BDOS facade | 914 | 14 | `CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-217, system information block. |
+| `EC00h-EF9Fh` | BDOS facade | 920 | 8 | `CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-217, system information block. |
 | `EFA0h-EFFFh` | SIO ownership return | 34 | 62 | Quiesces application-owned SIO0/A at boot and application exit. |
 | `F000h-F1AFh` | BIOS tables, ROM copy, boot | 331 | 101 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero. |
 | `F1B0h-F287h` | Banking services | 210 | 6 | `SELMEM`, `SETBNK`, `XMOVE`, `MOVE`. |
@@ -66,14 +66,14 @@ System common code ends at `FFD8h`.
 | `3040h-30FFh` | Console facade | 125 | 67 | CP/M console entries; dispatch on the console stack. |
 | `3100h-31FFh` | Storage facade | 26 | 230 | CP/M disk entries; jumps into the drive dispatcher. |
 | `3200h-327Fh` | VIDEO_SEND | 40 | 88 | Raw video request through the selected console backend. |
-| `3280h-33FFh` | IOCALL | 131 | 253 | 32-byte mailbox transaction. |
-| `3400h-38FFh` | IOC command lane | 1101 | 179 | Common-packet command-lane transport. |
-| `3900h-39FFh` | Bulk entries | 34 | 222 | `IOCBULK` and `IOCBULKW`. |
-| `3A00h-3CFFh` | IOC bulk lane | 581 | 187 | Common-packet bulk-lane transport and link bring-up. |
+| `3280h-33FFh` | IOCALL | 140 | 244 | 32-byte mailbox transaction. |
+| `3400h-38FFh` | IOC command lane | 1014 | 266 | Common-packet command-lane transport. |
+| `3900h-39FFh` | Bulk entries | 43 | 213 | `IOCBULK` and `IOCBULKW`. |
+| `3A00h-3CFFh` | IOC bulk lane | 558 | 210 | Common-packet bulk-lane transport and link bring-up. |
 | `3D00h-3DFFh` | USB keyboard input | 186 | 70 | Doorbell-gated keyboard fetch. |
 | `3E00h-3FFFh` | USB keyboard state | 57 | 455 | Mailboxes and keyboard queue. |
-| `4000h-42FFh` | SD-card backend | 450 | 318 | Record read and write through the IO Controller cache. |
-| `4300h-432Fh` | B: select probe | 20 | 28 | Card availability, then the B: DPH. |
+| `4000h-42FFh` | SD-card backend | 705 | 63 | Record read and write through the IO Controller cache. |
+| `4300h-432Fh` | B: select probe | 23 | 25 | Card availability, then the B: DPH. |
 | `4330h-43FFh` | Drive A: backend | 164 | 44 | The build-selected A: backend. |
 | `4400h-47FFh` | Drive dispatcher | 155 | 869 | Routes A: to its backend and B:/C: to SD units; C: select probe. |
 | `4800h-5FFFh` | V9958 console | 3191 | 2953 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
@@ -92,7 +92,7 @@ Data:
 | `8000h-87FFh` | Console font | CP850 6x8. |
 | `8800h-883Fh` | Boot banner text | |
 
-The last resident asset ends at `CBFFh`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.
+The last resident asset ends at `CE08h`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.
 
 | Range | Use |
 |---|---|
@@ -102,7 +102,10 @@ The last resident asset ends at `CBFFh`. Cold boot installs all 64 KiB; OS-owned
 | `C300h-C3BFh` | SD transaction scratch (`MOVE_BUFFER`) |
 | `C3C0h-C3FFh` | Unallocated |
 | `C400h-CBFFh` | Pristine CCP restore asset |
-| `CC00h-DFFFh` | Unallocated |
+| `CC00h (empty)` | Unallocated |
+| `CC00h-CDFFh` | SD deblock line (one 512-byte logical block) |
+| `CE00h-CE08h` | SD deblock tag (valid, unit, block) |
+| `CE09h-DFFFh` | Unallocated |
 
 All eight physical SRAM banks include E000h-FFFFh, visible in flat mode 01. Modes 10/11 overlay that range with bank 0.
 

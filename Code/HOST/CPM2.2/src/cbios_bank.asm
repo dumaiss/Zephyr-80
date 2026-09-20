@@ -27,6 +27,7 @@
 	.globl ioc_bulk_synced
 	.globl ioc_rx_synced,ioc_link_ready
 	.globl IOC_DIAG_STATUS,IOC_DIAG_LANE,IOC_DIAG_RR0,IOC_DIAG_RR1
+	.globl SD_DEBLOCK_HITS,SD_DEBLOCK_MISSES
 	.globl IOC_DIAG_SYNCED,IOC_DIAG_READY,IOC_DIAG_BULK_SYNCED,IOC_DIAG_SEQ
 	.globl IOC_DIAG_BULK_REASON,IOC_DIAG_BULK_TYPE,IOC_DIAG_BULK_SEQ
 	.globl IOC_DIAG_BULK_STATUS
@@ -299,7 +300,21 @@ IOC_DIAG_BULK_STATUS:	.db 0
 			; Explicit zeros, not .ds: the contract publishes these as
 			; reading zero, and .ds leaves them at the FFh ROM fill.
 			; The size assertion below catches a length change.
-			.db 0,0,0,0
+			;
+			; DIAGNOSTIC, AND TEMPORARY: these four currently carry the
+			; deblock line's hit/miss tally rather than zeros.
+			;
+			; They live here, not beside the line in bank 7, because a
+			; program reading them runs in latch mode 10 where bank 7
+			; is not visible at all -- common memory is the only place
+			; both the BIOS and a transient can see.  The layout does
+			; not change, so the mirror in
+			; ../Utilities/src/ioc_diag_record.inc still agrees and
+			; check_diag_record stays quiet; but DIAGCHK asserts these
+			; read zero and will report a reserved-byte failure once
+			; any disk I/O has happened.  Expected, not a fault.
+SD_DEBLOCK_HITS:	.dw 0
+SD_DEBLOCK_MISSES:	.dw 0
 IOC_DIAG_RECORD_END:
 
 ; The capture code writes LANE+BULK_REASON and READY+SYNCED as 16-bit pairs,

@@ -618,9 +618,11 @@ zephyr_sysinfo:
 	.dw SERCON_FLAGS
 	.dw BIOS_CODE_START
 	.dw ZBIOS_EXT_BASE
+	; STORAGE_PROFILE: append-only v2 pointer; old offsets unchanged.
+	.dw storage_profile_iocall
 zephyr_sysinfo_end:
 
-	.ifne (zephyr_sysinfo_end - zephyr_sysinfo) - (ZSYSINFO_OFF_EXT + 2)
+	.ifne (zephyr_sysinfo_end - zephyr_sysinfo) - (ZSYSINFO_OFF_STORAGE_PROFILE + 2)
 	.error 1			; the block and ZSYSINFO_OFF_* disagree
 	.endif
 
@@ -644,6 +646,13 @@ fac_ret_hl:		.dw 0
 fac_copy_dst:		.dw 0
 fac_copy_len:		.dw 0
 fac_zext_target:	.dw 0
+
+; STORAGE_PROFILE: four owned bytes in the facade allocation EC00h-EF9Fh.
+; Modulo-65536 entry counts, cold-boot zero; snapshot rather than reset.
+; Removal guide: docs/storage-profiling.md at repository root.
+	.globl storage_profile_iocall,storage_profile_iocbulk
+storage_profile_iocall: .dw 0
+storage_profile_iocbulk: .dw 0
 
 FACADE_CODE_END:
 

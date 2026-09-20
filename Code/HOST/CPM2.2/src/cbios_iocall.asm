@@ -256,6 +256,13 @@ sio_command_init:
 IOCALL:
 	ld (xport_iocall_sp),sp
 	ld sp,#CBIOS_XPORT_STACK_TOP
+	; STORAGE_PROFILE: count entries only, preserve inputs and flags.
+	.globl storage_profile_iocall
+	push hl
+	ld hl,(storage_profile_iocall)
+	inc hl
+	ld (storage_profile_iocall),hl
+	pop hl
 	call iocall_body
 	ld sp,(xport_iocall_sp)
 	ret

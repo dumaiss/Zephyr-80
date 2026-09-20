@@ -159,13 +159,14 @@ GATE_STACK_TOP                  = 0xff00        ; FEC0h-FEFFh
 FAC_STACK_TOP                   = 0xff60        ; FF00h-FF5Fh
 
 ; Zephyr BDOS function 203 returns HL -> this layout (zephyr_sysinfo).
-ZSYSINFO_VERSION                = 0x01
+ZSYSINFO_VERSION                = 0x02 ; STORAGE_PROFILE append-only extension
 ZSYSINFO_OFF_VERSION            = 0x00          ; .db ZSYSINFO_VERSION
 ZSYSINFO_OFF_XPORT_LEVEL        = 0x01          ; .db ZBIOS_XPORT_LEVEL
 ZSYSINFO_OFF_DIAG               = 0x02          ; .dw IOC link failure record
 ZSYSINFO_OFF_SERCON             = 0x04          ; .dw SERCON_FLAGS
 ZSYSINFO_OFF_BIOS               = 0x06          ; .dw CP/M BIOS jump table
 ZSYSINFO_OFF_EXT                = 0x08          ; .dw Zephyr extension table
+ZSYSINFO_OFF_STORAGE_PROFILE    = 0x0a          ; .dw IOCALL/IOCBULK counters
 CONST_NO_CHAR                   = 0x00
 CONST_HAS_CHAR                  = 0xff
 CR                              = 0x0d
@@ -304,6 +305,20 @@ SIO_WR0_RESET_EXT_STATUS        = 0x10
 ; convention this code uses for RR0 bit 5 / CTS.  On the command channel the MCU
 ; drives /DCDB as COMMAND_READY.
 SIO_RR0_DCD                     = 0x08
+SIO_RR0_TX_UNDERRUN             = 0x40   ; RR0 D6, set when the transmitter runs dry
+
+; Sync/fill character for the bulk lane, WR6 and WR7.
+;
+; These have never been programmed, so they read 00 -- and 00 is exactly what an
+; unaccumulated CRC register also reads, since Reset Transmit CRC Generator
+; presets it to zeros.  A single 00 in the trailer is therefore ambiguous
+; between "the CRC never accumulated" and "the underrun sent sync instead of
+; CRC", which are different faults with different fixes.
+;
+; AA makes them tell apart on sight.  It is safe against the controller's marker
+; search: strict bit alternation cannot contain A5 5A, which needs adjacent
+; equal bits.
+IOC_BULK_SYNC_FILL              = 0xaa
 
 ; How long IOCALL waits for COMMAND_READY before giving up.  Must comfortably
 ; exceed the MCU's longest legitimate busy period -- SD initialisation is up to
@@ -351,10 +366,32 @@ IOC_SEND_TRAILER_FILL           = 0xff
 ;
 ; HUNT is used only until the boundary has been established once; after that
 ; NO_HUNT keeps the receiver enabled and leaves the boundary alone.
-SIO_WR3_BULK_RX_HUNT            = 0xd1   ; 8-bit RX, hunt, RX enable
-SIO_WR3_BULK_RX_NO_HUNT         = 0xc1   ; 8-bit RX, RX enable, boundary kept
-SIO_WR5_BULK_RTS_ON             = 0xea   ; DTR on, 8-bit TX, TX enable, RTS on
-SIO_WR5_BULK_RTS_OFF            = 0xe8   ; same, RTS off
+SIO_WR3_BULK_RX_HUNT            = 0xd9   ; 8-bit RX, hunt, RX enable, Rx CRC
+SIO_WR3_BULK_RX_NO_HUNT         = 0xc9   ; 8-bit RX, RX enable, Rx CRC, boundary kept
+SIO_WR3_BULK_RX_CRC_OFF         = 0xc1   ; same, Rx CRC accumulation STOPPED
+
+; THE RECEIVER HAS NO END-OF-MESSAGE EVENT.  Transmit does -- the underrun/EOM
+; latch is a real hardware event that makes the SIO emit its CRC.  Receive has
+; no equivalent: the checker accumulates every character while WR3 D3 says to,
+; and SOFTWARE defines where the protected message ends by clearing that bit at
+; the right delayed point.
+;
+; That is what an earlier attempt here missed.  It armed the checker and never
+; disarmed it, so the pad characters after the trailer were accumulated too and
+; the zero residue that existed right after CRC2 was gone before RR1 was read.
+; No amount of waiting could have fixed that: the bit was not late, it was
+; being computed over the wrong block.
+;
+; The checker runs one character behind the FIFO, so the sequence is:
+;
+;   ... CRC1 CRC2 | PAD1 -> clear WR3 D3 | PAD2 -> read RR1 D6
+;
+; PAD1 and PAD2 are not part of the protected block.  They exist to give the
+; delayed pipeline the clocks to finish CRC1/CRC2 -- the manual's "16 bit times
+; after the last character enters the FIFO (8 bits internal delay plus 8 bits
+; CRC shifting)".
+SIO_WR5_BULK_RTS_ON             = 0xeb   ; DTR, 8-bit TX, TX enable, RTS on, Tx CRC
+SIO_WR5_BULK_RTS_OFF            = 0xe9   ; same, RTS off
 SIO_WR5_BULK_IDLE               = 0xe0   ; same format, TX disabled, RTS off
 
 ; Bulk WRITE (Z80 -> MCU): the receiver stays ENABLED during transmit.  The
@@ -366,6 +403,59 @@ SIO_WR3_BULK_TX                 = 0xc1   ; 8-bit RX, RX stays enabled
 ; WR0 command: reset the Tx Underrun/EOM latch.  Must be issued AFTER the first
 ; byte is in the transmit buffer -- see IOCBULKW.
 SIO_WR0_RESET_EOM               = 0xc0
+SIO_WR0_RESET_RX_CRC            = 0x40   ; WR0 D7:D6 = 01
+SIO_WR0_RESET_TX_CRC            = 0x80   ; WR0 D7:D6 = 10
+SIO_RR1_CRC_ERROR               = 0x40   ; RR1 D6; "An error-free block resolves to zero"
+
+; ---------------------------------------------------------------------------
+; Bulk lane CRC in the SIO, both directions
+; ---------------------------------------------------------------------------
+;
+; WR5 D2 is clear in the values above, which the manual defines as
+; "0 = SDLC-CRC (X16+X12+X5+1)" -- the CCITT 1021h polynomial ioc_crc_table
+; implements.  A non-SDLC sync mode presets generator and checker to zero, which
+; is what ioc_crc_block starts from.  Only the two enables were ever missing.
+;
+; The software pass costs 527 T-states per byte, 52.7 us at 10 MHz, measured as
+; 81% of this lane's per-byte cost -- larger than the wire and the card together.
+;
+; NEITHER ENABLE IS EVER TOGGLED MID-FRAME.  Both are armed while the lane is
+; quiet and left alone, so coverage cannot depend on how far behind the wire the
+; Z80 happens to be.  The manual's 8-bit receive delay exists so software CAN
+; decide per character, but this lane has a producer that never waits and a
+; three-byte FIFO, so "per character" is a race here, not a feature.
+;
+; Coverage therefore differs from the old software boundary and the controller
+; matches it:
+;   transmit  lead-in + preamble + header + payload   (armed before byte one)
+;   receive   preamble + header + payload             (armed while the clock is
+;                                                      gated, before byte one)
+; The two directions are separate switches because they fail separately and
+; are worth keeping separately.  Receive failing takes B: out; transmit failing
+; is a refused write with the drive still readable.
+IOC_BULK_HW_RX_CRC              = 0
+
+
+; ===========================================================================
+; MEASUREMENT ONLY -- DO NOT SHIP WITH THIS SET
+; ===========================================================================
+;
+; Skips the receive CRC verification entirely.  The controller still computes
+; its CRC and still puts it on the wire, and this code is still assembled and
+; still reachable -- the answer is simply not consulted.  A corrupted bulk read
+; is therefore ACCEPTED SILENTLY, which is the one failure mode the whole lane
+; exists to prevent.
+;
+; It exists to bound what is left.  With the closed form the software CRC is
+; down to about 15% of a 128-byte record, while the fixed per-transaction cost
+; is 41%.  Measuring with the CRC removed says whether further CRC work is
+; worth anything before spending effort on it -- the model predicts 9.8 KiB/s
+; against 7.84 today, so roughly 25%.
+;
+; The boot banner says BYPASS while this is on, because a flag that silently
+; disables integrity checking is exactly the kind that ships by accident.
+IOC_BULK_CRC_BYPASS             = 1
+IOC_BULK_HW_TX_CRC              = 1
 ; RR1 bit 6: Tx Underrun/EOM.  Set after a transfer means the transmitter ran
 ; dry and streamed WR7 fill in place of data.
 SIO_RR1_TX_UNDERRUN             = 0x40
@@ -1235,7 +1325,58 @@ SD_CMD_FLUSH                          = 0x0a
 SD_RSP_FLUSH                          = 0x8a
 SD_CMD_XFER_STATUS                    = 0x06
 SD_RSP_XFER_STATUS                    = 0x86
+SD_CMD_READ_BLOCK                     = 0x0f       ; production, volume-relative
+SD_RSP_READ_BLOCK                     = 0x8f
 SD_STORAGE_RECORD_BYTES               = 0x0080
+SD_STORAGE_BLOCK_BYTES                = 0x0200
+SD_STORAGE_RECS_PER_BLOCK             = 0x04
+
+; ------------------------------------------------------------------------------
+; Host-side 512-byte deblock line
+; ------------------------------------------------------------------------------
+; CP/M's unit is a 128-byte record; the card's is a 512-byte block.  The
+; controller already bridges the two, but it does so one RECORD at a time, so a
+; sequential read pays a full IOCALL + READY + IOCBULK for every 128 bytes.
+; Measured: ~9.5 KiB/s that way against ~20.9 KiB/s for real 512-byte block
+; reads that all miss the controller's own cache.  The transaction, not the
+; card and not the wire, is what the sequential path is paying for.
+;
+; ONE line, tagged by unit and logical block.  Four consecutive records then
+; cost one transaction instead of four.  This is deliberately not a cache:
+; there is no replacement policy, no read-ahead and no dirty state, because a
+; single line is all that sequential CP/M access needs.
+;
+; Placement: bank 7 CC00h-DFFFh is unallocated per docs/memory-map.md -- the
+; region above the pristine CCP restore asset and below E000h.  It is NOT in
+; MOVE_BUFFER: that is per-transaction scratch reused by every request, while
+; this line has to survive from one BDOS read to the next.  It is not in an
+; application bank either.
+;
+; The SD backend runs in latch mode 11, where bank 7 and the caller's DMA
+; window are both addressable, which is what lets IOCBULK fill this directly
+; and a plain LDIR serve a quarter out of it.
+SD_DEBLOCK_BUFFER                     = BIOS7_BASE + 0x9c00      ; CC00h, bank 7
+SD_DEBLOCK_BUFFER_SIZE                = SD_STORAGE_BLOCK_BYTES   ; exactly one block
+SD_DEBLOCK_BUFFER_END                 = SD_DEBLOCK_BUFFER + SD_DEBLOCK_BUFFER_SIZE - 1
+
+; Tag and scratch, on the page after the line so the line stays exactly 512
+; bytes and page aligned.
+SD_DEBLOCK_TAG                        = BIOS7_BASE + 0x9e00      ; CE00h, bank 7
+sd_deblock_valid                      = SD_DEBLOCK_TAG + 0x00
+sd_deblock_unit                       = SD_DEBLOCK_TAG + 0x01
+sd_deblock_block                      = SD_DEBLOCK_TAG + 0x02    ; 16-bit
+sd_deblock_want                       = SD_DEBLOCK_TAG + 0x04    ; 16-bit, requested
+sd_deblock_quarter                    = SD_DEBLOCK_TAG + 0x06
+sd_deblock_echo                       = SD_DEBLOCK_TAG + 0x07    ; 16-bit, expected echo
+SD_DEBLOCK_TAG_SIZE                   = 0x0009
+SD_DEBLOCK_TAG_END                    = SD_DEBLOCK_TAG + SD_DEBLOCK_TAG_SIZE - 1
+
+; Build-time guards.  A negative .ds is an assembly error, so these fail the
+; build rather than letting a later allocation quietly overlap the line.
+SD_DEBLOCK_GUARD_SIZE                 = SD_DEBLOCK_BUFFER_SIZE - 0x0200
+SD_DEBLOCK_GUARD_ABOVE_CCP            = SD_DEBLOCK_BUFFER - (BIOS7_BASE + 0x9800)
+SD_DEBLOCK_GUARD_BELOW_TAG            = SD_DEBLOCK_TAG - (SD_DEBLOCK_BUFFER_END + 1)
+SD_DEBLOCK_GUARD_BELOW_COMMON         = 0xe000 - (SD_DEBLOCK_TAG_END + 1)
 
 ; SD backend state.  Lives in the storage work area's tail, which had 12 free
 ; bytes between the VDrip transport's block and storage_caller_sp.

@@ -1,13 +1,29 @@
-; Zephyr-80 CP/M storage backend: SD card via the IO Controller record cache.
+; Zephyr-80 CP/M storage backend: SD card via the IO Controller, with a
+; host-side 512-byte deblock line.
 ;
-; Drive B.  The MCU owns an 8-slot LRU cache of 512-byte blocks and serves
-; 128-byte CP/M records out of it, so this backend never sees a block and does
-; no deblocking.  That is the whole point of the split: deblocking on the Z80
-; would cost a 512-byte buffer in a BIOS that does not have one to spare, plus
-; a pre-read on every partial write.  Here it costs SRAM the PIC has plenty of.
+; Drives B: (unit 0) and C: (unit 1), two SD volumes on the one card.  The MCU
+; owns an 8-slot LRU cache of 512-byte blocks but serves 128-byte CP/M records
+; out of it -- CP/M's record is 128 bytes, the card's block is 512 -- so a
+; sequential read was paying a whole IOCALL + READY + IOCBULK per quarter
+; block.  The Z80 now keeps one 512-byte deblock line in bank 7
+; (SD_DEBLOCK_BUFFER, CC00h) with its tag state at SD_DEBLOCK_TAG (CE00h):
+; three reads in four are served from the line with no MCU transaction at all.
+; One line on purpose, not a cache -- no replacement policy, no read-ahead, no
+; dirty state; one line is all sequential CP/M access needs.
 ;
-;   READ   record -> CMD_SD_READ_REC, READY, 128 bytes on the bulk lane
-;   WRITE  record -> CMD_SD_WRITE_REC, READY, 128 bytes out, then DONE
+;   READ   record -> split into logical block + quarter.  A line hit copies
+;                    the quarter straight to the caller's DMA.  A miss:
+;                    CMD_SD_READ_BLOCK (0Fh), READY, 512 bytes on the bulk
+;                    lane, volume-relative -- the same MCU volume mapping and
+;                    the same MCU cache as CMD_SD_READ_REC.  0Fh is
+;                    deliberately not the raw-LBA CMD_SD_READ_BULK, which is
+;                    diagnostic-only and bypasses volume mapping.
+;   WRITE  record -> CMD_SD_WRITE_REC, READY, 128 bytes out, then DONE.
+;                    The line is read-side: after a write the MCU has
+;                    accepted, the affected quarter is refreshed from the
+;                    same DMA bytes when the line holds the containing block,
+;                    and a failed write drops the line when the failure
+;                    targeted that block.
 ;
 ; The record number is what the VDrip backend already computed as its LBA:
 ; track * 4 + sector, which for an 8 MiB volume is exactly a 16-bit quantity.
@@ -21,7 +37,15 @@
 ; Scratch is MOVE_BUFFER, which is 192 bytes and divides exactly into the
 ; 128-byte record and the two 32-byte command frames.  Nothing else is live
 ; during a storage transaction -- CP/M does not re-enter the BIOS.
+;
+; The reply echo is compared against sd_deblock_echo, not sd_storage_record: a
+; block request echoes the block it decoded and a record request the record, so
+; one comparison serves both.
+;
+; SD_DEBLOCK_HITS / SD_DEBLOCK_MISSES are diagnostic and temporary; see
+; docs/storage-profiling.md.
 
+	.globl SD_DEBLOCK_HITS,SD_DEBLOCK_MISSES
 	.globl sd_storage_home,sd_storage_settrk
 	.globl sd_storage_setsec,sd_storage_read,sd_storage_write
 	.globl sd_storage_sectran,sd_storage_flush
@@ -159,12 +183,14 @@ sd_exchange:
 	; The MCU echoes the record it decoded.  The frame CRC proves the frame
 	; arrived intact; this proves both ends agree on what it MEANT, which a
 	; decode bug on either side would survive.
+	; sd_deblock_echo, not sd_storage_record: a block request echoes the block
+	; it decoded, a record request the record.  One comparison serves both.
 	ld hl,#(MOVE_BUFFER + SD_STORAGE_RX_OFF + 8)
-	ld a,(sd_storage_record)
+	ld a,(sd_deblock_echo)
 	cp (hl)
 	jr nz,sd_exchange_echo
 	inc hl
-	ld a,(sd_storage_record + 1)
+	ld a,(sd_deblock_echo + 1)
 	cp (hl)
 	jr nz,sd_exchange_echo
 	xor a
@@ -214,30 +240,196 @@ sd_storage_read:
 	or a
 	ret nz
 
+	call sd_deblock_split
+	call sd_deblock_match
+	jr nz,sd_read_miss
+
+	ld hl,#SD_DEBLOCK_HITS
+	call sd_deblock_bump
+	jr sd_read_serve
+sd_read_miss:
+	ld hl,#SD_DEBLOCK_MISSES
+	call sd_deblock_bump
+	call sd_deblock_fill
+	or a
+	ret nz
+sd_read_serve:
+	call sd_deblock_to_dma
+	xor a
+	ret
+
+; ---------------------------------------------------------------------------
+; Deblock helpers
+; ---------------------------------------------------------------------------
+
+; Split sd_storage_record into the logical block and the quarter within it.
+; Out: sd_deblock_want = record >> 2, sd_deblock_quarter = record & 3.
+sd_deblock_split:
+	ld hl,(sd_storage_record)
+	ld a,l
+	and #(SD_STORAGE_RECS_PER_BLOCK - 1)
+	ld (sd_deblock_quarter),a
+	srl h
+	rr l
+	srl h
+	rr l
+	ld (sd_deblock_want),hl
+	ret
+
+; Z when the line is valid and holds the wanted unit and block.
+sd_deblock_match:
+	ld a,(sd_deblock_valid)
+	or a
+	jr z,sd_deblock_miss
+	ld a,(sd_deblock_unit)
+	ld hl,#sd_storage_unit
+	cp (hl)
+	ret nz
+	ld hl,(sd_deblock_block)
+	ld de,(sd_deblock_want)
+	ld a,h
+	cp d
+	ret nz
+	ld a,l
+	cp e
+	ret
+sd_deblock_miss:
+	or #0xff			; A non-zero: report NZ, never a false hit
+	ret
+
+; Bump the 16-bit counter at HL, saturating rather than wrapping: a wrapped
+; count reads as a plausible small number, and the whole point is the ratio.
+; Diagnostic; remove with the counters.
+sd_deblock_bump:
+	inc (hl)
+	ret nz
+	inc hl
+	inc (hl)
+	ret nz
+	ld (hl),#0xff			; both bytes rolled: pin at FFFF
+	dec hl
+	ld (hl),#0xff
+	ret
+
+; Drop the line.  Cheap enough to call on any path that could make it stale.
+sd_deblock_invalidate:
+	xor a
+	ld (sd_deblock_valid),a
+	ret
+
+; Fetch one logical 512-byte block into the line.
+;
+; The line is invalidated FIRST and marked valid only after the whole
+; transaction has succeeded, so any failure -- transport, wrong class, MCU
+; status, echo mismatch, short READY, bulk error -- leaves it invalid rather
+; than holding a partially filled block that would then be served as data.
+; Out: A = BIOS_OK, or a BIOS_ERR_* code.
+sd_deblock_fill:
+	call sd_deblock_invalidate
+
 	call sd_zero_frames
-	ld a,#SD_CMD_READ_REC
-	call sd_build_request
-	ld a,#SD_RSP_READ_REC
+	ld a,#SD_CMD_READ_BLOCK
+	call sd_build_block_request
+	ld hl,(sd_deblock_want)
+	ld (sd_deblock_echo),hl
+	ld a,#SD_RSP_READ_BLOCK
 	call sd_exchange
 	or a
 	ret nz
 
-	; Length comes from READY rather than being assumed: a short transfer is
-	; the MCU's to declare, and IOCBULK verifies the CRC trailer itself.
-	ld hl,#(MOVE_BUFFER + SD_STORAGE_DATA_OFF)
+	; READY must promise exactly one block.  The record path can accept the
+	; MCU's declared length because a short record is still a whole answer;
+	; here a short block would leave three quarters of the line undefined and
+	; every one of them would later be served as data.
 	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + 6)
-	ld e,a
+	cp #0x00			; 512 low
+	jr nz,sd_deblock_bad_len
 	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + 7)
-	ld d,a
+	cp #0x02			; 512 high
+	jr nz,sd_deblock_bad_len
+
+	; Straight into the line: mode 11 has bank 7 addressable, so no staging
+	; buffer and no second copy.
+	ld hl,#SD_DEBLOCK_BUFFER
+	ld de,#SD_STORAGE_BLOCK_BYTES
 	call IOCBULK
 	or a
-	jr nz,sd_read_bulk_failed
+	jr nz,sd_deblock_bulk_failed
 
-	call sd_copy_to_dma
+	; Only now is the line real.
+	ld hl,(sd_deblock_want)
+	ld (sd_deblock_block),hl
+	ld a,(sd_storage_unit)
+	ld (sd_deblock_unit),a
+	ld a,#1
+	ld (sd_deblock_valid),a
 	xor a
 	ret
-sd_read_bulk_failed:
+sd_deblock_bad_len:
+	ld a,#BIOS_ERR_BAD_REPLY
+	ret
+sd_deblock_bulk_failed:
 	ld a,#BIOS_ERR_IO
+	ret
+
+; HL = the wanted quarter inside the line.
+sd_deblock_quarter_addr:
+	ld a,(sd_deblock_quarter)
+	ld h,#0
+	ld l,a
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl			; quarter * 128
+	ld de,#SD_DEBLOCK_BUFFER
+	add hl,de
+	ret
+
+; Serve the selected 128-byte quarter to the caller's DMA address.
+sd_deblock_to_dma:
+	call sd_deblock_quarter_addr
+	ld de,(cbios_dma_addr)
+	ld bc,#SD_STORAGE_RECORD_BYTES
+	ldir
+	xor a
+	ret
+
+; Refresh the selected quarter from the caller's DMA address, after a write the
+; MCU has accepted.  Keeps the line coherent without making it dirty: the
+; controller remains the only thing that owns write-back.
+sd_deblock_from_dma:
+	call sd_deblock_quarter_addr
+	ex de,hl
+	ld hl,(cbios_dma_addr)
+	ld bc,#SD_STORAGE_RECORD_BYTES
+	ldir
+	ret
+
+; Build a block-addressed request.  In: A = command class.
+sd_build_block_request:
+	ld hl,#(MOVE_BUFFER + SD_STORAGE_TX_OFF)
+	ld (hl),a			; class
+	inc hl
+	ld (hl),#0x01			; seq placeholder; IOCALL stamps the real one
+	inc hl
+	ld (hl),#0x00			; status
+	inc hl
+	ld (hl),#0x05			; payload: 32-bit block, then the unit
+	inc hl
+	ld de,(sd_deblock_want)
+	ld (hl),e
+	inc hl
+	ld (hl),d
+	inc hl
+	ld (hl),#0x00
+	inc hl
+	ld (hl),#0x00
+	inc hl
+	ld a,(sd_storage_unit)
+	ld (hl),a
 	ret
 
 ; ---------------------------------------------------------------------------
@@ -258,6 +450,8 @@ sd_storage_write:
 	call sd_zero_frames
 	ld a,#SD_CMD_WRITE_REC
 	call sd_build_request
+	ld hl,(sd_storage_record)
+	ld (sd_deblock_echo),hl
 	ld a,#SD_RSP_WRITE_REC
 	call sd_exchange
 	or a
@@ -288,18 +482,49 @@ sd_storage_write:
 	ld a,(MOVE_BUFFER + SD_STORAGE_RX_OFF + 5)
 	or a
 	jr nz,sd_write_done_failed
+
+	; The controller has accepted the record.  If the line happens to hold the
+	; block it landed in, refresh that quarter from the same DMA bytes that
+	; were just sent, so a read-after-write cannot be served stale data.
+	;
+	; This does NOT make the line dirty: the bytes are already with the
+	; controller, which remains the only thing that owns write-back.  The DMA
+	; address is still the caller's and still addressable -- the write path
+	; read from it a few instructions ago through sd_copy_from_dma.
+	call sd_deblock_split
+	call sd_deblock_match
+	jr nz,sd_write_ok
+	call sd_deblock_from_dma
+sd_write_ok:
 	xor a
 	ret
 sd_write_bulk_failed:
+	call sd_deblock_drop_if_cached
 	ld a,#BIOS_ERR_IO
 	ret
+
+; A write that failed may or may not have disturbed the block; the line cannot
+; tell which, so it drops the line when the failure targeted the cached block.
+; Conservative on purpose: correctness over keeping the line.
+sd_deblock_drop_if_cached:
+	push af
+	call sd_deblock_split
+	call sd_deblock_match
+	jr nz,sd_deblock_drop_done
+	call sd_deblock_invalidate
+sd_deblock_drop_done:
+	pop af
+	ret
 sd_write_xport_failed:
+	call sd_deblock_drop_if_cached
 	ld a,#BIOS_ERR_TIMEOUT
 	ret
 sd_write_reply_failed:
+	call sd_deblock_drop_if_cached
 	ld a,#BIOS_ERR_BAD_REPLY
 	ret
 sd_write_done_failed:
+	call sd_deblock_drop_if_cached
 	ld a,#BIOS_ERR_IO
 	ret
 
@@ -505,6 +730,45 @@ SD_STORAGE_ALV2:
 ; Foreground only: uses MOVE_BUFFER and is not ISR-safe.
 ; ---------------------------------------------------------------------------
 	.area CODE (ABS)
+; ---------------------------------------------------------------------------
+; Deblock line and its tag, placed into the bank 7 image
+; ---------------------------------------------------------------------------
+;
+; The line itself is reserved rather than emitted -- nothing may read it until
+; a fill has succeeded, and the valid byte below is what enforces that.
+; Reserving it here is what makes a later allocation at CC00h collide at build
+; time instead of quietly sharing the address.
+	.area CODE (ABS)
+	.org SD_DEBLOCK_BUFFER
+SD_DEBLOCK_BUFFER_START:
+	; EMITTED, not reserved.  check_overlap.py compares emitted bytes, so a
+	; .ds here would occupy the address without defending it: a later region
+	; .org'd into CC00h would assemble clean and silently share the line.
+	; The bank is a full 64 KiB page either way, so the zeros cost nothing.
+	.rept SD_DEBLOCK_BUFFER_SIZE
+	.db 0
+	.endm
+SD_DEBLOCK_BUFFER_IMAGE_END:
+
+; THE TAG IS EXPLICIT ZEROS, NOT .ds.
+;
+; Cold boot installs the full 64 KiB bank 7 page from ROM, and the unallocated
+; fill is FFh.  A .ds here would leave sd_deblock_valid reading FFh on the first
+; read after power-on: the line would report a hit, and 512 bytes of ROM fill
+; would be served to CP/M as disk data.  The IOC failure record's reserved bytes
+; are explicit zeros for the same reason.
+	.area CODE (ABS)
+	.org SD_DEBLOCK_TAG
+SD_DEBLOCK_TAG_START:
+	.db 0				; sd_deblock_valid  -- invalid at cold boot
+	.db 0				; sd_deblock_unit
+	.dw 0				; sd_deblock_block
+	.dw 0				; sd_deblock_want
+	.db 0				; sd_deblock_quarter
+	.dw 0				; sd_deblock_echo
+SD_DEBLOCK_TAG_IMAGE_END:
+
+	.area CODE (ABS)
 	.org CBIOS_SD_PROBE_CODE_BASE
 
 SD_PROBE_CODE_START:
@@ -515,6 +779,12 @@ sd_storage_probe:
 	jr sd_probe_store_result
 
 sd_probe_failed:
+	; The card did not answer.  Whatever the line holds came from a card that
+	; may now be a different one, so drop it -- this is the media event the
+	; unit/block tag cannot cover.  Only on FAILURE: invalidating on every
+	; successful probe would drop the line on each SELDSK, and CP/M selects a
+	; drive before essentially every BDOS file operation.
+	call sd_deblock_invalidate
 	ld de,#0x0000			; no DPH: drive unavailable
 ; In: DE = DPH to return, or zero for an unavailable drive.
 ; Out: saved SELDSK HL replaced with DE.  Clobbers HL; foreground only.
