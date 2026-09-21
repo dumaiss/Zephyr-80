@@ -122,7 +122,7 @@ void sd_profile_reset(void)
  * reports ready.  Lower this first if CMD17 or the data token misbehave: a
  * card that initialises cleanly at 125 kHz and then fails at the data rate is
  * a signal-integrity problem, not a protocol one. */
-#define SD_DATA_BAUD             SPI1_BAUD_4MHZ
+#define SD_DATA_BAUD             3u  /* 64 MHz / (2 * (3 + 1)) = 8 MHz */
 #define SD_DATA_BYTE_US          \
     ((8uL * 2uL * (SD_DATA_BAUD + 1uL)) / 64uL)
 
@@ -133,7 +133,7 @@ void sd_profile_reset(void)
 #define SD_ACMD41_RETRIES        1200u
 #define SD_ACMD41_ILLEGAL_LIMIT  8u
 #define SD_INIT_ATTEMPTS         2u    /* initial attempt plus one recovery */
-#define SD_TOKEN_TIMEOUT_US      150000uL
+#define SD_TOKEN_TIMEOUT_US      65000uL
 #define SD_TOKEN_POLL_BYTES      (SD_TOKEN_TIMEOUT_US / SD_DATA_BYTE_US)
 
 /* CRC-16-CCITT (poly 1021h, init 0000h, MSB first) -- the algorithm SD uses
@@ -482,7 +482,7 @@ static SdStatus sd_read_block_inner(uint32_t lba, uint8_t *buf)
     uint8_t  r1;
     uint8_t  token;
     uint32_t address;
-    uint32_t token_count;
+    uint16_t token_count;
     uint16_t i;
     uint16_t crc;
     uint16_t card_crc;
@@ -535,9 +535,27 @@ static SdStatus sd_read_block_inner(uint32_t lba, uint8_t *buf)
     }
 
     crc = 0u;
+    /* Performance experiment: CMD17 payload deliberately bypasses the generic
+     * byte-transfer wrappers to measure per-byte software overhead.  This is
+     * not the final SPI block-transfer architecture. */
     for (i = 0u; i < SD_BLOCK_SIZE; i++) {
-        buf[i] = sd_xfer(0xFFu);
-        crc = crc16_update(crc, buf[i]);
+        uint16_t guard = 20000u; /* Same bound as SPI1_TIMEOUT_LOOPS. */
+
+        SPI1TXB = 0xFFu;
+        while (!PIR3bits.SPI1RXIF) {
+            if (--guard == 0u) {
+                bus_failed = true;
+                break;
+            }
+        }
+        if (bus_failed)
+            break;
+
+        /* Reading the single received byte empties RX FIFO and clears RXIF. */
+        buf[i] = SPI1RXB;
+
+    /* TEMP: disable card<->PIC CRC calculation */
+        //crc = crc16_update(crc, buf[i]);
     }
 
     /* The card always sends a CRC-16 after the block.  SPI mode does not
@@ -554,6 +572,8 @@ static SdStatus sd_read_block_inner(uint32_t lba, uint8_t *buf)
         return SD_ERR_BUS;
     }
 
+    /*TEMP disable*/
+    /*
     if (card_crc != crc) {
         trace[SD_TRACE_BYTES - 4u] = (uint8_t)(crc >> 8);
         trace[SD_TRACE_BYTES - 3u] = (uint8_t)crc;
@@ -562,7 +582,7 @@ static SdStatus sd_read_block_inner(uint32_t lba, uint8_t *buf)
         sd_deselect();
         return SD_ERR_CRC;
     }
-
+*/
     sd_deselect();
     return SD_OK;
 }

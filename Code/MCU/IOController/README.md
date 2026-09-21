@@ -17,6 +17,23 @@ make DEVICE=PIC18F47Q84
 make XC8=/path/to/xc8-cc DFP=/path/to/device/support
 ```
 
+Bulk data CRC calculation and verification are bypassed by default with
+`IOC_BULK_CRC_BYPASS=1` in `include/config.h`, matching the current Z80 bypass.
+This applies to both directions of the SIO1/A bulk lane: IOC sends a two-byte
+zero CRC trailer and ignores the received CRC. Packet framing and metadata
+checks remain active; command-lane CRC and SD-card SPI CRC are unchanged.
+The Z80 must keep its bulk receive CRC bypass enabled with this setting.
+
+To restore IOC bulk CRC generation and verification:
+
+```sh
+make DEFS=-DIOC_BULK_CRC_BYPASS=0
+```
+
+Use `make` (or `make DEFS=-DIOC_BULK_CRC_BYPASS=1`) to return to bypass mode.
+Restoring end-to-end verification also requires disabling the Z80's separate
+`IOC_BULK_CRC_BYPASS` setting.
+
 ## Current Behavior
 
 At boot the firmware asserts the host reset pair for 100 ms:

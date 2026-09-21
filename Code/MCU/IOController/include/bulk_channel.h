@@ -9,7 +9,9 @@
  *
  * The two SIO channels are one transport with two lanes.  SIO1/B carries the
  * command/READY lifecycle, while SIO1/A carries larger DATA.  Both use the
- * same A5/5A common packet, metadata checks, CRC, and persistent External Sync.
+ * same A5/5A common packet, metadata checks, and persistent External Sync.
+ * Bulk CRC generation/checking is optional via IOC_BULK_CRC_BYPASS in config.h;
+ * the two trailer bytes remain on the wire even when bypassed.
  *
  * Lifecycle, driven from the command channel:
  *

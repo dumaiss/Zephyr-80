@@ -92,6 +92,7 @@
  * BULK LANE ONLY.  sio_link_crc16_update stays MSB-first for the command lane,
  * which is software on both ends and unchanged.
  */
+#if !IOC_BULK_CRC_BYPASS
 static const uint16_t bulk_crc_table[256] = {
     0x0000u, 0x1189u, 0x2312u, 0x329Bu, 0x4624u, 0x57ADu, 0x6536u, 0x74BFu,
     0x8C48u, 0x9DC1u, 0xAF5Au, 0xBED3u, 0xCA6Cu, 0xDBE5u, 0xE97Eu, 0xF8F7u,
@@ -131,6 +132,7 @@ static uint16_t bulk_crc_update(uint16_t crc, uint8_t data)
 {
     return (uint16_t)((crc >> 8) ^ bulk_crc_table[(uint8_t)((crc ^ data) & 0xFFu)]);
 }
+#endif
 
 /* The bulk lane runs SPI2 faster than the command lane.  SCK = 64 MHz /
  * (2 * (BAUD+1)), so BAUD 15 gives 2 MHz and 4 us of clocking per byte, against
@@ -591,15 +593,25 @@ static bool bulk_run_send(void)
     /* Header setup
      * is fixed cost; the 512-byte payload below updates CRC while SPI2 is
      * already shifting the same byte, removing the old complete pre-pass. */
+#if !IOC_BULK_CRC_BYPASS
     crc = sio_link_crc16_update(crc, (uint8_t)packet_length);
+#endif
     if (ok) ok = bulk_send_packet_byte((uint8_t)packet_length);
+#if !IOC_BULK_CRC_BYPASS
     crc = sio_link_crc16_update(crc, (uint8_t)(packet_length >> 8));
+#endif
     if (ok) ok = bulk_send_packet_byte((uint8_t)(packet_length >> 8));
+#if !IOC_BULK_CRC_BYPASS
     crc = sio_link_crc16_update(crc, armed_type);
+#endif
     if (ok) ok = bulk_send_packet_byte(armed_type);
+#if !IOC_BULK_CRC_BYPASS
     crc = sio_link_crc16_update(crc, armed_sequence);
+#endif
     if (ok) ok = bulk_send_packet_byte(armed_sequence);
+#if !IOC_BULK_CRC_BYPASS
     crc = sio_link_crc16_update(crc, armed_status);
+#endif
     if (ok) ok = bulk_send_packet_byte(armed_status);
 
     payload = armed_buf;
@@ -611,7 +623,9 @@ static bool bulk_run_send(void)
          * CRC work.  Direct register access avoids two calls, a pointer
          * argument and a 16-bit timeout setup on every payload byte. */
         SPI2TXB = value;
+#if !IOC_BULK_CRC_BYPASS
         crc = sio_link_crc16_update(crc, value);
+#endif
 
         guard = BULK_SPI_TIMEOUT_POLLS;
         while (!PIR5bits.SPI2RXIF) {
@@ -632,7 +646,8 @@ static bool bulk_run_send(void)
         remaining--;
     }
 
-    /* MSB-first and high byte first: THE HOST'S RECEIVE IS STILL SOFTWARE.
+    /* Bypass sends two zero bytes to preserve the trailer and flush clocks.
+     * Otherwise MSB-first and high byte first: THE HOST'S RECEIVE IS STILL SOFTWARE.
      * Only its transmit uses the SIO's hardware.  The two directions are
      * independent and must not be changed together by reflex -- doing exactly
      * that is what took B: out. */
@@ -688,8 +703,9 @@ static bool bulk_run_receive(void)
     uint16_t bit_index;
     uint16_t window;
     uint16_t length;
+#if !IOC_BULK_CRC_BYPASS
     uint16_t crc;
-    uint16_t wire_crc;
+#endif
     /* Hoisted from the header-parse block so the CRC probe below can see them. */
     uint16_t declared;
     uint8_t  type;
@@ -793,6 +809,7 @@ static bool bulk_run_receive(void)
             return false;
         }
 
+#if !IOC_BULK_CRC_BYPASS
         /* The host arms its generator before its first byte leaves, so its
          * coverage is the whole transmission: the sacrificial lead-in, both
          * preamble bytes, then header and payload.  The lead-in never arrives
@@ -813,14 +830,18 @@ static bool bulk_run_receive(void)
         crc = bulk_crc_update(crc, type);
         crc = bulk_crc_update(crc, sequence);
         crc = bulk_crc_update(crc, status);
+#endif
     }
 
     bit_index = (uint16_t)(bit_index + 40u);
     for (i = 0u; i < length; i++) {
         armed_rx_buf[i] = rx_wire_byte((uint16_t)(bit_index + (i * 8u)));
+#if !IOC_BULK_CRC_BYPASS
         crc = bulk_crc_update(crc, armed_rx_buf[i]);
+#endif
     }
 
+#if !IOC_BULK_CRC_BYPASS
     /* Feed the trailer back through in the order it arrived and require a zero
      * residue -- "An error-free block resolves to zero".  That is immune to
      * whichever byte order the SIO's underrun append emits. */
@@ -829,7 +850,6 @@ static bool bulk_run_receive(void)
         uint8_t t1 = rx_wire_byte((uint16_t)(bit_index + ((length + 1u) * 8u)));
         crc = bulk_crc_update(crc, t0);
         crc = bulk_crc_update(crc, t1);
-        wire_crc = crc;
     }
 
     if (crc != 0u) {
@@ -841,7 +861,9 @@ static bool bulk_run_receive(void)
         return false;
     }
 
-    /* The transport phase is complete once the packet and CRC are accepted.
+#endif
+
+    /* The transport phase is complete once the packet and optional CRC are accepted.
      * Release /CTSA before the potentially slow storage commit: the host's
      * next IOCALL polls COMMAND_READY (/DCDB), which remains deasserted until
      * service_command_request() returns after this commit.  Keeping /CTSA low

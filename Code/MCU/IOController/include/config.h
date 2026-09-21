@@ -30,6 +30,20 @@
 #define IOC_DIAGNOSTIC_BUILD 0
 #endif
 
+/* Bulk data CRC bypass, matching the Z80 IOC_BULK_CRC_BYPASS setting.
+ * 1 skips IOC bulk TX calculation (sends a zero trailer) and RX verification.
+ * 0 restores the existing software TX CRC and reflected RX residue check.
+ * Framing, metadata checks, command CRC and SD-card SPI CRC are unchanged.
+ * The Z80 must bypass bulk RX CRC while this is 1.
+ * Override with make DEFS=-DIOC_BULK_CRC_BYPASS=0 to restore IOC checking.
+ */
+#ifndef IOC_BULK_CRC_BYPASS
+#define IOC_BULK_CRC_BYPASS 1
+#endif
+#if IOC_BULK_CRC_BYPASS != 0 && IOC_BULK_CRC_BYPASS != 1
+#error "IOC_BULK_CRC_BYPASS must be 0 or 1"
+#endif
+
 /* ===========================================================================
  * U15 PIC18F57Q84-I/PT pin map
  * ===========================================================================

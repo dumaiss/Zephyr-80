@@ -24,7 +24,10 @@ foreach(_ioc_target
         IOController_default_default_XC8_assemble
         IOController_default_default_XC8_assemblePreprocess)
     if(TARGET ${_ioc_target})
-        target_include_directories(${_ioc_target} PRIVATE "${_ioc_include_dir}")
+        target_include_directories(${_ioc_target} PRIVATE
+            "${_ioc_include_dir}"
+            "${_ioc_project_dir}/third_party/tinyusb/src"
+            "${_ioc_project_dir}/third_party/fatfs")
     endif()
 endforeach()
 
@@ -46,3 +49,23 @@ if(TARGET IOController_default_default_XC8_compile)
             "${_ioc_controller_latch_source}")
     endif()
 endif()
+
+# Match the normal Makefile build: enable shared-filesystem commands and use
+# the hybrid stack required by the firmware's reentrant call paths. Remove
+# MPLAB's default -O0 so XC8 uses its normal default optimization, as make does.
+if(TARGET IOController_default_default_XC8_compile)
+    target_compile_definitions(IOController_default_default_XC8_compile
+        PRIVATE IOC_FS_COMMANDS=1)
+endif()
+get_property(_ioc_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_ioc_target IN LISTS _ioc_targets)
+    foreach(_ioc_option_property COMPILE_OPTIONS LINK_OPTIONS)
+        get_target_property(_ioc_options ${_ioc_target} ${_ioc_option_property})
+        if(_ioc_options)
+            list(FILTER _ioc_options EXCLUDE REGEX "^-mstack=|^-O0$")
+            list(APPEND _ioc_options "-mstack=hybrid:512:0:0")
+            set_property(TARGET ${_ioc_target} PROPERTY
+                ${_ioc_option_property} "${_ioc_options}")
+        endif()
+    endforeach()
+endforeach()

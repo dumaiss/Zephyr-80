@@ -1,0 +1,26 @@
+{
+    "folders": [
+        {
+            "name": "IOController",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "memory-inspector.debugTypes": [
+            "arm-debugger",
+            "embedded-debug",
+            "gdb",
+            "mplab-core-da",
+            "renesas-amalgamator",
+            "renesas-cloud-jlink",
+            "renesas-hardware",
+            "renesas-rcar-linux",
+            "renesas-simulator"
+        ],
+        "mplab.clangd.compileCommandsDir": "${workspaceFolder}/_build/IOController/default",
+        "mplab.clangd.arguments": [
+            "--header-insertion=never"
+        ],
+        "mplab.clangd.path": "/opt/microchip/xc8/v3.10/bin/xc8-clangd"
+    }
+}
