@@ -364,6 +364,45 @@ fat_fs2_close:
 	ld a,#FS2_RSP_CLOSE
 	jp fat_exchange
 
+; A = FS2 command, HL = packed 8.3 component.  Serves UNLINK, MKDIR and RMDIR,
+; which differ only in the command byte; every FS2 response class is its
+; command plus 80h.
+fat_fs2_name_op:
+	push af
+	push hl
+	call fat_zero_frames
+	pop hl
+	ld de,#(FAT_TX + IOC_OFF_PAYLOAD)
+	ld bc,#FS2_NAME_BYTES
+	ldir
+	ld a,#FS2_NAME_BYTES
+	ld (FAT_TX + IOC_OFF_LEN),a
+	pop af
+	ld (FAT_TX),a
+	add a,#0x80
+	jp fat_exchange
+
+; HL = packed source name, DE = packed destination name.  Both resolve against
+; the same current resolver path, so this renames within one directory.
+fat_fs2_rename:
+	push de
+	push hl
+	call fat_zero_frames
+	ld a,#FS2_CMD_RENAME
+	ld (FAT_TX),a
+	ld a,#(2 * FS2_NAME_BYTES)
+	ld (FAT_TX + IOC_OFF_LEN),a
+	pop hl
+	ld de,#(FAT_TX + IOC_OFF_PAYLOAD)
+	ld bc,#FS2_NAME_BYTES
+	ldir
+	pop hl
+	ld de,#(FAT_TX + IOC_OFF_PAYLOAD + FS2_NAME_BYTES)
+	ld bc,#FS2_NAME_BYTES
+	ldir
+	ld a,#FS2_RSP_RENAME
+	jp fat_exchange
+
 ; DE:HL = byte offset, BC = requested length, IX = destination.
 ; Returns A=0 and BC=actual bytes, or A=status.
 fat_fs2_read:
@@ -1465,6 +1504,14 @@ fat_native_entry:
 	jp z,fat_native_sync
 	cp #ZNATIVE_TRUNCATE
 	jp z,fat_native_truncate
+	cp #ZNATIVE_DELETE
+	jp z,fat_native_delete
+	cp #ZNATIVE_RENAME
+	jp z,fat_native_rename
+	cp #ZNATIVE_MKDIR
+	jp z,fat_native_mkdir
+	cp #ZNATIVE_RMDIR
+	jp z,fat_native_rmdir
 fat_native_bad:
 	ld a,#0xff
 	jp fat_native_return
@@ -1968,6 +2015,65 @@ fat_native_truncate_result:
 	pop af
 	jp fat_native_return
 
+; The controller closes every FS2 file slot before it mutates the directory,
+; because FF_FS_LOCK is 0 there and FatFs will not stop an unlink or rename of
+; a file something still holds open.  The tokens on this side are therefore
+; dead whatever the outcome, and saying so here keeps a later operation from
+; presenting a token the controller has already retired.
+fat_native_forget_slots:
+	xor a
+	ld (fat_native_active),a
+	ld (fat_native_active + 1),a
+	ld (fat_native_modes),a
+	ld (fat_native_modes + 1),a
+	ret
+
+fat_native_delete:
+	ld a,#FS2_CMD_UNLINK
+	jr fat_native_name_op
+fat_native_mkdir:
+	ld a,#FS2_CMD_MKDIR
+	jr fat_native_name_op
+fat_native_rmdir:
+	ld a,#FS2_CMD_RMDIR
+fat_native_name_op:
+	ld (fat_native_op_cmd),a
+	call fat_check_write_protect
+	jp nz,fat_native_return
+	ld a,#1
+	call fat_fs2_path
+	jp nz,fat_native_return
+	call fat_native_name
+	ld a,(fat_native_op_cmd)
+	call fat_fs2_name_op
+	jr fat_native_mutate_result
+
+; Source in the descriptor's name field, destination at ZNATIVE_OFF_NAME2.
+fat_native_rename:
+	call fat_check_write_protect
+	jp nz,fat_native_return
+	ld a,#1
+	call fat_fs2_path
+	jp nz,fat_native_return
+	call fat_native_name
+	push hl
+	ld hl,(fat_native_desc)
+	ld de,#ZNATIVE_OFF_NAME2
+	add hl,de
+	ex de,hl			; DE = destination name
+	pop hl				; HL = source name
+	call fat_fs2_rename
+fat_native_mutate_result:
+	; A directory mutation whose commit is unknown must never be replayed.
+	cp #FS2_STATUS_TRANSPORT
+	jr nz,fat_native_mutate_known
+	ld a,#FS2_STATUS_UNKNOWN_WRITE
+fat_native_mutate_known:
+	push af
+	call fat_native_forget_slots
+	pop af
+	jp fat_native_return
+
 fat_native_reopen:
 	ld hl,(fat_native_desc)
 	ld de,#ZNATIVE_OFF_HANDLE
@@ -2311,6 +2417,8 @@ fat_native_positions:
 	.ds 8
 fat_native_pos_ptr:
 	.dw 0x0000
+fat_native_op_cmd:
+	.db 0
 fat_native_slot_index:
 	.db 0x00
 fat_native_open_mode:

@@ -450,7 +450,7 @@ static bool is_command_class(uint8_t value)
            (value == CMD_VOL_INFO)
 #if IOC_FS_COMMANDS
            || (value >= CMD_FS_OPENDIR && value <= CMD_FS_SELFTEST)
-           || (value >= CMD_FS2_CAPS && value <= CMD_FS2_TRUNCATE)
+           || (value >= CMD_FS2_CAPS && value <= CMD_FS2_RMDIR)
 #endif
            ;
     /* The CMD_FS_* block (20h-28h) follows IOC_FS_COMMANDS, which the Makefile

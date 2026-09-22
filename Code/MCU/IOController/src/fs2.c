@@ -312,7 +312,9 @@ void handler_fs2_caps(const IocFrame *request, IocFrame *reply)
 #if FF_FS_READONLY
     flags |= IOC_FS2_CAP_READ_ONLY;
 #else
-    flags |= IOC_FS2_CAP_WRITE | IOC_FS2_CAP_TRUNCATE;
+    flags |= IOC_FS2_CAP_WRITE | IOC_FS2_CAP_TRUNCATE
+           | IOC_FS2_CAP_UNLINK | IOC_FS2_CAP_RENAME
+           | IOC_FS2_CAP_MKDIR | IOC_FS2_CAP_RMDIR;
 #endif
     reply_init(request, reply, RSP_FS2_CAPS, IOC_STATUS_OK,
                IOC_FS2_CAP_REPLY_LEN);
@@ -770,6 +772,111 @@ void handler_fs2_write(const IocFrame *request, IocFrame *reply)
                              reply->bytes[IOC_OFF_READY_XFER_ID],
                              CMD_FS2_WRITE, request->bytes[IOC_OFF_SEQ],
                              commit_fs2_write);
+#endif
+}
+
+#if !FF_FS_READONLY
+/* FF_FS_LOCK is 0, so FatFs will not stop a caller from unlinking or renaming
+ * a file it still has open -- its own documentation says the application must
+ * prevent that or the volume gets corrupted.  FS2 file handles are declared
+ * opportunistic, and handler_fs_delete does the same thing for /SHARED, so
+ * close them all rather than try to work out which one names this path.  A
+ * caller that had uncommitted data lost nothing it had not already written. */
+static void close_all_files(void)
+{
+    uint8_t i;
+    for (i = 0u; i < IOC_FS2_FILE_SLOTS; ++i) {
+        if (files[i].open) {
+            (void)f_close(&files[i].fil);
+            files[i].open = false;
+            files[i].writable = false;
+            files[i].position = 0uL;
+        }
+    }
+}
+
+/* UNLINK, MKDIR and RMDIR differ only in the FatFs call and the reply class. */
+static void namespace_op(const IocFrame *request, IocFrame *reply,
+                         uint8_t cls, uint8_t op)
+{
+    char path[FS2_PATH_MAX + 1u];
+    FATFS *fs;
+    uint8_t status = need_fs(&fs);
+    (void)fs;
+
+    if ((status == IOC_STATUS_OK) &&
+        !make_path(path, &request->bytes[IOC_OFF_FS2_NAME], false))
+        status = IOC_STATUS_FS2_BAD_NAME;
+    if (status == IOC_STATUS_OK) {
+        if (op == CMD_FS2_MKDIR) {
+            status = map_result(f_mkdir(path));
+        } else {
+            close_all_files();
+            status = map_result(f_unlink(path));
+        }
+    }
+    reply_init(request, reply, cls, status, 0u);
+}
+#endif
+
+void handler_fs2_unlink(const IocFrame *request, IocFrame *reply)
+{
+#if FF_FS_READONLY
+    reply_init(request, reply, RSP_FS2_UNLINK,
+               IOC_STATUS_FS2_READ_ONLY, 0u);
+#else
+    namespace_op(request, reply, RSP_FS2_UNLINK, CMD_FS2_UNLINK);
+#endif
+}
+
+void handler_fs2_mkdir(const IocFrame *request, IocFrame *reply)
+{
+#if FF_FS_READONLY
+    reply_init(request, reply, RSP_FS2_MKDIR,
+               IOC_STATUS_FS2_READ_ONLY, 0u);
+#else
+    namespace_op(request, reply, RSP_FS2_MKDIR, CMD_FS2_MKDIR);
+#endif
+}
+
+/* f_unlink removes an empty directory too, and reports FR_DENIED when it is
+ * not empty; map_result turns that into the read-only/denied status. */
+void handler_fs2_rmdir(const IocFrame *request, IocFrame *reply)
+{
+#if FF_FS_READONLY
+    reply_init(request, reply, RSP_FS2_RMDIR,
+               IOC_STATUS_FS2_READ_ONLY, 0u);
+#else
+    namespace_op(request, reply, RSP_FS2_RMDIR, CMD_FS2_RMDIR);
+#endif
+}
+
+void handler_fs2_rename(const IocFrame *request, IocFrame *reply)
+{
+#if FF_FS_READONLY
+    reply_init(request, reply, RSP_FS2_RENAME,
+               IOC_STATUS_FS2_READ_ONLY, 0u);
+#else
+    char from[FS2_PATH_MAX + 1u];
+    char to[FS2_PATH_MAX + 1u];
+    FATFS *fs;
+    uint8_t status = need_fs(&fs);
+    FILINFO info;
+    (void)fs;
+
+    if ((status == IOC_STATUS_OK) &&
+        (!make_path(from, &request->bytes[IOC_OFF_FS2_RENAME_FROM], false) ||
+         !make_path(to, &request->bytes[IOC_OFF_FS2_RENAME_TO], false)))
+        status = IOC_STATUS_FS2_BAD_NAME;
+    /* f_rename reports FR_DENIED for an existing destination, which maps to
+     * the read-only status and reads as a permission problem.  Say EXISTS. */
+    if ((status == IOC_STATUS_OK) && (f_stat(to, &info) == FR_OK))
+        status = IOC_STATUS_FS2_EXISTS;
+    if (status == IOC_STATUS_OK) {
+        close_all_files();
+        status = map_result(f_rename(from, to));
+    }
+    reply_init(request, reply, RSP_FS2_RENAME, status, 0u);
 #endif
 }
 

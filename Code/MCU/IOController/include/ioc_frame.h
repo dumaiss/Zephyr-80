@@ -204,6 +204,10 @@
 #define CMD_FS2_WRITE         0x3E
 #define CMD_FS2_SYNC          0x3F
 #define CMD_FS2_TRUNCATE      0x40
+#define CMD_FS2_UNLINK        0x41
+#define CMD_FS2_RENAME        0x42
+#define CMD_FS2_MKDIR         0x43
+#define CMD_FS2_RMDIR         0x44
 
 /* Response class bytes (MCU → Z80) */
 #define RSP_PING             0x81
@@ -248,6 +252,10 @@
 #define RSP_FS2_WRITE        0xBE
 #define RSP_FS2_SYNC         0xBF
 #define RSP_FS2_TRUNCATE     0xC0
+#define RSP_FS2_UNLINK       0xC1
+#define RSP_FS2_RENAME       0xC2
+#define RSP_FS2_MKDIR        0xC3
+#define RSP_FS2_RMDIR        0xC4
 
 /* ---------------------------------------------------------------------------
  * FS2 capability contract (version 1)
@@ -275,6 +283,10 @@
 #define IOC_FS2_CAP_SPACE                0x0020u
 #define IOC_FS2_CAP_WRITE                0x0040u
 #define IOC_FS2_CAP_TRUNCATE             0x0080u
+#define IOC_FS2_CAP_UNLINK               0x0100u
+#define IOC_FS2_CAP_RENAME               0x0200u
+#define IOC_FS2_CAP_MKDIR                0x0400u
+#define IOC_FS2_CAP_RMDIR                0x0800u
 
 /* RSP_FS2_CAPS payload.  Multibyte fields are little-endian. */
 #define IOC_OFF_FS2_CAP_VERSION          (IOC_OFF_PAYLOAD + 0u)
@@ -314,6 +326,14 @@
 
 #define IOC_OFF_FS2_TRUNCATE_SIZE         (IOC_OFF_PAYLOAD + 2u) /* uint32 */
 #define IOC_FS2_TRUNCATE_REQ_LEN           6u
+
+/* UNLINK, MKDIR and RMDIR take a single packed name at IOC_OFF_FS2_NAME and
+ * reply with no payload.  RENAME takes the existing name followed by the new
+ * one; both are resolved against the same current resolver path, so this is a
+ * rename within one directory and never a cross-directory move. */
+#define IOC_OFF_FS2_RENAME_FROM          (IOC_OFF_PAYLOAD + 0u) /* 11 bytes */
+#define IOC_OFF_FS2_RENAME_TO            (IOC_OFF_PAYLOAD + IOC_NAME_LEN)
+#define IOC_FS2_RENAME_REQ_LEN           (2u * IOC_NAME_LEN)
 
 #define IOC_OFF_FS2_OPEN_TOKEN           (IOC_OFF_PAYLOAD + 0u) /* uint16 */
 #define IOC_OFF_FS2_OPEN_SIZE            (IOC_OFF_PAYLOAD + 2u) /* uint32 */
@@ -831,8 +851,13 @@
  *      which is diagnostic-only and bypasses volume mapping.
  *      Additive: a host that never sends 0Fh sees no change.
  */
-/* 73: STORAGE_PROFILE diagnostic page 2; no transport format change. */
-#define IOC_FW_LEVEL  73
+/* 73: STORAGE_PROFILE diagnostic page 2; no transport format change.
+ * 74: FS2 namespace commands 41h-44h (UNLINK/RENAME/MKDIR/RMDIR).  Additive,
+ *     but the level MUST move with them: the writable commands 3Dh-40h were
+ *     added without bumping it, so old and new firmware were indistinguishable
+ *     and a controller that silently drops an unadmitted frame looked exactly
+ *     like a host-side hang. */
+#define IOC_FW_LEVEL  74
 
 /* PING reply: a snapshot of the power handshake pins.
  *

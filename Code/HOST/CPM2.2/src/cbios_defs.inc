@@ -1470,6 +1470,10 @@ FS2_CMD_OPEN_RW                       = 0x3d
 FS2_CMD_WRITE                         = 0x3e
 FS2_CMD_SYNC                          = 0x3f
 FS2_CMD_TRUNCATE                      = 0x40
+FS2_CMD_UNLINK                        = 0x41
+FS2_CMD_RENAME                        = 0x42
+FS2_CMD_MKDIR                         = 0x43
+FS2_CMD_RMDIR                         = 0x44
 FS2_RSP_CAPS                          = 0xb0
 FS2_RSP_GENERATION                    = 0xb1
 FS2_RSP_RESET                         = 0xb2
@@ -1487,6 +1491,10 @@ FS2_RSP_OPEN_RW                       = 0xbd
 FS2_RSP_WRITE                         = 0xbe
 FS2_RSP_SYNC                          = 0xbf
 FS2_RSP_TRUNCATE                      = 0xc0
+FS2_RSP_UNLINK                        = 0xc1
+FS2_RSP_RENAME                        = 0xc2
+FS2_RSP_MKDIR                         = 0xc3
+FS2_RSP_RMDIR                         = 0xc4
 FS2_STATUS_EXISTS                     = 0x42
 FS2_STATUS_BAD_NAME                   = 0x43
 FS2_STATUS_READ_ONLY                  = 0x44
@@ -1524,6 +1532,10 @@ ZNATIVE_CHDIR                         = 0x09
 ZNATIVE_WRITE                         = 0x0a
 ZNATIVE_SYNC                          = 0x0b
 ZNATIVE_TRUNCATE                      = 0x0c
+ZNATIVE_DELETE                        = 0x0d
+ZNATIVE_RENAME                        = 0x0e
+ZNATIVE_MKDIR                         = 0x0f
+ZNATIVE_RMDIR                         = 0x10
 ZNATIVE_OPEN_READ                     = 0x00
 ZNATIVE_OPEN_UPDATE                   = 0x01
 ZNATIVE_OPEN_CREATE_NEW               = 0x02
@@ -1538,6 +1550,11 @@ ZNATIVE_OFF_LENGTH                    = 0x0a
 ZNATIVE_OFF_BUFFER                    = 0x0c
 ZNATIVE_OFF_RESULT                    = 0x10
 ZNATIVE_OFF_NAME                      = 0x12
+; RENAME's destination name.  The descriptor is 32 bytes and the source name
+; already runs to 1Ch, so a second 11-byte name will not fit after it.  RENAME
+; uses none of POSITION, LENGTH, BUFFER or RESULT, so the destination goes in
+; that span instead and the descriptor keeps its size and its version.
+ZNATIVE_OFF_NAME2                     = 0x06
 ZNATIVE_DESC_BYTES                    = 0x20
 
 ; CMD_VOL_INFO is how C: decides whether it exists.  It is a pure query -- it

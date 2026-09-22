@@ -306,14 +306,51 @@ do_op:
 	ld de,#desc
 	jp zb_native
 
-set_name_test:
+; HL = packed 8.3 name.
+set_name:
 	push bc
-	ld hl,#name_test
 	ld de,#desc + ZN_NAME
 	ld bc,#11
 	ldir
 	pop bc
 	ret
+
+set_name_test:
+	ld hl,#name_test
+	jr set_name
+
+; A = native op, HL = packed name.
+name_op:
+	ld (t_op),a
+	ld (t_buf),hl
+	call op_begin
+	ld hl,(t_buf)
+	call set_name
+	ld a,(t_op)
+	jp do_op
+
+; HL = source name, DE = destination name.
+rename_op:
+	ld (t_buf),hl
+	ld (t_len),de
+	call op_begin
+	ld hl,(t_buf)
+	call set_name
+	ld hl,(t_len)
+	ld de,#desc + ZN_NAME2
+	ld bc,#11
+	ldir
+	ld a,#ZN_RENAME
+	jp do_op
+
+; HL = packed name.  On success ZN_POSITION holds the size.
+stat_name:
+	ld (t_buf),hl
+	call op_begin
+	ld hl,(t_buf)
+	call set_name
+	ld a,#ZN_STAT
+	jp do_op
 
 ; A = open mode.
 open_mode:
@@ -432,13 +469,11 @@ check_position:
 ; STAT the test file; its size must equal HL.
 check_stat_size:
 	ld (t_expect),hl
-	call op_begin
-	call set_name_test
-	ld a,#ZN_STAT
-	call do_op
+	ld hl,#name_test
+	call stat_name
 	ret nz
 	ld hl,(t_expect)
-	jr check_position
+	jp check_position
 
 ; HL = expected, DE = actual, BC = length.
 cmp_block:
@@ -994,6 +1029,135 @@ t_wp_clear:
 	call BDOS
 	jp check_ro_clear
 
+; Namespace mutations run with no handle open: the controller closes every FS2
+; file slot before touching a directory, so an open handle would be retired
+; underneath the caller.
+t_mkdir:
+	ld hl,#name_dir
+	ld a,#ZN_MKDIR
+	jp name_op
+
+t_mkdir_twice:
+	ld hl,#name_dir
+	ld a,#ZN_MKDIR
+	call name_op
+	jr nz,t_mkdir_twice_check
+	ld a,#ERR_UNEXPECTED
+	or a
+	ret
+t_mkdir_twice_check:
+	cp #ZN_ERR_EXISTS
+	ret nz
+	xor a
+	ret
+
+t_rmdir:
+	ld hl,#name_dir
+	ld a,#ZN_RMDIR
+	jp name_op
+
+t_rmdir_gone:
+	ld hl,#name_dir
+	ld a,#ZN_RMDIR
+	call name_op
+	jr nz,t_rmdir_gone_check
+	ld a,#ERR_UNEXPECTED
+	or a
+	ret
+t_rmdir_gone_check:
+	cp #ZN_ERR_NOT_FOUND
+	ret nz
+	xor a
+	ret
+
+; Rename must move the file's contents, not just its directory entry, so the
+; size is checked under the new name before it is renamed back.
+t_rename:
+	ld hl,#name_test
+	ld de,#name_test2
+	call rename_op
+	ret nz
+	ld hl,#name_test2
+	call stat_name
+	ret nz
+	ld hl,#2048
+	jp check_position
+
+t_rename_back:
+	ld hl,#name_test2
+	ld de,#name_test
+	call rename_op
+	ret nz
+	ld hl,#2048
+	jp check_stat_size
+
+; Renaming onto a name that exists must be refused rather than destroying it.
+t_rename_onto:
+	call op_begin
+	ld a,#ZN_OPEN_CREATE_ALWAYS
+	ld (desc + ZN_FLAGS),a
+	ld hl,#name_test2
+	call set_name
+	ld a,#ZN_OPEN
+	call do_op
+	ret nz
+	ld a,(desc + ZN_HANDLE)
+	call close_handle
+	ret nz
+	ld hl,#name_test
+	ld de,#name_test2
+	call rename_op
+	jr nz,t_rename_onto_check
+	ld a,#ERR_UNEXPECTED
+	or a
+	jr t_rename_onto_clean
+t_rename_onto_check:
+	cp #ZN_ERR_EXISTS
+	jr z,t_rename_onto_ok
+	jr t_rename_onto_clean
+t_rename_onto_ok:
+	xor a
+t_rename_onto_clean:
+	push af
+	ld hl,#name_test2
+	ld a,#ZN_DELETE
+	call name_op
+	pop af
+	ret
+
+; The last two checks are also this program's cleanup: until DELETE existed,
+; every run left its test file behind.
+t_delete:
+	ld hl,#name_test
+	ld a,#ZN_DELETE
+	call name_op
+	ret nz
+	ld hl,#name_test
+	call stat_name
+	jr nz,t_delete_check
+	ld a,#ERR_UNEXPECTED
+	or a
+	ret
+t_delete_check:
+	cp #ZN_ERR_NOT_FOUND
+	ret nz
+	xor a
+	ret
+
+t_delete_gone:
+	ld hl,#name_test
+	ld a,#ZN_DELETE
+	call name_op
+	jr nz,t_delete_gone_check
+	ld a,#ERR_UNEXPECTED
+	or a
+	ret
+t_delete_gone_check:
+	cp #ZN_ERR_NOT_FOUND
+	ret nz
+	xor a
+	ret
+
 ; ZSDOS software write protection is an OS-level concept the FAT backend has
 ; to honour on its own, because these writes never reach ZSDOS.  Function 28
 ; also resets FAT context, so this runs last, with no handle open.
@@ -1055,10 +1219,19 @@ test_table:
 	.dw n_read_ro,       t_read_ro
 	.dw n_exhaust,       t_exhaust
 	.dw n_close,         t_close
+	.dw n_mkdir,         t_mkdir
+	.dw n_mkdir_twice,   t_mkdir_twice
+	.dw n_rmdir,         t_rmdir
+	.dw n_rmdir_gone,    t_rmdir_gone
+	.dw n_rename,        t_rename
+	.dw n_rename_back,   t_rename_back
+	.dw n_rename_onto,   t_rename_onto
 	.dw n_write_protect, t_write_protect
 	.dw n_wp_vector,     t_wp_vector
 	.dw n_wp_clear,      t_wp_clear
 	.dw n_wp_cleared,    t_wp_cleared
+	.dw n_delete,        t_delete
+	.dw n_delete_gone,   t_delete_gone
 	.dw 0,               0
 
 n_api:           .ascii "native api        $"
@@ -1085,6 +1258,15 @@ n_ro_write:      .ascii "write ro handle   $"
 n_read_ro:       .ascii "read ro handle    $"
 n_exhaust:       .ascii "handle exhaustion $"
 n_close:         .ascii "close             $"
+n_mkdir:         .ascii "mkdir             $"
+n_mkdir_twice:   .ascii "mkdir twice       $"
+n_rmdir:         .ascii "rmdir             $"
+n_rmdir_gone:    .ascii "rmdir gone        $"
+n_rename:        .ascii "rename            $"
+n_rename_back:   .ascii "rename back       $"
+n_rename_onto:   .ascii "rename onto file  $"
+n_delete:        .ascii "delete            $"
+n_delete_gone:   .ascii "delete gone       $"
 n_write_protect: .ascii "write protected   $"
 n_wp_vector:     .ascii "zsdos ro vector   $"
 n_wp_clear:      .ascii "clear protection  $"
@@ -1105,6 +1287,8 @@ txt_no_write: .ascii "Controller firmware has no FS2 write support; reflash it. 
 txt_wp_stuck: .ascii "\r\nWARNING: D: left write protected. Warm boot does NOT clear\r\nthis; power cycle to recover.\r\n$"
 
 name_test:    .ascii "ZFWTEST TMP"
+name_test2:   .ascii "ZFWTEST2TMP"
+name_dir:     .ascii "ZFWDIR     "
 
 entry_sp:   .dw 0
 tbl_ptr:    .dw 0

@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -31,6 +32,8 @@ enum {
     ZN_ERR_READ_ONLY = 0x44,
     ZN_ERR_NO_HANDLE = 0x48,
     ZN_ERR_RANGE = 0x4a,
+    ZN_ERR_NOT_DIR = 0x46,
+    ZN_ERR_IS_DIR = 0x47,
     ZN_ERR_UNKNOWN_WRITE = 0x4d,
 };
 
@@ -38,12 +41,13 @@ enum {
 enum {
     OFF_VERSION = 0, OFF_OP = 1, OFF_STATUS = 2, OFF_FLAGS = 3,
     OFF_HANDLE = 4, OFF_POSITION = 6, OFF_LENGTH = 10, OFF_BUFFER = 12,
-    OFF_RESULT = 16, OFF_NAME = 18,
+    OFF_RESULT = 16, OFF_NAME = 18, OFF_NAME2 = 6,
 };
 
 enum {
     OP_OPEN = 1, OP_CLOSE = 2, OP_READ = 3, OP_SEEK = 4, OP_TELL = 5,
     OP_STAT = 6, OP_WRITE = 10, OP_SYNC = 11, OP_TRUNCATE = 12,
+    OP_DELETE = 13, OP_RENAME = 14, OP_MKDIR = 15, OP_RMDIR = 16,
 };
 
 enum { MODE_READ = 0, MODE_UPDATE = 1, MODE_CREATE_NEW = 2, MODE_CREATE_ALWAYS = 3 };
@@ -70,6 +74,7 @@ struct Rig {
     CPU cpu{&memory};
     unsigned drive = 3;             // D: is the FAT-backed drive
     map<string, vector<unsigned char>> files;
+    set<string> dirs;
     Slot slots[SLOTS];
     bool write_protected = false;
     // zsdos.lib ships FLGBITS = 01101101B; bit 2 is "Read-Only Enable", and
@@ -226,12 +231,41 @@ struct Rig {
             slot.position = size;
             return ZN_OK;
         }
+        // The controller closes every file slot before a namespace mutation.
+        case OP_DELETE: case OP_RENAME: case OP_MKDIR: case OP_RMDIR: {
+            if (write_protected) return ZN_ERR_READ_ONLY;
+            const string name = name_at(descriptor);
+            for (Slot &slot : slots) slot = Slot();
+            if (op == OP_MKDIR) {
+                if (dirs.count(name) || files.count(name)) return ZN_ERR_EXISTS;
+                dirs.insert(name);
+                return ZN_OK;
+            }
+            if (op == OP_RMDIR) {
+                if (!dirs.count(name)) return ZN_ERR_NOT_FOUND;
+                dirs.erase(name);
+                return ZN_OK;
+            }
+            if (op == OP_DELETE) {
+                if (!files.count(name)) return ZN_ERR_NOT_FOUND;
+                files.erase(name);
+                return ZN_OK;
+            }
+            string to;
+            for (unsigned i = 0; i < 11; ++i) to.push_back(char(byte(descriptor + OFF_NAME2 + i)));
+            if (!files.count(name)) return ZN_ERR_NOT_FOUND;
+            if (files.count(to) || dirs.count(to)) return ZN_ERR_EXISTS;
+            files[to] = files[name];
+            files.erase(name);
+            return ZN_OK;
+        }
         case OP_STAT: {
             // STAT opens and closes internally, so it needs a free slot.
             bool free_slot = false;
             for (const Slot &slot : slots) free_slot = free_slot || !slot.active;
             if (!free_slot) return ZN_ERR_NO_HANDLE;
             const string name = name_at(descriptor);
+            if (dirs.count(name)) { put_dword(descriptor + OFF_POSITION, 0); return ZN_OK; }
             if (!files.count(name)) return ZN_ERR_NOT_FOUND;
             put_dword(descriptor + OFF_POSITION, files[name].size());
             put(descriptor + OFF_FLAGS, 0);
@@ -375,8 +409,11 @@ int main(int argc, char **argv) try {
     fresh.run();
     if (fresh.failures() != 0) report(fresh, "fresh");
     need(fresh.failures() == 0, "ZFW reported a failure on a fresh volume");
-    need(fresh.output.find("passed 28") != string::npos, "fresh run did not pass 28 checks");
-    need(fresh.files.count("ZFWTEST TMP") == 1, "ZFW did not leave its test file");
+    need(fresh.output.find("passed 37") != string::npos, "fresh run did not pass 37 checks");
+    // Checkpoint 2 gave it DELETE and RMDIR, so a run now cleans up after
+    // itself instead of leaving ZFWTEST.TMP on the card forever.
+    need(fresh.files.empty(), "ZFW left a file behind");
+    need(fresh.dirs.empty(), "ZFW left a directory behind");
     for (const Slot &slot : fresh.slots) need(!slot.active, "ZFW leaked a handle");
     need(!fresh.write_protected, "ZFW left the drive write protected");
 
@@ -387,7 +424,7 @@ int main(int argc, char **argv) try {
     repeat.run();
     if (repeat.failures() != 0) report(repeat, "repeat");
     need(repeat.failures() == 0, "ZFW reported a failure on a re-run");
-    need(repeat.output.find("passed 28") != string::npos, "repeat run did not pass 28 checks");
+    need(repeat.output.find("passed 37") != string::npos, "repeat run did not pass 37 checks");
 
     // Not the FAT-backed drive: refuse rather than write somewhere else.
     Rig wrong_drive(binary, symbols);

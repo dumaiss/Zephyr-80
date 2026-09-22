@@ -63,6 +63,14 @@ ZN_CHDIR		= 9
 ZN_WRITE		= 10
 ZN_SYNC			= 11
 ZN_TRUNCATE		= 12
+ZN_DELETE		= 13
+ZN_RENAME		= 14
+ZN_MKDIR		= 15
+ZN_RMDIR		= 16
+; RENAME's destination name.  The descriptor has no room for a second 11-byte
+; name after ZN_NAME, and RENAME uses none of POSITION/LENGTH/BUFFER/RESULT,
+; so the new name goes in that span.
+ZN_NAME2		= 6
 ZN_OPEN_READ		= 0
 ZN_OPEN_UPDATE		= 1
 ZN_OPEN_CREATE_NEW	= 2

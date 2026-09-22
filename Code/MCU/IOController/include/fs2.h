@@ -23,5 +23,9 @@ void handler_fs2_open_rw(const IocFrame *, IocFrame *);
 void handler_fs2_write(const IocFrame *, IocFrame *);
 void handler_fs2_sync(const IocFrame *, IocFrame *);
 void handler_fs2_truncate(const IocFrame *, IocFrame *);
+void handler_fs2_unlink(const IocFrame *, IocFrame *);
+void handler_fs2_rename(const IocFrame *, IocFrame *);
+void handler_fs2_mkdir(const IocFrame *, IocFrame *);
+void handler_fs2_rmdir(const IocFrame *, IocFrame *);
 
 #endif
