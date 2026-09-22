@@ -529,8 +529,11 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
         layout.error(
             f"FAT code reservation {xspan(fat_code_base, fat_code_limit)} is outside free bank-7 code space"
         )
-    if fat_code_limit - fat_code_base != 0x1000:
-        layout.error("FAT code reservation is not the declared 4 KiB fixed region")
+    # Grown to 6 KiB for Milestone 6's writable FCB personality.  This stays a
+    # fixed number rather than "whatever fits" on purpose: it is the tripwire
+    # that makes growing the region a decision someone took, not a drift.
+    if fat_code_limit - fat_code_base != 0x1800:
+        layout.error("FAT code reservation is not the declared 6 KiB fixed region")
     if not (pool_limit <= fat_code_base):
         layout.error("fixed FAT code overlaps the reclaimable resource/cache pool")
 

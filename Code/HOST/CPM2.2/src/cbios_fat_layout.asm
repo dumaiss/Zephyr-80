@@ -742,25 +742,29 @@ fat_dispatch_fcb:
 	cp #17
 	jp z,fat_bdos_search_first
 	cp #19
-	jr z,fat_bdos_readonly
+	jp z,fat_bdos_delete
 	cp #20
 	jp z,fat_bdos_read_seq
 	cp #21
-	jr z,fat_bdos_readonly
+	jp z,fat_bdos_write_seq
 	cp #22
-	jr z,fat_bdos_readonly
+	jp z,fat_bdos_make
 	cp #23
-	jr z,fat_bdos_readonly
+	jp z,fat_bdos_rename
+	; Function 30 stays refused.  FAT attribute projection was removed
+	; deliberately -- the semantics do not line up and it corrupted 8.3 names
+	; -- so there is nothing here for SET ATTRIBUTES to set, and claiming
+	; success would be a lie the caller cannot detect.
 	cp #30
 	jr z,fat_bdos_readonly
 	cp #33
 	jp z,fat_bdos_read_random
 	cp #34
-	jr z,fat_bdos_readonly
+	jp z,fat_bdos_write_random
 	cp #35
 	jp z,fat_bdos_file_size
 	cp #40
-	jr z,fat_bdos_readonly
+	jp z,fat_bdos_write_random_zf
 	cp #102
 	jr z,fat_bdos_readonly
 	cp #103
@@ -904,6 +908,42 @@ fat_open_fcb:
 	ex de,hl
 	call fat_fs2_open
 	pop de
+	ret
+
+; A = FS2 writable-open mode, DE = FCB.  The write-side twin of fat_open_fcb.
+; DE is preserved.
+fat_open_fcb_mode:
+	ld (fat_open_mode_save),a
+	push de
+	ld a,#1
+	call fat_fs2_path
+	pop de
+	ret nz
+	push de
+	inc de
+	ex de,hl
+	ld a,(fat_open_mode_save)
+	call fat_fs2_open_rw
+	pop de
+	ret
+
+; A missing @N directory is how an empty USER area is represented, so the
+; first file created in one has to materialise it.  USER 0 maps to the real
+; directory and needs nothing; an @N that already exists is success.
+fat_ensure_user_dir:
+	ld a,(fat_current_user)
+	or a
+	ret z
+	call fat_fs2_base
+	ret nz
+	call fat_make_user_component
+	ld hl,#fat_user_component
+	ld a,#FS2_CMD_MKDIR
+	call fat_fs2_name_op
+	ret z
+	cp #FS2_STATUS_EXISTS
+	ret nz
+	xor a
 	ret
 
 fat_bdos_open:
@@ -1085,6 +1125,364 @@ fat_read_error:
 	ld a,#0xff			; filesystem/handle/transport error, not EOF
 	or a
 	scf
+	ret
+
+; DE=FCB, HL=DMA, fat_record already selected.  Opens for update, writes the
+; one 128-byte record at that record's byte offset, and closes.  The close is
+; the flush, which is why function 16 has nothing left to do -- and why a
+; crash costs at most the record in flight.
+fat_write_record:
+	ld (fat_work_fcb),de
+	ld (fat_work_dma),hl
+	call fat_check_write_protect
+	jr nz,fat_write_error
+	ld de,(fat_work_fcb)
+	ld a,#FS2_OPEN_UPDATE
+	call fat_open_fcb_mode
+	jr nz,fat_write_status
+	; fat_fs2_write sends what is already staged in the common bulk buffer.
+	ld hl,(fat_work_dma)
+	ld de,#FAC_BULK_BUF
+	ld bc,#128
+	ldir
+	call fat_record_offset
+	ld bc,#128
+	call fat_fs2_write
+	push af
+	call fat_fs2_close
+	ld d,a				; CLOSE failure is independent of WRITE
+	pop af
+	or a
+	jr nz,fat_write_status
+	ld a,d
+	or a
+	jr nz,fat_write_error
+	xor a
+	scf
+	ret
+; A full disk is a normal CP/M result, not a failure of the machine, so it
+; gets its own code.  Everything else -- transport, media, an unknown commit
+; -- is a hard error the caller must not mistake for "disk full".
+fat_write_status:
+	cp #FS2_STATUS_NO_SPACE
+	jr nz,fat_write_error
+	ld a,#2				; no available data block
+	or a
+	scf
+	ret
+fat_write_error:
+	ld a,#0xff
+	or a
+	scf
+	ret
+
+fat_bdos_write_seq:
+	ld (fat_work_fcb),de
+	push hl
+	call fat_seq_record
+	pop hl
+	call fat_write_record
+	ret nz
+	ld de,(fat_work_fcb)
+	call fat_increment_seq
+	xor a
+	scf
+	ret
+
+fat_bdos_write_random:
+	push hl
+	push de
+	ld hl,#33
+	add hl,de
+	ld de,#fat_record
+	ld bc,#3
+	ldir
+	pop de
+	pop hl
+	jp fat_write_record
+
+; Function 40 differs from 34 only in guaranteeing that a gap it skips over
+; reads back as zeros.  FatFs extends a file by allocating clusters holding
+; whatever was on the card, so the gap is written out explicitly.
+fat_bdos_write_random_zf:
+	; The caller's record may BE the common bulk buffer: the facade stages a
+	; hidden DMA into FAC_DMA_BUF, and FAC_DMA_BUF is FAC_BULK_BUF.  The gap
+	; fill writes zeros through that same buffer, so the record has to be
+	; moved out of the way first or the fill destroys it and the record lands
+	; on the card as zeros.  Plain WRITE is unaffected: its copy to the bulk
+	; buffer is then a copy onto itself, which changes nothing.
+	push de
+	ld de,#fat_zf_save
+	ld bc,#128
+	ldir
+	pop de
+	push de
+	ld hl,#33
+	add hl,de
+	ld de,#fat_record
+	ld bc,#3
+	ldir
+	pop de
+	push de
+	call fat_zero_fill_gap
+	pop de
+	jr nz,fat_write_status
+	ld hl,#fat_zf_save
+	jp fat_write_record
+
+; DE = FCB, fat_record = the target record.  Writes zero records from the
+; file's current end up to (not including) the target, inside a single open.
+fat_zero_fill_gap:
+	ld (fat_work_fcb),de
+	call fat_check_write_protect
+	ret nz
+	ld de,(fat_work_fcb)
+	ld a,#FS2_OPEN_UPDATE
+	call fat_open_fcb_mode
+	ret nz
+	ld hl,#fat_record
+	ld de,#fat_zf_target
+	ld bc,#3
+	ldir
+	call fat_size_records
+	; Every gap record writes the same 128 bytes, so stage them once.
+	ld hl,#FAC_BULK_BUF
+	ld (hl),#0
+	ld d,h
+	ld e,l
+	inc de
+	ld bc,#127
+	ldir
+fat_zf_loop:
+	call fat_zf_remaining
+	jr z,fat_zf_done
+	ld hl,#fat_zf_rec
+	ld de,#fat_record
+	ld bc,#3
+	ldir
+	call fat_record_offset
+	ld bc,#128
+	call fat_fs2_write
+	jr nz,fat_zf_failed
+	ld hl,#fat_zf_rec
+	inc (hl)
+	jr nz,fat_zf_loop
+	inc hl
+	inc (hl)
+	jr nz,fat_zf_loop
+	inc hl
+	inc (hl)
+	jr fat_zf_loop
+fat_zf_done:
+	ld hl,#fat_zf_target
+	ld de,#fat_record
+	ld bc,#3
+	ldir
+	call fat_fs2_close
+	or a
+	ret
+fat_zf_failed:
+	push af
+	call fat_fs2_close
+	pop af
+	or a
+	ret
+
+; fat_zf_rec = ceil(fat_file_size / 128): the first record past the end.
+fat_size_records:
+	ld hl,(fat_file_size)
+	ld de,(fat_file_size + 2)
+	ld bc,#127
+	add hl,bc
+	jr nc,fat_size_rec_nc
+	inc de
+fat_size_rec_nc:
+	ld b,#7
+fat_size_rec_shift:
+	srl d
+	rr e
+	rr h
+	rr l
+	djnz fat_size_rec_shift
+	ld (fat_zf_rec),hl
+	ld a,e
+	ld (fat_zf_rec + 2),a
+	ret
+
+; Z when the gap is exhausted (fat_zf_rec >= fat_zf_target).
+fat_zf_remaining:
+	ld a,(fat_zf_target + 2)
+	ld b,a
+	ld a,(fat_zf_rec + 2)
+	cp b
+	jr c,fat_zf_more
+	jr nz,fat_zf_none
+	ld a,(fat_zf_target + 1)
+	ld b,a
+	ld a,(fat_zf_rec + 1)
+	cp b
+	jr c,fat_zf_more
+	jr nz,fat_zf_none
+	ld a,(fat_zf_target)
+	ld b,a
+	ld a,(fat_zf_rec)
+	cp b
+	jr c,fat_zf_more
+fat_zf_none:
+	xor a
+	ret
+fat_zf_more:
+	ld a,#1
+	or a
+	ret
+
+; MAKE creates the file empty, materialising the USER directory first if this
+; is the first file in one.  CREATE_ALWAYS matches CP/M: MAKE over an existing
+; name truncates it.
+fat_bdos_make:
+	ld (fat_work_fcb),de
+	call fat_check_write_protect
+	jp nz,fat_bdos_fail
+	call fat_ensure_user_dir
+	jp nz,fat_bdos_fail
+	ld de,(fat_work_fcb)
+	ld a,#FS2_OPEN_CREATE_ALWAYS
+	call fat_open_fcb_mode
+	jp nz,fat_bdos_fail
+	call fat_fs2_close
+	jp nz,fat_bdos_fail
+	ld de,(fat_work_fcb)
+	call fat_fcb_stamp_user
+	; The file is empty, so the first sequential write must land at record 0.
+	ld hl,#12
+	add hl,de
+	xor a
+	ld (hl),a			; EX
+	inc hl
+	ld (hl),a			; S1
+	inc hl
+	ld (hl),a			; S2
+	inc hl
+	ld (hl),a			; RC
+	ld hl,#32
+	add hl,de
+	ld (hl),a			; CR
+	xor a
+	scf
+	ret
+
+; RENAME takes the existing name at FCB+1 and the new one at FCB+17.  Both
+; resolve in the current directory; CP/M has no cross-directory rename.
+fat_bdos_rename:
+	ld (fat_work_fcb),de
+	call fat_check_write_protect
+	jp nz,fat_bdos_fail
+	call fat_search_reset
+	ld a,#1
+	call fat_fs2_path
+	jp nz,fat_bdos_fail
+	ld hl,(fat_work_fcb)
+	ld de,#17
+	add hl,de
+	ex de,hl			; DE = new name
+	ld hl,(fat_work_fcb)
+	inc hl				; HL = existing name
+	call fat_fs2_rename
+	jp nz,fat_bdos_fail
+	xor a
+	scf
+	ret
+
+; ERA takes ambiguous names, so DELETE enumerates and removes every match.
+; The directory is reopened for each one: FatFs makes no promise about
+; enumerating a directory while it is being modified, and the controller
+; closes its file slots on every unlink anyway.  This borrows
+; fat_search_pattern and fat_search_match, so it resets any SEARCH in
+; progress first -- removing entries would leave that enumeration pointing
+; into a directory that moved underneath it.
+fat_bdos_delete:
+	ld (fat_work_fcb),de
+	call fat_check_write_protect
+	jp nz,fat_bdos_fail
+	call fat_search_reset
+	ld hl,(fat_work_fcb)
+	inc hl
+	ld de,#fat_search_pattern
+	ld bc,#11
+	ldir
+	xor a
+	ld (fat_delete_count),a
+fat_delete_loop:
+	call fat_delete_find
+	jr nz,fat_delete_done
+	ld hl,#fat_delete_name
+	ld a,#FS2_CMD_UNLINK
+	call fat_fs2_name_op
+	jp nz,fat_bdos_fail
+	ld hl,#fat_delete_count
+	inc (hl)
+	jr nz,fat_delete_loop
+fat_delete_done:
+	ld a,(fat_delete_count)
+	or a
+	jp z,fat_bdos_fail
+	xor a
+	scf
+	ret
+
+; Z with fat_delete_name set when an entry matching fat_search_pattern exists.
+fat_delete_find:
+	ld a,#1
+	call fat_fs2_path
+	ret nz
+	call fat_zero_frames
+	ld a,#FS2_CMD_OPENDIR
+	ld (FAT_TX),a
+	ld a,#FS2_RSP_OPENDIR
+	call fat_exchange
+	ret nz
+	ld hl,(FAT_RX + IOC_OFF_PAYLOAD)
+	ld (fat_dir_token),hl
+fat_delete_scan:
+	call fat_zero_frames
+	ld a,#FS2_CMD_READDIR
+	ld (FAT_TX),a
+	ld a,#2
+	ld (FAT_TX + IOC_OFF_LEN),a
+	ld hl,(fat_dir_token)
+	ld (FAT_TX + IOC_OFF_PAYLOAD),hl
+	ld a,#FS2_RSP_READDIR
+	call fat_exchange
+	jr nz,fat_delete_scan_end
+	ld a,(FAT_RX + IOC_OFF_PAYLOAD + 11)
+	and #FS2_ATTR_DIR
+	jr nz,fat_delete_scan
+	call fat_search_match
+	jr nz,fat_delete_scan
+	ld hl,#(FAT_RX + IOC_OFF_PAYLOAD)
+	ld de,#fat_delete_name
+	ld bc,#11
+	ldir
+	call fat_delete_close_dir
+	xor a
+	ret
+fat_delete_scan_end:
+	call fat_delete_close_dir
+	ld a,#1
+	or a
+	ret
+fat_delete_close_dir:
+	push af
+	call fat_zero_frames
+	ld a,#FS2_CMD_CLOSEDIR
+	ld (FAT_TX),a
+	ld a,#2
+	ld (FAT_TX + IOC_OFF_LEN),a
+	ld hl,(fat_dir_token)
+	ld (FAT_TX + IOC_OFF_PAYLOAD),hl
+	ld a,#FS2_RSP_CLOSEDIR
+	call fat_exchange
+	pop af
 	ret
 
 fat_bdos_read_seq:
@@ -2419,6 +2817,18 @@ fat_native_pos_ptr:
 	.dw 0x0000
 fat_native_op_cmd:
 	.db 0
+fat_open_mode_save:
+	.db 0
+fat_delete_count:
+	.db 0
+fat_delete_name:
+	.ds 11
+fat_zf_target:
+	.ds 3
+fat_zf_rec:
+	.ds 3
+fat_zf_save:
+	.ds 128
 fat_native_slot_index:
 	.db 0x00
 fat_native_open_mode:

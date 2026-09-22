@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <array>
@@ -25,6 +26,17 @@ struct Rig {
     unsigned dir_index=0, dir_cookie=1, mock_dir_file_size=1024;
     vector<string> resolver;
     bool dir_open=false;
+    // A real file model for the writable cases.  The read-only cases above
+    // predate it and keep their synthetic mock_file_size behaviour, so
+    // use_file_model stays off for them.
+    bool use_file_model=false;
+    map<string,vector<unsigned char>> model;
+    set<string> model_dirs;
+    vector<string> listing; unsigned listing_at=0;
+    string open_name; unsigned xfer_id=0; unsigned write_status=0;
+    unsigned pending_write_off=0, pending_write_len=0;
+    unsigned unlinks=0, renames=0, mkdirs=0;
+    string last_rename_from, last_rename_to;
     bool fail_next_open=false, fail_next_read=false, fail_next_close=false;
     Rig(char *bin,char *syms){ifstream f(bin,ios::binary);f.read((char*)mem.get_mem(),65536);need(f.gcount()==65536,"image");ifstream n(syms);string k;unsigned v;while(n>>k>>v)s[k]=v;cpu.regs.SP.set_pair16(0xd800);}
     unsigned at(const string&k){return s.at(k);}
@@ -42,6 +54,17 @@ struct Rig {
         case 0x34: {string component;for(unsigned i=0;i<11;i++)component.push_back(char(mem.fetch_mem(tx+4+i)));resolver.push_back(component);reply(0xb4,0,0);break;} // PUSH
         case 0x35: { // OPEN_RO
             if(fail_next_open){fail_next_open=false;reply(0xb5,0x40,0);break;}
+            if(use_file_model){
+                string n;for(unsigned i=0;i<11;i++)n.push_back(char(mem.fetch_mem(tx+4+i)));
+                if(!model.count(n)){reply(0xb5,0x40,0);break;}
+                open_name=n;
+                slot=2;for(unsigned i=0;i<2;i++)if(!slot_open[i]){slot=i;break;}
+                if(slot==2){reply(0xb5,0x48,0);break;}
+                slot_open[slot]=true;if(++slot_cookie[slot]>255)slot_cookie[slot]=1;
+                token=(slot_cookie[slot]<<8)|(slot+1);opens++;
+                reply(0xb5,0,7);put16(rx+4,token);put32(rx+6,model[n].size());mem.store_mem(rx+10,0);
+                break;
+            }
             slot=2;for(unsigned i=0;i<2;i++)if(!slot_open[i]){slot=i;break;}
             if(slot==2){reply(0xb5,0x48,0);break;}
             slot_open[slot]=true;if(++slot_cookie[slot]>255)slot_cookie[slot]=1;
@@ -54,7 +77,8 @@ struct Rig {
             if(fail_next_read){fail_next_read=false;reply(0xb6,0x4e,0);break;}
             if(slot>=2||!slot_open[slot]||(token>>8)!=slot_cookie[slot]){reply(0xb6,0x48,0);break;}
             pending_offset=get32(tx+6);unsigned wanted=get16(tx+10);unsigned got=0;
-            if(pending_offset<mock_file_size)got=min(wanted,mock_file_size-pending_offset);
+            unsigned size=use_file_model?unsigned(model[open_name].size()):mock_file_size;
+            if(pending_offset<size)got=min(wanted,size-pending_offset);
             reads++;reply(0xb6,0,8);mem.store_mem(rx+4,1);mem.store_mem(rx+5,1);put16(rx+6,got);put32(rx+8,pending_offset);
             break;
         }
@@ -65,11 +89,76 @@ struct Rig {
             if(fail_next_close){fail_next_close=false;reply(0xb7,0x4e,0);break;}
             reply(0xb7,0,0);break;
         }
+        case 0x3d: { // OPEN_RW
+            unsigned mode=mem.fetch_mem(tx+4);
+            string n; for(unsigned i=0;i<11;i++) n.push_back(char(mem.fetch_mem(tx+5+i)));
+            open_name=n;
+            bool exists=model.count(n)!=0;
+            if(mode==1&&exists){reply(0xbd,0x42,0);break;}          // CREATE_NEW
+            if(mode==0&&!exists){reply(0xbd,0x40,0);break;}          // UPDATE
+            if(mode==2||!exists) model[n].clear();                   // CREATE_ALWAYS
+            slot=2;for(unsigned i=0;i<2;i++)if(!slot_open[i]){slot=i;break;}
+            if(slot==2){reply(0xbd,0x48,0);break;}
+            slot_open[slot]=true;if(++slot_cookie[slot]>255)slot_cookie[slot]=1;
+            token=(slot_cookie[slot]<<8)|(slot+1);opens++;max_open=max(max_open,live_slots());
+            reply(0xbd,0,7);put16(rx+4,token);put32(rx+6,model[n].size());mem.store_mem(rx+10,0);
+            break;
+        }
+        case 0x3e: { // WRITE: READY, then IOCBULKW, then XFER_STATUS
+            token=get16(tx+4);slot=(token&255)-1;
+            if(slot>=2||!slot_open[slot]||(token>>8)!=slot_cookie[slot]){reply(0xbe,0x48,0);break;}
+            pending_write_off=get32(tx+6);pending_write_len=get16(tx+10);
+            if(pending_write_len==0||pending_write_len>512){reply(0xbe,0x4a,0);break;}
+            xfer_id=(xfer_id%255)+1;
+            reply(0xbe,0,8);mem.store_mem(rx+4,xfer_id);mem.store_mem(rx+5,1);
+            put16(rx+6,pending_write_len);put32(rx+8,pending_write_off);
+            break;
+        }
+        case 0x06: // XFER_STATUS: DONE identity and result
+            reply(0x86,0,2);mem.store_mem(rx+4,xfer_id);mem.store_mem(rx+5,write_status);
+            break;
+        case 0x41: { // UNLINK
+            string n;for(unsigned i=0;i<11;i++)n.push_back(char(mem.fetch_mem(tx+4+i)));
+            for(bool&o:slot_open)o=false;
+            if(!model.count(n)){reply(0xc1,0x40,0);break;}
+            model.erase(n);unlinks++;reply(0xc1,0,0);break;
+        }
+        case 0x42: { // RENAME
+            string a,b;
+            for(unsigned i=0;i<11;i++)a.push_back(char(mem.fetch_mem(tx+4+i)));
+            for(unsigned i=0;i<11;i++)b.push_back(char(mem.fetch_mem(tx+15+i)));
+            for(bool&o:slot_open)o=false;
+            last_rename_from=a;last_rename_to=b;
+            if(!model.count(a)){reply(0xc2,0x40,0);break;}
+            if(model.count(b)){reply(0xc2,0x42,0);break;}
+            model[b]=model[a];model.erase(a);renames++;reply(0xc2,0,0);break;
+        }
+        case 0x43: { // MKDIR
+            string n;for(unsigned i=0;i<11;i++)n.push_back(char(mem.fetch_mem(tx+4+i)));
+            if(model_dirs.count(n)){reply(0xc3,0x42,0);break;}
+            model_dirs.insert(n);mkdirs++;reply(0xc3,0,0);break;
+        }
+        case 0x44: { // RMDIR
+            string n;for(unsigned i=0;i<11;i++)n.push_back(char(mem.fetch_mem(tx+4+i)));
+            if(!model_dirs.count(n)){reply(0xc4,0x40,0);break;}
+            model_dirs.erase(n);reply(0xc4,0,0);break;
+        }
         case 0x38: // OPENDIR
-            dir_open=true;dir_index=0;if(++dir_cookie>255)dir_cookie=1;reply(0xb8,0,2);put16(rx+4,(dir_cookie<<8)|1);break;
+            dir_open=true;dir_index=0;if(++dir_cookie>255)dir_cookie=1;
+            listing.clear();listing_at=0;
+            if(use_file_model) for(auto&f:model) listing.push_back(f.first);
+            reply(0xb8,0,2);put16(rx+4,(dir_cookie<<8)|1);break;
         case 0x39: { // READDIR: a directory first, then one ordinary file
             token=get16(tx+4);
             if(!dir_open||token!=((dir_cookie<<8)|1)){reply(0xb9,0x48,0);break;}
+            if(use_file_model){
+                if(listing_at>=listing.size()){reply(0xb9,0x41,0);break;}
+                const string n=listing[listing_at++];
+                reply(0xb9,0,16);
+                for(unsigned i=0;i<11;i++)mem.store_mem(rx+4+i,n[i]);
+                mem.store_mem(rx+15,0);put32(rx+16,model[n].size());
+                break;
+            }
             if(dir_index==0){const string n="TESTDIR    ";reply(0xb9,0,16);for(unsigned i=0;i<11;i++)mem.store_mem(rx+4+i,n[i]);mem.store_mem(rx+15,0x10);put32(rx+16,0);dir_index++;break;}
             if(dir_index==1){const string n="LESSON  MD ";reply(0xb9,0,16);for(unsigned i=0;i<11;i++)mem.store_mem(rx+4+i,n[i]);mem.store_mem(rx+15,0);put32(rx+16,mock_dir_file_size);dir_index++;break;}
             reply(0xb9,0x41,0);break;
@@ -79,8 +168,31 @@ struct Rig {
         }
         fake_return(0);
     }
-    void mock_iocbulk(){unsigned dst=cpu.regs.HL.get_pair16(),len=cpu.regs.DE.get_pair16();for(unsigned i=0;i<len;i++)mem.store_mem(dst+i,(pending_offset+i)&255);bulks++;fake_return(0);}
-    void call(const string&k){auto sp=cpu.regs.SP.get_pair16();mem.store_mem16(sp-2,0xd100);cpu.regs.SP.set_pair16(sp-2);cpu.regs.PC.set_pair16(at(k));unsigned b=400000;while(cpu.regs.PC.get_pair16()!=0xd100&&b--){auto pc=cpu.regs.PC.get_pair16();if(pc==at("IOCALL"))mock_iocall();else if(pc==at("IOCBULK"))mock_iocbulk();else cpu.execute();}need(b,"timeout "+k);need(cpu.regs.SP.get_pair16()==sp,"stack "+k);}
+    void mock_iocbulk(){
+        unsigned dst=cpu.regs.HL.get_pair16(),len=cpu.regs.DE.get_pair16();
+        for(unsigned i=0;i<len;i++){
+            unsigned v=(pending_offset+i)&255;
+            if(use_file_model){
+                const vector<unsigned char>&d=model[open_name];
+                v=(pending_offset+i<d.size())?d[pending_offset+i]:0;
+            }
+            mem.store_mem(dst+i,v);
+        }
+        bulks++;fake_return(0);
+    }
+    // Z80 -> MCU: the record the host staged in the common bulk buffer.
+    void mock_iocbulkw(){
+        unsigned src=cpu.regs.HL.get_pair16(),len=cpu.regs.DE.get_pair16();
+        vector<unsigned char>&d=model[open_name];
+        // Extending must NOT produce zeros here.  FatFs allocates clusters
+        // holding whatever was on the card, so filling with zeros would make
+        // function 40's guarantee untestable -- the gap would read back clean
+        // whether or not anything zeroed it.
+        if(d.size()<pending_write_off+len)d.resize(pending_write_off+len,0xCC);
+        for(unsigned i=0;i<len;i++)d[pending_write_off+i]=(unsigned char)mem.fetch_mem(src+i);
+        bulks++;fake_return(0);
+    }
+    void call(const string&k){auto sp=cpu.regs.SP.get_pair16();mem.store_mem16(sp-2,0xd100);cpu.regs.SP.set_pair16(sp-2);cpu.regs.PC.set_pair16(at(k));unsigned b=400000;while(cpu.regs.PC.get_pair16()!=0xd100&&b--){auto pc=cpu.regs.PC.get_pair16();if(pc==at("IOCALL"))mock_iocall();else if(pc==at("IOCBULK"))mock_iocbulk();else if(pc==at("IOCBULKW"))mock_iocbulkw();else cpu.execute();}need(b,"timeout "+k);need(cpu.regs.SP.get_pair16()==sp,"stack "+k);}
 };
 int main(int ac,char**av)try{
     need(ac==3,"usage");Rig t(av[1],av[2]);auto&r=t.cpu.regs;unsigned fcb=0x6600,dma=0x6700;
@@ -240,5 +352,124 @@ int main(int ac,char**av)try{
     t.put32(desc+t.at("ZNATIVE_OFF_POSITION"),1000);t.mem.store_mem(desc+t.at("ZNATIVE_OFF_OP"),4);
     r.DE.set_pair16(desc);t.call("fat_native_entry");
     need(native(3,0,100,nh)==0&&t.get16(desc+t.at("ZNATIVE_OFF_RESULT"))==24,"short native READ at EOF");
-    cout<<"PASS: FAT BDOS routing, all-USER raw SEARCH, USER-relative CHDIR, 624-record FS2 lifecycle, error mapping, native OPEN identity at the drive root, and native READ count/position\n";
+    // ---------------- Milestone 6: the writable FCB personality -------------
+    // These run against the real file model, so a record written through the
+    // FCB path is read back through it and must be the same bytes.
+    t.use_file_model=true; t.slot_open={{false,false}};
+    t.mem.store_mem(t.at("fat_current_user"),0);
+    t.mem.store_mem(t.at("fat_cwd_user"),0);
+    t.mem.store_mem(t.at("fat_cwd_count"),0);
+    t.mem.store_mem16(t.at("fat_ro_vector"),0);
+    t.mem.store_mem(t.at("fat_current_drive"),3);
+    const string wname="NEWFILE TXT";
+    auto set_fcb=[&](const string&n){
+        for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);
+        for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+1+i,n[i]);
+    };
+    auto fcb_call=[&](const char*sym){
+        r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call(sym);return r.AF.get_high();
+    };
+    // MAKE creates an empty file and resets the position fields, so the first
+    // sequential write lands at record zero.
+    set_fcb(wname);
+    t.mem.store_mem(fcb+12,9);t.mem.store_mem(fcb+32,7);   // stale EX/CR
+    need(fcb_call("fat_bdos_make")==0,"MAKE result");
+    need(t.model.count(wname)==1&&t.model[wname].empty(),"MAKE did not create an empty file");
+    need(t.mem.fetch_mem(fcb+12)==0&&t.mem.fetch_mem(fcb+15)==0&&t.mem.fetch_mem(fcb+32)==0,"MAKE left stale FCB position");
+    // Three sequential records, each a distinct pattern.
+    for(unsigned rec=0;rec<3;rec++){
+        for(unsigned i=0;i<128;i++)t.mem.store_mem(dma+i,(rec*128+i)&255);
+        need(fcb_call("fat_bdos_write_seq")==0,"WRITE SEQUENTIAL record "+to_string(rec));
+    }
+    need(t.model[wname].size()==384,"sequential writes produced "+to_string(t.model[wname].size())+" bytes");
+    for(unsigned i=0;i<384;i++)
+        need(t.model[wname][i]==((i)&255),"sequential write content at "+to_string(i));
+    need(t.mem.fetch_mem(fcb+32)==3,"CR did not advance past three records");
+    // Read the same records back through the FCB path.
+    set_fcb(wname);
+    for(unsigned rec=0;rec<3;rec++){
+        need(fcb_call("fat_bdos_read_seq")==0,"read back record "+to_string(rec));
+        for(unsigned i=0;i<128;i++)
+            need(t.mem.fetch_mem(dma+i)==((rec*128+i)&255),"read back content rec "+to_string(rec));
+    }
+    // WRITE RANDOM addresses record 5 => byte 640, extending the file.
+    set_fcb(wname);
+    t.mem.store_mem(fcb+33,5);
+    for(unsigned i=0;i<128;i++)t.mem.store_mem(dma+i,0xA5);
+    need(fcb_call("fat_bdos_write_random")==0,"WRITE RANDOM result");
+    need(t.model[wname].size()==768,"WRITE RANDOM wrote to the wrong offset");
+    need(t.model[wname][640]==0xA5&&t.model[wname][767]==0xA5,"WRITE RANDOM content");
+    // WRITE RANDOM WITH ZERO FILL must leave the gap readable as zeros, which
+    // is the only thing that distinguishes it from function 34.
+    t.model[wname].resize(384);
+    set_fcb(wname);
+    t.mem.store_mem(fcb+33,5);
+    for(unsigned i=0;i<128;i++)t.mem.store_mem(dma+i,0x5A);
+    need(fcb_call("fat_bdos_write_random_zf")==0,"WRITE RANDOM ZERO FILL result");
+    need(t.model[wname].size()==768,"zero fill produced "+to_string(t.model[wname].size())+" bytes");
+    for(unsigned i=384;i<640;i++)need(t.model[wname][i]==0,"gap byte "+to_string(i)+" was not zeroed");
+    need(t.model[wname][640]==0x5A,"zero fill clobbered the record itself");
+    // Again with the DMA pointing AT the common bulk buffer.  That is not a
+    // contrived case: the facade stages a hidden caller DMA into FAC_DMA_BUF,
+    // which is the same address as FAC_BULK_BUF, so on real hardware this is
+    // the normal path.  Using a separate dma above is what let a zero fill
+    // that overwrote the caller's record pass here and fail on the machine.
+    {
+        const unsigned bulk=t.at("FAC_BULK_BUF");
+        t.model[wname].resize(384);
+        set_fcb(wname);
+        t.mem.store_mem(fcb+33,5);
+        for(unsigned i=0;i<128;i++)t.mem.store_mem(bulk+i,0x6B);
+        r.DE.set_pair16(fcb);r.HL.set_pair16(bulk);t.call("fat_bdos_write_random_zf");
+        need(r.AF.get_high()==0,"zero fill with an aliased DMA");
+        need(t.model[wname].size()==768,"aliased zero fill size");
+        for(unsigned i=384;i<640;i++)
+            need(t.model[wname][i]==0,"aliased zero fill gap byte "+to_string(i));
+        for(unsigned i=640;i<768;i++)
+            need(t.model[wname][i]==0x6B,
+                 "the zero fill overwrote the caller's record at "+to_string(i));
+    }
+    // RENAME moves the contents, not just the name.
+    set_fcb(wname);
+    const string rname="MOVED   TXT";
+    for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+17+i,rname[i]);
+    need(fcb_call("fat_bdos_rename")==0,"RENAME result");
+    need(t.model.count(rname)==1&&t.model.count(wname)==0&&t.model[rname].size()==768,"RENAME");
+    // DELETE takes ambiguous names: ERA *.TXT must remove every match.
+    t.model["A       TXT"]=vector<unsigned char>(10,1);
+    t.model["B       TXT"]=vector<unsigned char>(10,2);
+    t.model["KEEP    DAT"]=vector<unsigned char>(10,3);
+    set_fcb("????????TXT");
+    need(fcb_call("fat_bdos_delete")==0,"wildcard DELETE result");
+    need(t.model.count("KEEP    DAT")==1,"wildcard DELETE removed a non-match");
+    need(t.model.count("A       TXT")==0&&t.model.count("B       TXT")==0&&
+         t.model.count(rname)==0,"wildcard DELETE left a match behind");
+    // A name that matches nothing is an error, not a silent success.
+    set_fcb("NOSUCH  FIL");
+    need(fcb_call("fat_bdos_delete")==0xff,"DELETE of a missing file reported success");
+    // ZSDOS software write protection is enforced above ZSDOS, so every
+    // mutation has to check it independently.
+    t.mem.store_mem16(t.at("fat_ro_vector"),0x0008);
+    set_fcb("WP      TXT");
+    need(fcb_call("fat_bdos_make")==0xff,"MAKE ignored write protection");
+    need(fcb_call("fat_bdos_write_seq")==0xff,"WRITE ignored write protection");
+    need(fcb_call("fat_bdos_delete")==0xff,"DELETE ignored write protection");
+    need(fcb_call("fat_bdos_rename")==0xff,"RENAME ignored write protection");
+    need(t.model.count("WP      TXT")==0,"a protected drive was written to");
+    t.mem.store_mem16(t.at("fat_ro_vector"),0);
+    // A full disk is its own result: callers must be able to tell it from a
+    // broken link, so it is 2 and not 255.
+    t.model["FULL    TXT"]=vector<unsigned char>();
+    set_fcb("FULL    TXT");
+    t.write_status=0x45;   // IOC_STATUS_FS2_NO_SPACE
+    need(fcb_call("fat_bdos_write_seq")==2,"disk full was not reported as 2");
+    t.write_status=0;
+    // Lazy @N: the first file created in a USER area materialises it.
+    t.mem.store_mem(t.at("fat_current_user"),3);
+    t.model_dirs.clear();
+    set_fcb("USERFILETXT");
+    need(fcb_call("fat_bdos_make")==0,"MAKE in a USER area");
+    need(t.model_dirs.count("@3         ")==1,"MAKE did not create the USER directory");
+    t.mem.store_mem(t.at("fat_current_user"),0);
+    cout<<"PASS: FAT BDOS routing, all-USER raw SEARCH, USER-relative CHDIR, 624-record FS2 lifecycle, error mapping, native OPEN identity and READ, and the writable FCB personality\n";
 }catch(const exception&e){cerr<<"FAIL: "<<e.what()<<'\n';return 1;}

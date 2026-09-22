@@ -1305,7 +1305,11 @@ RESOURCE_CACHE_LINE_COUNT             = 0x000d                         ; 13
 ; Reserve 2 KiB so that estimate fits with 496 bytes for alignment and measured
 ; growth.  The separate 512-byte cache lines remain leases from the pool above.
 CBIOS_FAT_BDOS_CODE_BASE              = BIOS7_BASE + 0x6000            ; 9000h
-CBIOS_FAT_BDOS_CODE_LIMIT             = BIOS7_BASE + 0x7000            ; A000h
+; Grown from A000h for Milestone 6: the writable FCB personality adds MAKE,
+; the three WRITE forms with their zero-fill, DELETE's directory enumeration
+; and RENAME.  A000h-BFFFh carries no other owner; check_overlap.py is the
+; authority that this stays true.
+CBIOS_FAT_BDOS_CODE_LIMIT             = BIOS7_BASE + 0x7800            ; A800h
 CBIOS_FAT_BDOS_CODE_SIZE              = CBIOS_FAT_BDOS_CODE_LIMIT - CBIOS_FAT_BDOS_CODE_BASE
 CBIOS_FAT_BDOS_STATE_BASE             = BIOS7_BASE + 0x9e10            ; CE10h
 CBIOS_FAT_BDOS_STATE_LIMIT            = BIOS7_BASE + 0xa610            ; D610h
@@ -1471,6 +1475,10 @@ FS2_CMD_WRITE                         = 0x3e
 FS2_CMD_SYNC                          = 0x3f
 FS2_CMD_TRUNCATE                      = 0x40
 FS2_CMD_UNLINK                        = 0x41
+; FS2 writable-open modes (the native modes minus one).
+FS2_OPEN_UPDATE                       = 0x00
+FS2_OPEN_CREATE_NEW                   = 0x01
+FS2_OPEN_CREATE_ALWAYS                = 0x02
 FS2_CMD_RENAME                        = 0x42
 FS2_CMD_MKDIR                         = 0x43
 FS2_CMD_RMDIR                         = 0x44
