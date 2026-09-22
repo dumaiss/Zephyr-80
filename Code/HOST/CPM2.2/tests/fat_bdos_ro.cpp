@@ -166,5 +166,79 @@ int main(int ac,char**av)try{
     t.mock_file_size=624*128;for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+1+i,rdname[i]);
     for(unsigned record=0;record<624;record++){r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0,"624-record read "+to_string(record));if(record==127||record==128||record==255||record==256||record==511||record==512)need(t.mem.fetch_mem(dma)==((record*128)&255),"boundary data "+to_string(record));need(t.live_slots()==0,"boundary slot leak "+to_string(record));}
     need(t.mem.fetch_mem(fcb+12)==4&&t.mem.fetch_mem(fcb+32)==112,"624-record final FCB position");r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==1,"624-record EOF");
-    cout<<"PASS: FAT BDOS routing, all-USER raw SEARCH, USER-relative CHDIR, 624-record FS2 lifecycle, and error mapping\n";
+    // Native OPEN records the path identity of the handle it just issued so a
+    // stale token can be reopened after a media-generation change.  At the
+    // drive root the relative component count is zero, and the copy recording
+    // it must not run at all: LDIR decrements BC before testing, so a zero
+    // count transfers 65536 bytes and walks the OS out of bank 7.  That froze
+    // the machine on the FIRST native OPEN from D:, whatever the mode.  The
+    // FCB path above never reached it, and the CHDIR cases above are the only
+    // other fat_native_entry op exercised here, so nothing caught it.
+    auto native_open=[&](unsigned mode,unsigned cwd_count){
+        for(unsigned i=0;i<32;i++)t.mem.store_mem(desc+i,0);
+        t.mem.store_mem(desc+0,1);
+        t.mem.store_mem(desc+t.at("ZNATIVE_OFF_OP"),1);            // ZNATIVE_OPEN
+        t.mem.store_mem(desc+t.at("ZNATIVE_OFF_FLAGS"),mode);
+        const string n="LESSON  MD ";
+        for(unsigned i=0;i<11;i++)t.mem.store_mem(desc+t.at("ZNATIVE_OFF_NAME")+i,n[i]);
+        t.mem.store_mem(t.at("fat_current_user"),0);
+        t.mem.store_mem(t.at("fat_cwd_user"),0);
+        t.mem.store_mem(t.at("fat_cwd_count"),cwd_count);
+        for(unsigned i=0;i<cwd_count*11u;i++)t.mem.store_mem(t.at("fat_cwd_components")+i,'A'+i%26);
+        t.mem.store_mem(t.at("fat_native_active"),0);
+        t.mem.store_mem(t.at("fat_native_active")+1,0);
+        r.DE.set_pair16(desc);t.call("fat_native_entry");
+        return t.mem.fetch_mem(desc+t.at("ZNATIVE_OFF_STATUS"));
+    };
+    // Canaries outside every buffer the copy legitimately touches.  A runaway
+    // LDIR wraps the whole address space, so any of these would be rewritten.
+    const unsigned canary[]={0x0040,0x1234,0x7000,0xc000};
+    for(unsigned a:canary)t.mem.store_mem(a,0x5a);
+    need(native_open(0,0)==0,"native OPEN at the drive root");
+    need(t.mem.fetch_mem(desc+t.at("ZNATIVE_OFF_HANDLE"))==1,"native OPEN handle");
+    need(t.mem.fetch_mem(t.at("fat_native_cwd0")+1)==0,"root identity recorded a component count");
+    for(unsigned a:canary)need(t.mem.fetch_mem(a)==0x5a,"native OPEN at the root clobbered "+to_string(a));
+    // The non-zero case must still copy exactly count*11 bytes, and no more.
+    t.mem.store_mem(0xc000,0x5a);
+    need(native_open(0,2)==0,"native OPEN below the drive root");
+    need(t.mem.fetch_mem(t.at("fat_native_cwd0")+1)==2,"two-component identity count");
+    for(unsigned i=0;i<22u;i++)need(t.mem.fetch_mem(t.at("fat_native_cwd0")+2+i)==unsigned('A'+i%26),"identity component byte "+to_string(i));
+    need(t.mem.fetch_mem(0xc000)==0x5a,"two-component copy overran its 22 bytes");
+    // Native READ must report the byte count and advance the handle position.
+    // It returned status 0 with ZN_RESULT untouched for every successful read:
+    // the STALE check before it left the flags set from its own CP, and the
+    // success path tested those instead of A.  The FCB read path has its own
+    // caller, so nothing here covered it.
+    auto native=[&](unsigned op,unsigned mode,unsigned len,unsigned handle){
+        for(unsigned i=0;i<32;i++)t.mem.store_mem(desc+i,0);
+        t.mem.store_mem(desc+0,1);
+        t.mem.store_mem(desc+t.at("ZNATIVE_OFF_OP"),op);
+        t.mem.store_mem(desc+t.at("ZNATIVE_OFF_FLAGS"),mode);
+        t.mem.store_mem(desc+t.at("ZNATIVE_OFF_HANDLE"),handle);
+        t.put16(desc+t.at("ZNATIVE_OFF_LENGTH"),len);
+        t.put16(desc+t.at("ZNATIVE_OFF_BUFFER"),0x7000);
+        const string n="LESSON  MD ";
+        for(unsigned i=0;i<11;i++)t.mem.store_mem(desc+t.at("ZNATIVE_OFF_NAME")+i,n[i]);
+        r.DE.set_pair16(desc);t.call("fat_native_entry");
+        return t.mem.fetch_mem(desc+t.at("ZNATIVE_OFF_STATUS"));
+    };
+    t.mem.store_mem(t.at("fat_current_user"),0);t.mem.store_mem(t.at("fat_cwd_user"),0);
+    t.mem.store_mem(t.at("fat_cwd_count"),0);
+    t.mem.store_mem(t.at("fat_native_active"),0);t.mem.store_mem(t.at("fat_native_active")+1,0);
+    // The identity cases above left handles open on the controller side.
+    t.slot_open={{false,false}};
+    t.mock_file_size=1024;
+    need(native(1,0,0,0)==0,"native OPEN for read");
+    unsigned nh=t.mem.fetch_mem(desc+t.at("ZNATIVE_OFF_HANDLE"));
+    need(native(3,0,100,nh)==0,"native READ status");
+    need(t.get16(desc+t.at("ZNATIVE_OFF_RESULT"))==100,"native READ reported "+to_string(t.get16(desc+t.at("ZNATIVE_OFF_RESULT")))+" bytes, not 100");
+    // The position must have moved, so a second read continues where it stopped.
+    need(native(5,0,0,nh)==0,"native TELL status");
+    need(t.get32(desc+t.at("ZNATIVE_OFF_POSITION"))==100,"native READ did not advance the position");
+    // A read that runs off the end still succeeds, with a short count.
+    need(native(4,0,0,nh)==0&&true,"native SEEK status");
+    t.put32(desc+t.at("ZNATIVE_OFF_POSITION"),1000);t.mem.store_mem(desc+t.at("ZNATIVE_OFF_OP"),4);
+    r.DE.set_pair16(desc);t.call("fat_native_entry");
+    need(native(3,0,100,nh)==0&&t.get16(desc+t.at("ZNATIVE_OFF_RESULT"))==24,"short native READ at EOF");
+    cout<<"PASS: FAT BDOS routing, all-USER raw SEARCH, USER-relative CHDIR, 624-record FS2 lifecycle, error mapping, native OPEN identity at the drive root, and native READ count/position\n";
 }catch(const exception&e){cerr<<"FAIL: "<<e.what()<<'\n';return 1;}

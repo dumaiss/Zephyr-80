@@ -323,6 +323,36 @@ fat_fs2_open:
 	xor a
 	ret
 
+; A = IOC FS2 writable-open mode, HL = packed 8.3 component.
+; On success records token, size and attributes in persistent scratch.
+fat_fs2_open_rw:
+	push af
+	push hl
+	call fat_zero_frames
+	ld a,#FS2_CMD_OPEN_RW
+	ld (FAT_TX),a
+	ld a,#12
+	ld (FAT_TX + IOC_OFF_LEN),a
+	pop hl
+	ld de,#(FAT_TX + IOC_OFF_PAYLOAD + 1)
+	ld bc,#FS2_NAME_BYTES
+	ldir
+	pop af
+	ld (FAT_TX + IOC_OFF_PAYLOAD),a
+	ld a,#FS2_RSP_OPEN_RW
+	call fat_exchange
+	ret nz
+	ld hl,(FAT_RX + IOC_OFF_PAYLOAD)
+	ld (fat_file_token),hl
+	ld hl,(FAT_RX + IOC_OFF_PAYLOAD + 2)
+	ld (fat_file_size),hl
+	ld hl,(FAT_RX + IOC_OFF_PAYLOAD + 4)
+	ld (fat_file_size + 2),hl
+	ld a,(FAT_RX + IOC_OFF_PAYLOAD + 6)
+	ld (fat_file_attr),a
+	xor a
+	ret
+
 fat_fs2_close:
 	call fat_zero_frames
 	ld a,#FS2_CMD_CLOSE
@@ -388,6 +418,130 @@ fat_fs2_read_fail:
 	or a
 	ret
 
+; DE:HL = explicit byte offset, BC = length already staged in FAC_BULK_BUF.
+; Returns A=0 only after a matching DONE record confirms the commit.  Once
+; READY has been accepted, any unresolvable transport/result ambiguity returns
+; FS2_STATUS_UNKNOWN_WRITE and is never replayed here.
+fat_fs2_write:
+	xor a
+	ld (fat_write_started),a
+	ld (fat_write_offset),hl
+	ld (fat_write_offset + 2),de
+	ld (fat_write_length),bc
+	push bc
+	push de
+	push hl
+	call fat_zero_frames
+	ld a,#FS2_CMD_WRITE
+	ld (FAT_TX),a
+	ld a,#8
+	ld (FAT_TX + IOC_OFF_LEN),a
+	ld hl,(fat_file_token)
+	ld (FAT_TX + IOC_OFF_PAYLOAD),hl
+	pop hl
+	pop de
+	ld (FAT_TX + IOC_OFF_PAYLOAD + 2),hl
+	ld (FAT_TX + IOC_OFF_PAYLOAD + 4),de
+	pop bc
+	ld (FAT_TX + IOC_OFF_PAYLOAD + 6),bc
+	ld a,#FS2_RSP_WRITE
+	call fat_exchange
+	ret nz
+	ld a,(FAT_RX + IOC_OFF_LEN)
+	cp #8
+	jr nz,fat_fs2_write_ready_bad
+	ld a,(FAT_RX + IOC_OFF_PAYLOAD)
+	or a
+	jr z,fat_fs2_write_ready_bad
+	ld (fat_write_xfer_id),a
+	ld a,(FAT_RX + IOC_OFF_PAYLOAD + 1)
+	cp #1				; BULK_DIR_Z80_TO_MCU
+	jr nz,fat_fs2_write_ready_bad
+	ld hl,(FAT_RX + IOC_OFF_PAYLOAD + 2)
+	ld de,(fat_write_length)
+	or a
+	sbc hl,de
+	jr nz,fat_fs2_write_ready_bad
+	ld hl,(FAT_RX + IOC_OFF_PAYLOAD + 4)
+	ld de,(fat_write_offset)
+	or a
+	sbc hl,de
+	jr nz,fat_fs2_write_ready_bad
+	ld hl,(FAT_RX + IOC_OFF_PAYLOAD + 6)
+	ld de,(fat_write_offset + 2)
+	or a
+	sbc hl,de
+	jr nz,fat_fs2_write_ready_bad
+	ld hl,#FAC_BULK_BUF
+	ld de,(fat_write_length)
+	ld a,#1
+	ld (fat_write_started),a
+	call IOCBULKW
+	; Even a local bulk error can race a completed commit.  DONE identity and
+	; status, not the bulk return alone, decide whether the write is known.
+	call fat_fs2_write_done
+	ret
+fat_fs2_write_ready_bad:
+	ld a,#FS2_STATUS_TRANSPORT
+	ld (fat_last_status),a
+	or a
+	ret
+
+fat_fs2_write_done:
+	call fat_zero_frames
+	ld a,#SD_CMD_XFER_STATUS
+	ld (FAT_TX),a
+	ld a,#1
+	ld (FAT_TX + IOC_OFF_LEN),a
+	ld a,#SD_RSP_XFER_STATUS
+	call fat_exchange
+	jr nz,fat_fs2_write_unknown
+	ld a,(FAT_RX + IOC_OFF_LEN)
+	cp #2
+	jr c,fat_fs2_write_unknown
+	ld a,(FAT_RX + IOC_OFF_PAYLOAD)
+	ld hl,#fat_write_xfer_id
+	cp (hl)
+	jr nz,fat_fs2_write_unknown
+	ld a,(FAT_RX + IOC_OFF_PAYLOAD + 1)
+	ld (fat_last_status),a
+	or a
+	ret
+fat_fs2_write_unknown:
+	ld a,#FS2_STATUS_UNKNOWN_WRITE
+	ld (fat_last_status),a
+	or a
+	ret
+
+fat_fs2_sync:
+	call fat_zero_frames
+	ld a,#FS2_CMD_SYNC
+	ld (FAT_TX),a
+	ld a,#2
+	ld (FAT_TX + IOC_OFF_LEN),a
+	ld hl,(fat_file_token)
+	ld (FAT_TX + IOC_OFF_PAYLOAD),hl
+	ld a,#FS2_RSP_SYNC
+	jp fat_exchange
+
+; DE:HL = new byte size.
+fat_fs2_truncate:
+	push de
+	push hl
+	call fat_zero_frames
+	ld a,#FS2_CMD_TRUNCATE
+	ld (FAT_TX),a
+	ld a,#6
+	ld (FAT_TX + IOC_OFF_LEN),a
+	ld hl,(fat_file_token)
+	ld (FAT_TX + IOC_OFF_PAYLOAD),hl
+	pop hl
+	pop de
+	ld (FAT_TX + IOC_OFF_PAYLOAD + 2),hl
+	ld (FAT_TX + IOC_OFF_PAYLOAD + 4),de
+	ld a,#FS2_RSP_TRUNCATE
+	jp fat_exchange
+
 ; ---------------------------------------------------------------------------
 ; Read-only FCB compatibility personality
 ; ---------------------------------------------------------------------------
@@ -400,11 +554,20 @@ fat_bdos_post:
 	jr z,fat_post_drive
 	cp #32
 	jr z,fat_post_user
+	cp #29
+	jr z,fat_post_ro_result
+	cp #28
+	jr z,fat_post_reset_ro
 	cp #13
-	jr z,fat_context_reset
+	jr z,fat_post_reset_ro
 	cp #37
 	ret nz
-	jp fat_context_reset
+fat_post_reset_ro:
+	call fat_context_reset
+	jp fat_refresh_ro
+fat_post_ro_result:
+	ld (fat_ro_vector),hl
+	ret
 fat_post_drive:
 	ld a,e
 	ld (fat_current_drive),a
@@ -416,6 +579,24 @@ fat_post_user:
 	and #0x1f
 	ld (fat_current_user),a
 	jp fat_search_reset
+
+; Refresh the software read-only vector from authoritative ZSDOS state.
+fat_refresh_ro:
+	ld c,#29
+	call ZSDOS_ENTRY
+	ld (fat_ro_vector),hl
+	ret
+
+; Returns A=0/Z when the configured FAT drive is writable, otherwise the FS2
+; read-only status.  Physical/filesystem protection is reported independently
+; by the IOC's FatFs result.
+fat_check_write_protect:
+	ld hl,(fat_ro_vector)
+	bit FAT_BIOS_DRIVE,l
+	ret z
+	ld a,#FS2_STATUS_READ_ONLY
+	or a
+	ret
 
 ; Bank-7 BDOS entry used by the facade after argument staging.  Keeping the
 ; selection here avoids a second common-memory dispatcher: FAT calls return
@@ -480,6 +661,8 @@ fat_context_clear:
 	ld (fat_file_token + 1),a
 	ld (fat_native_active),a
 	ld (fat_native_active + 1),a
+	ld (fat_native_modes),a
+	ld (fat_native_modes + 1),a
 	ld (fat_native_dir_active),a
 	ret
 
@@ -1276,6 +1459,12 @@ fat_native_entry:
 	jp z,fat_native_readdir
 	cp #ZNATIVE_CHDIR
 	jp z,fat_native_chdir
+	cp #ZNATIVE_WRITE
+	jp z,fat_native_write
+	cp #ZNATIVE_SYNC
+	jp z,fat_native_sync
+	cp #ZNATIVE_TRUNCATE
+	jp z,fat_native_truncate
 fat_native_bad:
 	ld a,#0xff
 	jp fat_native_return
@@ -1303,6 +1492,7 @@ fat_native_slot:
 	cp #3
 	jr nc,fat_native_slot_bad
 	dec a
+	ld (fat_native_slot_index),a
 	ld e,a
 	ld d,#0
 	ld hl,#fat_native_active
@@ -1326,11 +1516,47 @@ fat_native_slot_bad:
 	ret
 
 fat_native_open:
+	ld hl,(fat_native_desc)
+	ld de,#ZNATIVE_OFF_FLAGS
+	add hl,de
+	ld a,(hl)
+	cp #(ZNATIVE_OPEN_CREATE_ALWAYS + 1)
+	jr c,fat_native_open_mode_ok
+	ld a,#FS2_STATUS_RANGE
+	jp fat_native_return
+fat_native_open_mode_ok:
+	ld (fat_native_open_mode),a
+	or a
+	jr z,fat_native_open_path
+	call fat_check_write_protect
+	jp nz,fat_native_return
+fat_native_open_path:
 	ld a,#1
 	call fat_fs2_path
 	jp nz,fat_native_return
 	call fat_native_name
+	ld a,(fat_native_open_mode)
+	or a
+	jr z,fat_native_open_read
+	dec a				; native modes 1..3 -> FS2 modes 0..2
+	call fat_fs2_open_rw
+	jr fat_native_open_result
+fat_native_open_read:
 	call fat_fs2_open
+fat_native_open_result:
+	push af
+	ld a,(fat_native_open_mode)
+	cp #ZNATIVE_OPEN_CREATE_NEW
+	jr c,fat_native_open_known
+	pop af
+	cp #FS2_STATUS_TRANSPORT
+	jr nz,fat_native_open_checked
+	ld a,#FS2_STATUS_UNKNOWN_WRITE
+	jr fat_native_open_checked
+fat_native_open_known:
+	pop af
+fat_native_open_checked:
+	or a
 	jp nz,fat_native_return
 	ld a,(fat_native_active)
 	or a
@@ -1355,6 +1581,13 @@ fat_native_open_store:
 	ld hl,#fat_native_active
 	add hl,de
 	ld (hl),#1
+	ld hl,#fat_native_modes
+	ld a,(fat_native_slot_index)
+	ld e,a
+	ld d,#0
+	add hl,de
+	ld a,(fat_native_open_mode)
+	ld (hl),a
 	ld a,c
 	add a,a
 	ld e,a
@@ -1386,6 +1619,15 @@ fat_native_identity_ptrs:
 	call fat_effective_cwd_count
 	ld (de),a
 	inc de
+	; A relative CWD of zero components is the drive root -- the normal case,
+	; and the one every native OPEN from D: itself takes.  LDIR must not be
+	; reached with BC=0: the Z80 decrements BC before it tests, so a zero count
+	; transfers 65536 bytes instead of none, walking fat_cwd_components over
+	; the whole address space and destroying bank 7 with the OS still in it.
+	; fat_native_reopen already skips its replay on a zero count; this is the
+	; same condition on the recording side.
+	or a
+	jr z,fat_native_identity_done
 	ld l,a
 	ld h,#0
 	push de
@@ -1401,6 +1643,7 @@ fat_native_identity_ptrs:
 	pop de
 	ld hl,#fat_cwd_components
 	ldir
+fat_native_identity_done:
 	ld a,(fat_native_slot_index)
 	add a,a
 	add a,a
@@ -1441,15 +1684,26 @@ fat_native_close:
 	jp nz,fat_native_return
 	ld (fat_file_token),de
 	call fat_fs2_close
-	push af
-	ld hl,(fat_native_desc)
-	ld de,#ZNATIVE_OFF_HANDLE
+	cp #FS2_STATUS_TRANSPORT
+	jr nz,fat_native_close_status
+	ld hl,#fat_native_modes
+	ld a,(fat_native_slot_index)
+	ld e,a
+	ld d,#0
 	add hl,de
 	ld a,(hl)
-	dec a
+	or a
+	jr z,fat_native_close_status
+	ld a,#FS2_STATUS_UNKNOWN_WRITE
+fat_native_close_status:
+	push af
+	ld a,(fat_native_slot_index)
 	ld e,a
 	ld d,#0
 	ld hl,#fat_native_active
+	add hl,de
+	ld (hl),#0
+	ld hl,#fat_native_modes
 	add hl,de
 	ld (hl),#0
 	pop af
@@ -1495,12 +1749,30 @@ fat_native_read:
 	call fat_fs2_read
 	cp #FS2_STATUS_STALE
 	jr nz,fat_native_read_result
+	ld hl,#fat_native_modes
+	ld a,(fat_native_slot_index)
+	ld e,a
+	ld d,#0
+	add hl,de
+	ld a,(hl)
+	or a
+	jr z,fat_native_read_reopen
+	call fat_native_invalidate_slot
+	ld a,#FS2_STATUS_STALE
+	jp fat_native_return
+fat_native_read_reopen:
 	call fat_native_reopen
 	jp nz,fat_native_return
 	; Position and request length are still in the descriptor/slot; restart the
 	; read once with the newly issued token.
 	jp fat_native_read
 fat_native_read_result:
+	; Re-test A.  The STALE comparison above set the flags from the CP, not
+	; from fat_fs2_read's result, so a successful read arrived here as NZ and
+	; returned status 0 while skipping the RESULT store and the position
+	; advance below -- every native read reported zero bytes.  The sync,
+	; truncate and open paths all re-test the same way.
+	or a
 	jp nz,fat_native_return
 	ld hl,(fat_native_desc)
 	ld de,#ZNATIVE_OFF_RESULT
@@ -1524,6 +1796,176 @@ fat_native_read_result:
 	inc (hl)
 fat_native_read_done:
 	xor a
+	jp fat_native_return
+
+; The selected native slot must have been opened through a writable mode and
+; D: must not be protected by ZSDOS.  Physical/filesystem protection is still
+; enforced by FatFs on the controller.
+fat_native_require_write:
+	ld hl,#fat_native_modes
+	ld a,(fat_native_slot_index)
+	ld e,a
+	ld d,#0
+	add hl,de
+	ld a,(hl)
+	or a
+	jr nz,fat_native_require_write_wp
+	ld a,#FS2_STATUS_READ_ONLY
+	or a
+	ret
+fat_native_require_write_wp:
+	jp fat_check_write_protect
+
+fat_native_invalidate_slot:
+	ld a,(fat_native_slot_index)
+	ld e,a
+	ld d,#0
+	ld hl,#fat_native_active
+	add hl,de
+	ld (hl),#0
+	ld hl,#fat_native_modes
+	add hl,de
+	ld (hl),#0
+	ret
+
+fat_native_write:
+	call fat_native_slot
+	jp nz,fat_native_return
+	ld (fat_file_token),de
+	call fat_native_require_write
+	jp nz,fat_native_return
+	ld hl,(fat_native_desc)
+	ld de,#ZNATIVE_OFF_HANDLE
+	add hl,de
+	ld a,(hl)
+	dec a
+	add a,a
+	add a,a
+	ld e,a
+	ld d,#0
+	ld hl,#fat_native_positions
+	add hl,de
+	ld (fat_native_pos_ptr),hl
+	ld e,(hl)
+	inc hl
+	ld d,(hl)
+	inc hl
+	ld c,(hl)
+	inc hl
+	ld b,(hl)
+	ex de,hl
+	ld d,b
+	ld e,c			; DE:HL explicit byte offset
+	ld bc,(fat_native_desc)
+	push hl
+	ld h,b
+	ld l,c
+	ld bc,#ZNATIVE_OFF_LENGTH
+	add hl,bc
+	ld c,(hl)
+	inc hl
+	ld b,(hl)
+	pop hl
+	ld a,b
+	or c
+	jr z,fat_native_write_range
+	ld a,b
+	cp #2
+	jr c,fat_native_write_length_ok
+	jr nz,fat_native_write_range
+	ld a,c
+	or a
+	jr nz,fat_native_write_range
+fat_native_write_length_ok:
+	call fat_fs2_write
+	jr z,fat_native_write_success
+	push af
+	ld a,(fat_write_started)
+	or a
+	call nz,fat_native_invalidate_slot
+	pop af
+	jp fat_native_return
+fat_native_write_range:
+	ld a,#FS2_STATUS_RANGE
+	jp fat_native_return
+fat_native_write_success:
+	ld hl,(fat_native_desc)
+	ld de,#ZNATIVE_OFF_LENGTH
+	add hl,de
+	ld c,(hl)
+	inc hl
+	ld b,(hl)
+	ld hl,(fat_native_desc)
+	ld de,#ZNATIVE_OFF_RESULT
+	add hl,de
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	ld hl,(fat_native_pos_ptr)
+	ld a,(hl)
+	add a,c
+	ld (hl),a
+	inc hl
+	ld a,(hl)
+	adc a,b
+	ld (hl),a
+	inc hl
+	jr nc,fat_native_write_done
+	inc (hl)
+	jr nz,fat_native_write_done
+	inc hl
+	inc (hl)
+fat_native_write_done:
+	xor a
+	jp fat_native_return
+
+fat_native_sync:
+	call fat_native_slot
+	jp nz,fat_native_return
+	ld (fat_file_token),de
+	call fat_native_require_write
+	jp nz,fat_native_return
+	call fat_fs2_sync
+	cp #FS2_STATUS_TRANSPORT
+	jr nz,fat_native_sync_result
+	ld a,#FS2_STATUS_UNKNOWN_WRITE
+fat_native_sync_result:
+	or a
+	jp z,fat_native_return
+	push af
+	call fat_native_invalidate_slot
+	pop af
+	jp fat_native_return
+
+fat_native_truncate:
+	call fat_native_slot
+	jp nz,fat_native_return
+	ld (fat_file_token),de
+	call fat_native_require_write
+	jp nz,fat_native_return
+	ld hl,(fat_native_desc)
+	ld de,#ZNATIVE_OFF_POSITION
+	add hl,de
+	ld e,(hl)
+	inc hl
+	ld d,(hl)
+	inc hl
+	ld c,(hl)
+	inc hl
+	ld b,(hl)
+	ex de,hl
+	ld d,b
+	ld e,c			; DE:HL requested size
+	call fat_fs2_truncate
+	cp #FS2_STATUS_TRANSPORT
+	jr nz,fat_native_truncate_result
+	ld a,#FS2_STATUS_UNKNOWN_WRITE
+fat_native_truncate_result:
+	or a
+	jp z,fat_native_return
+	push af
+	call fat_native_invalidate_slot
+	pop af
 	jp fat_native_return
 
 fat_native_reopen:
@@ -1801,6 +2243,8 @@ fat_current_drive:
 	.db 0x00
 fat_current_user:
 	.db 0x00
+fat_ro_vector:
+	.dw 0x0000
 fat_expected:
 	.db 0x00
 fat_last_status:
@@ -1859,6 +2303,8 @@ fat_native_desc:
 	.dw 0x0000
 fat_native_active:
 	.ds 2
+fat_native_modes:
+	.ds 2
 fat_native_tokens:
 	.ds 4
 fat_native_positions:
@@ -1867,6 +2313,16 @@ fat_native_pos_ptr:
 	.dw 0x0000
 fat_native_slot_index:
 	.db 0x00
+fat_native_open_mode:
+	.db 0x00
+fat_write_started:
+	.db 0x00
+fat_write_xfer_id:
+	.db 0x00
+fat_write_length:
+	.dw 0x0000
+fat_write_offset:
+	.ds 4
 fat_native_dir_active:
 	.db 0x00
 fat_native_dir_token:

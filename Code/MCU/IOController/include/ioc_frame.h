@@ -200,6 +200,10 @@
 #define CMD_FS2_CLOSEDIR      0x3A
 #define CMD_FS2_STAT          0x3B
 #define CMD_FS2_SPACE         0x3C
+#define CMD_FS2_OPEN_RW       0x3D
+#define CMD_FS2_WRITE         0x3E
+#define CMD_FS2_SYNC          0x3F
+#define CMD_FS2_TRUNCATE      0x40
 
 /* Response class bytes (MCU → Z80) */
 #define RSP_PING             0x81
@@ -240,16 +244,20 @@
 #define RSP_FS2_CLOSEDIR     0xBA
 #define RSP_FS2_STAT         0xBB
 #define RSP_FS2_SPACE        0xBC
+#define RSP_FS2_OPEN_RW      0xBD
+#define RSP_FS2_WRITE        0xBE
+#define RSP_FS2_SYNC         0xBF
+#define RSP_FS2_TRUNCATE     0xC0
 
 /* ---------------------------------------------------------------------------
  * FS2 capability contract (version 1)
  * ---------------------------------------------------------------------------
  *
- * The first implementation is read-only, with two FIL slots, one DIR slot,
- * one bounded component resolver and the existing 512-byte bulk staging
- * buffer.  Counts and limits are reported so later pool growth does not change
- * the ABI.  Generation covers media/context invalidation while the Z80 keeps
- * running.  An MCU reset resets the whole machine, so there is no boot nonce.
+ * Two FIL slots, one DIR slot, one bounded component resolver and the existing
+ * 512-byte bulk staging buffer.  Counts and limits are reported so later pool
+ * growth does not change the ABI.  Generation covers media/context
+ * invalidation while the Z80 keeps running.  An MCU reset resets the whole
+ * machine, so there is no boot nonce.
  */
 #define IOC_FS2_VERSION                  1u
 #define IOC_FS2_STATUS_VERSION           1u
@@ -265,6 +273,8 @@
 #define IOC_FS2_CAP_MEDIA_GENERATION     0x0008u
 #define IOC_FS2_CAP_STAT                 0x0010u
 #define IOC_FS2_CAP_SPACE                0x0020u
+#define IOC_FS2_CAP_WRITE                0x0040u
+#define IOC_FS2_CAP_TRUNCATE             0x0080u
 
 /* RSP_FS2_CAPS payload.  Multibyte fields are little-endian. */
 #define IOC_OFF_FS2_CAP_VERSION          (IOC_OFF_PAYLOAD + 0u)
@@ -288,10 +298,22 @@
 #define IOC_OFF_FS2_NAME                 (IOC_OFF_PAYLOAD + 0u) /* 11 bytes */
 #define IOC_FS2_NAME_REQ_LEN             IOC_NAME_LEN
 
+/* OPEN_RW request: one mode byte followed by the packed name. */
+#define IOC_OFF_FS2_OPEN_MODE            (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_FS2_OPEN_NAME            (IOC_OFF_PAYLOAD + 1u)
+#define IOC_FS2_OPEN_RW_REQ_LEN          (1u + IOC_NAME_LEN)
+#define IOC_FS2_OPEN_UPDATE              0u
+#define IOC_FS2_OPEN_CREATE_NEW          1u
+#define IOC_FS2_OPEN_CREATE_ALWAYS       2u
+
 #define IOC_OFF_FS2_TOKEN                (IOC_OFF_PAYLOAD + 0u) /* uint16 */
 #define IOC_OFF_FS2_OFFSET               (IOC_OFF_PAYLOAD + 2u) /* uint32 */
 #define IOC_OFF_FS2_LENGTH               (IOC_OFF_PAYLOAD + 6u) /* uint16 */
 #define IOC_FS2_READ_REQ_LEN              8u
+#define IOC_FS2_WRITE_REQ_LEN             IOC_FS2_READ_REQ_LEN
+
+#define IOC_OFF_FS2_TRUNCATE_SIZE         (IOC_OFF_PAYLOAD + 2u) /* uint32 */
+#define IOC_FS2_TRUNCATE_REQ_LEN           6u
 
 #define IOC_OFF_FS2_OPEN_TOKEN           (IOC_OFF_PAYLOAD + 0u) /* uint16 */
 #define IOC_OFF_FS2_OPEN_SIZE            (IOC_OFF_PAYLOAD + 2u) /* uint32 */

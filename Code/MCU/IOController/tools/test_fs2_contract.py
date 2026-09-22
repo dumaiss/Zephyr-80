@@ -15,10 +15,11 @@ assert commands == ["CMD_FS2_CAPS", "CMD_FS2_GENERATION", "CMD_FS2_RESET",
                     "CMD_FS2_ROOT", "CMD_FS2_PUSH", "CMD_FS2_OPEN_RO",
                     "CMD_FS2_READ", "CMD_FS2_CLOSE", "CMD_FS2_OPENDIR",
                     "CMD_FS2_READDIR", "CMD_FS2_CLOSEDIR", "CMD_FS2_STAT",
-                    "CMD_FS2_SPACE"]
+                    "CMD_FS2_SPACE", "CMD_FS2_OPEN_RW", "CMD_FS2_WRITE",
+                    "CMD_FS2_SYNC", "CMD_FS2_TRUNCATE"]
 for command in commands:
     assert f"case {command}:" in dispatch, f"{command} is not dispatched"
-assert "value >= CMD_FS2_CAPS && value <= CMD_FS2_SPACE" in sync
+assert "value >= CMD_FS2_CAPS && value <= CMD_FS2_TRUNCATE" in sync
 assert "static uint8_t chunk[IOC_FS2_CHUNK_MAX]" not in fs2
 assert "#define chunk fs_bulk_chunk" in fs2
 assert "reply->bytes[IOC_OFF_FS2_OPEN_ATTR] = 0u;" in fs2

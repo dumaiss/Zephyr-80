@@ -26,6 +26,10 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
     case CMD_FS2_CLOSEDIR:   handler_fs2_closedir(request, reply);   return true;
     case CMD_FS2_STAT:       handler_fs2_stat(request, reply);       return true;
     case CMD_FS2_SPACE:      handler_fs2_space(request, reply);      return true;
+    case CMD_FS2_OPEN_RW:    handler_fs2_open_rw(request, reply);    return true;
+    case CMD_FS2_WRITE:      handler_fs2_write(request, reply);      return true;
+    case CMD_FS2_SYNC:       handler_fs2_sync(request, reply);       return true;
+    case CMD_FS2_TRUNCATE:   handler_fs2_truncate(request, reply);   return true;
     case CMD_FS_OPENDIR:  handler_fs_opendir(request, reply);  return true;
     case CMD_FS_READDIR:  handler_fs_readdir(request, reply);  return true;
     case CMD_FS_OPEN:     handler_fs_open(request, reply);     return true;

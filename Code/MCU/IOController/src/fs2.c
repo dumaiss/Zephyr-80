@@ -15,6 +15,7 @@ typedef struct {
     uint32_t position;
     uint8_t cookie;
     bool open;
+    bool writable;
 } Fs2File;
 
 typedef struct {
@@ -30,6 +31,11 @@ static Fs2Dir directory;
 static char resolver[FS2_PATH_MAX + 1u];
 static uint8_t resolver_components;
 static uint32_t generation;
+#if !FF_FS_READONLY
+static Fs2File *pending_write_file;
+static uint32_t pending_write_offset;
+static uint16_t pending_write_length;
+#endif
 
 static void reply_init(const IocFrame *request, IocFrame *reply,
                        uint8_t cls, uint8_t status, uint8_t len)
@@ -74,6 +80,7 @@ static void close_contexts(void)
         if (files[i].open)
             (void)f_close(&files[i].fil);
         files[i].open = false;
+        files[i].writable = false;
         files[i].position = 0uL;
     }
     if (directory.open)
@@ -114,23 +121,35 @@ void fs2_media_invalidated(void)
 
 static uint8_t map_result(FRESULT fr)
 {
+    uint8_t status;
+
     switch (fr) {
-    case FR_OK:            return IOC_STATUS_OK;
+    case FR_OK:            status = IOC_STATUS_OK; break;
     case FR_NO_FILE:
-    case FR_NO_PATH:       return IOC_STATUS_FS2_NOT_FOUND;
-    case FR_EXIST:         return IOC_STATUS_FS2_EXISTS;
-    case FR_INVALID_NAME:  return IOC_STATUS_FS2_BAD_NAME;
+    case FR_NO_PATH:       status = IOC_STATUS_FS2_NOT_FOUND; break;
+    case FR_EXIST:         status = IOC_STATUS_FS2_EXISTS; break;
+    case FR_INVALID_NAME:  status = IOC_STATUS_FS2_BAD_NAME; break;
     case FR_DENIED:
-    case FR_WRITE_PROTECTED:return IOC_STATUS_FS2_READ_ONLY;
+    case FR_WRITE_PROTECTED: status = IOC_STATUS_FS2_READ_ONLY; break;
     case FR_NOT_ENOUGH_CORE:
-    case FR_TOO_MANY_OPEN_FILES: return IOC_STATUS_FS2_NO_HANDLE;
-    case FR_INVALID_OBJECT:return IOC_STATUS_FS2_STALE;
-    case FR_INVALID_PARAMETER:return IOC_STATUS_FS2_RANGE;
+    case FR_TOO_MANY_OPEN_FILES: status = IOC_STATUS_FS2_NO_HANDLE; break;
+    case FR_INVALID_OBJECT: status = IOC_STATUS_FS2_STALE; break;
+    case FR_INVALID_PARAMETER: status = IOC_STATUS_FS2_RANGE; break;
     case FR_NOT_READY:
     case FR_NOT_ENABLED:
-    case FR_NO_FILESYSTEM: return IOC_STATUS_FS2_NO_MEDIA;
-    default:               return IOC_STATUS_FS2_IO;
+    case FR_NO_FILESYSTEM: status = IOC_STATUS_FS2_NO_MEDIA; break;
+    default:               status = IOC_STATUS_FS2_IO; break;
     }
+
+    /* A live host can outlast card removal or an SD/FatFs failure.  Drop every
+     * open context and advance the generation so no old token can be reused
+     * after the volume mounts again. */
+    if ((fr == FR_DISK_ERR) || (fr == FR_INT_ERR) ||
+        (fr == FR_NOT_READY) || (fr == FR_NOT_ENABLED) ||
+        (fr == FR_NO_FILESYSTEM))
+        sdfs_invalidate();
+
+    return status;
 }
 
 static uint8_t need_fs(FATFS **fs)
@@ -286,10 +305,15 @@ static Fs2File *file_for(uint16_t token, uint8_t *status)
 
 void handler_fs2_caps(const IocFrame *request, IocFrame *reply)
 {
-    uint16_t flags = IOC_FS2_CAP_READ_ONLY | IOC_FS2_CAP_EXPLICIT_OFFSET
+    uint16_t flags = IOC_FS2_CAP_EXPLICIT_OFFSET
                    | IOC_FS2_CAP_COMPONENT_RESOLVER
                    | IOC_FS2_CAP_MEDIA_GENERATION | IOC_FS2_CAP_STAT
                    | IOC_FS2_CAP_SPACE;
+#if FF_FS_READONLY
+    flags |= IOC_FS2_CAP_READ_ONLY;
+#else
+    flags |= IOC_FS2_CAP_WRITE | IOC_FS2_CAP_TRUNCATE;
+#endif
     reply_init(request, reply, RSP_FS2_CAPS, IOC_STATUS_OK,
                IOC_FS2_CAP_REPLY_LEN);
     reply->bytes[IOC_OFF_FS2_CAP_VERSION] = IOC_FS2_VERSION;
@@ -394,6 +418,7 @@ void handler_fs2_open_ro(const IocFrame *request, IocFrame *reply)
     if (file->cookie == 0u)
         file->cookie = 1u;
     file->open = true;
+    file->writable = false;
     file->generation = generation;
     file->position = 0uL;
     reply_init(request, reply, RSP_FS2_OPEN_RO, IOC_STATUS_OK,
@@ -457,9 +482,11 @@ void handler_fs2_close(const IocFrame *request, IocFrame *reply)
     uint8_t status;
     Fs2File *file = file_for(token, &status);
     if (status == IOC_STATUS_OK) {
-        status = map_result(f_close(&file->fil));
+        FRESULT fr = f_close(&file->fil);
         file->open = false;
+        file->writable = false;
         file->position = 0uL;
+        status = map_result(fr);
     }
     reply_init(request, reply, RSP_FS2_CLOSE, status, 0u);
 }
@@ -600,4 +627,193 @@ void handler_fs2_space(const IocFrame *request, IocFrame *reply)
           byte_count(free_clusters, cluster_bytes));
     put32(&reply->bytes[IOC_OFF_FS2_SPACE_TOTAL],
           byte_count(fs->n_fatent - 2uL, cluster_bytes));
+}
+
+void handler_fs2_open_rw(const IocFrame *request, IocFrame *reply)
+{
+#if FF_FS_READONLY
+    reply_init(request, reply, RSP_FS2_OPEN_RW,
+               IOC_STATUS_FS2_READ_ONLY, 0u);
+#else
+    char path[FS2_PATH_MAX + 1u];
+    FATFS *fs;
+    uint8_t status = need_fs(&fs);
+    uint8_t mode = request->bytes[IOC_OFF_FS2_OPEN_MODE];
+    uint8_t flags;
+    uint8_t i;
+    FRESULT fr;
+    Fs2File *file = NULL;
+    FILINFO info;
+    (void)fs;
+
+    if (mode > IOC_FS2_OPEN_CREATE_ALWAYS)
+        status = IOC_STATUS_FS2_RANGE;
+    if ((status == IOC_STATUS_OK) &&
+        !make_path(path, &request->bytes[IOC_OFF_FS2_OPEN_NAME], false))
+        status = IOC_STATUS_FS2_BAD_NAME;
+    if (status == IOC_STATUS_OK) {
+        fr = f_stat(path, &info);
+        if (fr == FR_OK) {
+            if ((info.fattrib & AM_DIR) != 0u)
+                status = IOC_STATUS_FS2_IS_DIR;
+            else if (mode == IOC_FS2_OPEN_CREATE_NEW)
+                status = IOC_STATUS_FS2_EXISTS;
+        } else if (fr == FR_NO_FILE) {
+            if (mode == IOC_FS2_OPEN_UPDATE)
+                status = IOC_STATUS_FS2_NOT_FOUND;
+        } else {
+            status = map_result(fr);
+        }
+    }
+    if (status == IOC_STATUS_OK) {
+        for (i = 0u; i < IOC_FS2_FILE_SLOTS; ++i) {
+            if (!files[i].open) {
+                file = &files[i];
+                break;
+            }
+        }
+        if (file == NULL)
+            status = IOC_STATUS_FS2_NO_HANDLE;
+    }
+    if (status == IOC_STATUS_OK) {
+        flags = FA_READ | FA_WRITE;
+        if (mode == IOC_FS2_OPEN_CREATE_NEW)
+            flags |= FA_CREATE_NEW;
+        else if (mode == IOC_FS2_OPEN_CREATE_ALWAYS)
+            flags |= FA_CREATE_ALWAYS;
+        fr = f_open(&file->fil, path, flags);
+        status = map_result(fr);
+    }
+    if (status != IOC_STATUS_OK) {
+        reply_init(request, reply, RSP_FS2_OPEN_RW, status, 0u);
+        return;
+    }
+    ++file->cookie;
+    if (file->cookie == 0u)
+        file->cookie = 1u;
+    file->open = true;
+    file->writable = true;
+    file->generation = generation;
+    file->position = 0uL;
+    reply_init(request, reply, RSP_FS2_OPEN_RW, IOC_STATUS_OK,
+               IOC_FS2_OPEN_REPLY_LEN);
+    put16(&reply->bytes[IOC_OFF_FS2_OPEN_TOKEN], token_for(i, file->cookie));
+    put32(&reply->bytes[IOC_OFF_FS2_OPEN_SIZE], (uint32_t)f_size(&file->fil));
+    reply->bytes[IOC_OFF_FS2_OPEN_ATTR] = 0u;
+#endif
+}
+
+#if !FF_FS_READONLY
+static uint8_t commit_fs2_write(void)
+{
+    FRESULT fr;
+    UINT put = 0u;
+    uint8_t status;
+
+    if ((pending_write_file == NULL) || !pending_write_file->open ||
+        !pending_write_file->writable ||
+        (pending_write_file->generation != generation))
+        return IOC_STATUS_FS2_STALE;
+
+    if (pending_write_file->position != pending_write_offset) {
+        fr = f_lseek(&pending_write_file->fil, (FSIZE_t)pending_write_offset);
+        status = map_result(fr);
+        if (status != IOC_STATUS_OK)
+            return status;
+        pending_write_file->position = pending_write_offset;
+    }
+
+    fr = f_write(&pending_write_file->fil, chunk,
+                 (UINT)pending_write_length, &put);
+    status = map_result(fr);
+    if (status != IOC_STATUS_OK)
+        return status;
+    pending_write_file->position = pending_write_offset + put;
+    if (put != pending_write_length)
+        return IOC_STATUS_FS2_NO_SPACE;
+    return IOC_STATUS_OK;
+}
+#endif
+
+void handler_fs2_write(const IocFrame *request, IocFrame *reply)
+{
+#if FF_FS_READONLY
+    reply_init(request, reply, RSP_FS2_WRITE,
+               IOC_STATUS_FS2_READ_ONLY, 0u);
+#else
+    uint16_t token = get16(&request->bytes[IOC_OFF_FS2_TOKEN]);
+    uint32_t offset = get32(&request->bytes[IOC_OFF_FS2_OFFSET]);
+    uint16_t length = get16(&request->bytes[IOC_OFF_FS2_LENGTH]);
+    uint8_t status;
+    Fs2File *file = file_for(token, &status);
+
+    if ((status == IOC_STATUS_OK) && !file->writable)
+        status = IOC_STATUS_FS2_READ_ONLY;
+    if ((status == IOC_STATUS_OK) &&
+        ((length == 0u) || (length > IOC_FS2_CHUNK_MAX)))
+        status = IOC_STATUS_FS2_RANGE;
+    if (status != IOC_STATUS_OK) {
+        reply_init(request, reply, RSP_FS2_WRITE, status, 0u);
+        return;
+    }
+
+    pending_write_file = file;
+    pending_write_offset = offset;
+    pending_write_length = length;
+    reply_init(request, reply, RSP_FS2_WRITE, IOC_STATUS_OK,
+               IOC_READY_PAYLOAD_LEN);
+    reply->bytes[IOC_OFF_READY_XFER_ID] = bulk_channel_next_xfer_id();
+    reply->bytes[IOC_OFF_READY_DIRECTION] = BULK_DIR_Z80_TO_MCU;
+    put16(&reply->bytes[IOC_OFF_READY_LEN_LO], length);
+    put32(&reply->bytes[IOC_OFF_READY_LBA], offset);
+    bulk_channel_arm_receive(chunk, length,
+                             reply->bytes[IOC_OFF_READY_XFER_ID],
+                             CMD_FS2_WRITE, request->bytes[IOC_OFF_SEQ],
+                             commit_fs2_write);
+#endif
+}
+
+void handler_fs2_sync(const IocFrame *request, IocFrame *reply)
+{
+#if FF_FS_READONLY
+    reply_init(request, reply, RSP_FS2_SYNC,
+               IOC_STATUS_FS2_READ_ONLY, 0u);
+#else
+    uint16_t token = get16(&request->bytes[IOC_OFF_FS2_TOKEN]);
+    uint8_t status;
+    Fs2File *file = file_for(token, &status);
+    if ((status == IOC_STATUS_OK) && !file->writable)
+        status = IOC_STATUS_FS2_READ_ONLY;
+    if (status == IOC_STATUS_OK)
+        status = map_result(f_sync(&file->fil));
+    reply_init(request, reply, RSP_FS2_SYNC, status, 0u);
+#endif
+}
+
+void handler_fs2_truncate(const IocFrame *request, IocFrame *reply)
+{
+#if FF_FS_READONLY
+    reply_init(request, reply, RSP_FS2_TRUNCATE,
+               IOC_STATUS_FS2_READ_ONLY, 0u);
+#else
+    uint16_t token = get16(&request->bytes[IOC_OFF_FS2_TOKEN]);
+    uint32_t size = get32(&request->bytes[IOC_OFF_FS2_TRUNCATE_SIZE]);
+    uint8_t status;
+    Fs2File *file = file_for(token, &status);
+    FRESULT fr;
+
+    if ((status == IOC_STATUS_OK) && !file->writable)
+        status = IOC_STATUS_FS2_READ_ONLY;
+    if (status == IOC_STATUS_OK) {
+        fr = f_lseek(&file->fil, (FSIZE_t)size);
+        status = map_result(fr);
+    }
+    if (status == IOC_STATUS_OK) {
+        fr = f_truncate(&file->fil);
+        status = map_result(fr);
+    }
+    if (status == IOC_STATUS_OK)
+        file->position = size;
+    reply_init(request, reply, RSP_FS2_TRUNCATE, status, 0u);
+#endif
 }

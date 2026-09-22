@@ -42,7 +42,7 @@ ZB_NATIVE_FILE		= 218
 ZN_VERSION		= 0
 ZN_OP			= 1
 ZN_STATUS		= 2
-ZN_FLAGS		= 3		; reserved, returned as zero
+ZN_FLAGS		= 3		; OPEN mode in; attributes out
 ZN_HANDLE		= 4
 ZN_POSITION		= 6
 ZN_LENGTH		= 10
@@ -60,6 +60,32 @@ ZN_STAT			= 6
 ZN_OPENDIR		= 7
 ZN_READDIR		= 8
 ZN_CHDIR		= 9
+ZN_WRITE		= 10
+ZN_SYNC			= 11
+ZN_TRUNCATE		= 12
+ZN_OPEN_READ		= 0
+ZN_OPEN_UPDATE		= 1
+ZN_OPEN_CREATE_NEW	= 2
+ZN_OPEN_CREATE_ALWAYS	= 3
+
+; Function 218 status byte (ZN_STATUS).  ../../CPM2.2/src/cbios_defs.inc is the
+; authority; these are the values a tool needs to tell one failure from another.
+ZN_OK			= 0x00
+ZN_ERR_NOT_FOUND	= 0x40
+ZN_ERR_END		= 0x41
+ZN_ERR_EXISTS		= 0x42
+ZN_ERR_BAD_NAME		= 0x43
+ZN_ERR_READ_ONLY	= 0x44
+ZN_ERR_NO_SPACE		= 0x45
+ZN_ERR_NOT_DIR		= 0x46
+ZN_ERR_IS_DIR		= 0x47
+ZN_ERR_NO_HANDLE	= 0x48
+ZN_ERR_STALE		= 0x49
+ZN_ERR_RANGE		= 0x4a
+ZN_ERR_NO_MEDIA		= 0x4b
+ZN_ERR_TRANSPORT	= 0x4c
+ZN_ERR_UNKNOWN_WRITE	= 0x4d
+ZN_ERR_IO		= 0x4e
 
 ; Interrupt callbacks, and everything they touch, live here (8 KiB common
 ; memory starts at E000h; the first 1 KiB belongs to the running program).
@@ -79,8 +105,8 @@ ZB_SYSINFO_STORAGE_PROFILE = 0x0a	; .dw two uint16 entry counters
 ; IOCALL: HL = TX frame, DE = RX frame.  Out: A = status; HL, DE unchanged.
 
 ; zb_native: DE -> 32-byte version-1 native-file descriptor.  The descriptor
-; is copied across the bank boundary by the facade.  READ data is staged
-; through the existing 512-byte common bulk buffer and copied to ZN_BUFFER.
+; is copied across the bank boundary by the facade.  READ and WRITE data are
+; staged through the existing 512-byte common bulk buffer.
 zb_native:
 	ld c,#ZB_NATIVE_FILE
 	call ZB_BDOS

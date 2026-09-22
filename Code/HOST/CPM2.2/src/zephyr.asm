@@ -125,6 +125,7 @@ ZBIOS_EXT_BASE:
 	.include "boot_rom_copy.asm"
 	.include "cbios_bank_select.asm"
 	.include "cbios_boot.asm"
+	.include "cbios_native_stage.asm"
 	.include "cbios_console.asm"
 	.include "sio_core.asm"
 	.include "cbios_xing.asm"

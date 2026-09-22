@@ -126,6 +126,11 @@ CBIOS_SIO_QUIESCE_BASE          = 0xefa0 ; unused facade tail
 FACADE_CODE_LIMIT               = CBIOS_SIO_QUIESCE_BASE                        ; CBIOS_BASE
 CBIOS_NATIVE_GATE_BASE          = 0xefc2 ; immediately after sio0a_quiesce
 CBIOS_NATIVE_GATE_LIMIT         = 0xf000
+; COMMON REQUIRED: function 218 must copy write data while the caller's bank
+; is visible and read data after bank-7 returns.  This small helper occupies
+; otherwise unused boot-region tail; filesystem logic and state remain bank 7.
+CBIOS_NATIVE_STAGE_BASE         = CBIOS_BASE + 0x0160      ; F160h
+CBIOS_NATIVE_STAGE_LIMIT        = CBIOS_BANKING_CODE_BASE ; F1B0h
 CBIOS_GATE_CODE_BASE            = 0xf538
 CBIOS_GATE_CODE_LIMIT           = 0xf730
 CBIOS_IRQ_CODE_BASE             = 0xf730
@@ -1445,7 +1450,7 @@ FAT_BIOS_DRIVE                        = 0x03       ; D:
 FAT_BIOS_EMPTY_BYTE                   = 0xe5
 FAT_BIOS_RECORD_BYTES                 = 0x0080
 
-; IOC FS2 version-1 read-only service.  Keep these values in step with
+; IOC FS2 version-1 service.  Keep these values in step with
 ; IOController/include/ioc_frame.h.  Requests and replies use the ordinary
 ; 32-byte IOCALL mailbox; FS2_READ hands its data to the existing bulk lane.
 FS2_CMD_CAPS                          = 0x30
@@ -1461,6 +1466,10 @@ FS2_CMD_READDIR                       = 0x39
 FS2_CMD_CLOSEDIR                      = 0x3a
 FS2_CMD_STAT                          = 0x3b
 FS2_CMD_SPACE                         = 0x3c
+FS2_CMD_OPEN_RW                       = 0x3d
+FS2_CMD_WRITE                         = 0x3e
+FS2_CMD_SYNC                          = 0x3f
+FS2_CMD_TRUNCATE                      = 0x40
 FS2_RSP_CAPS                          = 0xb0
 FS2_RSP_GENERATION                    = 0xb1
 FS2_RSP_RESET                         = 0xb2
@@ -1474,13 +1483,25 @@ FS2_RSP_READDIR                       = 0xb9
 FS2_RSP_CLOSEDIR                      = 0xba
 FS2_RSP_STAT                          = 0xbb
 FS2_RSP_SPACE                         = 0xbc
+FS2_RSP_OPEN_RW                       = 0xbd
+FS2_RSP_WRITE                         = 0xbe
+FS2_RSP_SYNC                          = 0xbf
+FS2_RSP_TRUNCATE                      = 0xc0
+FS2_STATUS_EXISTS                     = 0x42
+FS2_STATUS_BAD_NAME                   = 0x43
+FS2_STATUS_READ_ONLY                  = 0x44
+FS2_STATUS_NO_SPACE                   = 0x45
 FS2_STATUS_NOT_FOUND                  = 0x40
 FS2_STATUS_END                        = 0x41
 FS2_STATUS_NOT_DIR                    = 0x46
 FS2_STATUS_IS_DIR                     = 0x47
 FS2_STATUS_NO_HANDLE                  = 0x48
 FS2_STATUS_STALE                      = 0x49
+FS2_STATUS_RANGE                      = 0x4a
+FS2_STATUS_NO_MEDIA                   = 0x4b
 FS2_STATUS_TRANSPORT                  = 0x4c
+FS2_STATUS_UNKNOWN_WRITE              = 0x4d
+FS2_STATUS_IO                         = 0x4e
 FS2_NAME_BYTES                        = 0x0b
 FS2_TOKEN_BYTES                       = 0x02
 FS2_ATTR_RO                           = 0x01
@@ -1489,7 +1510,7 @@ FS2_ATTR_SYSTEM                       = 0x04
 FS2_ATTR_DIR                          = 0x10
 FS2_ATTR_ARCHIVE                      = 0x20
 
-; Zephyr function 218, native read-only descriptor (32 bytes).
+; Zephyr function 218, native byte-oriented descriptor (32 bytes).
 ZNATIVE_VERSION                       = 0x01
 ZNATIVE_OPEN                          = 0x01
 ZNATIVE_CLOSE                         = 0x02
@@ -1500,6 +1521,13 @@ ZNATIVE_STAT                          = 0x06
 ZNATIVE_OPENDIR                       = 0x07
 ZNATIVE_READDIR                       = 0x08
 ZNATIVE_CHDIR                         = 0x09
+ZNATIVE_WRITE                         = 0x0a
+ZNATIVE_SYNC                          = 0x0b
+ZNATIVE_TRUNCATE                      = 0x0c
+ZNATIVE_OPEN_READ                     = 0x00
+ZNATIVE_OPEN_UPDATE                   = 0x01
+ZNATIVE_OPEN_CREATE_NEW               = 0x02
+ZNATIVE_OPEN_CREATE_ALWAYS            = 0x03
 ZNATIVE_OFF_VERSION                   = 0x00
 ZNATIVE_OFF_OP                        = 0x01
 ZNATIVE_OFF_STATUS                    = 0x02
