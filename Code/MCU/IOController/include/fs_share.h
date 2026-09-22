@@ -51,6 +51,11 @@
 
 void fs_share_init(void);
 
+/* The filesystem command families are serialized by the command dispatcher.
+ * FS2 reuses this one 512-byte bulk staging area rather than reserving a
+ * second block of PIC RAM. */
+extern uint8_t fs_bulk_chunk[IOC_FS_CHUNK_MAX];
+
 void handler_fs_opendir(const IocFrame *request, IocFrame *reply);
 void handler_fs_readdir(const IocFrame *request, IocFrame *reply);
 void handler_fs_open(const IocFrame *request, IocFrame *reply);

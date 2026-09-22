@@ -38,6 +38,9 @@
 	.globl FACADE_CODE_START,FACADE_CODE_END
 	.globl irq_register,irq_unregister,irq_program_exit
 	.globl zephyr_sysinfo,IOC_DIAG_STATUS,BIOS_CODE_START
+	.globl fat_bdos_or_zsdos,native_gate_entry
+	.globl fac_eff_dma
+	.globl fac_zext_return,fac_de
 
 FACADE_FORCE_STAGE	= 1
 
@@ -323,7 +326,7 @@ fac_os_function:
 	ld a,(fac_fn)
 	ld c,a
 	ld de,(fac_os_de)
-	call ZSDOS_ENTRY
+	call fat_bdos_or_zsdos
 	ld (fac_ret_hl),hl
 	ld (fac_ret_de),de
 	ld (fac_ret_bc),bc
@@ -471,6 +474,8 @@ fac_return_de:
 ; enters bank 7 except through a gate.
 ; ---------------------------------------------------------------------------
 fac_zext:
+	cp #218
+	jp z,native_gate_entry
 	cp #ZEXT_REGISTER_ISR
 	jr nz,fac_zext_unregister
 	call irq_register

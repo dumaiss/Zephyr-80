@@ -43,6 +43,7 @@ FATFS_SRCS := \
     $(SRC_DIR)/sdfs.c \
     $(SRC_DIR)/diskio.c \
     $(SRC_DIR)/fs_share.c \
+    $(SRC_DIR)/fs2.c \
     $(FATFS_DIR)/ff.c
 FATFS_DEFS := -DIOC_FS_COMMANDS=1 -I$(FATFS_DIR)
 else
@@ -150,7 +151,7 @@ $(FIRMWARE_HEX): $(FIRMWARE_SRCS) $(FLAGS_STAMP) | $(BUILD_DIR)
 	$(XC8) $(XC8FLAGS) $(PROFILE_DEFS) $(FATFS_DEFS) $(DEFS) $(FIRMWARE_SRCS) -o $(BUILD_DIR)/$(TARGET)
 
 test:
-	@echo "No host tests yet: firmware only."
+	@python3 tools/test_fs2_contract.py
 
 size: $(FIRMWARE_HEX)
 	@ls -lh "$(BUILD_DIR)"

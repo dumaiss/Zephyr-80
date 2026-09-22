@@ -4,6 +4,7 @@
 #include "sd_card.h"
 #include "sd_cache.h"
 #include "ff.h"
+#include "fs2.h"
 
 /* The single FATFS object.  In FF_FS_TINY mode this carries the only 512-byte
  * sector window in the system: every FIL and DIR shares it, which is what
@@ -28,6 +29,7 @@ void sdfs_invalidate(void)
     }
 
     memset(&fs_obj, 0, sizeof(fs_obj));
+    fs2_media_invalidated();
 }
 
 SdStatus sdfs_mount(FATFS **fs)

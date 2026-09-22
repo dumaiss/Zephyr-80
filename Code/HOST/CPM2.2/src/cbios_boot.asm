@@ -9,6 +9,7 @@
 	.globl prepare_runnable_bank
 	.globl restore_ccp_from_os
 	.globl facade_reset,irq_reset,bank7_check
+	.globl xing_os_call_ix,fat_context_reset
 	.globl runtime_set_default_dma
 	.globl runtime_clear_default_dma
 	.globl console_init
@@ -85,6 +86,7 @@ boot_masked:
 	call boot_print_banner
 	call prepare_runnable_bank
 	call facade_reset
+	call boot_fat_context_reset
 	xor a
 	ld (IOBYTE),a
 	ld (TDRIVE),a
@@ -168,6 +170,7 @@ wboot_masked:
 	call restore_ccp_from_os
 	call prepare_runnable_bank
 	call facade_reset
+	call boot_fat_context_reset
 	; The font is in bank 7, where no program can overwrite it, so console
 	; initialisation needs no restore from ROM first.  The VDrip backend may
 	; temporarily enable SIO RX for its READY handshake; the direct V9958
@@ -259,6 +262,16 @@ runtime_clear_default_dma_loop:
 	ld (hl),a
 	inc hl
 	djnz runtime_clear_default_dma_loop
+	ret
+
+; Cold and warm boot discard transient FAT/FS2 handles while preserving the
+; bank-7 per-drive current directory.  Reuse the established mode crossing;
+; no additional common stub or stack is introduced.
+boot_fat_context_reset:
+	push ix
+	ld ix,#fat_context_reset
+	call xing_os_call_ix
+	pop ix
 	ret
 
 ; Silence all four Afternoon Blend PSGs.

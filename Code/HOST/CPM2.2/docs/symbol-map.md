@@ -11,8 +11,8 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | ROM page 0: reset vector and common memory | `build/firmware.bin` | 65536 bytes |
 | Bank 7 payload | `build/bank7.bin` | 65536 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Assembler listing | `build/firmware.lst` | 991016 bytes |
-| Linker symbol map | `build/firmware.map` | 50687 bytes |
+| Assembler listing | `build/firmware.lst` | 1140718 bytes |
+| Linker symbol map | `build/firmware.map` | 59469 bytes |
 | Layout manifest | `build/layout.manifest` | 1445 bytes |
 
 ## System Addresses
@@ -48,7 +48,7 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | Entry | Address | Target |
 |---|---:|---|
 | `BOOT` | `F000h` | `F05Ch` `boot` |
-| `WBOOT` | `F003h` | `F0AEh` `wboot` |
+| `WBOOT` | `F003h` | `F0B1h` `wboot` |
 | `CONST` | `F006h` | `F550h` `gate_const` |
 | `CONIN` | `F009h` | `F55Fh` `gate_conin` |
 | `CONOUT` | `F00Ch` | `F56Eh` `gate_conout` |
@@ -123,11 +123,11 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | `rom_copy_masked` | `0003h` | Stackless bootstrap: ROM pages 0 and 7 seed SRAM banks 0 and 7. |
 | `cbios_boot_after_rom_copy` | `0025h` | Cold boot handoff after the copy. |
 | `boot` | `F05Ch` | Cold boot: enters mode 11, checks bank 7, initializes, enters the CCP in mode 10. |
-| `wboot` | `F0AEh` | Warm boot trampoline. |
-| `wboot_resident` | `F0B1h` | Warm boot: resets the CTC, clears registrations, restores the CCP. |
-| `restore_ccp_from_os` | `F0F7h` | Copies `CBASE` through `FBASE-1` from the pristine CCP in bank 7. |
-| `prepare_runnable_bank` | `F103h` | Page zero and default DMA. |
-| `init_page_zero` | `F10Dh` | Installs `JP WBOOT` and `JP FBASE`. |
+| `wboot` | `F0B1h` | Warm boot trampoline. |
+| `wboot_resident` | `F0B4h` | Warm boot: resets the CTC, clears registrations, restores the CCP. |
+| `restore_ccp_from_os` | `F0FDh` | Copies `CBASE` through `FBASE-1` from the pristine CCP in bank 7. |
+| `prepare_runnable_bank` | `F109h` | Page zero and default DMA. |
+| `init_page_zero` | `F113h` | Installs `JP WBOOT` and `JP FBASE`. |
 | `ctc_disable_interrupts` | `F288h` | Resets the CTC and programs its vector base. |
 | `boot_print_banner` | `F2A9h` | Prints the boot banner. |
 | `SELMEM` | `F1B0h` | Selects a program bank, keeping the RAM mode. |
@@ -163,8 +163,8 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | `irq_unexpected` | `F7A7h` | `EI`/`RETI` stub for unprogrammed vectors. |
 | `irq_ctc_slots` | `F7BCh` | Callback entry per CTC channel; zero is unregistered. |
 | `facade_entry` | `EC09h` | BDOS facade entry, reached from `FBASE`. |
-| `facade_reset` | `EF25h` | Resets the facade's DMA tracking. |
-| `zephyr_sysinfo` | `EF69h` | System information block returned by function 203. |
+| `facade_reset` | `EF2Ah` | Resets the facade's DMA tracking. |
+| `zephyr_sysinfo` | `EF6Eh` | System information block returned by function 203. |
 | `sercon_init` | `F844h` | Arms the serial console fallback at cold boot. |
 | `sercon_install` | `F854h` | Rebinds the serial console after warm boot. |
 
@@ -187,7 +187,7 @@ Visible at these addresses only in operating-system mode.
 | `stg_a_seldsk` | `4341h` | Drive A: select. |
 | `stg_a_read` | `4355h` | Drive A: record read. |
 | `sd_storage_probe` | `4300h` | B: select probe. |
-| `sd_storage_probe2` | `4460h` | C: select probe. |
+| `sd_storage_probe2` | `4477h` | C: select probe. |
 | `VIDEO_SEND` | `3200h` | Raw video request. |
 | `IOCALL` | `32F2h` | IO Controller command/reply. |
 | `IOCBULK` | `3900h` | IO Controller bulk receive. |
@@ -197,9 +197,17 @@ Visible at these addresses only in operating-system mode.
 | `STORAGE_A_DPH` | `6000h` | Drive A: DPH. |
 | `SD_STORAGE_DPH` | `6020h` | B: DPH. |
 | `SD_STORAGE_DPH2` | `6500h` | C: DPH. |
+| `FAT_BIOS_DPH` | `904Ah` | D: synthetic FAT DPH. |
+| `FAT_BIOS_DPB` | `905Ah` | Synthetic FAT compatibility geometry. |
+| `fat_bios_read` | `9021h` | E5-filled synthetic disk record read. |
+| `fat_bios_write` | `9047h` | Synthetic disk write failure. |
+| `FAT_BIOS_ALV` | `CE14h` | D: synthetic allocation vector. |
 | `CBIOS_STORAGE_DIRBUF` | `6040h` | Shared directory buffer. |
 | `CONSOLE_FONT_ROM_BASE` | `8000h` | Console font. |
 | `BOOT_BANNER_TEXT` | `8800h` | Boot banner text. |
+| `RESOURCE_CACHE_POOL_BASE` | `6600h` | Start of the 13-line reclaimable resource/cache pool. |
+| `FAT_BDOS_CODE_START` | `9000h` | Fixed FAT compatibility code region. |
+| `FAT_BDOS_STATE_START` | `CE10h` | Fixed FAT persistent-state region. |
 | `v9958_console_driver` | `4800h` | V9958 console driver table. |
 | `v9958_console_init` | `4814h` | V9958 warm initialization. |
 

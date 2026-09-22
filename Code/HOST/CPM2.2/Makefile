@@ -78,6 +78,15 @@ VDRIP_TRANSPORT_INCLUDE :=
 VDRIP_TRANSPORT_LINKED := 0
 endif
 
+# FAT D: selection.  Milestones 2-4 now provide the complete read-only path, so
+# the normal image exposes D:.  FAT_BIOS_M1=0 remains as a recovery build that
+# parks the synthetic drive without changing placement.
+FAT_BIOS_M1 ?= 1
+VALID_FAT_BIOS_M1 := 0 1
+ifeq ($(filter $(FAT_BIOS_M1),$(VALID_FAT_BIOS_M1)),)
+$(error Unsupported FAT_BIOS_M1='$(FAT_BIOS_M1)'; choose 0 or 1)
+endif
+
 ASFLAGS ?= -o -l -s
 LDFLAGS ?= -i
 ROM_SIZE ?= 65536
@@ -107,7 +116,8 @@ RUNTIME_SRCS ?= \
 	$(STORAGE_A_SRC) \
 	$(SRC_DIR)/cbios_storage_sd.asm \
 	$(SRC_DIR)/cbios_bank_select.asm \
-	$(SRC_DIR)/cbios_bank.asm
+	$(SRC_DIR)/cbios_bank.asm \
+	$(SRC_DIR)/cbios_fat_layout.asm
 
 FIRMWARE_BIN ?= $(BUILD_DIR)/firmware.bin
 SYMBOLS_FILE ?= $(BUILD_DIR)/firmware.map
@@ -194,13 +204,15 @@ all: image
 # Deferred (=), not immediate (:=): CCP and BDOS are defined further down this
 # file, so an immediate assignment here expands them as empty and produces
 # "zephyr80--.bin".
-CPM_CONFIG = $(CCP)-$(BDOS)
+FAT_BIOS_M1_SUFFIX = $(if $(filter 1,$(FAT_BIOS_M1)),-fatro,)
+CPM_CONFIG = $(CCP)-$(BDOS)$(FAT_BIOS_M1_SUFFIX)
 STAMPED_IMAGE = $(BUILD_DIR)/zephyr80-$(CPM_CONFIG).bin
 
 image: $(FINAL_IMAGE) docs
 	@cp "$(FINAL_IMAGE)" "$(STAMPED_IMAGE)"
 	@echo ""
 	@echo "  ROM built:  CCP=$(CCP)  BDOS=$(BDOS)"
+	@echo "    FAT read-only gate: $(FAT_BIOS_M1)"
 	@echo "    $(FINAL_IMAGE)"
 	@echo "    $(STAMPED_IMAGE)   <- flash this one to be sure"
 	@echo ""
@@ -228,8 +240,10 @@ docs: $(FINAL_IMAGE) $(FIRMWARE_LST) $(SYMBOLS_FILE) $(LAYOUT_MANIFEST) $(MEMORY
 # find there -- a lost IFF, an unbalanced token, a CTC channel stopped at the
 # wrong port, an ISR that outgrows its stack.  Needs a C++17 compiler and
 # libqkz80.
-test: $(FIRMWARE_LST) $(FIRMWARE_FLAT) $(SYMBOLS_FILE)
+test: $(FIRMWARE_BIN) $(FIRMWARE_LST) $(FIRMWARE_FLAT) $(SYMBOLS_FILE)
 	$(PYTHON) $(TOOLS_DIR)/test_irq_core.py --build-dir $(BUILD_DIR)
+	$(PYTHON) $(TOOLS_DIR)/test_fat_bios_m1.py --build-dir $(BUILD_DIR)
+	$(PYTHON) $(TOOLS_DIR)/test_fat_bdos_ro.py --build-dir $(BUILD_DIR)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -254,6 +268,7 @@ $(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm Makefile FORCE | $(BUILD_DIR)
 	sed \
 		-e 's|\.include "vdrip_transport.asm"|$(VDRIP_TRANSPORT_INCLUDE)|' \
 		-e 's|^VDRIP_TRANSPORT_LINKED = 1$$|VDRIP_TRANSPORT_LINKED = $(VDRIP_TRANSPORT_LINKED)|' \
+		-e 's|^FAT_BIOS_M1_ENABLED = 0$$|FAT_BIOS_M1_ENABLED = $(FAT_BIOS_M1)|' \
 		-e 's|\.include "cbios_console_vdrip.asm"|.include "cbios_console_$(CONSOLE).asm"|' \
 		-e 's|\.include "cbios_storage_vdrip.asm"|.include "cbios_storage_$(STORAGE_A).asm"|' \
 		"$<" > "$@"

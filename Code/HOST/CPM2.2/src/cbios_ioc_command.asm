@@ -652,11 +652,34 @@ IOC_CMD_RECV_DRAINED:
 	out (SIO_COMMAND_CTRL_PORT),a
 
 	; Receiver is armed and hunting; the reply can no longer be missed.
-	; Everything from here to the preamble match is the WAIT, so unmask.
+	; The potentially long controller/card WAIT remains interruptible.  Poll
+	; RR0 without consuming a byte; the first receive-ready indication is the
+	; boundary between that wait and the streaming reply.  Mask immediately at
+	; that boundary, before reading even the first marker byte.  Previously the
+	; marker scan itself ran enabled.  A CTC callback could then land after a
+	; byte became ready and overflow the three-byte FIFO before the code reached
+	; the masked packet body.
 	call ioc_cmd_irq_restore
 
 	push de
 	pop hl				; HL = RX buffer pointer
+
+	ld b,#SIO_COMMAND_TIMEOUT_OUTER
+IOC_CMD_RECV_WAIT_OUTER:
+	ld de,#SIO_COMMAND_TIMEOUT
+IOC_CMD_RECV_WAIT_FIRST:
+	in a,(SIO_COMMAND_CTRL_PORT)
+	and #SIO_RX_READY
+	jr nz,IOC_CMD_RECV_STREAMING
+	dec de
+	ld a,d
+	or e
+	jr nz,IOC_CMD_RECV_WAIT_FIRST
+	djnz IOC_CMD_RECV_WAIT_OUTER
+	ld a,#IOC_XPORT_TIMEOUT_REPLY_MARKER
+	jp IOC_CMD_RECV_FAIL
+IOC_CMD_RECV_STREAMING:
+	call irq_disable
 
 	; Search the bounded reply window for the full A5 5A marker.  The previous
 	; transaction's trailing FF can become FIFO-visible only when this reply's
@@ -689,15 +712,11 @@ IOC_CMD_RECV_BAD_FRAME_READY:
 	; That is why this no longer needs a scan-budget field to be diagnosable.
 	jp IOC_CMD_RECV_BAD_FRAME_MASKED
 
-; The marker scan above runs with interrupts ENABLED: it is the WAIT for the
-; MCU's reply, and that wait spans any card I/O the command triggered -- up to a
-; second.  Masking it would be the multi-millisecond blackout the design
-; explicitly rules out.
-;
-; From here the bytes are streaming and the MCU will not pause, so the body is
-; masked.  The longest command packet body is 33 bytes, about 1 ms.
+; The wait above runs with interrupts enabled.  From the first receive-ready
+; indication through marker scan and packet body, bytes are streaming and the
+; MCU will not pause, so interrupts are already masked.  The longest command
+; reply window is about 1 ms.
 IOC_CMD_RECV_PACKET:
-	call irq_disable
 	ld hl,#ioc_packet_header
 	ld b,#5				; LEN_LO LEN_HI TYPE SEQ STATUS
 IOC_CMD_RECV_HEADER:

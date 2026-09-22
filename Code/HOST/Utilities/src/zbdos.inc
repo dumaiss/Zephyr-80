@@ -35,6 +35,31 @@ ZB_EXT_IOCALL		= 214
 ZB_EXT_VIDEO_SEND	= 215
 ZB_EXT_IOCBULK		= 216
 ZB_EXT_IOCBULKW		= 217
+ZB_NATIVE_FILE		= 218
+
+; Function 218 descriptor, version 1.  Names are packed 8.3 components.  Paths
+; are traversed with repeated ZCHDIR calls; applications never see IOC tokens.
+ZN_VERSION		= 0
+ZN_OP			= 1
+ZN_STATUS		= 2
+ZN_FLAGS		= 3		; reserved, returned as zero
+ZN_HANDLE		= 4
+ZN_POSITION		= 6
+ZN_LENGTH		= 10
+ZN_BUFFER		= 12
+ZN_RESULT		= 16
+ZN_NAME			= 18
+ZN_DESC_BYTES		= 32
+ZN_API_VERSION		= 1
+ZN_OPEN			= 1
+ZN_CLOSE		= 2
+ZN_READ			= 3
+ZN_SEEK			= 4
+ZN_TELL			= 5
+ZN_STAT			= 6
+ZN_OPENDIR		= 7
+ZN_READDIR		= 8
+ZN_CHDIR		= 9
 
 ; Interrupt callbacks, and everything they touch, live here (8 KiB common
 ; memory starts at E000h; the first 1 KiB belongs to the running program).
@@ -52,6 +77,16 @@ ZB_SYSINFO_EXT		= 0x08		; .dw Zephyr extension table
 ZB_SYSINFO_STORAGE_PROFILE = 0x0a	; .dw two uint16 entry counters
 
 ; IOCALL: HL = TX frame, DE = RX frame.  Out: A = status; HL, DE unchanged.
+
+; zb_native: DE -> 32-byte version-1 native-file descriptor.  The descriptor
+; is copied across the bank boundary by the facade.  READ data is staged
+; through the existing 512-byte common bulk buffer and copied to ZN_BUFFER.
+zb_native:
+	ld c,#ZB_NATIVE_FILE
+	call ZB_BDOS
+	or a
+	ret
+
 IOCALL:
 	ld (zb_regs + 5),hl
 	ld (zb_regs + 3),de

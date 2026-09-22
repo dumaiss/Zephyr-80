@@ -19,6 +19,7 @@
 #include "boot_guard.h"
 #if IOC_FS_COMMANDS
 #include "fs_share.h"
+#include "fs2.h"
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -145,6 +146,7 @@ static void platform_init(void)
     vol_init();
 #if IOC_FS_COMMANDS
     fs_share_init();
+    fs2_init();
 #endif
 
     power_init();

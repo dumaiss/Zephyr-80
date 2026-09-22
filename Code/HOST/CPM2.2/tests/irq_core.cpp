@@ -12,9 +12,22 @@ void require(bool ok, const string &why) { if (!ok) throw runtime_error(why); }
 struct CPU : qkz80 {
     vector<pair<int,int>> writes;
     int rx = 0, ctrl = 0x23, data = 0x22;
+    bool command_reply = false, command_streaming = false;
+    bool command_data_read_with_irq = false;
     explicit CPU(qkz80_cpu_mem *m) : qkz80(m) { set_cpu_mode(MODE_Z80); }
     void port_out(qkz80_uint8 p, qkz80_uint8 v) override { writes.emplace_back(p,v); }
     qkz80_uint8 port_in(qkz80_uint8 p) override {
+        if (command_reply && p == 0x33) {
+            // The pre-reply FIFO drain occurs masked and sees no data.  Once
+            // the receive wait is interruptible, start a continuous reply.
+            if (!command_streaming && regs.IFF1) command_streaming = true;
+            return command_streaming && rx ? 1 : 0;
+        }
+        if (command_reply && p == 0x32) {
+            command_data_read_with_irq |= bool(regs.IFF1);
+            --rx;
+            return 'K';
+        }
         if (p == ctrl) return rx ? 1 : 0;
         if (p == data) { --rx; return 'K'; }
         return 0;
@@ -132,6 +145,18 @@ int main(int argc,char **argv) try {
         r.HL.set_pair16(0xd200);r.DE.set_pair16(1);t.call("iocbulk_body");
         require(bool(r.IFF1)==enabled,"bulk error changed IFF");
     }
+    // A command reply may take a long time to begin, so that wait is
+    // interruptible.  Once RR0 first reports a byte, the marker and body must
+    // be consumed with interrupts masked or a CTC callback can overflow the
+    // three-byte SIO FIFO.  A deliberately marker-free stream exercises the
+    // whole scan and its error exit.
+    t.iff(true);t.call("ioc_cmd_irq_save");
+    t.cpu.command_reply=true;t.cpu.command_streaming=false;
+    t.cpu.command_data_read_with_irq=false;t.cpu.rx=256;
+    r.DE.set_pair16(0xd200);t.call("ioc_command_recv_frame");
+    require(!t.cpu.command_data_read_with_irq,"command reply byte read with interrupts enabled");
+    require(r.IFF1,"command reply error did not restore IFF");
+    t.cpu.command_reply=false;t.cpu.rx=0;
     for(unsigned ptr:{0xe000,0xefff,0xf958,0xffff}) {
         r.BC.set_high(4);r.DE.set_pair16(ptr);t.call("irq_register_kernel");
         require(r.AF.get_high()==0xff,"unsafe kernel entry accepted");

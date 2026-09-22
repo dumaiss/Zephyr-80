@@ -24,9 +24,10 @@ Code regions, each bounded by the limit `cbios_defs.inc` declares for it. Used a
 
 | Region | Owner | Used | Free | Contents |
 |---|---|---:|---:|---|
-| `EC00h-EF9Fh` | BDOS facade | 920 | 8 | `CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-217, system information block. |
-| `EFA0h-EFFFh` | SIO ownership return | 34 | 62 | Quiesces application-owned SIO0/A at boot and application exit. |
-| `F000h-F1AFh` | BIOS tables, ROM copy, boot | 331 | 101 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero. |
+| `EC00h-EF9Fh` | BDOS facade | 925 | 3 | `CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-218, system information block. |
+| `EFA0h-EFC1h` | SIO ownership return | 34 | 0 | Quiesces application-owned SIO0/A at boot and application exit. |
+| `EFC2h-EFFFh` | Native file gate | 62 | 0 | Function 218 descriptor and read-data staging through the existing crossing mechanism. |
+| `F000h-F1AFh` | BIOS tables, ROM copy, boot | 349 | 83 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero. |
 | `F1B0h-F287h` | Banking services | 210 | 6 | `SELMEM`, `SETBNK`, `XMOVE`, `MOVE`. |
 | `F288h-F297h` | CTC reset | 15 | 1 | `ctc_disable_interrupts`: CTC reset and vector base. |
 | `F298h-F2A8h` | IOC link failure record | 16 | 1 | Read by the CP/M tools through BDOS function 203. |
@@ -67,16 +68,17 @@ System common code ends at `FFD8h`.
 | `3100h-31FFh` | Storage facade | 26 | 230 | CP/M disk entries; jumps into the drive dispatcher. |
 | `3200h-327Fh` | VIDEO_SEND | 40 | 88 | Raw video request through the selected console backend. |
 | `3280h-33FFh` | IOCALL | 140 | 244 | 32-byte mailbox transaction. |
-| `3400h-38FFh` | IOC command lane | 1014 | 266 | Common-packet command-lane transport. |
+| `3400h-38FFh` | IOC command lane | 1037 | 243 | Common-packet command-lane transport. |
 | `3900h-39FFh` | Bulk entries | 43 | 213 | `IOCBULK` and `IOCBULKW`. |
 | `3A00h-3CFFh` | IOC bulk lane | 558 | 210 | Common-packet bulk-lane transport and link bring-up. |
 | `3D00h-3DFFh` | USB keyboard input | 186 | 70 | Doorbell-gated keyboard fetch. |
 | `3E00h-3FFFh` | USB keyboard state | 57 | 455 | Mailboxes and keyboard queue. |
-| `4000h-42FFh` | SD-card backend | 705 | 63 | Record read and write through the IO Controller cache. |
+| `4000h-42FFh` | SD-card backend | 745 | 23 | Record read and write through the IO Controller cache. |
 | `4300h-432Fh` | B: select probe | 23 | 25 | Card availability, then the B: DPH. |
 | `4330h-43FFh` | Drive A: backend | 164 | 44 | The build-selected A: backend. |
-| `4400h-47FFh` | Drive dispatcher | 155 | 869 | Routes A: to its backend and B:/C: to SD units; C: select probe. |
+| `4400h-47FFh` | Drive dispatcher | 178 | 846 | Routes A: to its backend, B:/C: to SD units, and gated D: to the synthetic FAT BIOS. |
 | `4800h-5FFFh` | V9958 console | 3191 | 2953 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
+| `9000h-9FFFh` | FAT BDOS backend | 2805 | 1291 | Read-only FS2 client, native file manager, FAT BDOS compatibility layer, DPH and DPB. |
 
 Data:
 
@@ -89,10 +91,13 @@ Data:
 | `6300h` | B: allocation vector | |
 | `6400h` | C: allocation vector | |
 | `6500h` | C: DPH and DPB | SD unit 1. |
+| `6510h-65FFh` | Unallocated | Deliberate gap after the C: DPH. |
+| `6600h-7FFFh` | Reclaimable resource/cache pool | 13 lines of 512 bytes; no permanent owner. |
 | `8000h-87FFh` | Console font | CP850 6x8. |
 | `8800h-883Fh` | Boot banner text | |
+| `904Ah` | D: synthetic DPH and DPB | Read-only FAT compatibility geometry; selection gate is `1`. |
 
-The last resident asset ends at `CE08h`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.
+The last resident asset ends at `D025h`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.
 
 | Range | Use |
 |---|---|
@@ -105,7 +110,9 @@ The last resident asset ends at `CE08h`. Cold boot installs all 64 KiB; OS-owned
 | `CC00h (empty)` | Unallocated |
 | `CC00h-CDFFh` | SD deblock line (one 512-byte logical block) |
 | `CE00h-CE08h` | SD deblock tag (valid, unit, block) |
-| `CE09h-DFFFh` | Unallocated |
+| `CE09h-CE0Fh` | Unallocated |
+| `CE10h-D60Fh` | FAT BDOS persistent-state reservation | Fixed bank-7 state; track/sector and synthetic ALV currently use `912` bytes. |
+| `D610h-DFFFh` | Unallocated |
 
 All eight physical SRAM banks include E000h-FFFFh, visible in flat mode 01. Modes 10/11 overlay that range with bank 0.
 
@@ -119,7 +126,7 @@ All eight physical SRAM banks include E000h-FFFFh, visible in flat mode 01. Mode
 | 3 | ROM disk page 3 | 49152 | `build/romdisk.p3.bin` |
 | 7 | OS bank 7 | 65536 | `build/bank7.bin` |
 
-The burnable image `build/zephyr80.bin` is 524288 bytes. Console backend: `v9958`. Drive A: backend: `rom`.
+The burnable image `build/zephyr80.bin` is 524288 bytes. Console backend: `v9958`. Drive A: backend: `rom`. FAT read-only selection gate: `1`.
 
 ## Validation Report
 
@@ -138,3 +145,6 @@ Checked:
 - Staging buffers stay inside the shared buffer, and the returned copies do not overlap each other or the IM2 page.
 - Runtime state blocks stay inside `FE00h-FE7Fh` without overlapping.
 - The interrupt, gate and facade stacks are ordered, disjoint and common; the BIOS private stacks and SD scratch lie in bank 7's `C000h-DFFFh`.
+- The 13-by-512-byte resource/cache pool remains reclaimable and disjoint from fixed FAT code and persistent state.
+- FAT backend code and persistent state remain inside their declared bank-7 ceilings.
+- The synthetic FAT DPH points at the shared directory buffer, its fixed DPB, a null CSV and its bank-7 ALV.

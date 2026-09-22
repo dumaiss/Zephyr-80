@@ -184,6 +184,23 @@
 #define CMD_FS_DELETE        0x27
 #define CMD_FS_SELFTEST      0x28
 
+/* FS2 is the additive, root-relative filesystem service used by the bank-7
+ * FAT personality and the native Zephyr file API.  The existing 20h-28h
+ * /SHARED service remains unchanged. */
+#define CMD_FS2_CAPS          0x30
+#define CMD_FS2_GENERATION    0x31
+#define CMD_FS2_RESET         0x32
+#define CMD_FS2_ROOT          0x33
+#define CMD_FS2_PUSH          0x34
+#define CMD_FS2_OPEN_RO       0x35
+#define CMD_FS2_READ          0x36
+#define CMD_FS2_CLOSE         0x37
+#define CMD_FS2_OPENDIR       0x38
+#define CMD_FS2_READDIR       0x39
+#define CMD_FS2_CLOSEDIR      0x3A
+#define CMD_FS2_STAT          0x3B
+#define CMD_FS2_SPACE         0x3C
+
 /* Response class bytes (MCU → Z80) */
 #define RSP_PING             0x81
 #define RSP_SD_READ          0x83
@@ -210,6 +227,90 @@
 #define RSP_FS_STAT          0xA6
 #define RSP_FS_DELETE        0xA7
 #define RSP_FS_SELFTEST      0xA8
+#define RSP_FS2_CAPS         0xB0
+#define RSP_FS2_GENERATION   0xB1
+#define RSP_FS2_RESET        0xB2
+#define RSP_FS2_ROOT         0xB3
+#define RSP_FS2_PUSH         0xB4
+#define RSP_FS2_OPEN_RO      0xB5
+#define RSP_FS2_READ         0xB6
+#define RSP_FS2_CLOSE        0xB7
+#define RSP_FS2_OPENDIR      0xB8
+#define RSP_FS2_READDIR      0xB9
+#define RSP_FS2_CLOSEDIR     0xBA
+#define RSP_FS2_STAT         0xBB
+#define RSP_FS2_SPACE        0xBC
+
+/* ---------------------------------------------------------------------------
+ * FS2 capability contract (version 1)
+ * ---------------------------------------------------------------------------
+ *
+ * The first implementation is read-only, with two FIL slots, one DIR slot,
+ * one bounded component resolver and the existing 512-byte bulk staging
+ * buffer.  Counts and limits are reported so later pool growth does not change
+ * the ABI.  Generation covers media/context invalidation while the Z80 keeps
+ * running.  An MCU reset resets the whole machine, so there is no boot nonce.
+ */
+#define IOC_FS2_VERSION                  1u
+#define IOC_FS2_STATUS_VERSION           1u
+#define IOC_FS2_TOKEN_BYTES              2u
+#define IOC_FS2_CHUNK_MAX                512u
+#define IOC_FS2_FILE_SLOTS               2u
+#define IOC_FS2_DIR_SLOTS                1u
+#define IOC_FS2_RESOLVER_COMPONENTS      16u
+
+#define IOC_FS2_CAP_READ_ONLY            0x0001u
+#define IOC_FS2_CAP_EXPLICIT_OFFSET      0x0002u
+#define IOC_FS2_CAP_COMPONENT_RESOLVER   0x0004u
+#define IOC_FS2_CAP_MEDIA_GENERATION     0x0008u
+#define IOC_FS2_CAP_STAT                 0x0010u
+#define IOC_FS2_CAP_SPACE                0x0020u
+
+/* RSP_FS2_CAPS payload.  Multibyte fields are little-endian. */
+#define IOC_OFF_FS2_CAP_VERSION          (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_FS2_CAP_STATUS_VERSION   (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_FS2_CAP_FLAGS            (IOC_OFF_PAYLOAD + 2u)  /* uint16 */
+#define IOC_OFF_FS2_CAP_GENERATION       (IOC_OFF_PAYLOAD + 4u)  /* uint32 */
+#define IOC_OFF_FS2_CAP_CHUNK_MAX        (IOC_OFF_PAYLOAD + 8u)  /* uint16 */
+#define IOC_OFF_FS2_CAP_FILE_SLOTS       (IOC_OFF_PAYLOAD + 10u)
+#define IOC_OFF_FS2_CAP_DIR_SLOTS        (IOC_OFF_PAYLOAD + 11u)
+#define IOC_OFF_FS2_CAP_RESOLVER_MAX     (IOC_OFF_PAYLOAD + 12u)
+#define IOC_OFF_FS2_CAP_TOKEN_BYTES      (IOC_OFF_PAYLOAD + 13u)
+#define IOC_FS2_CAP_REPLY_LEN            14u
+
+/* RSP_FS2_GENERATION carries only the current uint32 media generation. */
+#define IOC_OFF_FS2_GENERATION           (IOC_OFF_PAYLOAD + 0u)
+#define IOC_FS2_GENERATION_REPLY_LEN     4u
+
+/* FS2 request and reply layouts.  Every name is the same packed, space-padded
+ * 8.3 form used by an FCB.  Tokens are little-endian slot/cookie values and
+ * are meaningful only to the command which issued them. */
+#define IOC_OFF_FS2_NAME                 (IOC_OFF_PAYLOAD + 0u) /* 11 bytes */
+#define IOC_FS2_NAME_REQ_LEN             IOC_NAME_LEN
+
+#define IOC_OFF_FS2_TOKEN                (IOC_OFF_PAYLOAD + 0u) /* uint16 */
+#define IOC_OFF_FS2_OFFSET               (IOC_OFF_PAYLOAD + 2u) /* uint32 */
+#define IOC_OFF_FS2_LENGTH               (IOC_OFF_PAYLOAD + 6u) /* uint16 */
+#define IOC_FS2_READ_REQ_LEN              8u
+
+#define IOC_OFF_FS2_OPEN_TOKEN           (IOC_OFF_PAYLOAD + 0u) /* uint16 */
+#define IOC_OFF_FS2_OPEN_SIZE            (IOC_OFF_PAYLOAD + 2u) /* uint32 */
+#define IOC_OFF_FS2_OPEN_ATTR            (IOC_OFF_PAYLOAD + 6u) /* reserved, zero */
+#define IOC_FS2_OPEN_REPLY_LEN            7u
+
+#define IOC_OFF_FS2_DIR_TOKEN            (IOC_OFF_PAYLOAD + 0u) /* uint16 */
+#define IOC_FS2_DIR_REPLY_LEN             2u
+#define IOC_OFF_FS2_DIRENT_NAME          (IOC_OFF_PAYLOAD + 0u) /* 11 bytes */
+#define IOC_OFF_FS2_DIRENT_ATTR          (IOC_OFF_PAYLOAD + 11u) /* AM_DIR only */
+#define IOC_OFF_FS2_DIRENT_SIZE          (IOC_OFF_PAYLOAD + 12u) /* uint32 */
+#define IOC_FS2_DIRENT_REPLY_LEN         16u
+
+#define IOC_OFF_FS2_STAT_SIZE            (IOC_OFF_PAYLOAD + 0u) /* uint32 */
+#define IOC_OFF_FS2_STAT_ATTR            (IOC_OFF_PAYLOAD + 4u) /* AM_DIR only */
+#define IOC_FS2_STAT_REPLY_LEN            5u
+#define IOC_OFF_FS2_SPACE_FREE           (IOC_OFF_PAYLOAD + 0u) /* uint32 */
+#define IOC_OFF_FS2_SPACE_TOTAL          (IOC_OFF_PAYLOAD + 4u) /* uint32 */
+#define IOC_FS2_SPACE_REPLY_LEN           8u
 
 /* ---------------------------------------------------------------------------
  * Volume commands
@@ -845,6 +946,27 @@
 #define IOC_STATUS_FS_NO_HANDLE   0x36  /* no file open, or wrong handle */
 #define IOC_STATUS_FS_RANGE       0x37  /* chunk longer than IOC_FS_CHUNK_MAX */
 #define IOC_STATUS_FS_ERROR       0x38  /* anything else FatFs reported */
+
+/* FS2 status namespace.  Keep semantically different outcomes distinct so
+ * the bank-7 compatibility layer can map them to characterized ZSDOS results
+ * without guessing.  IOC_STATUS_FS2_TRANSPORT is reserved for a host-side
+ * synthesized result; firmware does not claim to diagnose its own lost reply.
+ */
+#define IOC_STATUS_FS2_NOT_FOUND       0x40
+#define IOC_STATUS_FS2_END             0x41
+#define IOC_STATUS_FS2_EXISTS          0x42
+#define IOC_STATUS_FS2_BAD_NAME        0x43
+#define IOC_STATUS_FS2_READ_ONLY       0x44
+#define IOC_STATUS_FS2_NO_SPACE        0x45
+#define IOC_STATUS_FS2_NOT_DIR         0x46
+#define IOC_STATUS_FS2_IS_DIR          0x47
+#define IOC_STATUS_FS2_NO_HANDLE       0x48
+#define IOC_STATUS_FS2_STALE           0x49
+#define IOC_STATUS_FS2_RANGE           0x4A
+#define IOC_STATUS_FS2_NO_MEDIA        0x4B
+#define IOC_STATUS_FS2_TRANSPORT       0x4C
+#define IOC_STATUS_FS2_UNKNOWN_WRITE   0x4D
+#define IOC_STATUS_FS2_IO              0x4E
 
 typedef struct {
     uint8_t bytes[IOC_FRAME_SIZE];

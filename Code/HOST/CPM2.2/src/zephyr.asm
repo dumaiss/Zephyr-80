@@ -24,6 +24,11 @@
 ; template, so 1.
 VDRIP_TRANSPORT_LINKED = 1
 
+; FAT read-only selection gate.  The Makefile rewrites this line from
+; FAT_BIOS_M1; normal milestone-4 builds use one, while zero remains a recovery
+; configuration that parks D: without changing linked placement.
+FAT_BIOS_M1_ENABLED = 0
+
 ; CP/M addresses the BIOS uses.  They came from the stock CP/M source, which is
 ; no longer assembled.  CBASE holds the CCP; FBASE, six bytes past the CCP slot,
 ; is the BDOS entry every program calls through page zero.
@@ -139,9 +144,11 @@ ZBIOS_EXT_BASE:
 	.include "cbios_storage_vdrip.asm"
 	.include "cbios_storage_sd.asm"
 	.include "cbios_bank.asm"
+	.include "cbios_fat_layout.asm"
 	.include "cbios_gate.asm"
 	.include "cbios_irq.asm"
 	.include "cbios_facade.asm"
+	.include "cbios_native_gate.asm"
 
 ; ZSDOS's BIOS jump table, bank 7.
 ;

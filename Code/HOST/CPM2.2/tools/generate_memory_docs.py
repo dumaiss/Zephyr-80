@@ -80,10 +80,12 @@ class Region:
 
 
 COMMON_REGIONS = [
-    Region("SIO ownership return", "SIO_QUIESCE_START", "SIO_QUIESCE_END", "CBIOS_BASE",
+    Region("SIO ownership return", "SIO_QUIESCE_START", "SIO_QUIESCE_END", "CBIOS_NATIVE_GATE_BASE",
            "Quiesces application-owned SIO0/A at boot and application exit."),
+    Region("Native file gate", "NATIVE_GATE_START", "NATIVE_GATE_END", "CBIOS_NATIVE_GATE_LIMIT",
+           "Function 218 descriptor and read-data staging through the existing crossing mechanism."),
     Region("BDOS facade", "FACADE_CODE_START", "FACADE_CODE_END", "FACADE_CODE_LIMIT",
-           "`CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-217, system information block."),
+           "`CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-218, system information block."),
     Region("BIOS tables, ROM copy, boot", "BIOS_CODE_START", None, "CBIOS_BANKING_CODE_BASE",
            "CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero."),
     Region("Banking services", "BANKING_CODE_START", "BANKING_CODE_END", "CBIOS_SPARE_CODE_BASE",
@@ -142,7 +144,9 @@ BANK7_REGIONS = [
     Region("Drive A: backend", "STORAGE_A_CODE_START", "STORAGE_A_CODE_END", "CBIOS_SD_PROBE2_CODE_BASE",
            "The build-selected A: backend."),
     Region("Drive dispatcher", "CBIOS_SD_PROBE2_CODE_BASE", "SD_PROBE2_CODE_END", "CBIOS_V9958_CONSOLE_CODE_BASE",
-           "Routes A: to its backend and B:/C: to SD units; C: select probe."),
+           "Routes A: to its backend, B:/C: to SD units, and gated D: to the synthetic FAT BIOS."),
+    Region("FAT BDOS backend", "FAT_BDOS_CODE_START", "FAT_BDOS_CODE_END", "CBIOS_FAT_BDOS_CODE_LIMIT",
+           "Read-only FS2 client, native file manager, FAT BDOS compatibility layer, DPH and DPB."),
 ]
 
 CONSOLE_REGIONS = {
@@ -233,9 +237,17 @@ BANK7_IMPLEMENTATION = [
     (("STORAGE_A_DPH",), "Drive A: DPH."),
     (("SD_STORAGE_DPH",), "B: DPH."),
     (("SD_STORAGE_DPH2",), "C: DPH."),
+    (("FAT_BIOS_DPH",), "D: synthetic FAT DPH."),
+    (("FAT_BIOS_DPB",), "Synthetic FAT compatibility geometry."),
+    (("fat_bios_read",), "E5-filled synthetic disk record read."),
+    (("fat_bios_write",), "Synthetic disk write failure."),
+    (("FAT_BIOS_ALV",), "D: synthetic allocation vector."),
     (("CBIOS_STORAGE_DIRBUF",), "Shared directory buffer."),
     (("CONSOLE_FONT_ROM_BASE",), "Console font."),
     (("BOOT_BANNER_TEXT",), "Boot banner text."),
+    (("RESOURCE_CACHE_POOL_BASE",), "Start of the 13-line reclaimable resource/cache pool."),
+    (("FAT_BDOS_CODE_START",), "Fixed FAT compatibility code region."),
+    (("FAT_BDOS_STATE_START",), "Fixed FAT persistent-state region."),
 ]
 
 BANK7_OPTIONAL = [
@@ -282,6 +294,9 @@ VALIDATION_NOTES = [
     "Staging buffers stay inside the shared buffer, and the returned copies do not overlap each other or the IM2 page.",
     "Runtime state blocks stay inside `FE00h-FE7Fh` without overlapping.",
     "The interrupt, gate and facade stacks are ordered, disjoint and common; the BIOS private stacks and SD scratch lie in bank 7's `C000h-DFFFh`.",
+    "The 13-by-512-byte resource/cache pool remains reclaimable and disjoint from fixed FAT code and persistent state.",
+    "FAT backend code and persistent state remain inside their declared bank-7 ceilings.",
+    "The synthetic FAT DPH points at the shared directory buffer, its fixed DPB, a null CSV and its bank-7 ALV.",
 ]
 
 
@@ -481,8 +496,77 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
         layout.error(f"FBASE = {h4(s('FBASE'))} is not six bytes into the facade")
     if s("FACADE_CODE_LIMIT") != s("CBIOS_SIO_QUIESCE_BASE"):
         layout.error("facade limit does not meet the SIO ownership-return region")
+    if s("SIO_QUIESCE_END") != s("CBIOS_NATIVE_GATE_BASE"):
+        layout.error("native file gate does not immediately follow SIO ownership return")
+    if s("NATIVE_GATE_END") > s("CBIOS_NATIVE_GATE_LIMIT"):
+        layout.error("native file gate exceeds the pre-BIOS common-memory tail")
     if s("BIOS7_BASE") != s("ZSDOS_ORG") + s("ZSDOS_SIZE"):
         layout.error("BIOS7_BASE is not ZSDOS_ORG + ZSDOS_SIZE; ZSDOS computes its BIOS as ZSDOS+1000h")
+
+    pool_base = s("RESOURCE_CACHE_POOL_BASE")
+    pool_limit = s("RESOURCE_CACHE_POOL_LIMIT")
+    line_size = s("RESOURCE_CACHE_LINE_SIZE")
+    line_count = s("RESOURCE_CACHE_LINE_COUNT")
+    if pool_base != 0x6600 or pool_limit != 0x8000:
+        layout.error(
+            f"reclaimable resource/cache pool is {xspan(pool_base, pool_limit)}, expected 6600h-7FFFh"
+        )
+    if pool_limit - pool_base != line_size * line_count:
+        layout.error(
+            "resource/cache pool size does not equal RESOURCE_CACHE_LINE_SIZE * RESOURCE_CACHE_LINE_COUNT"
+        )
+    pool_bytes = layout.emitted_in(pool_base, pool_limit)
+    if pool_bytes:
+        layout.error(
+            f"{len(pool_bytes)} initialized bytes consume the reclaimable resource/cache pool, first at {h4(pool_bytes[0])}"
+        )
+
+    fat_code_base = s("CBIOS_FAT_BDOS_CODE_BASE")
+    fat_code_limit = s("CBIOS_FAT_BDOS_CODE_LIMIT")
+    if s("FAT_BDOS_CODE_START") != fat_code_base:
+        layout.error("FAT_BDOS_CODE_START is not CBIOS_FAT_BDOS_CODE_BASE")
+    if fat_code_base < s("BOOT_BANNER_TEXT_END") or fat_code_limit > BANK7_PRIVATE_BASE:
+        layout.error(
+            f"FAT code reservation {xspan(fat_code_base, fat_code_limit)} is outside free bank-7 code space"
+        )
+    if fat_code_limit - fat_code_base != 0x1000:
+        layout.error("FAT code reservation is not the declared 4 KiB fixed region")
+    if not (pool_limit <= fat_code_base):
+        layout.error("fixed FAT code overlaps the reclaimable resource/cache pool")
+
+    fat_state_base = s("CBIOS_FAT_BDOS_STATE_BASE")
+    fat_state_limit = s("CBIOS_FAT_BDOS_STATE_LIMIT")
+    if s("FAT_BDOS_STATE_START") != fat_state_base:
+        layout.error("FAT_BDOS_STATE_START is not CBIOS_FAT_BDOS_STATE_BASE")
+    if fat_state_base < s("SD_DEBLOCK_TAG") + s("SD_DEBLOCK_TAG_SIZE") or fat_state_limit > OS_BODY_LIMIT:
+        layout.error(
+            f"FAT state reservation {xspan(fat_state_base, fat_state_limit)} overlaps existing bank-7 state"
+        )
+    if fat_state_limit - fat_state_base != 0x0800:
+        layout.error("FAT persistent-state reservation is not the declared 2 KiB ceiling")
+    if s("FAT_BDOS_STATE_END") > fat_state_limit:
+        layout.error("FAT persistent state exceeds CBIOS_FAT_BDOS_STATE_LIMIT")
+
+    fat_dph = s("FAT_BIOS_DPH")
+    fat_dpb = s("FAT_BIOS_DPB")
+    fat_alv = s("FAT_BIOS_ALV")
+    for offset, expected, label in [
+        (8, s("CBIOS_STORAGE_DIRBUF"), "DIRBUF"),
+        (10, fat_dpb, "DPB"),
+        (12, 0, "CSV"),
+        (14, fat_alv, "ALV"),
+    ]:
+        actual = layout.word(fat_dph + offset)
+        if actual != expected:
+            shown = "nothing" if actual is None else h4(actual)
+            layout.error(f"synthetic FAT DPH {label} pointer is {shown}, expected {h4(expected)}")
+    expected_dpb = bytes([0x04, 0x00, 0x05, 0x1F, 0x01, 0xFF, 0x07,
+                          0xFF, 0x01, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00])
+    actual_dpb = bytes(layout.emitted.get(fat_dpb + i, 0xFF) for i in range(len(expected_dpb)))
+    if actual_dpb != expected_dpb:
+        layout.error(f"synthetic FAT DPB is {actual_dpb.hex()}, expected {expected_dpb.hex()}")
+    if fat_alv != fat_state_base + 4 or s("FAT_BDOS_STATE_END") < fat_alv + 0x100:
+        layout.error("synthetic FAT track/sector state and 256-byte ALV are not contiguous")
 
     magic = bytes(layout.emitted.get(s("BIOS7_MAGIC") + i, 0) for i in range(8))
     if magic != b"BANK7OS1":
@@ -805,8 +889,11 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         f"| `{h4(s('SD_STORAGE_ALV_BUFFER'))}` | B: allocation vector | |",
         f"| `{h4(s('SD_STORAGE_ALV2_BUFFER'))}` | C: allocation vector | |",
         f"| `{h4(s('SD_STORAGE_DPH2'))}` | C: DPH and DPB | SD unit 1. |",
+        f"| `{xspan(s('SD_STORAGE_DPH2') + 0x10, s('RESOURCE_CACHE_POOL_BASE'))}` | Unallocated | Deliberate gap after the C: DPH. |",
+        f"| `{xspan(s('RESOURCE_CACHE_POOL_BASE'), s('RESOURCE_CACHE_POOL_LIMIT'))}` | Reclaimable resource/cache pool | {s('RESOURCE_CACHE_LINE_COUNT')} lines of {s('RESOURCE_CACHE_LINE_SIZE')} bytes; no permanent owner. |",
         f"| `{xspan(s('CONSOLE_FONT_ROM_BASE'), s('CONSOLE_FONT_ROM_BASE') + s('FONT_CP850_6X8_SIZE'))}` | Console font | CP850 6x8. |",
         f"| `{xspan(s('BOOT_BANNER_TEXT'), s('BOOT_BANNER_TEXT_END'))}` | Boot banner text | |",
+        f"| `{h4(s('FAT_BIOS_DPH'))}` | D: synthetic DPH and DPB | Read-only FAT compatibility geometry; selection gate is `{s('FAT_BIOS_M1_ENABLED')}`. |",
         "",
         f"The last resident asset ends at `{h4(facts['bank7_image_end'] - 1)}`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.",
         "",
@@ -821,7 +908,9 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         f"| `{xspan(s('CCP_RESTORE_BASE') + s('CCP_RESTORE_SIZE'), s('SD_DEBLOCK_BUFFER'))}` | Unallocated |",
         f"| `{xspan(s('SD_DEBLOCK_BUFFER'), s('SD_DEBLOCK_BUFFER') + s('SD_DEBLOCK_BUFFER_SIZE'))}` | SD deblock line (one 512-byte logical block) |",
         f"| `{xspan(s('SD_DEBLOCK_TAG'), s('SD_DEBLOCK_TAG') + s('SD_DEBLOCK_TAG_SIZE'))}` | SD deblock tag (valid, unit, block) |",
-        f"| `{xspan(s('SD_DEBLOCK_TAG') + s('SD_DEBLOCK_TAG_SIZE'), OS_BODY_LIMIT)}` | Unallocated |",
+        f"| `{xspan(s('SD_DEBLOCK_TAG') + s('SD_DEBLOCK_TAG_SIZE'), s('CBIOS_FAT_BDOS_STATE_BASE'))}` | Unallocated |",
+        f"| `{xspan(s('CBIOS_FAT_BDOS_STATE_BASE'), s('CBIOS_FAT_BDOS_STATE_LIMIT'))}` | FAT BDOS persistent-state reservation | Fixed bank-7 state; track/sector and synthetic ALV currently use `{s('FAT_BDOS_STATE_END') - s('FAT_BDOS_STATE_START')}` bytes. |",
+        f"| `{xspan(s('CBIOS_FAT_BDOS_STATE_LIMIT'), OS_BODY_LIMIT)}` | Unallocated |",
         "",
         "All eight physical SRAM banks include E000h-FFFFh, visible in flat mode 01. Modes 10/11 overlay that range with bank 0.",
         "",
@@ -843,7 +932,8 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
     lines += [
         "",
         f"The burnable image `{args.final_image}` is {args.final_image.stat().st_size} bytes. "
-        f"Console backend: `{manifest.get('console.backend')}`. Drive A: backend: `{manifest.get('storage.backend')}`.",
+        f"Console backend: `{manifest.get('console.backend')}`. Drive A: backend: `{manifest.get('storage.backend')}`. "
+        f"FAT read-only selection gate: `{s('FAT_BIOS_M1_ENABLED')}`.",
         "",
         "## Validation Report",
         "",

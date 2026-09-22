@@ -124,6 +124,8 @@ PROGRAM_ISR_AREA                = 0xe000                        ; E000h-E3FFh
 CBIOS_FACADE_BASE               = 0xec00                        ; CBASE + 800h
 CBIOS_SIO_QUIESCE_BASE          = 0xefa0 ; unused facade tail
 FACADE_CODE_LIMIT               = CBIOS_SIO_QUIESCE_BASE                        ; CBIOS_BASE
+CBIOS_NATIVE_GATE_BASE          = 0xefc2 ; immediately after sio0a_quiesce
+CBIOS_NATIVE_GATE_LIMIT         = 0xf000
 CBIOS_GATE_CODE_BASE            = 0xf538
 CBIOS_GATE_CODE_LIMIT           = 0xf730
 CBIOS_IRQ_CODE_BASE             = 0xf730
@@ -1269,6 +1271,41 @@ SD_STORAGE_ALV2_BUFFER                = BIOS7_BASE + 0x3400            ; 6400h, 
 SD_STORAGE_ALV2_SIZE                  = 0x0100
 SD_STORAGE_DPH2                       = BIOS7_BASE + 0x3500            ; 6500h, bank 7
 
+; ---------------------------------------------------------------------------
+; Reclaimable resource/cache pool contract
+; ---------------------------------------------------------------------------
+; This range is deliberately NOT permanent FAT storage.  It is thirteen
+; independently reclaimable 512-byte lines.  Milestone 0 records ownership
+; and geometry only; the resource/cache allocator itself is not implemented
+; here.  A future FAT record cache may lease a line and must tolerate refusal
+; or eviction according to that allocator's contract.
+RESOURCE_CACHE_POOL_BASE              = BIOS7_BASE + 0x3600            ; 6600h
+RESOURCE_CACHE_POOL_LIMIT             = BIOS7_BASE + 0x5000            ; 8000h
+RESOURCE_CACHE_POOL_SIZE              = RESOURCE_CACHE_POOL_LIMIT - RESOURCE_CACHE_POOL_BASE
+RESOURCE_CACHE_LINE_SIZE              = 0x0200
+RESOURCE_CACHE_LINE_COUNT             = 0x000d                         ; 13
+
+; ---------------------------------------------------------------------------
+; FAT BDOS backend fixed ownership
+; ---------------------------------------------------------------------------
+; Code and persistent state receive explicit fixed bank-7 regions instead of
+; borrowing the reclaimable pool.  The labels emitted by cbios_fat_layout.asm
+; let the generated memory map report actual use against these ceilings.
+;
+; The state range starts after the existing SD deblock tag.  It is persistent
+; OS state, not transaction scratch and not cache storage.  No common-memory
+; bytes are reserved for the FAT work in this milestone.
+;
+; The initial non-cache estimate is 1552 bytes (384 + 192 + 192 + 528 + 256).
+; Reserve 2 KiB so that estimate fits with 496 bytes for alignment and measured
+; growth.  The separate 512-byte cache lines remain leases from the pool above.
+CBIOS_FAT_BDOS_CODE_BASE              = BIOS7_BASE + 0x6000            ; 9000h
+CBIOS_FAT_BDOS_CODE_LIMIT             = BIOS7_BASE + 0x7000            ; A000h
+CBIOS_FAT_BDOS_CODE_SIZE              = CBIOS_FAT_BDOS_CODE_LIMIT - CBIOS_FAT_BDOS_CODE_BASE
+CBIOS_FAT_BDOS_STATE_BASE             = BIOS7_BASE + 0x9e10            ; CE10h
+CBIOS_FAT_BDOS_STATE_LIMIT            = BIOS7_BASE + 0xa610            ; D610h
+CBIOS_FAT_BDOS_STATE_SIZE             = CBIOS_FAT_BDOS_STATE_LIMIT - CBIOS_FAT_BDOS_STATE_BASE
+
 ; C:'s selection probe, the card probe both SD drives share, and the drive
 ; dispatcher.
 ;
@@ -1396,11 +1433,84 @@ sd_storage_unit                       = SD_STORAGE_WORK_AREA + 0x09
 ;   A: = 0  ROM disk (not an SD unit)
 ;   B: = 1  -> unit 0, /CPM/CPM_1.DRV
 ;   C: = 2  -> unit 1, /CPM/CPM_2.DRV
-;   D: = 3  -> unit 2, when the firmware's VOL_UNITS and a DPH exist for it
-; SD_STORAGE_DRIVE_LIMIT is the first drive letter with no backing unit, so
-; adding a drive is a DPH, an allocation vector and one bump here.
+;   D: = 3  reserved for the synthetic FAT BIOS, not an SD volume unit
+; SD_STORAGE_DRIVE_LIMIT is the first drive letter outside the SD-unit range.
 SD_STORAGE_DRIVE2                     = 0x02       ; C:
 SD_STORAGE_DRIVE_LIMIT                = 0x03
+
+; D: is reserved for the FAT-backed compatibility personality.  During
+; Milestone 1 it is selectable only in an explicit FAT_BIOS_M1=1 build.  Its
+; BIOS path is a synthetic empty CP/M disk; no FAT file access occurs here.
+FAT_BIOS_DRIVE                        = 0x03       ; D:
+FAT_BIOS_EMPTY_BYTE                   = 0xe5
+FAT_BIOS_RECORD_BYTES                 = 0x0080
+
+; IOC FS2 version-1 read-only service.  Keep these values in step with
+; IOController/include/ioc_frame.h.  Requests and replies use the ordinary
+; 32-byte IOCALL mailbox; FS2_READ hands its data to the existing bulk lane.
+FS2_CMD_CAPS                          = 0x30
+FS2_CMD_GENERATION                    = 0x31
+FS2_CMD_RESET                         = 0x32
+FS2_CMD_ROOT                          = 0x33
+FS2_CMD_PUSH                          = 0x34
+FS2_CMD_OPEN_RO                       = 0x35
+FS2_CMD_READ                          = 0x36
+FS2_CMD_CLOSE                         = 0x37
+FS2_CMD_OPENDIR                       = 0x38
+FS2_CMD_READDIR                       = 0x39
+FS2_CMD_CLOSEDIR                      = 0x3a
+FS2_CMD_STAT                          = 0x3b
+FS2_CMD_SPACE                         = 0x3c
+FS2_RSP_CAPS                          = 0xb0
+FS2_RSP_GENERATION                    = 0xb1
+FS2_RSP_RESET                         = 0xb2
+FS2_RSP_ROOT                          = 0xb3
+FS2_RSP_PUSH                          = 0xb4
+FS2_RSP_OPEN_RO                       = 0xb5
+FS2_RSP_READ                          = 0xb6
+FS2_RSP_CLOSE                         = 0xb7
+FS2_RSP_OPENDIR                       = 0xb8
+FS2_RSP_READDIR                       = 0xb9
+FS2_RSP_CLOSEDIR                      = 0xba
+FS2_RSP_STAT                          = 0xbb
+FS2_RSP_SPACE                         = 0xbc
+FS2_STATUS_NOT_FOUND                  = 0x40
+FS2_STATUS_END                        = 0x41
+FS2_STATUS_NOT_DIR                    = 0x46
+FS2_STATUS_IS_DIR                     = 0x47
+FS2_STATUS_NO_HANDLE                  = 0x48
+FS2_STATUS_STALE                      = 0x49
+FS2_STATUS_TRANSPORT                  = 0x4c
+FS2_NAME_BYTES                        = 0x0b
+FS2_TOKEN_BYTES                       = 0x02
+FS2_ATTR_RO                           = 0x01
+FS2_ATTR_HIDDEN                       = 0x02
+FS2_ATTR_SYSTEM                       = 0x04
+FS2_ATTR_DIR                          = 0x10
+FS2_ATTR_ARCHIVE                      = 0x20
+
+; Zephyr function 218, native read-only descriptor (32 bytes).
+ZNATIVE_VERSION                       = 0x01
+ZNATIVE_OPEN                          = 0x01
+ZNATIVE_CLOSE                         = 0x02
+ZNATIVE_READ                          = 0x03
+ZNATIVE_SEEK                          = 0x04
+ZNATIVE_TELL                          = 0x05
+ZNATIVE_STAT                          = 0x06
+ZNATIVE_OPENDIR                       = 0x07
+ZNATIVE_READDIR                       = 0x08
+ZNATIVE_CHDIR                         = 0x09
+ZNATIVE_OFF_VERSION                   = 0x00
+ZNATIVE_OFF_OP                        = 0x01
+ZNATIVE_OFF_STATUS                    = 0x02
+ZNATIVE_OFF_FLAGS                     = 0x03
+ZNATIVE_OFF_HANDLE                    = 0x04
+ZNATIVE_OFF_POSITION                  = 0x06
+ZNATIVE_OFF_LENGTH                    = 0x0a
+ZNATIVE_OFF_BUFFER                    = 0x0c
+ZNATIVE_OFF_RESULT                    = 0x10
+ZNATIVE_OFF_NAME                      = 0x12
+ZNATIVE_DESC_BYTES                    = 0x20
 
 ; CMD_VOL_INFO is how C: decides whether it exists.  It is a pure query -- it
 ; performs no card I/O and changes no state -- so it can be issued at SELDSK

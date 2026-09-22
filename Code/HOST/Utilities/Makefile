@@ -30,6 +30,9 @@ ASFLAGS ?= -o -l -s
 LDFLAGS ?= -i
 
 IHX_TO_COM := $(TOOLS_DIR)/ihx_to_com.py
+BDOSCHAR_FIXTURE_GEN := $(TOOLS_DIR)/generate_bdoschar_fixtures.py
+BDOSCHAR_FIXTURE_INC := $(SRC_DIR)/bdoschar_fixtures.inc
+BDOSCHAR_CASES_SUB   := $(SRC_DIR)/bdoschar.sub
 
 # --- normal profile: the ROM rescue disk ------------------------------------
 # Non-destructive version, transport, power and controller-health check.
@@ -48,13 +51,13 @@ NORMAL += sysid
 # --- diagnostic set ----------------------------------------------------------
 # DESTRUCTIVE: these write to whatever card is inserted.
 DIAG := ioc_bulk ioc_sdblk ioc_sdwrite ioc_sdsoak ioc_sdrec ioc_sdbench
-# Non-destructive bring-up: SIO RTS probe, BIOS failure-record check, V9958
-# display test, IO Controller HID status pages, sound card test.
-DIAG += ioc_rts_probe ioc_diagchk v9958tst hidstat sndtest
+# Bring-up and characterization: SIO RTS probe, BIOS failure-record check,
+# V9958 display test, IO Controller HID status pages, sound card and BDOS tests.
+DIAG += ioc_rts_probe ioc_diagchk v9958tst hidstat sndtest bdoschar
 
 # --- tools -------------------------------------------------------------------
 # X/Y/ZMODEM file transfer over the serial console port.
-TOOLS := xfer
+TOOLS := xfer zcd
 
 TARGETS := $(NORMAL) $(DIAG) $(TOOLS)
 
@@ -71,14 +74,19 @@ DIAG_RECORD_AUTHORITY ?= ../CPM2.2/src/cbios_defs.inc
 DIAG_RECORD_CHECK     ?= ../CPM2.2/tools/check_diag_record.py
 
 .DEFAULT_GOAL := all
-.PHONY: all normal diagnostic tools clean check-diag-record list
+.PHONY: all normal diagnostic tools test test-zcd clean check-diag-record check-bdoschar-fixtures generate-bdoschar-fixtures list
 .SECONDARY: $(RELS) $(IHXS)
 
-all: check-diag-record $(COMS)
+all: check-diag-record check-bdoschar-fixtures $(COMS)
 
 normal:     check-diag-record $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(NORMAL)))
-diagnostic: check-diag-record $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(DIAG)))
+diagnostic: check-diag-record check-bdoschar-fixtures $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(DIAG)))
 tools:      $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(TOOLS)))
+
+test: test-zcd
+
+test-zcd: $(BUILD_DIR)/zcd.com
+	$(PYTHON) $(TOOLS_DIR)/test_zcd.py
 
 check-diag-record:
 	@if [ -f "$(DIAG_RECORD_CHECK)" ] && [ -f "$(DIAG_RECORD_AUTHORITY)" ]; then \
@@ -87,6 +95,17 @@ check-diag-record:
 	else \
 		echo "check-diag-record: BIOS project not present, skipping"; \
 	fi
+
+generate-bdoschar-fixtures:
+	$(PYTHON) $(BDOSCHAR_FIXTURE_GEN) --output $(BDOSCHAR_FIXTURE_INC) --submit-output $(BDOSCHAR_CASES_SUB)
+
+check-bdoschar-fixtures: $(BDOSCHAR_FIXTURE_INC) $(BDOSCHAR_CASES_SUB)
+	$(PYTHON) $(BDOSCHAR_FIXTURE_GEN) --output $(BDOSCHAR_FIXTURE_INC) --submit-output $(BDOSCHAR_CASES_SUB) --check
+
+$(BDOSCHAR_FIXTURE_INC) $(BDOSCHAR_CASES_SUB): $(BDOSCHAR_FIXTURE_GEN)
+	$(PYTHON) $(BDOSCHAR_FIXTURE_GEN) --output $(BDOSCHAR_FIXTURE_INC) --submit-output $(BDOSCHAR_CASES_SUB)
+
+$(BUILD_DIR)/bdoschar.rel: $(BDOSCHAR_FIXTURE_INC)
 
 $(BUILD_DIR):
 	mkdir -p $@

@@ -3,6 +3,7 @@
 #include "ioc_frame.h"
 #if IOC_FS_COMMANDS
 #include "fs_share.h"
+#include "fs2.h"
 #endif
 
 bool dispatch_command(const IocFrame *request, IocFrame *reply)
@@ -12,6 +13,19 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
 #if IOC_FS_COMMANDS
     /* Shared folder, user space only.  Confined to /SHARED/ by fs_share.c. */
     switch (cls) {
+    case CMD_FS2_CAPS:       handler_fs2_caps(request, reply);       return true;
+    case CMD_FS2_GENERATION: handler_fs2_generation(request, reply); return true;
+    case CMD_FS2_RESET:      handler_fs2_reset(request, reply);      return true;
+    case CMD_FS2_ROOT:       handler_fs2_root(request, reply);       return true;
+    case CMD_FS2_PUSH:       handler_fs2_push(request, reply);       return true;
+    case CMD_FS2_OPEN_RO:    handler_fs2_open_ro(request, reply);    return true;
+    case CMD_FS2_READ:       handler_fs2_read(request, reply);       return true;
+    case CMD_FS2_CLOSE:      handler_fs2_close(request, reply);      return true;
+    case CMD_FS2_OPENDIR:    handler_fs2_opendir(request, reply);    return true;
+    case CMD_FS2_READDIR:    handler_fs2_readdir(request, reply);    return true;
+    case CMD_FS2_CLOSEDIR:   handler_fs2_closedir(request, reply);   return true;
+    case CMD_FS2_STAT:       handler_fs2_stat(request, reply);       return true;
+    case CMD_FS2_SPACE:      handler_fs2_space(request, reply);      return true;
     case CMD_FS_OPENDIR:  handler_fs_opendir(request, reply);  return true;
     case CMD_FS_READDIR:  handler_fs_readdir(request, reply);  return true;
     case CMD_FS_OPEN:     handler_fs_open(request, reply);     return true;
