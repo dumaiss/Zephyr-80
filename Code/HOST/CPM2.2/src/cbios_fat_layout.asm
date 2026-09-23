@@ -612,7 +612,7 @@ fat_post_drive:
 	ld (fat_current_drive),a
 	jp fat_context_reset
 fat_post_user:
-	call fat_cache_invalidate
+	call fat_cache_flush
 	ld a,e
 	cp #0xff
 	ret z
@@ -668,7 +668,7 @@ fat_bdos_or_zsdos:
 	ret
 
 fat_context_reset:
-	call fat_cache_invalidate
+	call fat_cache_flush
 	call fat_search_reset
 	ld a,(fat_native_active)
 	or a
@@ -1133,6 +1133,78 @@ fat_cache_invalidate:
 	pop af
 	ret
 
+; Close the cached read handle if one is held.  Clears the tag first, so a
+; close that fails still leaves us believing we hold nothing -- the controller
+; slot is the scarce thing and a half-owned one is worse than none.
+fat_hcache_close:
+	ld a,(fat_hcache_valid)
+	or a
+	ret z
+	xor a
+	ld (fat_hcache_valid),a
+	ld hl,(fat_hcache_token)
+	ld (fat_file_token),hl
+	jp fat_fs2_close
+
+; Drop both caches.  The line is only memory, but the handle is one of the
+; controller's two file slots and has to be given back or the next opener
+; finds the pool full.  Called from every mutation point, so it must leave
+; the caller's registers alone.
+fat_cache_flush:
+	push af
+	push bc
+	push de
+	push hl
+	call fat_cache_invalidate
+	call fat_hcache_close
+	pop hl
+	pop de
+	pop bc
+	pop af
+	ret
+
+; DE = FCB.  Leaves an open read handle in fat_file_token, reusing the one
+; from the previous record whenever it names the same file for the same USER.
+; That reuse is the point: the resolver walk and the OPEN were being paid on
+; every line, and neither changes between records of one file.
+fat_hcache_open:
+	ld (fat_work_fcb),de
+	ld a,(fat_hcache_valid)
+	or a
+	jr z,fat_hcache_fresh
+	ld hl,#fat_hcache_user
+	ld a,(fat_current_user)
+	cp (hl)
+	jr nz,fat_hcache_fresh
+	ld hl,#fat_hcache_name
+	ld de,(fat_work_fcb)
+	inc de
+	ld b,#11
+	call fat_cache_cmp
+	jr nz,fat_hcache_fresh
+	ld hl,(fat_hcache_token)
+	ld (fat_file_token),hl
+	xor a
+	ret
+fat_hcache_fresh:
+	call fat_hcache_close
+	ld de,(fat_work_fcb)
+	call fat_open_fcb
+	ret nz
+	ld hl,(fat_file_token)
+	ld (fat_hcache_token),hl
+	ld hl,(fat_work_fcb)
+	inc hl
+	ld de,#fat_hcache_name
+	ld bc,#11
+	ldir
+	ld a,(fat_current_user)
+	ld (fat_hcache_user),a
+	ld a,#1
+	ld (fat_hcache_valid),a
+	xor a
+	ret
+
 ; Ask the pool once.  A refusal is permanent for the session; asking again on
 ; every record would cost more than the cache saves.
 fat_cache_lease:
@@ -1224,8 +1296,11 @@ fat_cache_fill:
 	call fat_cache_lease
 	ret nz
 	call fat_cache_invalidate
+	xor a
+	ld (fat_hcache_retry),a
+fat_cache_fill_attempt:
 	ld de,(fat_work_fcb)
-	call fat_open_fcb
+	call fat_hcache_open
 	ret nz
 	ld hl,#fat_record
 	ld de,#fat_cache_saverec
@@ -1247,17 +1322,31 @@ fat_cache_fill:
 	ld bc,#RESOURCE_CACHE_LINE_SIZE
 	ld ix,(fat_cache_line)
 	call fat_fs2_read
+	or a
+	jr z,fat_cache_fill_store
+	; The controller retires every file slot on a namespace mutation, so a
+	; token can die underneath us.  The FCB is authoritative and nothing is
+	; lost by reopening, but only once -- a second failure is a real error,
+	; not a handle that went stale.
+	cp #FS2_STATUS_NO_HANDLE
+	jr z,fat_cache_fill_reopen
+	cp #FS2_STATUS_STALE
+	jr nz,fat_cache_fill_failed
+fat_cache_fill_reopen:
+	call fat_hcache_close
+	ld a,(fat_hcache_retry)
+	or a
+	jr nz,fat_cache_fill_failed
+	ld a,#1
+	ld (fat_hcache_retry),a
+	jr fat_cache_fill_attempt
+fat_cache_fill_failed:
 	push af
-	push bc
-	call fat_fs2_close
-	ld d,a				; CLOSE failure is independent of READ
-	pop bc
+	call fat_hcache_close
 	pop af
 	or a
-	ret nz
-	ld a,d				; ...and is an error here too, as it is on the
-	or a				; read-through path; the two must agree
-	ret nz
+	ret
+fat_cache_fill_store:
 	ld (fat_cache_len),bc
 	ld hl,(fat_work_fcb)
 	inc hl
@@ -1294,20 +1383,31 @@ fat_cache_deliver:
 	ld c,l
 	ld b,#0
 fat_cache_deliver_copy:
+	; Copy first, then pad only what the copy did not cover.  Filling the
+	; whole record with 1Ah and overwriting all of it again cost 128 LDIR
+	; iterations per record, and three records in four are served from here.
 	push bc
-	ld hl,(fat_work_dma)
-	ld (hl),#0x1a
-	ld d,h
-	ld e,l
-	inc de
-	ld bc,#127
-	ldir
-	pop bc
 	ld hl,(fat_cache_line)
 	ld de,(fat_cache_within)
 	add hl,de
 	ld de,(fat_work_dma)
+	ldir				; DE ends just past the bytes copied
+	pop bc
+	ld a,#128
+	sub c
+	jr z,fat_cache_deliver_done	; a full record needs no padding at all
+	ld c,a
+	ld b,#0
+	ld h,d
+	ld l,e
+	ld (hl),#0x1a
+	inc de
+	dec bc
+	ld a,b
+	or c
+	jr z,fat_cache_deliver_done
 	ldir
+fat_cache_deliver_done:
 	xor a
 	scf
 	ret
@@ -1380,7 +1480,7 @@ fat_read_error:
 ; the flush, which is why function 16 has nothing left to do -- and why a
 ; crash costs at most the record in flight.
 fat_write_record:
-	call fat_cache_invalidate
+	call fat_cache_flush
 	ld (fat_work_fcb),de
 	ld (fat_work_dma),hl
 	call fat_check_write_protect
@@ -1482,7 +1582,7 @@ fat_bdos_write_random_zf:
 ; DE = FCB, fat_record = the target record.  Writes zero records from the
 ; file's current end up to (not including) the target, inside a single open.
 fat_zero_fill_gap:
-	call fat_cache_invalidate
+	call fat_cache_flush
 	ld (fat_work_fcb),de
 	call fat_check_write_protect
 	ret nz
@@ -1590,7 +1690,7 @@ fat_zf_more:
 ; is the first file in one.  CREATE_ALWAYS matches CP/M: MAKE over an existing
 ; name truncates it.
 fat_bdos_make:
-	call fat_cache_invalidate
+	call fat_cache_flush
 	ld (fat_work_fcb),de
 	call fat_check_write_protect
 	jp nz,fat_bdos_fail
@@ -1625,7 +1725,7 @@ fat_bdos_make:
 ; RENAME takes the existing name at FCB+1 and the new one at FCB+17.  Both
 ; resolve in the current directory; CP/M has no cross-directory rename.
 fat_bdos_rename:
-	call fat_cache_invalidate
+	call fat_cache_flush
 	ld (fat_work_fcb),de
 	call fat_check_write_protect
 	jp nz,fat_bdos_fail
@@ -1653,7 +1753,7 @@ fat_bdos_rename:
 ; progress first -- removing entries would leave that enumeration pointing
 ; into a directory that moved underneath it.
 fat_bdos_delete:
-	call fat_cache_invalidate
+	call fat_cache_flush
 	ld (fat_work_fcb),de
 	call fat_check_write_protect
 	jp nz,fat_bdos_fail
@@ -2224,8 +2324,7 @@ fat_native_open:
 	jp fat_native_return
 fat_native_open_mode_ok:
 	ld (fat_native_open_mode),a
-	or a
-	call nz,fat_cache_invalidate
+	call fat_cache_flush
 	ld a,(fat_native_open_mode)
 	or a
 	jr z,fat_native_open_path
@@ -2530,7 +2629,7 @@ fat_native_invalidate_slot:
 	ret
 
 fat_native_write:
-	call fat_cache_invalidate
+	call fat_cache_flush
 	call fat_native_slot
 	jp nz,fat_native_return
 	ld (fat_file_token),de
@@ -2640,7 +2739,7 @@ fat_native_sync_result:
 	jp fat_native_return
 
 fat_native_truncate:
-	call fat_cache_invalidate
+	call fat_cache_flush
 	call fat_native_slot
 	jp nz,fat_native_return
 	ld (fat_file_token),de
@@ -2677,7 +2776,7 @@ fat_native_truncate_result:
 ; dead whatever the outcome, and saying so here keeps a later operation from
 ; presenting a token the controller has already retired.
 fat_native_forget_slots:
-	call fat_cache_invalidate
+	call fat_cache_flush
 	xor a
 	ld (fat_native_active),a
 	ld (fat_native_active + 1),a
@@ -2919,7 +3018,7 @@ fat_native_dir_bad:
 	jp fat_native_return
 
 fat_native_chdir:
-	call fat_cache_invalidate
+	call fat_cache_flush
 	; An empty component selects the current USER's drive root.  Test this
 	; before replaying the old CWD so it also provides a recovery path if a
 	; directory was removed on the FAT volume.
@@ -3114,6 +3213,16 @@ fat_line_rec:
 	.ds 3
 fat_cache_saverec:
 	.ds 3
+fat_hcache_valid:
+	.db 0
+fat_hcache_retry:
+	.db 0
+fat_hcache_user:
+	.db 0
+fat_hcache_token:
+	.dw 0
+fat_hcache_name:
+	.ds 11
 fat_native_slot_index:
 	.db 0x00
 fat_native_open_mode:

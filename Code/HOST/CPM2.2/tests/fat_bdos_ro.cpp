@@ -270,14 +270,18 @@ int main(int ac,char**av)try{
     for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);
     for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+1+i,rdname[i]);
     t.mem.store_mem(t.at("fat_current_drive"),3);
-    for(unsigned record=0;record<8;record++){r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0,"multi-record read "+to_string(record));need(t.mem.fetch_mem(dma)==((record*128)&255),"record data "+to_string(record));need(t.live_slots()==0,"slot leaked after record "+to_string(record));}
+    for(unsigned record=0;record<8;record++){r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0,"multi-record read "+to_string(record));need(t.mem.fetch_mem(dma)==((record*128)&255),"record data "+to_string(record));need(t.live_slots()<=1,"more than the cached read handle held after record "+to_string(record));}
     r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==1,"genuine EOF result");// Nine records now cost three controller round trips, not nine: four
     // records share one 512-byte line, and the ninth probes past the end.
     // Each "open" is really RESET/ROOT/PUSH/OPEN, so the real saving is
     // larger than the count suggests.  If this ever reads 9 again, the
     // deblocking has stopped working.
-    need(t.opens==base_opens+3&&t.reads==base_reads+3&&t.bulks==base_bulks+2&&t.closes==base_closes+3,
-         "deblocking: expected 3 round trips for 9 records, got "+to_string(t.opens-base_opens));need(t.max_open==1,"temporary reads consumed concurrent slots");
+    // One OPEN for the whole stream, not one per line and certainly not one
+    // per record: the handle is reused while the FCB names the same file, so
+    // a line costs a READ and a bulk and nothing else.
+    need(t.opens==base_opens+1,"handle reuse: 9 records took "+to_string(t.opens-base_opens)+" opens");
+    need(t.reads==base_reads+3&&t.bulks==base_bulks+2,
+         "deblocking: 9 records took "+to_string(t.reads-base_reads)+" reads");need(t.max_open==1,"temporary reads consumed concurrent slots");
     // Filesystem and close failures are errors, never EOF, and a failed read
     // still attempts to release its temporary context.
     // These exercise the read-through path's error handling.  Without
@@ -285,17 +289,30 @@ int main(int ac,char**av)try{
     // injected failure would never be reached -- which is exactly what the
     // cache is for, but not what is being tested here.
     t.mem.store_mem(t.at("fat_cache_valid"),0);
-    t.mem.store_mem(fcb+12,0);t.mem.store_mem(fcb+14,0);t.mem.store_mem(fcb+32,0);t.fail_next_read=true;unsigned oldclose=t.closes;r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0xff,"READ error masqueraded as EOF");need(t.closes==oldclose+1&&t.live_slots()==0,"READ error did not close context");
+    t.mem.store_mem(fcb+12,0);t.mem.store_mem(fcb+14,0);t.mem.store_mem(fcb+32,0);t.fail_next_read=true;unsigned oldclose=t.closes;r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0xff,"READ error masqueraded as EOF");need(t.live_slots()==0,"a failed read kept its handle");
+    // A read no longer closes -- it keeps the handle -- so what matters now is
+    // that a close which FAILS during a flush does not leave us believing we
+    // still own a handle the controller has already thrown away.
     t.mem.store_mem(t.at("fat_cache_valid"),0);
-    t.fail_next_close=true;r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0xff,"CLOSE error ignored");need(t.live_slots()==0,"mock CLOSE did not release slot");
+    r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");
+    need(t.mem.fetch_mem(t.at("fat_hcache_valid"))==1,"a read should leave its handle cached");
+    t.fail_next_close=true;
+    t.call("fat_cache_flush");
+    need(t.mem.fetch_mem(t.at("fat_hcache_valid"))==0,
+         "a failed close left the handle marked valid");
     t.mem.store_mem(t.at("fat_cache_valid"),0);
     t.fail_next_open=true;r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0xff,"OPEN error masqueraded as EOF");
     // Stream the reported SONG.ZVG size across every EXM=1 boundary.
     t.mock_file_size=624*128;for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+1+i,rdname[i]);
-    for(unsigned record=0;record<624;record++){r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0,"624-record read "+to_string(record));if(record==127||record==128||record==255||record==256||record==511||record==512)need(t.mem.fetch_mem(dma)==((record*128)&255),"boundary data "+to_string(record));need(t.live_slots()==0,"boundary slot leak "+to_string(record));}
+    for(unsigned record=0;record<624;record++){r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0,"624-record read "+to_string(record));if(record==127||record==128||record==255||record==256||record==511||record==512)need(t.mem.fetch_mem(dma)==((record*128)&255),"boundary data "+to_string(record));need(t.live_slots()<=1,"boundary slot leak "+to_string(record));}
     // 624 records across 156 lines: the whole stream cost 163 opens counting
     // everything earlier in this run, against 625 before deblocking.
-    need(t.opens<200,"deblocking: 624 records took "+to_string(t.opens)+" opens");
+    need(t.opens<20,"handle reuse: 624 records took "+to_string(t.opens)+" opens");
+    // The handle must be handed back when anything invalidates it, or the
+    // controller's two file slots leak away one program at a time.
+    need(t.live_slots()==1,"the read cache should be holding its handle here");
+    t.call("fat_cache_flush");
+    need(t.live_slots()==0,"flush did not return the cached handle");
     need(t.mem.fetch_mem(fcb+12)==4&&t.mem.fetch_mem(fcb+32)==112,"624-record final FCB position");r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==1,"624-record EOF");
     // Native OPEN records the path identity of the handle it just issued so a
     // stale token can be reopened after a media-generation change.  At the
@@ -371,6 +388,28 @@ int main(int ac,char**av)try{
     t.put32(desc+t.at("ZNATIVE_OFF_POSITION"),1000);t.mem.store_mem(desc+t.at("ZNATIVE_OFF_OP"),4);
     r.DE.set_pair16(desc);t.call("fat_native_entry");
     need(native(3,0,100,nh)==0&&t.get16(desc+t.at("ZNATIVE_OFF_RESULT"))==24,"short native READ at EOF");
+    // A file whose length is not a multiple of 128 must still deliver its
+    // last record padded with 1Ah.  The deliver path copies first and pads
+    // only the tail, so this is the case that exercises the padding at all.
+    {
+        t.mem.store_mem(t.at("fat_cache_valid"),0);
+        t.call("fat_cache_flush");
+        t.mock_file_size=100;
+        for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);
+        for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+1+i,rdname[i]);
+        for(unsigned i=0;i<128;i++)t.mem.store_mem(dma+i,0x5A);
+        r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");
+        need(r.AF.get_high()==0,"short final record");
+        for(unsigned i=0;i<100;i++)
+            need(t.mem.fetch_mem(dma+i)==(i&255),"short record data at "+to_string(i));
+        for(unsigned i=100;i<128;i++)
+            need(t.mem.fetch_mem(dma+i)==0x1a,
+                 "short record tail not padded at "+to_string(i));
+        r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");
+        need(r.AF.get_high()==1,"EOF after a short final record");
+        t.mock_file_size=1024;
+        t.call("fat_cache_flush");
+    }
     // The cached line must not survive a write to the same file, or a program
     // that writes then reads gets what was there before.
     {
