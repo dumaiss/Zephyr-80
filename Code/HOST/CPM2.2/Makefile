@@ -78,9 +78,12 @@ VDRIP_TRANSPORT_INCLUDE :=
 VDRIP_TRANSPORT_LINKED := 0
 endif
 
-# FAT D: selection.  Milestones 2-4 now provide the complete read-only path, so
-# the normal image exposes D:.  FAT_BIOS_M1=0 remains as a recovery build that
-# parks the synthetic drive without changing placement.
+# FAT drive selection.  The FAT personality is complete and writable, and the
+# normal image is simply the machine: it exposes the FAT drive and carries no
+# suffix.  FAT_BIOS_M1=0 is the exception -- a recovery build that parks the
+# synthetic drive without changing placement -- so that is the one that gets
+# marked in the filename.  (The M1 in the name is historical: it was the
+# Milestone-1 gate, and it now gates the whole personality.)
 FAT_BIOS_M1 ?= 1
 VALID_FAT_BIOS_M1 := 0 1
 ifeq ($(filter $(FAT_BIOS_M1),$(VALID_FAT_BIOS_M1)),)
@@ -204,7 +207,7 @@ all: image
 # Deferred (=), not immediate (:=): CCP and BDOS are defined further down this
 # file, so an immediate assignment here expands them as empty and produces
 # "zephyr80--.bin".
-FAT_BIOS_M1_SUFFIX = $(if $(filter 1,$(FAT_BIOS_M1)),-fatro,)
+FAT_BIOS_M1_SUFFIX = $(if $(filter 1,$(FAT_BIOS_M1)),,-nofat)
 CPM_CONFIG = $(CCP)-$(BDOS)$(FAT_BIOS_M1_SUFFIX)
 STAMPED_IMAGE = $(BUILD_DIR)/zephyr80-$(CPM_CONFIG).bin
 
@@ -212,7 +215,7 @@ image: $(FINAL_IMAGE) docs
 	@cp "$(FINAL_IMAGE)" "$(STAMPED_IMAGE)"
 	@echo ""
 	@echo "  ROM built:  CCP=$(CCP)  BDOS=$(BDOS)"
-	@echo "    FAT read-only gate: $(FAT_BIOS_M1)"
+	@echo "    FAT drive: $(if $(filter 1,$(FAT_BIOS_M1)),enabled,PARKED (recovery build))"
 	@echo "    $(FINAL_IMAGE)"
 	@echo "    $(STAMPED_IMAGE)   <- flash this one to be sure"
 	@echo ""

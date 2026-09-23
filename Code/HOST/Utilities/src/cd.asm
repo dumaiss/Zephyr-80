@@ -1,11 +1,16 @@
-; ZCD.COM -- select a directory in the FAT-backed D: namespace.
+; CD.COM -- select a directory in the FAT-backed B: namespace.
 ;
-; Usage: ZCD GAMES, ZCD D8:GAMES, or ZCD D8: to select the USER root.
-; Bare ZCD selects the current USER root when the caller is already on D:.
+; Usage: CD GAMES, CD B8:GAMES, or CD B8: to select the USER root.
+; Bare CD selects the current USER root when the caller is already on B:.
+; CD .. steps one level up.  That case is recognised from the command tail,
+; not from FCB1: the CP/M name parser stops the name at the first '.', so the
+; CCP hands this program eleven spaces for "..", which is exactly what it
+; hands it for a bare CD.  The untouched tail is the only place the two can
+; still be told apart.
 ; Repeated calls traverse a hierarchy.  The bank-7 CWD survives transient
 ; program exit and drive changes; warm boot preserves the selected directory.
 
-	.module zcd
+	.module cd
 	.area CODE (ABS)
 	.org 0x0100
 
@@ -16,7 +21,7 @@ BDOS_USER = 32
 FCB1 = 0x005c
 CMDTAIL = 0x0080
 CMDTEXT = 0x0081
-FAT_FCB_DRIVE = 4
+FAT_FCB_DRIVE = 2		; B:, one-based as FCB1 stores it
 
 start:
 	ld (entry_sp),sp
@@ -37,6 +42,12 @@ clear_desc:
 	ld a,(CMDTAIL)
 	or a
 	jr z,prepare_target
+	call tail_is_dotdot
+	jr nz,copy_name
+	ld a,#ZN_CDUP
+	ld (desc + ZN_OP),a
+	jr prepare_target
+copy_name:
 	ld hl,#FCB1 + 1
 	ld de,#desc + ZN_NAME
 	ld bc,#11
@@ -79,8 +90,8 @@ print:
 	ld sp,(entry_sp)
 	ret
 
-; The native service is D:-specific.  An explicit D: is accepted from any
-; caller drive; an omitted drive is accepted only while D: is current.
+; The native service is specific to the FAT drive.  An explicit B: is
+; accepted from any caller drive; an omitted drive only while B: is current.
 validate_drive:
 	ld a,(FCB1)
 	or a
@@ -90,6 +101,63 @@ validate_drive:
 	inc a				; BDOS is zero-based; FCB drives are one-based
 validate_explicit_drive:
 	cp #FAT_FCB_DRIVE
+	ret
+
+; Z when the command tail names "..", ignoring a leading drive prefix so that
+; CD B8:.. works the same way.
+tail_is_dotdot:
+	ld hl,#CMDTEXT
+dotdot_skip:
+	ld a,(hl)
+	cp #' '
+	jr nz,dotdot_prefix
+	inc hl
+	jr dotdot_skip
+dotdot_prefix:
+	push hl
+	call skip_drive_prefix
+	ld a,(hl)
+	cp #'.'
+	jr nz,dotdot_no
+	inc hl
+	ld a,(hl)
+	cp #'.'
+	jr nz,dotdot_no
+	inc hl
+	ld a,(hl)
+	or a
+	jr z,dotdot_yes
+	cp #' '
+	jr nz,dotdot_no
+dotdot_yes:
+	pop hl
+	xor a
+	ret
+dotdot_no:
+	pop hl
+	ld a,#1
+	or a
+	ret
+
+; HL past a leading "B:" or "B8:" style prefix, or unchanged when there is none.
+skip_drive_prefix:
+	push hl
+dotdot_scan:
+	ld a,(hl)
+	or a
+	jr z,dotdot_scan_none
+	cp #' '
+	jr z,dotdot_scan_none
+	cp #':'
+	jr z,dotdot_scan_found
+	inc hl
+	jr dotdot_scan
+dotdot_scan_found:
+	inc hl
+	pop af				; discard the saved start
+	ret
+dotdot_scan_none:
+	pop hl
 	ret
 
 ; ZCPR records the drive and packed name in FCB1, but keeps the USER from a
@@ -108,12 +176,12 @@ parse_skip_spaces:
 	jr parse_skip_spaces
 parse_prefix:
 	and #0xdf
-	cp #'D'
+	cp #'B'
 	jr nz,parse_possible_user
 	inc hl
 	ld a,(hl)
 	cp #':'
-	ret z				; D: uses the caller's USER
+	ret z				; B: uses the caller's USER
 parse_possible_user:
 	ld a,(hl)
 	sub #'0'
@@ -177,7 +245,7 @@ restore_user:
 
 ok_text:    .ascii "Directory selected\r\n$"
 fail_text:  .ascii "Cannot select directory\r\n$"
-target_text: .ascii "ZCD target must be D0: through D15:\r\n$"
+target_text: .ascii "CD target must be B0: through B15:\r\n$"
 entry_sp:   .dw 0
 saved_user: .db 0
 target_user: .db 0

@@ -1,4 +1,4 @@
-// Execute the assembled ZCD.COM with only its CALL 5 services mocked.
+// Execute the assembled CD.COM with only its CALL 5 services mocked.
 #include <qkz80/qkz80.h>
 
 #include <algorithm>
@@ -30,6 +30,7 @@ struct Rig {
     unsigned user = 8;
     unsigned native_calls = 0;
     unsigned native_user = 0xff;
+    unsigned native_op = 0;
     string native_name;
     string output;
     vector<unsigned> user_sets;
@@ -38,7 +39,7 @@ struct Rig {
         fill(memory.get_mem(), memory.get_mem() + 65536, 0);
         ifstream image(binary, ios::binary);
         image.read(reinterpret_cast<char *>(memory.get_mem()) + 0x100, 0xff00);
-        need(image.gcount() > 0, "missing ZCD.COM");
+        need(image.gcount() > 0, "missing CD.COM");
         ifstream names(symbol_file);
         string name;
         unsigned value;
@@ -80,8 +81,10 @@ struct Rig {
         }
         if (function == 218) {
             const unsigned descriptor = cpu.regs.DE.get_pair16();
-            need(byte(descriptor) == 1 && byte(descriptor + 1) == 9,
-                 "bad native CHDIR descriptor");
+            need(byte(descriptor) == 1, "bad native descriptor version");
+            native_op = byte(descriptor + 1);
+            need(native_op == 9 || native_op == 19,
+                 "CD issued something other than CHDIR or CDUP");
             native_calls++;
             native_user = user;
             native_name.clear();
@@ -118,46 +121,72 @@ struct Rig {
             if (cpu.regs.PC.get_pair16() == 5) bdos();
             else cpu.execute();
         }
-        need(budget > 0, "ZCD execution timeout");
-        need(cpu.regs.SP.get_pair16() == entry_sp + 2, "ZCD did not restore entry stack");
+        need(budget > 0, "CD execution timeout");
+        need(cpu.regs.SP.get_pair16() == entry_sp + 2, "CD did not restore entry stack");
     }
 };
 
 int main(int argc, char **argv) try {
-    need(argc == 3, "usage: zcd-test zcd.com symbols");
+    need(argc == 3, "usage: cd-test cd.com symbols");
 
     Rig bare(argv[1], argv[2]);
-    bare.setup(3, 8, 0, "", "");
+    bare.setup(1, 8, 0, "", "");
     bare.run();
     need(bare.native_calls == 1 && bare.native_user == 8 && bare.native_name[0] == 0,
-         "bare D8: root selection");
-    need(bare.user == 8 && bare.user_sets.empty(), "bare ZCD changed USER");
+         "bare B8: root selection");
+    need(bare.user == 8 && bare.user_sets.empty(), "bare CD changed USER");
 
     Rig remote(argv[1], argv[2]);
-    remote.setup(0, 14, 4, "TESTDIR    ", " D8:TESTDIR");
+    remote.setup(0, 14, 2, "TESTDIR    ", " B8:TESTDIR");
     remote.run();
     need(remote.native_calls == 1 && remote.native_user == 8 &&
              remote.native_name == "TESTDIR    ",
-         "remote D8:TESTDIR selection");
+         "remote B8:TESTDIR selection");
     need(remote.user == 14 && remote.user_sets == vector<unsigned>({8, 14}),
-         "remote ZCD did not restore USER 14");
+         "remote CD did not restore USER 14");
 
     Rig root(argv[1], argv[2]);
-    root.setup(1, 0, 4, "           ", " D8:");
+    root.setup(2, 0, 2, "           ", " B8:");
     root.run();
     need(root.native_calls == 1 && root.native_user == 8 && root.native_name[0] == ' ',
-         "remote D8: root selection");
+         "remote B8: root selection");
     need(root.user == 0 && root.user_sets == vector<unsigned>({8, 0}),
          "remote root did not restore USER 0");
 
     Rig wrong_drive(argv[1], argv[2]);
-    wrong_drive.setup(1, 0, 0, "TESTDIR    ", " TESTDIR");
+    wrong_drive.setup(2, 0, 0, "TESTDIR    ", " TESTDIR");
     wrong_drive.run();
     need(wrong_drive.native_calls == 0 &&
-             wrong_drive.output.find("target must be D0") != string::npos,
-         "relative ZCD from a non-FAT drive was accepted");
+             wrong_drive.output.find("target must be B0") != string::npos,
+         "relative CD from a non-FAT drive was accepted");
 
-    cout << "PASS: ZCD direct return, bare root, explicit D8 target, and USER restore\n";
+    // "CD .." must step up, not jump to the root.  The CCP hands this program
+    // eleven spaces for it -- the same as a bare CD -- so the only thing that
+    // can tell them apart is the untouched command tail.
+    Rig up(argv[1], argv[2]);
+    up.setup(1, 8, 0, "           ", " ..");
+    up.run();
+    need(up.native_calls == 1 && up.native_op == 19, "CD .. did not use CDUP");
+
+    Rig up_drive(argv[1], argv[2]);
+    up_drive.setup(0, 8, 2, "           ", " B8:..");
+    up_drive.run();
+    need(up_drive.native_calls == 1 && up_drive.native_op == 19,
+         "CD B8:.. did not use CDUP");
+
+    // A bare CD still selects the root, and a named directory still descends.
+    Rig bare2(argv[1], argv[2]);
+    bare2.setup(1, 8, 0, "", "");
+    bare2.run();
+    need(bare2.native_calls == 1 && bare2.native_op == 9, "bare CD stopped using CHDIR");
+
+    Rig dotfile(argv[1], argv[2]);
+    dotfile.setup(1, 8, 0, "GAMES      ", " GAMES");
+    dotfile.run();
+    need(dotfile.native_calls == 1 && dotfile.native_op == 9, "CD GAMES stopped using CHDIR");
+
+    cout << "PASS: CD direct return, bare root, explicit B8 target, USER restore, "
+            "and CD .. stepping one level up\n";
 } catch (const exception &error) {
     cerr << "FAIL: " << error.what() << '\n';
     return 1;

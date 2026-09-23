@@ -76,9 +76,9 @@ System common code ends at `FFD8h`.
 | `4000h-42FFh` | SD-card backend | 745 | 23 | Record read and write through the IO Controller cache. |
 | `4300h-432Fh` | B: select probe | 23 | 25 | Card availability, then the B: DPH. |
 | `4330h-43FFh` | Drive A: backend | 164 | 44 | The build-selected A: backend. |
-| `4400h-47FFh` | Drive dispatcher | 178 | 846 | Routes A: to its backend, B:/C: to SD units, and gated D: to the synthetic FAT BIOS. |
+| `4400h-47FFh` | Drive dispatcher | 179 | 845 | Routes A: to its backend, gated B: to the synthetic FAT BIOS, and C:/D: to SD units. |
 | `4800h-5FFFh` | V9958 console | 3191 | 2953 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
-| `9000h-A7FFh` | FAT BDOS backend | 4979 | 1165 | Read-only FS2 client, native file manager, FAT BDOS compatibility layer, DPH and DPB. |
+| `9000h-A7FFh` | FAT BDOS backend | 5128 | 1016 | FS2 client, native file manager, writable FAT BDOS personality, read cache, DPH and DPB. |
 
 Data:
 
@@ -126,7 +126,7 @@ All eight physical SRAM banks include E000h-FFFFh, visible in flat mode 01. Mode
 | 3 | ROM disk page 3 | 49152 | `build/romdisk.p3.bin` |
 | 7 | OS bank 7 | 65536 | `build/bank7.bin` |
 
-The burnable image `build/zephyr80.bin` is 524288 bytes. Console backend: `v9958`. Drive A: backend: `rom`. FAT read-only selection gate: `1`.
+The burnable image `build/zephyr80.bin` is 524288 bytes. Console backend: `v9958`. Drive A: backend: `rom`. FAT drive selection gate: `1`.
 
 ## Validation Report
 

@@ -1224,7 +1224,7 @@ CBIOS_AREA_END                  = 0xffff
 ; To go back to SD as the boot volume, swap these two values.  Nothing else
 ; needs to change: the dispatcher routes on whatever SELDSK was given and each
 ; backend owns its own DPH and allocation vector.
-SD_STORAGE_DRIVE                      = 0x01       ; B:
+SD_STORAGE_DRIVE                      = 0x02       ; C:
 VDRIP_STORAGE_DRIVE                   = 0x00       ; A:
 
 ; Neutral name for whichever backend is linked as A:.  The dispatcher routes on
@@ -1440,17 +1440,18 @@ sd_storage_unit                       = SD_STORAGE_WORK_AREA + 0x09
 
 ; Drive letters map to controller volume units by subtracting one:
 ;   A: = 0  ROM disk (not an SD unit)
-;   B: = 1  -> unit 0, /CPM/CPM_1.DRV
-;   C: = 2  -> unit 1, /CPM/CPM_2.DRV
-;   D: = 3  reserved for the synthetic FAT BIOS, not an SD volume unit
+;   B: = 1  reserved for the FAT-backed personality, not an SD volume unit
+;   C: = 2  -> unit 0, /CPM/CPM_1.DRV
+;   D: = 3  -> unit 1, /CPM/CPM_2.DRV
 ; SD_STORAGE_DRIVE_LIMIT is the first drive letter outside the SD-unit range.
-SD_STORAGE_DRIVE2                     = 0x02       ; C:
-SD_STORAGE_DRIVE_LIMIT                = 0x03
+SD_STORAGE_DRIVE2                     = 0x03       ; D:
+SD_STORAGE_DRIVE_LIMIT                = 0x04
 
-; D: is reserved for the FAT-backed compatibility personality.  During
-; Milestone 1 it is selectable only in an explicit FAT_BIOS_M1=1 build.  Its
-; BIOS path is a synthetic empty CP/M disk; no FAT file access occurs here.
-FAT_BIOS_DRIVE                        = 0x03       ; D:
+; B: is the FAT-backed personality: the hierarchical volume with the files a
+; PC wrote.  It sits directly after the ROM rescue disk because it is the
+; drive the machine is normally used from; the fixed-geometry CP/M volumes
+; follow it.  FAT_BIOS_M1=0 parks it for a recovery build.
+FAT_BIOS_DRIVE                        = 0x01       ; B:
 FAT_BIOS_EMPTY_BYTE                   = 0xe5
 FAT_BIOS_RECORD_BYTES                 = 0x0080
 
@@ -1544,6 +1545,9 @@ ZNATIVE_DELETE                        = 0x0d
 ZNATIVE_RENAME                        = 0x0e
 ZNATIVE_MKDIR                         = 0x0f
 ZNATIVE_RMDIR                         = 0x10
+ZNATIVE_CWD                           = 0x11
+ZNATIVE_SPACE                         = 0x12
+ZNATIVE_CDUP                          = 0x13
 ZNATIVE_OPEN_READ                     = 0x00
 ZNATIVE_OPEN_UPDATE                   = 0x01
 ZNATIVE_OPEN_CREATE_NEW               = 0x02
@@ -1563,6 +1567,9 @@ ZNATIVE_OFF_NAME                      = 0x12
 ; uses none of POSITION, LENGTH, BUFFER or RESULT, so the destination goes in
 ; that span instead and the descriptor keeps its size and its version.
 ZNATIVE_OFF_NAME2                     = 0x06
+; SPACE's total-bytes result.  SPACE carries no name, so the name field holds
+; the second 32-bit figure and the descriptor keeps its size.
+ZNATIVE_OFF_SPACE_TOTAL               = 0x12
 ZNATIVE_DESC_BYTES                    = 0x20
 
 ; CMD_VOL_INFO is how C: decides whether it exists.  It is a pure query -- it

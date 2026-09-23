@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the assembled ZCD command parser and exit path in libqkz80."""
+"""Run the assembled CD command parser and exit path in libqkz80."""
 from pathlib import Path
 import subprocess
 import sys
@@ -10,14 +10,14 @@ bios_tools = root.parent / "CPM2.2" / "tools"
 sys.path.insert(0, str(bios_tools))
 from generate_memory_docs import parse_listing
 
-symbols, _ = parse_listing(root / "build/zcd.lst")
-symbol_file = root / "build/zcd-test-symbols.txt"
+symbols, _ = parse_listing(root / "build/cd.lst")
+symbol_file = root / "build/cd-test-symbols.txt"
 symbol_file.write_text("".join(f"{name} {value}\n" for name, value in symbols.items()))
-exe = root / "build/zcd-test"
+exe = root / "build/cd-test"
 subprocess.run([
     "c++", "-std=c++17", "-Wall", "-Wextra", "-O2",
-    str(root / "tests/zcd.cpp"), "-lqkz80", "-o", str(exe),
+    str(root / "tests/cd.cpp"), "-lqkz80", "-o", str(exe),
 ], check=True)
 subprocess.run([
-    str(exe), str(root / "build/zcd.com"), str(symbol_file),
+    str(exe), str(root / "build/cd.com"), str(symbol_file),
 ], check=True)

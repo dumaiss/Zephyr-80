@@ -144,9 +144,9 @@ BANK7_REGIONS = [
     Region("Drive A: backend", "STORAGE_A_CODE_START", "STORAGE_A_CODE_END", "CBIOS_SD_PROBE2_CODE_BASE",
            "The build-selected A: backend."),
     Region("Drive dispatcher", "CBIOS_SD_PROBE2_CODE_BASE", "SD_PROBE2_CODE_END", "CBIOS_V9958_CONSOLE_CODE_BASE",
-           "Routes A: to its backend, B:/C: to SD units, and gated D: to the synthetic FAT BIOS."),
+           "Routes A: to its backend, gated B: to the synthetic FAT BIOS, and C:/D: to SD units."),
     Region("FAT BDOS backend", "FAT_BDOS_CODE_START", "FAT_BDOS_CODE_END", "CBIOS_FAT_BDOS_CODE_LIMIT",
-           "Read-only FS2 client, native file manager, FAT BDOS compatibility layer, DPH and DPB."),
+           "FS2 client, native file manager, writable FAT BDOS personality, read cache, DPH and DPB."),
 ]
 
 CONSOLE_REGIONS = {
@@ -936,7 +936,7 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         "",
         f"The burnable image `{args.final_image}` is {args.final_image.stat().st_size} bytes. "
         f"Console backend: `{manifest.get('console.backend')}`. Drive A: backend: `{manifest.get('storage.backend')}`. "
-        f"FAT read-only selection gate: `{s('FAT_BIOS_M1_ENABLED')}`.",
+        f"FAT drive selection gate: `{s('FAT_BIOS_M1_ENABLED')}`.",
         "",
         "## Validation Report",
         "",

@@ -67,6 +67,10 @@ ZN_DELETE		= 13
 ZN_RENAME		= 14
 ZN_MKDIR		= 15
 ZN_RMDIR		= 16
+ZN_CWD			= 17	; FLAGS = component index in; RESULT = depth, NAME = it
+ZN_SPACE		= 18	; POSITION = free bytes, ZN_TOTAL = total bytes
+ZN_CDUP			= 19	; step one level up; at the root it does nothing
+ZN_TOTAL		= 18	; SPACE's second figure, in the unused name field
 ; RENAME's destination name.  The descriptor has no room for a second 11-byte
 ; name after ZN_NAME, and RENAME uses none of POSITION/LENGTH/BUFFER/RESULT,
 ; so the new name goes in that span.

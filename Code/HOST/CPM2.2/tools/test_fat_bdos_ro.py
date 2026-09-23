@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run pure assembled read-only FAT BDOS semantics in libqkz80."""
+"""Run the pure assembled FAT BDOS semantics, read and write, in libqkz80."""
 import argparse
 from pathlib import Path
 import subprocess

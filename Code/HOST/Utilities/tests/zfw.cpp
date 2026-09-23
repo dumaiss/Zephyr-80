@@ -72,7 +72,7 @@ struct Slot {
 struct Rig {
     qkz80_cpu_mem memory;
     CPU cpu{&memory};
-    unsigned drive = 3;             // D: is the FAT-backed drive
+    unsigned drive = 1;             // B: is the FAT-backed drive
     map<string, vector<unsigned char>> files;
     set<string> dirs;
     Slot slots[SLOTS];
@@ -304,7 +304,7 @@ struct Rig {
             return;
         }
         if (function == 29) {  // read-only vector; D: is bit 3
-            const unsigned vector = write_protected ? 0x0008 : 0x0000;
+            const unsigned vector = write_protected ? 0x0002 : 0x0000;
             cpu.regs.HL.set_pair16(vector);
             return_from_bdos(vector & 0xff);
             return;
@@ -332,7 +332,7 @@ struct Rig {
         }
         if (function == 37) {
             if (honour_reset_drive && !(zsdos_flags & 0x04) &&
-                (cpu.regs.DE.get_pair16() & 0x0008) != 0)
+                (cpu.regs.DE.get_pair16() & 0x0002) != 0)
                 write_protected = false;
             context_reset();
             return_from_bdos(0);
@@ -428,7 +428,7 @@ int main(int argc, char **argv) try {
 
     // Not the FAT-backed drive: refuse rather than write somewhere else.
     Rig wrong_drive(binary, symbols);
-    wrong_drive.drive = 1;
+    wrong_drive.drive = 2;
     wrong_drive.run();
     need(wrong_drive.files.empty() &&
              wrong_drive.output.find("must run on the FAT-backed drive") != string::npos,

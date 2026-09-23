@@ -30,7 +30,7 @@ struct Rig {
     map<string, vector<unsigned char>> files;
     string output;
     unsigned dma = 0x80;
-    unsigned drive = 3;
+    unsigned drive = 1;
     bool write_protected = false;
     unsigned zsdos_flags = 0x6d;   // bit 2 = Read-Only Enable, as shipped
     // A conventional CP/M drive zero-fills only a PREVIOUSLY UNALLOCATED
@@ -94,8 +94,8 @@ struct Rig {
         case 25: ret_bdos(drive); return;
         case 26: dma = de; ret_bdos(0); return;
         case 28: write_protected = true; ret_bdos(0); return;
-        case 29: cpu.regs.HL.set_pair16(write_protected ? 8 : 0);
-                 ret_bdos(write_protected ? 8 : 0); return;
+        case 29: cpu.regs.HL.set_pair16(write_protected ? 2 : 0);
+                 ret_bdos(write_protected ? 2 : 0); return;
         case 37: case 13:
             if (!(zsdos_flags & 0x04)) write_protected = false;
             ret_bdos(0); return;

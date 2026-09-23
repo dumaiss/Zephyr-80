@@ -173,12 +173,29 @@ MANIFEST = (
     # out whether it arrived intact rather than inferring it from whether the
     # program runs.
     ("zsys", "CRC.COM", "CRC.COM"),
-    # Named directories.  MKDIR edits NAMES.DIR, CD logs into a directory by
-    # name, PWD lists the names and shows the current one.  The file lives on
-    # B0 (A: is read only) or wherever the internal path finds it first.
-    ("zsys", "CD.COM", "CD.COM"),
-    ("zsys", "PWD.COM", "PWD.COM"),
-    ("zsys", "MKDIR.COM", "MKDIR.COM"),
+    # ZCPR2's named-directory set -- CD, PWD and MKDIR over a NAMES.DIR file --
+    # is deliberately NOT carried.  The FAT volume has real directories, and
+    # those three names now belong to the tools below that drive them.  A
+    # NAMES.DIR alias for a fixed-geometry CP/M drive is a different idea
+    # wearing the same names, and having both would be the confusing outcome.
+
+    # --- Zephyr file tools -----------------------------------------------
+    # Real directories on the FAT volume, and the ordinary file operations
+    # that go with them.  Built from source in ../Utilities.
+    ("utils", "cd.com", "CD.COM"),
+    ("utils", "pwd.com", "PWD.COM"),
+    ("utils", "ls.com", "LS.COM"),
+    ("utils", "mkdir.com", "MKDIR.COM"),
+    ("utils", "rmdir.com", "RMDIR.COM"),
+    # Rename within a drive, copy-then-delete across one.  Both volume types
+    # answer BDOS 23, so the same command works on either, and the delete is
+    # the last step so a failure part-way leaves the original in place.  CP is
+    # the same copy without that delete; they share the body in copyfile.inc.
+    ("utils", "mv.com", "MV.COM"),
+    ("utils", "cp.com", "CP.COM"),
+    # STAT reports a CP/M volume in terms of its fixed geometry, which on the
+    # FAT drive is a fiction clamped to 8 MiB.  FSTAT asks the controller.
+    ("utils", "fstat.com", "FSTAT.COM"),
 )
 
 # The volume is 144 KiB in 1 KiB blocks (DSM=143 in cbios_storage_rom.asm), of

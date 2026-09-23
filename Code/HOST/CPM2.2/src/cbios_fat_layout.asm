@@ -1,6 +1,6 @@
 ; FAT-backed read-only BDOS personality -- fixed bank-7 code and state.
 ;
-; ZSDOS owns D: through a synthetic DPH while the dispatcher implements file
+; ZSDOS owns B: through a synthetic DPH while the dispatcher implements file
 ; operations through the controller FS2 service.  The BIOS-level disk remains
 ; deliberately empty: READ returns E5h-filled records and WRITE fails.
 
@@ -28,7 +28,7 @@ fat_bios_home:
 	ld (fat_bios_track),hl
 	ret
 
-; SELDSK backend for configured FAT drive D:.
+; SELDSK backend for the configured FAT drive B:.
 ; Output: HL = shared synthetic FAT DPH.
 ; Clobbers: HL.  Does not block or emit IOC traffic.  Not ISR-safe.
 fat_bios_seldsk:
@@ -239,7 +239,7 @@ fat_fs2_base:
 	ld hl,#fat_component_cpm
 	call fat_fs2_push
 	ret nz
-	ld hl,#fat_component_d
+	ld hl,#fat_component_b
 	call fat_fs2_push
 	ret
 
@@ -876,7 +876,7 @@ fat_alv_mask_more:
 	or #0x80
 	jr fat_alv_mask_loop
 
-; DE=FCB.  Z when it resolves to D:.
+; DE=FCB.  Z when it resolves to the FAT drive.
 fat_effective_drive:
 	ld a,(de)
 	or a
@@ -2263,6 +2263,12 @@ fat_native_entry:
 	jp z,fat_native_mkdir
 	cp #ZNATIVE_RMDIR
 	jp z,fat_native_rmdir
+	cp #ZNATIVE_CWD
+	jp z,fat_native_cwd
+	cp #ZNATIVE_SPACE
+	jp z,fat_native_space
+	cp #ZNATIVE_CDUP
+	jp z,fat_native_cdup
 fat_native_bad:
 	ld a,#0xff
 	jp fat_native_return
@@ -2420,7 +2426,7 @@ fat_native_identity_ptrs:
 	ld (de),a
 	inc de
 	; A relative CWD of zero components is the drive root -- the normal case,
-	; and the one every native OPEN from D: itself takes.  LDIR must not be
+	; and the one every native OPEN from B: itself takes.  LDIR must not be
 	; reached with BC=0: the Z80 decrements BC before it tests, so a zero count
 	; transfers 65536 bytes instead of none, walking fat_cwd_components over
 	; the whole address space and destroying bank 7 with the OS still in it.
@@ -2599,8 +2605,8 @@ fat_native_read_done:
 	jp fat_native_return
 
 ; The selected native slot must have been opened through a writable mode and
-; D: must not be protected by ZSDOS.  Physical/filesystem protection is still
-; enforced by FatFs on the controller.
+; the FAT drive must not be protected by ZSDOS.  Physical/filesystem
+; protection is still enforced by FatFs on the controller.
 fat_native_require_write:
 	ld hl,#fat_native_modes
 	ld a,(fat_native_slot_index)
@@ -2775,6 +2781,97 @@ fat_native_truncate_result:
 ; a file something still holds open.  The tokens on this side are therefore
 ; dead whatever the outcome, and saying so here keeps a later operation from
 ; presenting a token the controller has already retired.
+; Read the current directory back, one component at a time.  The descriptor
+; carries a single 11-byte name field and the path can be sixteen deep, so the
+; caller passes an index in ZNATIVE_OFF_FLAGS and gets the total count with
+; every answer; PWD loops until it has them all.  An index past the end is not
+; an error -- it is how the caller stops.  No controller traffic: this is all
+; bank-7 state that ZCHDIR already maintains.
+fat_native_cwd:
+	call fat_effective_cwd_count
+	ld c,a
+	ld hl,(fat_native_desc)
+	ld de,#ZNATIVE_OFF_RESULT
+	add hl,de
+	ld (hl),c
+	inc hl
+	ld (hl),#0
+	ld hl,(fat_native_desc)
+	ld de,#ZNATIVE_OFF_FLAGS
+	add hl,de
+	ld a,(hl)
+	cp c
+	jr nc,fat_native_cwd_done
+	ld l,a
+	ld h,#0
+	ld d,h
+	ld e,l
+	add hl,hl
+	add hl,hl
+	add hl,de
+	add hl,hl
+	add hl,de			; index * 11
+	ld de,#fat_cwd_components
+	add hl,de
+	push hl
+	call fat_native_name
+	ex de,hl			; DE = the descriptor's name field
+	pop hl				; HL = the component
+	ld bc,#11
+	ldir
+fat_native_cwd_done:
+	xor a
+	jp fat_native_return
+
+; Step one level up.  ZCHDIR only ever appends, and an empty name resets to
+; the USER root, so without this a caller two levels down has no way back to
+; its parent except by re-descending from the root.  ".." cannot be smuggled
+; through the name field: the CP/M parser stops the name at the first '.', so
+; the CCP hands a transient eleven spaces for it, which is indistinguishable
+; from a bare CD.  Already at the root is success, not an error -- the caller
+; asked to be one level up and it is as far up as there is.
+fat_native_cdup:
+	call fat_cache_flush
+	call fat_effective_cwd_count
+	or a
+	jr z,fat_native_cdup_done
+	dec a
+	ld (fat_cwd_count),a
+	ld a,(fat_current_user)
+	ld (fat_cwd_user),a
+fat_native_cdup_done:
+	xor a
+	jp fat_native_return
+
+; Free and total bytes as the controller reports them.  BDOS 27's answer is
+; clamped to the 8 MiB synthetic CP/M geometry and says nothing true about a
+; larger card, so a tool that wants the real figure has to ask for it.
+fat_native_space:
+	call fat_zero_frames
+	ld a,#FS2_CMD_SPACE
+	ld (FAT_TX),a
+	ld a,#FS2_RSP_SPACE
+	call fat_exchange
+	jp nz,fat_native_return
+	ld hl,#(FAT_RX + IOC_OFF_PAYLOAD)
+	ld de,(fat_native_desc)
+	ex de,hl
+	ld bc,#ZNATIVE_OFF_POSITION
+	add hl,bc
+	ex de,hl
+	ld bc,#4
+	ldir
+	ld hl,#(FAT_RX + IOC_OFF_PAYLOAD + 4)
+	ld de,(fat_native_desc)
+	ex de,hl
+	ld bc,#ZNATIVE_OFF_SPACE_TOTAL
+	add hl,bc
+	ex de,hl
+	ld bc,#4
+	ldir
+	xor a
+	jp fat_native_return
+
 fat_native_forget_slots:
 	call fat_cache_flush
 	xor a
@@ -3079,8 +3176,8 @@ fat_native_chdir_root:
 fat_component_cpm:
 	.ascii "CPM     "
 	.ascii "   "
-fat_component_d:
-	.ascii "D       "
+fat_component_b:
+	.ascii "B       "
 	.ascii "   "
 
 FAT_BDOS_CODE_END:
@@ -3094,7 +3191,7 @@ fat_bios_track:
 fat_bios_sector:
 	.dw 0x0000
 
-; ZSDOS owns this compatibility allocation vector after selecting/logging D:.
+; ZSDOS owns this compatibility allocation vector after selecting/logging B:.
 ; Keep it immediately after track/sector: the generated layout contract and
 ; the DPH both rely on this deliberate fixed placement.
 FAT_BIOS_ALV:

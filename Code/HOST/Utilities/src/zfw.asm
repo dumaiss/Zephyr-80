@@ -37,11 +37,11 @@ BDOS_SET_FLAGS = 101		; ZSDOS Set Flags
 ZSDOS_FLAG_RO_ENABLE = 0x04	; FLAGS bit 2, "Read-Only Enable"
 BDOS_RESET_DISK = 13
 BDOS_SELECT = 14
-FAT_DRIVE_RO_BIT = 0x08		; D: in the ZSDOS read-only vector
+FAT_DRIVE_RO_BIT = 0x02		; B: in the ZSDOS read-only vector
 BDOS_RESET_DRIVE = 37
 FCB1 = 0x005c
-FAT_FCB_DRIVE = 4			; D:, one-based as FCB1 stores it
-FAT_DRIVE_BIT = 0x0008			; function 37 vector bit for D:
+FAT_FCB_DRIVE = 2			; B:, one-based as FCB1 stores it
+FAT_DRIVE_BIT = 0x0002			; function 37 vector bit for B:
 
 ; This program's own failure codes, chosen above the ZN_ status range.
 ERR_UNEXPECTED = 0xe1
@@ -960,7 +960,7 @@ ro_vector:
 	ld (v_got),hl
 	ret
 
-; A = 0 when ZSDOS itself says D: is protected.
+; A = 0 when ZSDOS itself says the FAT drive is protected.
 check_ro_set:
 	call ro_vector
 	push hl
@@ -977,7 +977,7 @@ check_ro_set_bad:
 	or a
 	ret
 
-; A = 0 when ZSDOS itself says D: is writable again.
+; A = 0 when ZSDOS itself says the FAT drive is writable again.
 check_ro_clear:
 	call ro_vector
 	push hl
@@ -1284,7 +1284,7 @@ txt_crlf:     .ascii "\r\n$"
 txt_drive:    .ascii "ZFW must run on the FAT-backed drive\r\n$"
 txt_no_fs2:   .ascii "No FS2 capability reply from the controller: $"
 txt_no_write: .ascii "Controller firmware has no FS2 write support; reflash it. caps=$"
-txt_wp_stuck: .ascii "\r\nWARNING: D: left write protected. Warm boot does NOT clear\r\nthis; power cycle to recover.\r\n$"
+txt_wp_stuck: .ascii "\r\nWARNING: B: left write protected. Warm boot does NOT clear\r\nthis; power cycle to recover.\r\n$"
 
 name_test:    .ascii "ZFWTEST TMP"
 name_test2:   .ascii "ZFWTEST2TMP"

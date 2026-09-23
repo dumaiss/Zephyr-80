@@ -24,7 +24,7 @@
 ; template, so 1.
 VDRIP_TRANSPORT_LINKED = 1
 
-; FAT read-only selection gate.  The Makefile rewrites this line from
+; FAT drive selection gate.  The Makefile rewrites this line from
 ; FAT_BIOS_M1; normal milestone-4 builds use one, while zero remains a recovery
 ; configuration that parks D: without changing linked placement.
 FAT_BIOS_M1_ENABLED = 0

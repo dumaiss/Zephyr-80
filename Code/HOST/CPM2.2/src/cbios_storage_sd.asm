@@ -826,20 +826,20 @@ stg_seldsk:
 	jp z,stg_sel_a
 	cp #FAT_BIOS_DRIVE
 	jr z,stg_sel_fat
-	; The remaining supported drives are SD volumes, and the unit each addresses
-	; is the drive letter minus one: B: -> 0, C: -> 1.  D: was handled above and
-	; never enters this range.
+	; The remaining supported drives are SD volumes, and the unit each
+	; addresses is the drive letter minus SD_STORAGE_DRIVE: C: -> 0, D: -> 1.
+	; A: and B: were handled above and never enter this range.
 	cp #SD_STORAGE_DRIVE
 	jr c,stg_sel_bad
 	cp #SD_STORAGE_DRIVE_LIMIT
 	jr nc,stg_sel_bad
 	ld (stg_drive),a
-	dec a
+	sub #SD_STORAGE_DRIVE
 	ld (sd_storage_unit),a
 	push bc
 	push de
 	push hl
-	or a				; unit 0 is B:
+	or a				; unit 0 is C:
 	jr z,stg_sel_unit0
 	ld hl,#sd_storage_probe2
 	jp stg_run
@@ -851,8 +851,8 @@ stg_sel_bad:
 	ld (stg_drive),a
 	jp stg_a_seldsk_unsupported
 stg_sel_fat:
-	; The complete read-only personality is linked in every build.  The gate is
-	; retained only for the recovery image that deliberately parks D:.
+	; The complete FAT personality is linked in every build.  The gate is
+	; retained only for the recovery image that deliberately parks B:.
 	ld a,#FAT_BIOS_M1_ENABLED
 	or a
 	jr z,stg_sel_bad

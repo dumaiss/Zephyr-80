@@ -57,7 +57,7 @@ DIAG += ioc_rts_probe ioc_diagchk v9958tst hidstat sndtest bdoschar
 
 # --- tools -------------------------------------------------------------------
 # X/Y/ZMODEM file transfer over the serial console port.
-TOOLS := xfer zcd zfw zfwprob zfcb
+TOOLS := xfer cd ls mkdir rmdir pwd fstat mv cp zfw zfwprob zfcb
 
 TARGETS := $(NORMAL) $(DIAG) $(TOOLS)
 
@@ -74,7 +74,7 @@ DIAG_RECORD_AUTHORITY ?= ../CPM2.2/src/cbios_defs.inc
 DIAG_RECORD_CHECK     ?= ../CPM2.2/tools/check_diag_record.py
 
 .DEFAULT_GOAL := all
-.PHONY: all normal diagnostic tools test test-zcd test-zfw test-zfcb clean check-diag-record check-bdoschar-fixtures generate-bdoschar-fixtures list
+.PHONY: all normal diagnostic tools test test-cd test-ls test-tools test-zfw test-zfcb clean check-diag-record check-bdoschar-fixtures generate-bdoschar-fixtures list
 .SECONDARY: $(RELS) $(IHXS)
 
 all: check-diag-record check-bdoschar-fixtures $(COMS)
@@ -83,10 +83,16 @@ normal:     check-diag-record $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(NORMA
 diagnostic: check-diag-record check-bdoschar-fixtures $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(DIAG)))
 tools:      $(addprefix $(BUILD_DIR)/,$(addsuffix .com,$(TOOLS)))
 
-test: test-zcd test-zfw test-zfcb
+test: test-cd test-ls test-tools test-zfw test-zfcb
 
-test-zcd: $(BUILD_DIR)/zcd.com
-	$(PYTHON) $(TOOLS_DIR)/test_zcd.py
+test-cd: $(BUILD_DIR)/cd.com
+	$(PYTHON) $(TOOLS_DIR)/test_cd.py
+
+test-ls: $(BUILD_DIR)/ls.com
+	$(PYTHON) $(TOOLS_DIR)/test_ls.py
+
+test-tools: $(BUILD_DIR)/mkdir.com $(BUILD_DIR)/rmdir.com $(BUILD_DIR)/pwd.com $(BUILD_DIR)/fstat.com $(BUILD_DIR)/mv.com $(BUILD_DIR)/cp.com
+	$(PYTHON) $(TOOLS_DIR)/test_tools.py
 
 test-zfw: $(BUILD_DIR)/zfw.com
 	$(PYTHON) $(TOOLS_DIR)/test_zfw.py

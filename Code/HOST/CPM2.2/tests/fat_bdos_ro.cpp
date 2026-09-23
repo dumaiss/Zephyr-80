@@ -19,6 +19,8 @@ struct CPU : qkz80 {
 };
 struct Rig {
     qkz80_cpu_mem mem; CPU cpu{&mem}; map<string,unsigned> s;
+    unsigned iocalls=0;
+    unsigned cmdcount_total() const { return iocalls; }
     array<bool,2> slot_open{{false,false}};
     array<unsigned,2> slot_cookie{{1,1}};
     unsigned opens=0, reads=0, bulks=0, closes=0, max_open=0;
@@ -49,6 +51,7 @@ struct Rig {
     void reply(unsigned cls,unsigned status,unsigned len){unsigned rx=at("FAT_RX");for(unsigned i=0;i<32;i++)mem.store_mem(rx+i,0);mem.store_mem(rx,cls);mem.store_mem(rx+2,status);mem.store_mem(rx+3,len);}
     void mock_iocall(){
         const unsigned tx=at("FAT_TX"), rx=at("FAT_RX"); unsigned cmd=mem.fetch_mem(tx), token, slot;
+        ++iocalls;
         switch(cmd){
         case 0x33: resolver.clear();reply(0xb3,0,0);break; // ROOT
         case 0x34: {string component;for(unsigned i=0;i<11;i++)component.push_back(char(mem.fetch_mem(tx+4+i)));resolver.push_back(component);reply(0xb4,0,0);break;} // PUSH
@@ -143,6 +146,8 @@ struct Rig {
             if(!model_dirs.count(n)){reply(0xc4,0x40,0);break;}
             model_dirs.erase(n);reply(0xc4,0,0);break;
         }
+        case 0x3c: // SPACE: 512 MiB free of 1 GiB
+            reply(0xbc,0,8);put32(rx+4,0x20000000u);put32(rx+8,0x40000000u);break;
         case 0x38: // OPENDIR
             dir_open=true;dir_index=0;if(++dir_cookie>255)dir_cookie=1;
             listing.clear();listing_at=0;
@@ -200,7 +205,7 @@ int main(int ac,char**av)try{
     // cache leases a line from there, and 6600h/6700h used to be unowned.
     // 8840h is past the boot banner text and has no owner.
     for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);
-    t.mem.store_mem(t.at("fat_current_drive"),3);r.DE.set_pair16(fcb);r.HL.set_pair16(dma);
+    t.mem.store_mem(t.at("fat_current_drive"),1);r.DE.set_pair16(fcb);r.HL.set_pair16(dma);
     t.mem.store_mem(fcb+12,1);t.mem.store_mem(fcb+32,1);t.call("fat_seq_record");
     unsigned seq=t.mem.fetch_mem(t.at("fat_record"))
                  | (t.mem.fetch_mem(t.at("fat_record")+1)<<8)
@@ -243,13 +248,13 @@ int main(int ac,char**av)try{
     r.BC.set_low(18);r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_dispatch");need((r.AF.get_low()&1)&&r.AF.get_high()==0xff&&!t.dir_open,"raw-directory SEARCH did not exhaust after USER 15");
     // ZCD selects a directory visible inside the current CP/M USER namespace.
     // USER therefore precedes the relative CWD in the FS2 resolver.
-    unsigned desc=0x8900;   // likewise outside the poolfor(unsigned i=0;i<32;i++)t.mem.store_mem(desc+i,0);t.mem.store_mem(desc,1);t.mem.store_mem(desc+1,9);const string dirname="TESTDIR    ";for(unsigned i=0;i<11;i++)t.mem.store_mem(desc+18+i,dirname[i]);t.mem.store_mem(t.at("fat_current_user"),8);r.DE.set_pair16(desc);t.call("fat_native_entry");need(t.mem.fetch_mem(desc+2)==0,"native CHDIR failed, status="+to_string(t.mem.fetch_mem(desc+2))+" cwd="+to_string(t.mem.fetch_mem(t.at("fat_cwd_count")))+" resolver-components="+to_string(t.resolver.size()));need(t.resolver.size()==4&&t.resolver[0]=="CPM        "&&t.resolver[1]=="D          "&&t.resolver[2]=="@8         "&&t.resolver[3]==dirname,"native CHDIR was not USER-relative");need(t.mem.fetch_mem(t.at("fat_cwd_count"))==1&&t.mem.fetch_mem(t.at("fat_cwd_user"))==8,"native CHDIR did not retain its USER-owned CWD");t.mem.store_mem(t.at("fat_current_user"),15);
+    unsigned desc=0x8900;   // likewise outside the poolfor(unsigned i=0;i<32;i++)t.mem.store_mem(desc+i,0);t.mem.store_mem(desc,1);t.mem.store_mem(desc+1,9);const string dirname="TESTDIR    ";for(unsigned i=0;i<11;i++)t.mem.store_mem(desc+18+i,dirname[i]);t.mem.store_mem(t.at("fat_current_user"),8);r.DE.set_pair16(desc);t.call("fat_native_entry");need(t.mem.fetch_mem(desc+2)==0,"native CHDIR failed, status="+to_string(t.mem.fetch_mem(desc+2))+" cwd="+to_string(t.mem.fetch_mem(t.at("fat_cwd_count")))+" resolver-components="+to_string(t.resolver.size()));need(t.resolver.size()==4&&t.resolver[0]=="CPM        "&&t.resolver[1]=="B          "&&t.resolver[2]=="@8         "&&t.resolver[3]==dirname,"native CHDIR was not USER-relative");need(t.mem.fetch_mem(t.at("fat_cwd_count"))==1&&t.mem.fetch_mem(t.at("fat_cwd_user"))==8,"native CHDIR did not retain its USER-owned CWD");t.mem.store_mem(t.at("fat_current_user"),15);
 
     // Function 218 must return the descriptor status after its READ/non-READ
     // dispatch, and SELDSK must validate the drive root rather than replaying
     // a CWD that belongs beneath a USER directory.
     unsigned staged=t.at("FAC_SFCB_BUF");for(unsigned i=0;i<32;i++)t.mem.store_mem(staged+i,0);t.mem.store_mem(staged,1);t.mem.store_mem(staged+1,9);t.mem.store_mem(staged+2,0);t.mem.store_mem16(t.at("fac_de"),desc);t.mem.store_mem16(t.at("fac_caller_sp"),r.SP.get_pair16()-2);r.AF.set_high(0);t.call("native_gate_status_dispatch");need(r.AF.get_high()==0,"function 218 returned operation instead of status");
-    t.call("fat_bios_seldsk");need(r.HL.get_pair16()==t.at("FAT_BIOS_DPH"),"saved USER-relative CWD made SELDSK fail");need(t.resolver.size()==2&&t.resolver[0]=="CPM        "&&t.resolver[1]=="D          ","SELDSK replayed USER-relative CWD");
+    t.call("fat_bios_seldsk");need(r.HL.get_pair16()==t.at("FAT_BIOS_DPH"),"saved USER-relative CWD made SELDSK fail");need(t.resolver.size()==2&&t.resolver[0]=="CPM        "&&t.resolver[1]=="B          ","SELDSK replayed USER-relative CWD");
     r.AF.set_high(1);t.call("fat_fs2_path");need(t.resolver.size()==3&&t.resolver[2]=="@15        ","USER 8 CWD leaked into USER 15");
     t.mem.store_mem(t.at("fat_current_user"),8);
     for(unsigned i=18;i<29;i++)t.mem.store_mem(desc+i,0);
@@ -269,7 +274,7 @@ int main(int ac,char**av)try{
     unsigned base_opens=t.opens,base_reads=t.reads,base_bulks=t.bulks,base_closes=t.closes;
     for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);
     for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+1+i,rdname[i]);
-    t.mem.store_mem(t.at("fat_current_drive"),3);
+    t.mem.store_mem(t.at("fat_current_drive"),1);
     for(unsigned record=0;record<8;record++){r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0,"multi-record read "+to_string(record));need(t.mem.fetch_mem(dma)==((record*128)&255),"record data "+to_string(record));need(t.live_slots()<=1,"more than the cached read handle held after record "+to_string(record));}
     r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==1,"genuine EOF result");// Nine records now cost three controller round trips, not nine: four
     // records share one 512-byte line, and the ninth probes past the end.
@@ -452,6 +457,57 @@ int main(int ac,char**av)try{
         t.mem.store_mem(t.at("fat_cache_tried"),0);
         t.model.erase(cn);
     }
+    // The two ops PWD and FSTAT need.  CWD is pure bank-7 state, so it must
+    // answer without touching the controller at all.
+    {
+        t.mem.store_mem(t.at("fat_current_user"),0);
+        t.mem.store_mem(t.at("fat_cwd_user"),0);
+        t.mem.store_mem(t.at("fat_cwd_count"),2);
+        const string c0="GAMES      ", c1="RPG        ";
+        for(unsigned i=0;i<11;i++){
+            t.mem.store_mem(t.at("fat_cwd_components")+i,c0[i]);
+            t.mem.store_mem(t.at("fat_cwd_components")+11+i,c1[i]);
+        }
+        auto cwd=[&](unsigned index){
+            for(unsigned i=0;i<32;i++)t.mem.store_mem(desc+i,0);
+            t.mem.store_mem(desc+0,1);
+            t.mem.store_mem(desc+t.at("ZNATIVE_OFF_OP"),t.at("ZNATIVE_CWD"));
+            t.mem.store_mem(desc+t.at("ZNATIVE_OFF_FLAGS"),index);
+            unsigned before=t.cmdcount_total();
+            r.DE.set_pair16(desc);t.call("fat_native_entry");
+            need(t.cmdcount_total()==before,"CWD readback issued controller traffic");
+            string n; for(unsigned i=0;i<11;i++)n.push_back(char(t.mem.fetch_mem(desc+t.at("ZNATIVE_OFF_NAME")+i)));
+            return n;
+        };
+        need(cwd(0)==c0,"CWD component 0");
+        need(t.get16(desc+t.at("ZNATIVE_OFF_RESULT"))==2,"CWD reported the wrong depth");
+        need(cwd(1)==c1,"CWD component 1");
+        // Past the end answers with the count and no name, so a loop can stop.
+        cwd(2);
+        need(t.get16(desc+t.at("ZNATIVE_OFF_RESULT"))==2,"CWD past the end lost the count");
+        // CDUP steps exactly one level, and is a no-op at the root rather
+        // than an error -- the caller asked to go up and there is no further.
+        auto cdup=[&](){
+            for(unsigned i=0;i<32;i++)t.mem.store_mem(desc+i,0);
+            t.mem.store_mem(desc+0,1);
+            t.mem.store_mem(desc+t.at("ZNATIVE_OFF_OP"),t.at("ZNATIVE_CDUP"));
+            r.DE.set_pair16(desc);t.call("fat_native_entry");
+            return t.mem.fetch_mem(desc+2);
+        };
+        need(cdup()==0&&t.mem.fetch_mem(t.at("fat_cwd_count"))==1,"CDUP from depth 2");
+        need(cdup()==0&&t.mem.fetch_mem(t.at("fat_cwd_count"))==0,"CDUP from depth 1");
+        need(cdup()==0&&t.mem.fetch_mem(t.at("fat_cwd_count"))==0,"CDUP at the root");
+        t.mem.store_mem(t.at("fat_cwd_count"),2);
+        t.mem.store_mem(t.at("fat_cwd_user"),0);
+        // Free space must come from the controller, not the clamped ALV.
+        for(unsigned i=0;i<32;i++)t.mem.store_mem(desc+i,0);
+        t.mem.store_mem(desc+0,1);
+        t.mem.store_mem(desc+t.at("ZNATIVE_OFF_OP"),t.at("ZNATIVE_SPACE"));
+        r.DE.set_pair16(desc);t.call("fat_native_entry");
+        need(t.mem.fetch_mem(desc+2)==0,"SPACE status");
+        need(t.get32(desc+t.at("ZNATIVE_OFF_POSITION"))==0x20000000u,"SPACE free bytes");
+        need(t.get32(desc+t.at("ZNATIVE_OFF_SPACE_TOTAL"))==0x40000000u,"SPACE total bytes");
+    }
     // ---------------- Milestone 6: the writable FCB personality -------------
     // These run against the real file model, so a record written through the
     // FCB path is read back through it and must be the same bytes.
@@ -460,7 +516,7 @@ int main(int ac,char**av)try{
     t.mem.store_mem(t.at("fat_cwd_user"),0);
     t.mem.store_mem(t.at("fat_cwd_count"),0);
     t.mem.store_mem16(t.at("fat_ro_vector"),0);
-    t.mem.store_mem(t.at("fat_current_drive"),3);
+    t.mem.store_mem(t.at("fat_current_drive"),1);
     const string wname="NEWFILE TXT";
     auto set_fcb=[&](const string&n){
         for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);
@@ -549,7 +605,7 @@ int main(int ac,char**av)try{
     need(fcb_call("fat_bdos_delete")==0xff,"DELETE of a missing file reported success");
     // ZSDOS software write protection is enforced above ZSDOS, so every
     // mutation has to check it independently.
-    t.mem.store_mem16(t.at("fat_ro_vector"),0x0008);
+    t.mem.store_mem16(t.at("fat_ro_vector"),0x0002);
     set_fcb("WP      TXT");
     need(fcb_call("fat_bdos_make")==0xff,"MAKE ignored write protection");
     need(fcb_call("fat_bdos_write_seq")==0xff,"WRITE ignored write protection");

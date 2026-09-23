@@ -1,8 +1,8 @@
 ; Local Zephyr-80 CP/M storage BIOS stubs.
 ;
-; This file owns the CP/M BIOS storage entry points.  B:/C: are SD volumes, A:
-; is whichever backend the build selected, and a FAT read-only build can
-; select D: through the synthetic FAT BIOS personality.
+; This file owns the CP/M BIOS storage entry points.  A: is whichever backend
+; the build selected, B: is the FAT-backed personality through the synthetic
+; FAT BIOS, and C:/D: are SD volumes.  A recovery build parks B:.
 ;
 ; A: is a build-time choice (STORAGE_A in the Makefile) because the BIOS common
 ; window has no room for two backends at once.  All of them .org at
