@@ -78,7 +78,7 @@ System common code ends at `FFD8h`.
 | `4330h-43FFh` | Drive A: backend | 164 | 44 | The build-selected A: backend. |
 | `4400h-47FFh` | Drive dispatcher | 178 | 846 | Routes A: to its backend, B:/C: to SD units, and gated D: to the synthetic FAT BIOS. |
 | `4800h-5FFFh` | V9958 console | 3191 | 2953 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
-| `9000h-A7FFh` | FAT BDOS backend | 4416 | 1728 | Read-only FS2 client, native file manager, FAT BDOS compatibility layer, DPH and DPB. |
+| `9000h-A7FFh` | FAT BDOS backend | 4831 | 1313 | Read-only FS2 client, native file manager, FAT BDOS compatibility layer, DPH and DPB. |
 
 Data:
 
@@ -97,7 +97,7 @@ Data:
 | `8800h-883Fh` | Boot banner text | |
 | `904Ah` | D: synthetic DPH and DPB | Read-only FAT compatibility geometry; selection gate is `1`. |
 
-The last resident asset ends at `D0C6h`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.
+The last resident asset ends at `D0F0h`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.
 
 | Range | Use |
 |---|---|
@@ -111,7 +111,7 @@ The last resident asset ends at `D0C6h`. Cold boot installs all 64 KiB; OS-owned
 | `CC00h-CDFFh` | SD deblock line (one 512-byte logical block) |
 | `CE00h-CE08h` | SD deblock tag (valid, unit, block) |
 | `CE09h-CE0Fh` | Unallocated |
-| `CE10h-D60Fh` | FAT BDOS persistent-state reservation | Fixed bank-7 state; track/sector and synthetic ALV currently use `1073` bytes. |
+| `CE10h-D60Fh` | FAT BDOS persistent-state reservation | Fixed bank-7 state; track/sector and synthetic ALV currently use `1115` bytes. |
 | `D610h-DFFFh` | Unallocated |
 
 All eight physical SRAM banks include E000h-FFFFh, visible in flat mode 01. Modes 10/11 overlay that range with bank 0.

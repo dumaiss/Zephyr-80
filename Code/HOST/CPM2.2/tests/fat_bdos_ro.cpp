@@ -195,7 +195,10 @@ struct Rig {
     void call(const string&k){auto sp=cpu.regs.SP.get_pair16();mem.store_mem16(sp-2,0xd100);cpu.regs.SP.set_pair16(sp-2);cpu.regs.PC.set_pair16(at(k));unsigned b=400000;while(cpu.regs.PC.get_pair16()!=0xd100&&b--){auto pc=cpu.regs.PC.get_pair16();if(pc==at("IOCALL"))mock_iocall();else if(pc==at("IOCBULK"))mock_iocbulk();else if(pc==at("IOCBULKW"))mock_iocbulkw();else cpu.execute();}need(b,"timeout "+k);need(cpu.regs.SP.get_pair16()==sp,"stack "+k);}
 };
 int main(int ac,char**av)try{
-    need(ac==3,"usage");Rig t(av[1],av[2]);auto&r=t.cpu.regs;unsigned fcb=0x6600,dma=0x6700;
+    need(ac==3,"usage");Rig t(av[1],av[2]);auto&r=t.cpu.regs;unsigned fcb=0x8840,dma=0x88c0;
+    // Scratch must sit outside RESOURCE_CACHE_POOL (6600h-7FFFh): the read
+    // cache leases a line from there, and 6600h/6700h used to be unowned.
+    // 8840h is past the boot banner text and has no owner.
     for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);
     t.mem.store_mem(t.at("fat_current_drive"),3);r.DE.set_pair16(fcb);r.HL.set_pair16(dma);
     t.mem.store_mem(fcb+12,1);t.mem.store_mem(fcb+32,1);t.call("fat_seq_record");
@@ -240,7 +243,7 @@ int main(int ac,char**av)try{
     r.BC.set_low(18);r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_dispatch");need((r.AF.get_low()&1)&&r.AF.get_high()==0xff&&!t.dir_open,"raw-directory SEARCH did not exhaust after USER 15");
     // ZCD selects a directory visible inside the current CP/M USER namespace.
     // USER therefore precedes the relative CWD in the FS2 resolver.
-    unsigned desc=0x6800;for(unsigned i=0;i<32;i++)t.mem.store_mem(desc+i,0);t.mem.store_mem(desc,1);t.mem.store_mem(desc+1,9);const string dirname="TESTDIR    ";for(unsigned i=0;i<11;i++)t.mem.store_mem(desc+18+i,dirname[i]);t.mem.store_mem(t.at("fat_current_user"),8);r.DE.set_pair16(desc);t.call("fat_native_entry");need(t.mem.fetch_mem(desc+2)==0,"native CHDIR failed, status="+to_string(t.mem.fetch_mem(desc+2))+" cwd="+to_string(t.mem.fetch_mem(t.at("fat_cwd_count")))+" resolver-components="+to_string(t.resolver.size()));need(t.resolver.size()==4&&t.resolver[0]=="CPM        "&&t.resolver[1]=="D          "&&t.resolver[2]=="@8         "&&t.resolver[3]==dirname,"native CHDIR was not USER-relative");need(t.mem.fetch_mem(t.at("fat_cwd_count"))==1&&t.mem.fetch_mem(t.at("fat_cwd_user"))==8,"native CHDIR did not retain its USER-owned CWD");t.mem.store_mem(t.at("fat_current_user"),15);
+    unsigned desc=0x8900;   // likewise outside the poolfor(unsigned i=0;i<32;i++)t.mem.store_mem(desc+i,0);t.mem.store_mem(desc,1);t.mem.store_mem(desc+1,9);const string dirname="TESTDIR    ";for(unsigned i=0;i<11;i++)t.mem.store_mem(desc+18+i,dirname[i]);t.mem.store_mem(t.at("fat_current_user"),8);r.DE.set_pair16(desc);t.call("fat_native_entry");need(t.mem.fetch_mem(desc+2)==0,"native CHDIR failed, status="+to_string(t.mem.fetch_mem(desc+2))+" cwd="+to_string(t.mem.fetch_mem(t.at("fat_cwd_count")))+" resolver-components="+to_string(t.resolver.size()));need(t.resolver.size()==4&&t.resolver[0]=="CPM        "&&t.resolver[1]=="D          "&&t.resolver[2]=="@8         "&&t.resolver[3]==dirname,"native CHDIR was not USER-relative");need(t.mem.fetch_mem(t.at("fat_cwd_count"))==1&&t.mem.fetch_mem(t.at("fat_cwd_user"))==8,"native CHDIR did not retain its USER-owned CWD");t.mem.store_mem(t.at("fat_current_user"),15);
 
     // Function 218 must return the descriptor status after its READ/non-READ
     // dispatch, and SELDSK must validate the drive root rather than replaying
@@ -268,15 +271,31 @@ int main(int ac,char**av)try{
     for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+1+i,rdname[i]);
     t.mem.store_mem(t.at("fat_current_drive"),3);
     for(unsigned record=0;record<8;record++){r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0,"multi-record read "+to_string(record));need(t.mem.fetch_mem(dma)==((record*128)&255),"record data "+to_string(record));need(t.live_slots()==0,"slot leaked after record "+to_string(record));}
-    r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==1,"genuine EOF result");need(t.opens==base_opens+9&&t.reads==base_reads+9&&t.bulks==base_bulks+8&&t.closes==base_closes+9,"OPEN/READ/BULK/CLOSE lifecycle counts");need(t.max_open==1,"temporary reads consumed concurrent slots");
+    r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==1,"genuine EOF result");// Nine records now cost three controller round trips, not nine: four
+    // records share one 512-byte line, and the ninth probes past the end.
+    // Each "open" is really RESET/ROOT/PUSH/OPEN, so the real saving is
+    // larger than the count suggests.  If this ever reads 9 again, the
+    // deblocking has stopped working.
+    need(t.opens==base_opens+3&&t.reads==base_reads+3&&t.bulks==base_bulks+2&&t.closes==base_closes+3,
+         "deblocking: expected 3 round trips for 9 records, got "+to_string(t.opens-base_opens));need(t.max_open==1,"temporary reads consumed concurrent slots");
     // Filesystem and close failures are errors, never EOF, and a failed read
     // still attempts to release its temporary context.
+    // These exercise the read-through path's error handling.  Without
+    // dropping the cached line the record would be served from memory and the
+    // injected failure would never be reached -- which is exactly what the
+    // cache is for, but not what is being tested here.
+    t.mem.store_mem(t.at("fat_cache_valid"),0);
     t.mem.store_mem(fcb+12,0);t.mem.store_mem(fcb+14,0);t.mem.store_mem(fcb+32,0);t.fail_next_read=true;unsigned oldclose=t.closes;r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0xff,"READ error masqueraded as EOF");need(t.closes==oldclose+1&&t.live_slots()==0,"READ error did not close context");
+    t.mem.store_mem(t.at("fat_cache_valid"),0);
     t.fail_next_close=true;r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0xff,"CLOSE error ignored");need(t.live_slots()==0,"mock CLOSE did not release slot");
+    t.mem.store_mem(t.at("fat_cache_valid"),0);
     t.fail_next_open=true;r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0xff,"OPEN error masqueraded as EOF");
     // Stream the reported SONG.ZVG size across every EXM=1 boundary.
     t.mock_file_size=624*128;for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+1+i,rdname[i]);
     for(unsigned record=0;record<624;record++){r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==0,"624-record read "+to_string(record));if(record==127||record==128||record==255||record==256||record==511||record==512)need(t.mem.fetch_mem(dma)==((record*128)&255),"boundary data "+to_string(record));need(t.live_slots()==0,"boundary slot leak "+to_string(record));}
+    // 624 records across 156 lines: the whole stream cost 163 opens counting
+    // everything earlier in this run, against 625 before deblocking.
+    need(t.opens<200,"deblocking: 624 records took "+to_string(t.opens)+" opens");
     need(t.mem.fetch_mem(fcb+12)==4&&t.mem.fetch_mem(fcb+32)==112,"624-record final FCB position");r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");need(r.AF.get_high()==1,"624-record EOF");
     // Native OPEN records the path identity of the handle it just issued so a
     // stale token can be reopened after a media-generation change.  At the
@@ -352,6 +371,48 @@ int main(int ac,char**av)try{
     t.put32(desc+t.at("ZNATIVE_OFF_POSITION"),1000);t.mem.store_mem(desc+t.at("ZNATIVE_OFF_OP"),4);
     r.DE.set_pair16(desc);t.call("fat_native_entry");
     need(native(3,0,100,nh)==0&&t.get16(desc+t.at("ZNATIVE_OFF_RESULT"))==24,"short native READ at EOF");
+    // The cached line must not survive a write to the same file, or a program
+    // that writes then reads gets what was there before.
+    {
+        t.use_file_model=true; t.slot_open={{false,false}};
+        t.mem.store_mem(t.at("fat_current_user"),0);
+        t.mem.store_mem(t.at("fat_cwd_user"),0);
+        t.mem.store_mem(t.at("fat_cwd_count"),0);
+        t.mem.store_mem16(t.at("fat_ro_vector"),0);
+        const string cn="CACHE   TST";
+        t.model[cn]=vector<unsigned char>(512,0x11);
+        for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);
+        for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+1+i,cn[i]);
+        r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");
+        need(t.mem.fetch_mem(dma)==0x11,"cached read before write");
+        // Rewrite record 0 through the FCB path.
+        for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);
+        for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+1+i,cn[i]);
+        for(unsigned i=0;i<128;i++)t.mem.store_mem(dma+i,0x22);
+        r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_write_seq");
+        need(r.AF.get_high()==0,"write over a cached line");
+        for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);
+        for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+1+i,cn[i]);
+        r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");
+        need(t.mem.fetch_mem(dma)==0x22,
+             "a stale cached line survived a write: got "+to_string(t.mem.fetch_mem(dma)));
+        // And with the pool full, every read must still be correct -- the
+        // contract is that a lease may be refused, not that it is optional.
+        for(unsigned i=0;i<13;i++)t.mem.store_mem(t.at("res_owners")+i,0xEE);
+        t.mem.store_mem16(t.at("fat_cache_line"),0);
+        t.mem.store_mem(t.at("fat_cache_tried"),0);
+        t.mem.store_mem(t.at("fat_cache_valid"),0);
+        for(unsigned i=0;i<36;i++)t.mem.store_mem(fcb+i,0);
+        for(unsigned i=0;i<11;i++)t.mem.store_mem(fcb+1+i,cn[i]);
+        r.DE.set_pair16(fcb);r.HL.set_pair16(dma);t.call("fat_bdos_read_seq");
+        need(r.AF.get_high()==0&&t.mem.fetch_mem(dma)==0x22,
+             "read-through fallback with no cache line available");
+        need(t.get16(t.at("fat_cache_line"))==0,"a line was leased from a full pool");
+        // Give the pool back for the tests that follow.
+        for(unsigned i=0;i<13;i++)t.mem.store_mem(t.at("res_owners")+i,0);
+        t.mem.store_mem(t.at("fat_cache_tried"),0);
+        t.model.erase(cn);
+    }
     // ---------------- Milestone 6: the writable FCB personality -------------
     // These run against the real file model, so a record written through the
     // FCB path is read back through it and must be the same bytes.
