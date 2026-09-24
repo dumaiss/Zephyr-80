@@ -52,6 +52,7 @@
 
 	.globl sercon_init,sercon_install,sercon_console_driver
 	.globl SERCON_CODE_START,SERCON_CODE_END
+	.globl SERCON_BANK7_CODE_START,SERCON_BANK7_CODE_END
 	.globl console_backend_driver,console_set_driver
 	.globl sio_register_rx_sink,sio_send_byte
 
@@ -59,6 +60,99 @@
 	.org CBIOS_SERCON_CODE_BASE
 
 SERCON_CODE_START:
+
+; ---------------------------------------------------------------------------
+; Common memory: the registered RX sink only
+; ---------------------------------------------------------------------------
+; This is the half an interrupt reaches, so its address must be valid whatever
+; the latch holds.  Everything else in this driver is polled through the console
+; facade's driver table and lives in bank 7 below.
+
+; SIO0/B RX sink, called from the interrupt frame.
+;
+; In: A = channel id, C = received byte.  May clobber AF/BC/DE/HL but not
+; IX/IY, per the sio_core sink contract.  Returns quickly; no BDOS, no blocking,
+; no rendering.
+sercon_rx_sink:
+	ld a,c
+	cp #SERCON_ESC
+	jr z,sercon_rx_esc
+
+	; Any other byte breaks a partial match.
+	xor a
+	ld (SERCON_ESC_COUNT),a
+	jr sercon_rx_store
+
+sercon_rx_esc:
+	ld hl,#SERCON_ESC_COUNT
+	inc (hl)
+	ld a,(hl)
+	cp #SERCON_ESC_TRIGGER
+	jr c,sercon_rx_store
+
+	; Third ESC: toggle input ownership and arm the tee.  Arming on takeover
+	; means the rescue gesture works from a dark screen in one step.
+	ld (hl),#0x00
+	ld a,(SERCON_FLAGS)
+	xor #SERCON_FLAG_INPUT
+	or #SERCON_FLAG_TEE
+	ld (SERCON_FLAGS),a
+
+	; Drop the two ESCs already queued: the sequence is a command, not input.
+	xor a
+	ld (SERCON_RX_HEAD),a
+	ld (SERCON_RX_TAIL),a
+	ld (SERCON_RX_COUNT),a
+	ret
+
+sercon_rx_store:
+	; Only keep bytes when serial owns input; otherwise a terminal sitting at
+	; a prompt would type into whatever the machine is running.
+	ld a,(SERCON_FLAGS)
+	and #SERCON_FLAG_INPUT
+	ret z
+
+	ld a,(SERCON_RX_COUNT)
+	cp #SERCON_RX_BUFFER_SIZE
+	ret nc				; full: drop, the terminal is meant to pace
+	inc a
+	ld (SERCON_RX_COUNT),a
+
+	ld hl,#SERCON_RX_TAIL
+	ld e,(hl)
+	ld a,e
+	inc a
+	and #(SERCON_RX_BUFFER_SIZE - 1)
+	ld (hl),a
+	ld d,#0x00
+	ld hl,#sercon_rx_buffer
+	add hl,de
+	ld (hl),c
+	ret
+
+sercon_rx_buffer:
+	.ds SERCON_RX_BUFFER_SIZE
+
+SERCON_CODE_END:
+
+	.ifgt (SERCON_CODE_END - SERCON_CODE_START) - (CBIOS_SERCON_CODE_LIMIT - CBIOS_SERCON_CODE_BASE)
+	.error 1			; serial console runs into the staging buffer
+	.endif
+
+; ---------------------------------------------------------------------------
+; Bank 7: the polled serial console tee
+; ---------------------------------------------------------------------------
+; The driver table, init/install, the CONST/CONIN/CONOUT tee, and TX with CTS
+; handling.  Reached only through the console facade (bank 7) and from boot
+; after bank7_check, so none of it needs a common address.
+;
+; It reads sercon_rx_buffer and SERCON_RX_HEAD/_COUNT, which stay in common
+; because the sink writes them: bank 7 reads common freely in mode 11.
+
+	.area CODE (ABS)
+	.org CBIOS_SERCON_BANK7_CODE_BASE
+
+SERCON_BANK7_CODE_START:
 
 ; The composite driver table the console facade dispatches through.
 ;
@@ -270,73 +364,8 @@ sercon_conin_dequeue:
 	ld a,e
 	ret
 
-; SIO0/B RX sink, called from the interrupt frame.
-;
-; In: A = channel id, C = received byte.  May clobber AF/BC/DE/HL but not
-; IX/IY, per the sio_core sink contract.  Returns quickly; no BDOS, no blocking,
-; no rendering.
-sercon_rx_sink:
-	ld a,c
-	cp #SERCON_ESC
-	jr z,sercon_rx_esc
+SERCON_BANK7_CODE_END:
 
-	; Any other byte breaks a partial match.
-	xor a
-	ld (SERCON_ESC_COUNT),a
-	jr sercon_rx_store
-
-sercon_rx_esc:
-	ld hl,#SERCON_ESC_COUNT
-	inc (hl)
-	ld a,(hl)
-	cp #SERCON_ESC_TRIGGER
-	jr c,sercon_rx_store
-
-	; Third ESC: toggle input ownership and arm the tee.  Arming on takeover
-	; means the rescue gesture works from a dark screen in one step.
-	ld (hl),#0x00
-	ld a,(SERCON_FLAGS)
-	xor #SERCON_FLAG_INPUT
-	or #SERCON_FLAG_TEE
-	ld (SERCON_FLAGS),a
-
-	; Drop the two ESCs already queued: the sequence is a command, not input.
-	xor a
-	ld (SERCON_RX_HEAD),a
-	ld (SERCON_RX_TAIL),a
-	ld (SERCON_RX_COUNT),a
-	ret
-
-sercon_rx_store:
-	; Only keep bytes when serial owns input; otherwise a terminal sitting at
-	; a prompt would type into whatever the machine is running.
-	ld a,(SERCON_FLAGS)
-	and #SERCON_FLAG_INPUT
-	ret z
-
-	ld a,(SERCON_RX_COUNT)
-	cp #SERCON_RX_BUFFER_SIZE
-	ret nc				; full: drop, the terminal is meant to pace
-	inc a
-	ld (SERCON_RX_COUNT),a
-
-	ld hl,#SERCON_RX_TAIL
-	ld e,(hl)
-	ld a,e
-	inc a
-	and #(SERCON_RX_BUFFER_SIZE - 1)
-	ld (hl),a
-	ld d,#0x00
-	ld hl,#sercon_rx_buffer
-	add hl,de
-	ld (hl),c
-	ret
-
-sercon_rx_buffer:
-	.ds SERCON_RX_BUFFER_SIZE
-
-SERCON_CODE_END:
-
-	.ifgt (SERCON_CODE_END - SERCON_CODE_START) - (CBIOS_SERCON_CODE_LIMIT - CBIOS_SERCON_CODE_BASE)
-	.error 1			; serial console runs into the staging buffer
+	.ifgt (SERCON_BANK7_CODE_END - SERCON_BANK7_CODE_START) - (CBIOS_SERCON_BANK7_CODE_LIMIT - CBIOS_SERCON_BANK7_CODE_BASE)
+	.error 1			; serial console tee overflows its bank-7 region
 	.endif

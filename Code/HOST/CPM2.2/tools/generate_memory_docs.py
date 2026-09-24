@@ -70,92 +70,124 @@ class Region:
     """
 
     def __init__(self, name: str, start_sym: str, end_sym: str | None, limit_sym: str,
-                 notes: str, optional: bool = False):
+                 notes: str, optional: bool = False, zone: str | None = None):
         self.name = name
         self.start_sym = start_sym
         self.end_sym = end_sym
         self.limit_sym = limit_sym
         self.notes = notes
         self.optional = optional
+        # Which class of thing this is, per docs/entity-placement-gap-analysis.md.
+        # Common memory: abi | crossing | interrupt | driver | state.
+        # Bank 7:        core | driver | state | asset.
+        # Reported, not yet enforced -- see ZONE_BOUNDS below.
+        self.zone = zone
+
+
+# Which zones a region may declare, per memory class.  This is the enforcement
+# the placement rule needs: an entity belongs in common only if its address must
+# resolve to the same bytes under more than one latch state, and the zone is how
+# a region states which of the three reasons applies.
+#
+#   abi         a published address: programs or the other processor see it
+#   crossing    changes the memory mode, or stages caller objects across it
+#   interrupt   reached from an ISR, so the latch is unknown
+#   driver-isr  a driver's ISR-reachable tail, and ONLY that -- the rest of the
+#               driver belongs in bank 7
+#
+# `core` is absent from the common set deliberately: core defines contracts and
+# has no reason to be addressable under more than one latch state.  `crossing`
+# and `interrupt` are absent from bank 7 for the mirror reason.
+#
+# This checks classification, not contiguity.  Zones are not required to occupy
+# disjoint address ranges; consolidating them is separate work (see
+# entity-placement-gap-analysis.md section 8.5).
+COMMON_ZONES = {"abi", "crossing", "interrupt", "driver-isr"}
+BANK7_ZONES = {"core", "driver", "state", "asset"}
+ZONES_FOR_AREA = {"common": COMMON_ZONES, "bank 7": BANK7_ZONES}
 
 
 COMMON_REGIONS = [
-    Region("SIO ownership return", "SIO_QUIESCE_START", "SIO_QUIESCE_END", "CBIOS_NATIVE_GATE_BASE",
-           "Quiesces application-owned SIO0/A at boot and application exit."),
+    Region("SIO ownership return", "SIO_QUIESCE_START", "SIO_QUIESCE_END", "CBIOS_SIO_QUIESCE_CODE_LIMIT",
+           "Quiesces application-owned SIO0/A at boot and application exit.", zone="crossing"),
     Region("Native file gate", "NATIVE_GATE_START", "NATIVE_GATE_END", "CBIOS_NATIVE_GATE_LIMIT",
-           "Function 218 descriptor and read-data staging through the existing crossing mechanism."),
+           "Function 218 descriptor and read-data staging through the existing crossing mechanism.", zone="crossing"),
     Region("BDOS facade", "FACADE_CODE_START", "FACADE_CODE_END", "FACADE_CODE_LIMIT",
-           "`CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-218, system information block."),
-    Region("BIOS tables, ROM copy, boot", "BIOS_CODE_START", None, "CBIOS_BANKING_CODE_BASE",
-           "CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero."),
-    Region("Banking services", "BANKING_CODE_START", "BANKING_CODE_END", "CBIOS_SPARE_CODE_BASE",
-           "`SELMEM`, `SETBNK`, `XMOVE`, `MOVE`."),
-    Region("CTC reset", "CBIOS_SPARE_CODE_BASE", None, "CBIOS_IOC_DIAG_BASE",
-           "`ctc_disable_interrupts`: CTC reset and vector base."),
-    Region("IOC link failure record", "CBIOS_IOC_DIAG_BASE", "IOC_DIAG_RECORD_END", "CBIOS_BOOT_BANNER_CODE_BASE",
-           "Read by the CP/M tools through BDOS function 203."),
-    Region("Boot banner printer", "BOOT_BANNER_CODE_START", "BOOT_BANNER_CODE_END", "CBIOS_SIO_CORE_CODE_BASE",
-           "Prints the banner text kept in bank 7."),
-    Region("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END", "CBIOS_XING_CODE_BASE",
-           "SIO0/B and SIO1 initialization, receive sinks, SIO interrupt body."),
+           "`CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-218, system information block.", zone="abi"),
+    Region("BIOS tables, ROM copy, boot", "BIOS_CODE_START", None, "CBIOS_BIOS_CODE_LIMIT",
+           "CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero.", zone="abi"),
+    Region("Banking services", "BANKING_CODE_START", "BANKING_CODE_END", "CBIOS_BANKING_CODE_LIMIT",
+           "`SELMEM`, `SETBNK`, `XMOVE`, `MOVE`.", zone="crossing"),
+    Region("CTC reset", "CBIOS_SPARE_CODE_BASE", None, "CBIOS_CTC_RESET_CODE_LIMIT",
+           "`ctc_disable_interrupts`: CTC reset and vector base.", zone="interrupt"),
+    Region("IOC link failure record", "CBIOS_IOC_DIAG_BASE", "IOC_DIAG_RECORD_END", "CBIOS_IOC_DIAG_CODE_LIMIT",
+           "Read by the CP/M tools through BDOS function 203.", zone="abi"),
+    Region("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END", "CBIOS_SIO_CORE_CODE_LIMIT",
+           "SIO0/B and SIO1 initialization, receive sinks, SIO interrupt body.", zone="interrupt"),
     Region("Crossing layer", "XING_CODE_START", "XING_CODE_END", "CBIOS_XING_CODE_LIMIT",
-           "Mode-preserving bank select; SIO IM2 entry belongs to the IRQ core."),
-    Region("Transport level", "ZBIOS_XPORT_LEVEL_ADDR", None, "CBIOS_GATE_CODE_BASE",
-           "The BIOS IO Controller transport level byte."),
+           "Mode-preserving bank select; SIO IM2 entry belongs to the IRQ core.", zone="crossing"),
+    Region("Transport level", "ZBIOS_XPORT_LEVEL_ADDR", None, "CBIOS_XPORT_LEVEL_CODE_LIMIT",
+           "The BIOS IO Controller transport level byte.", zone="abi"),
     Region("Crossing gates", "GATE_CODE_START", "GATE_CODE_END", "CBIOS_GATE_CODE_LIMIT",
-           "Console and IOC/video gates into bank 7, inert disk entries, warm-boot trap, ROM-disk copy window, bank 7 check."),
+           "Console and IOC/video gates into bank 7, inert disk entries, warm-boot trap, ROM-disk copy window, bank 7 check.", zone="crossing"),
     Region("Interrupt dispatch", "IRQ_CODE_START", "IRQ_CODE_END", "CBIOS_IRQ_CODE_LIMIT",
-           "CTC/SIO entries, complete context preservation, dispatch and boot policy."),
+           "CTC/SIO entries, complete context preservation, dispatch and boot policy.", zone="interrupt"),
     Region("IRQ policy", "IRQ_POLICY_START", "IRQ_POLICY_END", "CBIOS_IRQ_POLICY_LIMIT",
-           "Interrupt tokens, stackless boot policy and polling context preservation."),
+           "Interrupt tokens, stackless boot policy and polling context preservation.", zone="interrupt"),
     Region("CTC channel mapping", "CTC_HELPER_START", "CTC_HELPER_END", "CBIOS_CTC_HELPER_LIMIT",
-           "Logical-channel stop using the platform port mapping."),
+           "Logical-channel stop using the platform port mapping.", zone="interrupt"),
     Region("IRQ registration", "IRQ_REG_START", "IRQ_REG_END", "CBIOS_IRQ_REG_LIMIT",
-           "Atomic user/kernel callback registration."),
+           "Atomic user/kernel callback registration.", zone="interrupt"),
     Region("Serial console", "SERCON_CODE_START", "SERCON_CODE_END", "CBIOS_SERCON_CODE_LIMIT",
-           "Serial console tee and input switch.", optional=True),
+           "Serial console tee and input switch.", optional=True, zone="driver-isr"),
 ]
 
 BANK7_REGIONS = [
-    Region("ZSDOS's BIOS table", "BIOS7_TABLE", "BIOS7_TABLE_END", "CBIOS_CONSOLE_CODE_BASE",
-           "The table ZSDOS calls, and the `BANK7OS1` image marker."),
-    Region("Console facade", "CONSOLE_CODE_START", "CONSOLE_CODE_END", "CBIOS_STORAGE_CODE_BASE",
-           "CP/M console entries; dispatch on the console stack."),
-    Region("Storage facade", "STORAGE_STUB_CODE_START", "STORAGE_STUB_CODE_END", "CBIOS_BIOS_EXT_CODE_BASE",
-           "CP/M disk entries; jumps into the drive dispatcher."),
-    Region("VIDEO_SEND", "BIOS_EXT_CODE_START", "BIOS_EXT_CODE_END", "CBIOS_IOCTRL_CODE_BASE",
-           "Raw video request through the selected console backend."),
-    Region("IOCALL", "IOCTRL_CODE_START", "IOCTRL_CODE_END", "CBIOS_IOC_COMMAND_CODE_BASE",
-           "32-byte mailbox transaction."),
-    Region("IOC command lane", "IOC_CMD_CODE_START", "IOC_CMD_CODE_END", "CBIOS_XPORT_SHIM_CODE_BASE",
-           "Common-packet command-lane transport."),
-    Region("Bulk entries", "XPORT_SHIM_CODE_START", "XPORT_SHIM_CODE_END", "CBIOS_IOC_BULK_CODE_BASE",
-           "`IOCBULK` and `IOCBULKW`."),
-    Region("IOC bulk lane", "IOC_BULK_CODE_START", "IOC_BULK_CODE_END", "CBIOS_HID_INPUT_CODE_BASE",
-           "Common-packet bulk-lane transport and link bring-up."),
-    Region("USB keyboard input", "HID_INPUT_CODE_START", "HID_INPUT_CODE_END", "CBIOS_HID_INPUT_STATE_BASE",
-           "Doorbell-gated keyboard fetch."),
-    Region("USB keyboard state", "HID_INPUT_STATE_START", "HID_INPUT_STATE_END", "CBIOS_STORAGE_SD_CODE_BASE",
-           "Mailboxes and keyboard queue."),
+    Region("ZSDOS's BIOS table", "BIOS7_TABLE", "BIOS7_TABLE_END", "CBIOS_BIOS7_TABLE_LIMIT",
+           "The table ZSDOS calls, and the `BANK7OS1` image marker.", zone="core"),
+    Region("Console facade", "CONSOLE_CODE_START", "CONSOLE_CODE_END", "CBIOS_CONSOLE_CODE_LIMIT",
+           "CP/M console entries; dispatch on the console stack.", zone="core"),
+    Region("Storage facade", "STORAGE_STUB_CODE_START", "STORAGE_STUB_CODE_END", "CBIOS_STORAGE_CODE_LIMIT",
+           "CP/M disk entries; jumps into the drive dispatcher.", zone="core"),
+    Region("VIDEO_SEND", "BIOS_EXT_CODE_START", "BIOS_EXT_CODE_END", "CBIOS_BIOS_EXT_CODE_LIMIT",
+           "Raw video request through the selected console backend.", zone="core"),
+    Region("IOCALL", "IOCTRL_CODE_START", "IOCTRL_CODE_END", "CBIOS_IOCTRL_CODE_LIMIT",
+           "32-byte mailbox transaction.", zone="core"),
+    Region("IOC command lane", "IOC_CMD_CODE_START", "IOC_CMD_CODE_END", "CBIOS_IOC_COMMAND_CODE_LIMIT",
+           "Common-packet command-lane transport.", zone="driver"),
+    Region("Bulk entries", "XPORT_SHIM_CODE_START", "XPORT_SHIM_CODE_END", "CBIOS_XPORT_SHIM_CODE_LIMIT",
+           "`IOCBULK` and `IOCBULKW`.", zone="core"),
+    Region("IOC bulk lane", "IOC_BULK_CODE_START", "IOC_BULK_CODE_END", "CBIOS_IOC_BULK_CODE_LIMIT",
+           "Common-packet bulk-lane transport and link bring-up.", zone="driver"),
+    Region("USB keyboard input", "HID_INPUT_CODE_START", "HID_INPUT_CODE_END", "CBIOS_HID_INPUT_CODE_LIMIT",
+           "Doorbell-gated keyboard fetch.", zone="driver"),
+    Region("USB keyboard state", "HID_INPUT_STATE_START", "HID_INPUT_STATE_END", "CBIOS_HID_INPUT_STATE_LIMIT",
+           "Mailboxes and keyboard queue.", zone="state"),
     Region("SD-card backend", "SD_STORAGE_CODE_START", "SD_STORAGE_CODE_END", "CBIOS_STORAGE_SD_CODE_LIMIT",
-           "Record read and write through the IO Controller cache."),
-    Region("B: select probe", "SD_PROBE_CODE_START", "SD_PROBE_CODE_END", "CBIOS_STORAGE_A_CODE_BASE",
-           "Card availability, then the B: DPH."),
-    Region("Drive A: backend", "STORAGE_A_CODE_START", "STORAGE_A_CODE_END", "CBIOS_SD_PROBE2_CODE_BASE",
-           "The build-selected A: backend."),
-    Region("Drive dispatcher", "CBIOS_SD_PROBE2_CODE_BASE", "SD_PROBE2_CODE_END", "CBIOS_V9958_CONSOLE_CODE_BASE",
-           "Routes A: to its backend, gated B: to the synthetic FAT BIOS, and C:/D: to SD units."),
+           "Record read and write through the IO Controller cache.", zone="driver"),
+    Region("B: select probe", "SD_PROBE_CODE_START", "SD_PROBE_CODE_END", "CBIOS_SD_PROBE_CODE_LIMIT",
+           "Card availability, then the B: DPH.", zone="driver"),
+    Region("Drive A: backend", "STORAGE_A_CODE_START", "STORAGE_A_CODE_END", "CBIOS_STORAGE_A_CODE_LIMIT",
+           "The build-selected A: backend.", zone="driver"),
+    Region("Drive dispatcher", "CBIOS_SD_PROBE2_CODE_BASE", "SD_PROBE2_CODE_END", "CBIOS_SD_PROBE2_CODE_LIMIT",
+           "Routes A: to its backend, gated B: to the synthetic FAT BIOS, and C:/D: to SD units.", zone="core"),
+    Region("SIO services (bank 7)", "SIO_BANK7_CODE_START", "SIO_BANK7_CODE_END", "CBIOS_SIO_BANK7_CODE_LIMIT",
+           "`sio1_ioc_init`, `sio_core_enable_interrupts`, `sio_register_rx_sink`: reached only from bank 7 or from boot after `bank7_check`.", zone="core"),
+    Region("Serial console tee (bank 7)", "SERCON_BANK7_CODE_START", "SERCON_BANK7_CODE_END", "CBIOS_SERCON_BANK7_CODE_LIMIT",
+           "Driver table, init/install, the CONST/CONIN/CONOUT tee and TX; polled through the console facade.", optional=True, zone="driver"),
+    Region("Boot banner printer", "BOOT_BANNER_CODE_START", "BOOT_BANNER_CODE_END", "CBIOS_BOOT_BANNER_CODE_LIMIT",
+           "Prints the banner text beside it; runs once from cold boot, in mode 11.", zone="asset"),
     Region("FAT BDOS backend", "FAT_BDOS_CODE_START", "FAT_BDOS_CODE_END", "CBIOS_FAT_BDOS_CODE_LIMIT",
-           "FS2 client, native file manager, writable FAT BDOS personality, read cache, DPH and DPB."),
+           "FS2 client, native file manager, writable FAT BDOS personality, read cache, DPH and DPB.", zone="driver"),
 ]
 
 CONSOLE_REGIONS = {
     "v9958": Region("V9958 console", "V9958_CONSOLE_CODE_START", "V9958_CONSOLE_CODE_END",
                     "VDRIP_STORAGE_DPHDPB_BASE",
-                    "Direct LunchCrema V9958 console: parser, renderer, cursor and state."),
+                    "Direct LunchCrema V9958 console: parser, renderer, cursor and state.", zone="driver"),
     "vdrip": Region("Virtual Drip console", "VDRIP_CONSOLE_CODE_START", "VDRIP_CONSOLE_CODE_END",
                     "VDRIP_STORAGE_DPHDPB_BASE",
-                    "Retained Virtual Drip console."),
+                    "Retained Virtual Drip console.", zone="driver"),
 }
 
 COMMON_IMPLEMENTATION = [
@@ -454,6 +486,15 @@ def check_regions(layout: Layout, regions: list[Region], area: str) -> list[tupl
                 f"{area} {region.name}: {region.end_sym or 'last byte'} = {h4(end)} exceeds "
                 f"{region.limit_sym} = {h4(limit)} by {end - limit} bytes"
             )
+        allowed = ZONES_FOR_AREA.get(area)
+        if allowed is not None:
+            if region.zone is None:
+                layout.error(f"{area} {region.name}: declares no zone")
+            elif region.zone not in allowed:
+                layout.error(
+                    f"{area} {region.name}: zone '{region.zone}' is not permitted in {area} "
+                    f"(allowed: {', '.join(sorted(allowed))})"
+                )
         placed.append((region, start, end, limit))
     ordered = sorted(placed, key=lambda item: item[1])
     for (left, l_start, l_end, _), (right, r_start, _, _) in zip(ordered, ordered[1:]):
@@ -684,7 +725,7 @@ def region_rows(layout: Layout, placed: list[tuple[Region, int, int, int]]) -> l
     rows = []
     for region, start, end, limit in sorted(placed, key=lambda item: item[1]):
         rows.append(
-            f"| `{xspan(start, limit)}` | {region.name} | {end - start} | {limit - end} | {region.notes} |"
+            f"| `{xspan(start, limit)}` | {region.name} | {region.zone or '—'} | {end - start} | {limit - end} | {region.notes} |"
         )
     return rows
 
@@ -852,8 +893,8 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         "",
         "Code regions, each bounded by the limit `cbios_defs.inc` declares for it. Used and free are bytes.",
         "",
-        "| Region | Owner | Used | Free | Contents |",
-        "|---|---|---:|---:|---|",
+        "| Region | Owner | Zone | Used | Free | Contents |",
+        "|---|---|---|---:|---:|---|",
         *region_rows(layout, common),
         "",
         "Data and stacks:",
@@ -876,9 +917,9 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         "",
         "## SRAM Bank 7 (mode 11 only)",
         "",
-        "| Region | Owner | Used | Free | Contents |",
-        "|---|---|---:|---:|---|",
-        f"| `{xspan(s('ZSDOS_ORG'), s('ZSDOS_ORG') + s('ZSDOS_SIZE'))}` | ZSDOS | — | — | Installed from `build/bdos-zsdos.bin` by `tools/split_banked_image.py`. |",
+        "| Region | Owner | Zone | Used | Free | Contents |",
+        "|---|---|---|---:|---:|---|",
+        f"| `{xspan(s('ZSDOS_ORG'), s('ZSDOS_ORG') + s('ZSDOS_SIZE'))}` | ZSDOS | core | — | — | Installed from `build/bdos-zsdos.bin` by `tools/split_banked_image.py`. |",
         *region_rows(layout, bank7),
         "",
         "Data:",

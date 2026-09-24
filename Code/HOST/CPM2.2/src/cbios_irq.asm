@@ -158,6 +158,7 @@ IRQ_CODE_END:
 	.endif
 
 ; CPU-global policy helpers in previously unallocated common memory.
+	.area CODE (ABS)
 	.org CBIOS_IRQ_POLICY_BASE
 IRQ_POLICY_START:
 ; In: any IFF. Out: A=0 (disabled) or 1 (enabled), IRQs disabled.
@@ -231,6 +232,7 @@ IRQ_POLICY_END:
 	.error 1
 	.endif
 
+	.area CODE (ABS)
 	.org CBIOS_IRQ_REG_BASE
 IRQ_REG_START:
 ; Public user API, unchanged: B=CTC source 0..3, DE=E000h-E3FFh entry.
@@ -333,6 +335,7 @@ IRQ_REG_END:
 	.error 1
 	.endif
 
+	.area CODE (ABS)
 	.org CBIOS_IM2_VECTOR_TABLE
 IM2_VECTOR_TABLE_START:
 	.dw ctc0_isr,ctc1_isr,ctc2_isr,ctc3_isr

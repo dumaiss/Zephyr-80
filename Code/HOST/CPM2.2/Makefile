@@ -9,7 +9,6 @@ TOOLS_DIR ?= tools
 SRC_DIR ?= src
 DOCS_DIR ?= docs
 
-CPM22_SRC ?= cpm22/cpm22.asm
 CPMTOOLS_DISKDEF ?= config/diskdef
 
 # Which backend is linked as drive A:.  Exactly one can be, because the BIOS
@@ -91,7 +90,18 @@ $(error Unsupported FAT_BIOS_M1='$(FAT_BIOS_M1)'; choose 0 or 1)
 endif
 
 ASFLAGS ?= -o -l -s
-LDFLAGS ?= -i
+# -u makes the linker rewrite the listing with resolved addresses as
+# build/firmware.rst.  Everything that needs symbol addresses reads that, not
+# build/firmware.lst and not the .map: the ASxxxx symbol table truncates names
+# to eight characters (622 truncated, 285 of them ambiguous -- `fat_nati`
+# alone appears 79 times), so it cannot identify a symbol.  With ABS .org the
+# .lst and .rst agree; once an area is relocatable only the .rst is right.
+# Relocatable driver areas, placed here rather than by an .org in the source.
+# DRV_STORAGE_A is the build-selected drive A: backend; 4330h is where
+# CBIOS_STORAGE_A_CODE_BASE used to .org it.
+DRIVER_AREAS ?= -b DRV_STORAGE_A=0x4330
+
+LDFLAGS ?= -i -u
 ROM_SIZE ?= 65536
 MAKEBIN_FLAGS ?= -s $(ROM_SIZE)
 
@@ -124,11 +134,12 @@ RUNTIME_SRCS ?= \
 
 FIRMWARE_BIN ?= $(BUILD_DIR)/firmware.bin
 SYMBOLS_FILE ?= $(BUILD_DIR)/firmware.map
-CPM22_ASXXXX_SRC ?= $(BUILD_DIR)/cpm22_asxxxx.asm
 FIRMWARE_SRC ?= $(BUILD_DIR)/zephyr_build.asm
 FIRMWARE_REL ?= $(BUILD_DIR)/firmware.rel
 FIRMWARE_IHX ?= $(BUILD_DIR)/firmware.ihx
 FIRMWARE_LST ?= $(BUILD_DIR)/firmware.lst
+# The linker-resolved listing: same format, final addresses.
+FIRMWARE_RST ?= $(BUILD_DIR)/firmware.rst
 FIRMWARE_SYM ?= $(BUILD_DIR)/firmware.sym
 # The linked address space before it is cut into ROM page 0 and bank 7.
 FIRMWARE_FLAT ?= $(BUILD_DIR)/firmware_flat.bin
@@ -188,7 +199,6 @@ IMAGE_PREREQS := $(ROM_DISK_CHUNKS) $(BANK7_BIN)
 else
 IMAGE_PREREQS := $(BANK7_BIN)
 endif
-CPM22_CONVERT_TOOL := $(TOOLS_DIR)/convert_cpm22_asxxxx.py
 MEMORY_DOC_TOOL := $(TOOLS_DIR)/generate_memory_docs.py
 
 .PHONY: all image docs test clean check-inputs runtime-sources-check rom-disk FORCE
@@ -224,9 +234,9 @@ image: $(FINAL_IMAGE) docs
 # docs/memory-map.md and docs/symbol-map.md are generated from the listing and
 # validated against the banked layout on every build; a layout that breaks a
 # rule stops here.
-docs: $(FINAL_IMAGE) $(FIRMWARE_LST) $(SYMBOLS_FILE) $(LAYOUT_MANIFEST) $(MEMORY_DOC_TOOL) $(BANK7_BIN)
+docs: $(FINAL_IMAGE) $(FIRMWARE_RST) $(SYMBOLS_FILE) $(LAYOUT_MANIFEST) $(MEMORY_DOC_TOOL) $(BANK7_BIN)
 	$(PYTHON) $(MEMORY_DOC_TOOL) \
-		--listing "$(FIRMWARE_LST)" \
+		--listing "$(FIRMWARE_RST)" \
 		--map "$(SYMBOLS_FILE)" \
 		--defs "$(SRC_DIR)/cbios_defs.inc" \
 		--manifest "$(LAYOUT_MANIFEST)" \
@@ -243,7 +253,7 @@ docs: $(FINAL_IMAGE) $(FIRMWARE_LST) $(SYMBOLS_FILE) $(LAYOUT_MANIFEST) $(MEMORY
 # find there -- a lost IFF, an unbalanced token, a CTC channel stopped at the
 # wrong port, an ISR that outgrows its stack.  Needs a C++17 compiler and
 # libqkz80.
-test: $(FIRMWARE_BIN) $(FIRMWARE_LST) $(FIRMWARE_FLAT) $(SYMBOLS_FILE)
+test: $(FIRMWARE_BIN) $(FIRMWARE_RST) $(FIRMWARE_FLAT) $(SYMBOLS_FILE)
 	$(PYTHON) $(TOOLS_DIR)/test_irq_core.py --build-dir $(BUILD_DIR)
 	$(PYTHON) $(TOOLS_DIR)/test_fat_bios_m1.py --build-dir $(BUILD_DIR)
 	$(PYTHON) $(TOOLS_DIR)/test_fat_bdos_ro.py --build-dir $(BUILD_DIR)
@@ -263,9 +273,6 @@ runtime-sources-check:
 	@for src in $(RUNTIME_SRCS); do \
 		test -f "$$src" || { echo "Missing runtime source: $$src"; exit 1; }; \
 	done
-
-$(CPM22_ASXXXX_SRC): $(CPM22_SRC) $(CPM22_CONVERT_TOOL) | $(BUILD_DIR)
-	$(PYTHON) $(CPM22_CONVERT_TOOL) "$<" "$@"
 
 $(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm Makefile FORCE | $(BUILD_DIR)
 	sed \

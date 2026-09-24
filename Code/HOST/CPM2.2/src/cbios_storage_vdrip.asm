@@ -443,6 +443,7 @@ vdrip_storage_active_seq:
 vdrip_storage_lba:
 	.dw 0x0000
 
+	.area WORK (ABS)
 	.org CBIOS_STORAGE_CALLER_SP
 storage_caller_sp:
 	.dw 0x0000

@@ -653,6 +653,28 @@ CBIOS_STORAGE_CODE_BASE         = BIOS7_BASE + 0x0100                  ; 3100h, 
 ; that preceded banking are in bank 7 now.
 CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x01b0      ; F1B0h
 
+; ---------------------------------------------------------------------------
+; Independent ceilings for the common code regions
+; ---------------------------------------------------------------------------
+; Until now, seven regions were bounded by whatever region happened to follow
+; them: "BIOS tables" ended where banking began, "CTC reset" where the IOC
+; failure record began, and so on.  That is the card castle the driver slots
+; were invented to avoid -- a region's slack was not reserved for it, it was
+; simply whatever the next thing had not used yet, and it vanished the moment
+; the next thing moved.
+;
+; These constants give each of those regions a ceiling of its own.  The values
+; are exactly where the neighbours sit today, so nothing moves; what changes is
+; that growing one region now reports against its own limit instead of silently
+; eating into the next.  See docs/entity-placement-gap-analysis.md section 6.1.
+CBIOS_BIOS_CODE_LIMIT           = CBIOS_BASE + 0x01b0      ; F1B0h
+CBIOS_BANKING_CODE_LIMIT        = CBIOS_BASE + 0x0288      ; F288h
+CBIOS_CTC_RESET_CODE_LIMIT      = CBIOS_BASE + 0x0298      ; F298h
+CBIOS_IOC_DIAG_CODE_LIMIT       = CBIOS_BASE + 0x02f0      ; F2F0h
+CBIOS_SIO_CORE_CODE_LIMIT       = CBIOS_BASE + 0x0510      ; F510h
+CBIOS_XPORT_LEVEL_CODE_LIMIT    = CBIOS_BASE + 0x0538      ; F538h
+CBIOS_SIO_QUIESCE_CODE_LIMIT    = CBIOS_NATIVE_GATE_BASE   ; EFC2h
+
 ; ------------------------------------------------------------------------------
 ; Fixed Driver Slots
 ; ------------------------------------------------------------------------------
@@ -792,9 +814,11 @@ CBIOS_STORAGE_VDRIP_CODE_BASE         = CBIOS_STORAGE_A_CODE_BASE
 ; components in sequence, and the name is kept only because it is the .org that
 ; ctc_disable_interrupts uses:
 ;
-;   DCB1h  ctc_disable_interrupts
-;   DCC0h  the 16-byte IOC link failure record  (CBIOS_IOC_DIAG_BASE)
-;   DCD1h  the boot banner printer              (CBIOS_BOOT_BANNER_CODE_BASE)
+;   F288h  ctc_disable_interrupts
+;   F298h  the 16-byte IOC link failure record  (CBIOS_IOC_DIAG_BASE)
+;
+; The boot banner printer used to follow the failure record here.  It is in
+; bank 7 now (CBIOS_BOOT_BANNER_CODE_BASE); it never needed common residency.
 ;
 ; The generated memory map's Headroom table is the authority on what is left
 ; here; do not assume this region is open.
@@ -996,14 +1020,20 @@ ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_BASE + 0x0530                  ; F530h; 
 ; The cold-boot page copy writes it to SRAM bank 0. text_load_font reads from
 ; this address in bank 0 SRAM. Programs may overwrite this TPA address after
 ; boot; the warm-boot restore refreshes it before text_load_font is called.
-; Boot banner printer, in the core-BIOS space freed by removing the IOC
-; bring-up trace block and the ISR counter.  It cannot stay where the old
-; ten-byte banner was: that slot is packed against the console facade at
-; DB7Ch, and printing a version number needs a hex converter.
+; Boot banner printer.  Bank 7, in the read-only asset space beside the banner
+; text it prints.
 ;
-; DCD1h is the first byte after ioc_bulk_synced and runs to the SIO core at
-; DD10h -- 63 bytes, contiguous, and free in every build configuration.
-CBIOS_BOOT_BANNER_CODE_BASE     = CBIOS_IOC_DIAG_BASE + 0x11           ; DCD1h
+; It used to sit in common memory, in whatever hole existed when it was written
+; -- its own comment recorded that it had been evicted from bank 7 because the
+; old ten-byte banner slot was packed against the console facade.  Nothing about
+; it ever required common residency: it runs once, from cold boot, after
+; console_backend_cold_init has already called into bank 7, and it reads
+; BOOT_BANNER_TEXT at 8800h which is bank 7 itself.  Moving it back returns 56
+; bytes to the 8 KiB common window.  See docs/entity-placement-gap-analysis.md.
+;
+; 8A00h rather than 8840h, immediately after the banner text: the FAT BDOS qkz80
+; harness uses 8840h-893Fh as unowned scratch, and this keeps clear of it.
+CBIOS_BOOT_BANNER_CODE_BASE     = BIOS7_BASE + 0x5a00                  ; 8A00h, bank 7
 
 ; ---------------------------------------------------------------------------
 ; Serial console fallback (cbios_sercon.asm)
@@ -1310,6 +1340,59 @@ CBIOS_FAT_BDOS_CODE_BASE              = BIOS7_BASE + 0x6000            ; 9000h
 ; and RENAME.  A000h-BFFFh carries no other owner; check_overlap.py is the
 ; authority that this stays true.
 CBIOS_FAT_BDOS_CODE_LIMIT             = BIOS7_BASE + 0x7800            ; A800h
+
+; ---------------------------------------------------------------------------
+; SIO services that do not need common memory (sio_core.asm, bank 7 block)
+; ---------------------------------------------------------------------------
+; sio1_ioc_init, sio_core_enable_interrupts and sio_register_rx_sink are called
+; only from bank 7 or from boot after bank7_check, and no interrupt path reaches
+; them.  Moving them here returns 121 bytes to the 8 KiB common window.
+;
+; A declared region with its own ceiling, not one bounded by whatever follows:
+; the slack is reserved, so growing these does not move anything else.
+; ---------------------------------------------------------------------------
+; Independent ceilings for the bank-7 regions
+; ---------------------------------------------------------------------------
+; The same fix as the common-memory ceilings above, applied where the drivers
+; actually live.  Fourteen bank-7 regions ended wherever the next one began, so
+; their slack was not reserved for them -- it was whatever the neighbour had not
+; used, and it moved when the neighbour moved.  That is what a slot exists to
+; prevent, and it is why growing the V9958 console by eight bytes once shifted
+; the bulk-entry shims (see CBIOS_XPORT_SHIM_CODE_BASE).
+;
+; Values are exactly where the neighbours sit today: nothing moves.  What
+; changes is that each region now reports against a ceiling of its own.
+CBIOS_BIOS7_TABLE_LIMIT               = BIOS7_BASE + 0x0040            ; 3040h
+CBIOS_CONSOLE_CODE_LIMIT              = BIOS7_BASE + 0x0100            ; 3100h
+CBIOS_STORAGE_CODE_LIMIT              = BIOS7_BASE + 0x0200            ; 3200h
+CBIOS_BIOS_EXT_CODE_LIMIT             = BIOS7_BASE + 0x0280            ; 3280h
+CBIOS_IOCTRL_CODE_LIMIT               = BIOS7_BASE + 0x0400            ; 3400h
+CBIOS_IOC_COMMAND_CODE_LIMIT          = BIOS7_BASE + 0x0900            ; 3900h
+CBIOS_XPORT_SHIM_CODE_LIMIT           = BIOS7_BASE + 0x0A00            ; 3A00h
+CBIOS_IOC_BULK_CODE_LIMIT             = BIOS7_BASE + 0x0D00            ; 3D00h
+CBIOS_HID_INPUT_CODE_LIMIT            = BIOS7_BASE + 0x0E00            ; 3E00h
+CBIOS_HID_INPUT_STATE_LIMIT           = BIOS7_BASE + 0x1000            ; 4000h
+CBIOS_SD_PROBE_CODE_LIMIT             = BIOS7_BASE + 0x1330            ; 4330h
+CBIOS_STORAGE_A_CODE_LIMIT            = BIOS7_BASE + 0x1400            ; 4400h
+CBIOS_SD_PROBE2_CODE_LIMIT            = BIOS7_BASE + 0x1800            ; 4800h
+CBIOS_BOOT_BANNER_CODE_LIMIT          = BIOS7_BASE + 0x6000            ; 9000h
+
+CBIOS_SIO_BANK7_CODE_BASE             = CBIOS_FAT_BDOS_CODE_LIMIT      ; A800h
+CBIOS_SIO_BANK7_CODE_LIMIT            = CBIOS_SIO_BANK7_CODE_BASE + 0x100
+
+; The polled half of the serial console tee (cbios_sercon.asm).  Only the
+; registered RX sink needs a common address; the driver table, init, the
+; CONST/CONIN/CONOUT tee and TX are reached through the console facade in
+; bank 7 and from boot after bank7_check.  211 bytes returned to common.
+CBIOS_SERCON_BANK7_CODE_BASE          = CBIOS_SIO_BANK7_CODE_LIMIT     ; A900h
+CBIOS_SERCON_BANK7_CODE_LIMIT         = CBIOS_SERCON_BANK7_CODE_BASE + 0x100
+
+; The foreground half of the VDrip transport (vdrip_transport.asm).  Only the
+; registered RX sink and the parser it calls inline need common addresses; the
+; send path, handshake and registration are foreground.  297 bytes.
+; Linked only when VDRIP_TRANSPORT_LINKED; the region costs nothing otherwise.
+CBIOS_VDRIP_TRANSPORT_BANK7_CODE_BASE  = CBIOS_SERCON_BANK7_CODE_LIMIT  ; AA00h
+CBIOS_VDRIP_TRANSPORT_BANK7_CODE_LIMIT = CBIOS_VDRIP_TRANSPORT_BANK7_CODE_BASE + 0x180
 CBIOS_FAT_BDOS_CODE_SIZE              = CBIOS_FAT_BDOS_CODE_LIMIT - CBIOS_FAT_BDOS_CODE_BASE
 CBIOS_FAT_BDOS_STATE_BASE             = BIOS7_BASE + 0x9e10            ; CE10h
 CBIOS_FAT_BDOS_STATE_LIMIT            = BIOS7_BASE + 0xa610            ; D610h
@@ -1678,8 +1761,6 @@ RESERVED_RUNTIME_STATE_END      = CBIOS_RUNTIME_STATE_END
 ;   Slot 5 also contains IOCALL (at CBIOS_DRIVER_SLOT5_BASE) and the VDrip
 ;   storage backend (at CBIOS_STORAGE_VDRIP_CODE_BASE).
 ;   SIO core is part of core BIOS, not a driver slot occupant.
-;   The legacy SIO console driver (cbios_console_sio.asm) is preserved in the
-;   repository but not linked in the active VDrip-console build.
 
 VDRIP_STORAGE_SLOT_FIRST       = 5
 VDRIP_STORAGE_SLOT_LAST        = 5

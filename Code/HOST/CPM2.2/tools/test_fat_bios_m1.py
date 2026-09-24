@@ -17,7 +17,7 @@ args = parser.parse_args()
 
 root = Path(__file__).resolve().parents[1]
 build = args.build_dir.resolve()
-symbols, _ = parse_listing(build / "firmware.lst")
+symbols, _ = parse_listing(build / "firmware.rst")
 add_defs(symbols, root / "src/cbios_defs.inc")
 
 symbol_file = build / "fat-bios-m1-test-symbols.txt"

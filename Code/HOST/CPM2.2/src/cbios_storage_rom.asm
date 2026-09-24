@@ -297,6 +297,7 @@ stg_a_sector:
 rom_storage_sector:
 	.dw 0x0000
 
+	.area WORK (ABS)
 	.org CBIOS_STORAGE_CALLER_SP
 storage_caller_sp:
 	.dw 0x0000

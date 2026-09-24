@@ -22,25 +22,24 @@ Page zero's `0006h` holds `EC06h`: the transient program area is `0100h-EC05h`, 
 
 Code regions, each bounded by the limit `cbios_defs.inc` declares for it. Used and free are bytes.
 
-| Region | Owner | Used | Free | Contents |
-|---|---|---:|---:|---|
-| `EC00h-EF9Fh` | BDOS facade | 925 | 3 | `CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-218, system information block. |
-| `EFA0h-EFC1h` | SIO ownership return | 34 | 0 | Quiesces application-owned SIO0/A at boot and application exit. |
-| `EFC2h-EFFFh` | Native file gate | 46 | 16 | Function 218 descriptor and read-data staging through the existing crossing mechanism. |
-| `F000h-F1AFh` | BIOS tables, ROM copy, boot | 410 | 22 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero. |
-| `F1B0h-F287h` | Banking services | 210 | 6 | `SELMEM`, `SETBNK`, `XMOVE`, `MOVE`. |
-| `F288h-F297h` | CTC reset | 15 | 1 | `ctc_disable_interrupts`: CTC reset and vector base. |
-| `F298h-F2A8h` | IOC link failure record | 16 | 1 | Read by the CP/M tools through BDOS function 203. |
-| `F2A9h-F2EFh` | Boot banner printer | 56 | 15 | Prints the banner text kept in bank 7. |
-| `F2F0h-F50Fh` | SIO core | 523 | 21 | SIO0/B and SIO1 initialization, receive sinks, SIO interrupt body. |
-| `F510h-F52Fh` | Crossing layer | 26 | 6 | Mode-preserving bank select; SIO IM2 entry belongs to the IRQ core. |
-| `F530h-F537h` | Transport level | 1 | 7 | The BIOS IO Controller transport level byte. |
-| `F538h-F72Fh` | Crossing gates | 476 | 28 | Console and IOC/video gates into bank 7, inert disk entries, warm-boot trap, ROM-disk copy window, bank 7 check. |
-| `F730h-F82Fh` | Interrupt dispatch | 238 | 18 | CTC/SIO entries, complete context preservation, dispatch and boot policy. |
-| `F830h-F957h` | Serial console | 295 | 1 | Serial console tee and input switch. |
-| `FC98h-FCDFh` | IRQ policy | 64 | 8 | Interrupt tokens, stackless boot policy and polling context preservation. |
-| `FCE0h-FCFFh` | CTC channel mapping | 21 | 11 | Logical-channel stop using the platform port mapping. |
-| `FF60h-FFFFh` | IRQ registration | 121 | 39 | Atomic user/kernel callback registration. |
+| Region | Owner | Zone | Used | Free | Contents |
+|---|---|---|---:|---:|---|
+| `EC00h-EF9Fh` | BDOS facade | abi | 925 | 3 | `CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-218, system information block. |
+| `EFA0h-EFC1h` | SIO ownership return | crossing | 34 | 0 | Quiesces application-owned SIO0/A at boot and application exit. |
+| `EFC2h-EFFFh` | Native file gate | crossing | 46 | 16 | Function 218 descriptor and read-data staging through the existing crossing mechanism. |
+| `F000h-F1AFh` | BIOS tables, ROM copy, boot | abi | 410 | 22 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero. |
+| `F1B0h-F287h` | Banking services | crossing | 210 | 6 | `SELMEM`, `SETBNK`, `XMOVE`, `MOVE`. |
+| `F288h-F297h` | CTC reset | interrupt | 15 | 1 | `ctc_disable_interrupts`: CTC reset and vector base. |
+| `F298h-F2EFh` | IOC link failure record | abi | 16 | 72 | Read by the CP/M tools through BDOS function 203. |
+| `F2F0h-F50Fh` | SIO core | interrupt | 330 | 214 | SIO0/B and SIO1 initialization, receive sinks, SIO interrupt body. |
+| `F510h-F52Fh` | Crossing layer | crossing | 26 | 6 | Mode-preserving bank select; SIO IM2 entry belongs to the IRQ core. |
+| `F530h-F537h` | Transport level | abi | 1 | 7 | The BIOS IO Controller transport level byte. |
+| `F538h-F72Fh` | Crossing gates | crossing | 476 | 28 | Console and IOC/video gates into bank 7, inert disk entries, warm-boot trap, ROM-disk copy window, bank 7 check. |
+| `F730h-F82Fh` | Interrupt dispatch | interrupt | 238 | 18 | CTC/SIO entries, complete context preservation, dispatch and boot policy. |
+| `F830h-F957h` | Serial console | driver-isr | 84 | 212 | Serial console tee and input switch. |
+| `FC98h-FCDFh` | IRQ policy | interrupt | 64 | 8 | Interrupt tokens, stackless boot policy and polling context preservation. |
+| `FCE0h-FCFFh` | CTC channel mapping | interrupt | 21 | 11 | Logical-channel stop using the platform port mapping. |
+| `FF60h-FFFFh` | IRQ registration | interrupt | 121 | 39 | Atomic user/kernel callback registration. |
 
 Data and stacks:
 
@@ -60,25 +59,28 @@ System common code ends at `FFD8h`.
 
 ## SRAM Bank 7 (mode 11 only)
 
-| Region | Owner | Used | Free | Contents |
-|---|---|---:|---:|---|
-| `2000h-2FFFh` | ZSDOS | — | — | Installed from `build/bdos-zsdos.bin` by `tools/split_banked_image.py`. |
-| `3000h-303Fh` | ZSDOS's BIOS table | 59 | 5 | The table ZSDOS calls, and the `BANK7OS1` image marker. |
-| `3040h-30FFh` | Console facade | 125 | 67 | CP/M console entries; dispatch on the console stack. |
-| `3100h-31FFh` | Storage facade | 26 | 230 | CP/M disk entries; jumps into the drive dispatcher. |
-| `3200h-327Fh` | VIDEO_SEND | 40 | 88 | Raw video request through the selected console backend. |
-| `3280h-33FFh` | IOCALL | 140 | 244 | 32-byte mailbox transaction. |
-| `3400h-38FFh` | IOC command lane | 1037 | 243 | Common-packet command-lane transport. |
-| `3900h-39FFh` | Bulk entries | 43 | 213 | `IOCBULK` and `IOCBULKW`. |
-| `3A00h-3CFFh` | IOC bulk lane | 558 | 210 | Common-packet bulk-lane transport and link bring-up. |
-| `3D00h-3DFFh` | USB keyboard input | 186 | 70 | Doorbell-gated keyboard fetch. |
-| `3E00h-3FFFh` | USB keyboard state | 57 | 455 | Mailboxes and keyboard queue. |
-| `4000h-42FFh` | SD-card backend | 745 | 23 | Record read and write through the IO Controller cache. |
-| `4300h-432Fh` | B: select probe | 23 | 25 | Card availability, then the B: DPH. |
-| `4330h-43FFh` | Drive A: backend | 164 | 44 | The build-selected A: backend. |
-| `4400h-47FFh` | Drive dispatcher | 179 | 845 | Routes A: to its backend, gated B: to the synthetic FAT BIOS, and C:/D: to SD units. |
-| `4800h-5FFFh` | V9958 console | 3191 | 2953 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
-| `9000h-A7FFh` | FAT BDOS backend | 5128 | 1016 | FS2 client, native file manager, writable FAT BDOS personality, read cache, DPH and DPB. |
+| Region | Owner | Zone | Used | Free | Contents |
+|---|---|---|---:|---:|---|
+| `2000h-2FFFh` | ZSDOS | core | — | — | Installed from `build/bdos-zsdos.bin` by `tools/split_banked_image.py`. |
+| `3000h-303Fh` | ZSDOS's BIOS table | core | 59 | 5 | The table ZSDOS calls, and the `BANK7OS1` image marker. |
+| `3040h-30FFh` | Console facade | core | 125 | 67 | CP/M console entries; dispatch on the console stack. |
+| `3100h-31FFh` | Storage facade | core | 26 | 230 | CP/M disk entries; jumps into the drive dispatcher. |
+| `3200h-327Fh` | VIDEO_SEND | core | 40 | 88 | Raw video request through the selected console backend. |
+| `3280h-33FFh` | IOCALL | core | 140 | 244 | 32-byte mailbox transaction. |
+| `3400h-38FFh` | IOC command lane | driver | 1037 | 243 | Common-packet command-lane transport. |
+| `3900h-39FFh` | Bulk entries | core | 43 | 213 | `IOCBULK` and `IOCBULKW`. |
+| `3A00h-3CFFh` | IOC bulk lane | driver | 558 | 210 | Common-packet bulk-lane transport and link bring-up. |
+| `3D00h-3DFFh` | USB keyboard input | driver | 186 | 70 | Doorbell-gated keyboard fetch. |
+| `3E00h-3FFFh` | USB keyboard state | state | 57 | 455 | Mailboxes and keyboard queue. |
+| `4000h-42FFh` | SD-card backend | driver | 745 | 23 | Record read and write through the IO Controller cache. |
+| `4300h-432Fh` | B: select probe | driver | 23 | 25 | Card availability, then the B: DPH. |
+| `4330h-43FFh` | Drive A: backend | driver | 164 | 44 | The build-selected A: backend. |
+| `4400h-47FFh` | Drive dispatcher | core | 179 | 845 | Routes A: to its backend, gated B: to the synthetic FAT BIOS, and C:/D: to SD units. |
+| `4800h-5FFFh` | V9958 console | driver | 3191 | 2953 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
+| `8A00h-8FFFh` | Boot banner printer | asset | 56 | 1480 | Prints the banner text beside it; runs once from cold boot, in mode 11. |
+| `9000h-A7FFh` | FAT BDOS backend | driver | 5128 | 1016 | FS2 client, native file manager, writable FAT BDOS personality, read cache, DPH and DPB. |
+| `A800h-A8FFh` | SIO services (bank 7) | core | 121 | 135 | `sio1_ioc_init`, `sio_core_enable_interrupts`, `sio_register_rx_sink`: reached only from bank 7 or from boot after `bank7_check`. |
+| `A900h-A9FFh` | Serial console tee (bank 7) | driver | 211 | 45 | Driver table, init/install, the CONST/CONIN/CONOUT tee and TX; polled through the console facade. |
 
 Data:
 

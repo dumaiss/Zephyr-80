@@ -56,6 +56,7 @@ XING_SELECT_END:
 ; Stack used only in SRAM mode. No VDP traffic; not ISR-safe; bounded copy.
 ; The builder mirrors ROM_ACCESS_BASE..+SIZE into each filesystem page's
 ; unused tail, so instruction fetches continue in ROM after OUT (C),B.
+	.area CODE (ABS)
 	.org ROM_ACCESS_BASE - 2
 xing_rom_read:
 	out (c),b

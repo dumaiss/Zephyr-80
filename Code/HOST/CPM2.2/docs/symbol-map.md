@@ -11,8 +11,8 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | ROM page 0: reset vector and common memory | `build/firmware.bin` | 65536 bytes |
 | Bank 7 payload | `build/bank7.bin` | 65536 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Assembler listing | `build/firmware.lst` | 1246180 bytes |
-| Linker symbol map | `build/firmware.map` | 65003 bytes |
+| Assembler listing | `build/firmware.rst` | 1255958 bytes |
+| Linker symbol map | `build/firmware.map` | 65631 bytes |
 | Layout manifest | `build/layout.manifest` | 1445 bytes |
 
 ## System Addresses
@@ -129,17 +129,17 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | `prepare_runnable_bank` | `F109h` | Page zero and default DMA. |
 | `init_page_zero` | `F113h` | Installs `JP WBOOT` and `JP FBASE`. |
 | `ctc_disable_interrupts` | `F288h` | Resets the CTC and programs its vector base. |
-| `boot_print_banner` | `F2A9h` | Prints the boot banner. |
+| `boot_print_banner` | `8A00h` | Prints the boot banner. |
 | `SELMEM` | `F1B0h` | Selects a program bank, keeping the RAM mode. |
 | `SETBNK` | `F1CAh` | Records the next disk DMA bank. |
 | `XMOVE` | `F1D5h` | Arms a cross-bank `MOVE`. |
 | `MOVE` | `F1F0h` | Same-bank or cross-bank move through the staging buffer. |
-| `sio_core_init` | `F2F3h` | Initializes SIO0/B and clears receive sinks. |
-| `sio1_ioc_init` | `F322h` | Initializes SIO1 for the IO Controller link; cold boot only. |
-| `sio_core_enable_interrupts` | `F35Fh` | Loads `I`, enters IM2, programs SIO0/B WR2. |
-| `sio_register_rx_sink` | `F3B4h` | Registers a receive sink for a BIOS-owned SIO channel. |
-| `sio_send_byte` | `F3C9h` | Blocking send on a BIOS-owned SIO channel. |
-| `sio_core_isr` | `F477h` | SIO interrupt body, called on the ISR stack. |
+| `sio_core_init` | `F2F0h` | Initializes SIO0/B and clears receive sinks. |
+| `sio1_ioc_init` | `A800h` | Initializes SIO1 for the IO Controller link; cold boot only. |
+| `sio_core_enable_interrupts` | `A833h` | Loads `I`, enters IM2, programs SIO0/B WR2. |
+| `sio_register_rx_sink` | `A864h` | Registers a receive sink for a BIOS-owned SIO channel. |
+| `sio_send_byte` | `F343h` | Blocking send on a BIOS-owned SIO channel. |
+| `sio_core_isr` | `F3B6h` | SIO interrupt body, called on the ISR stack. |
 | `xing_isr` | `F75Fh` | SIO IM2 entry under the shared IRQ dispatcher. |
 | `xing_select_ram_bank` | `F510h` | Selects a RAM bank while keeping mode 10 or mode 11. |
 | `xing_os_call_ix` | `F538h` | Calls a bank 7 routine in mode 11 and restores the latch. |
@@ -165,8 +165,8 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | `facade_entry` | `EC09h` | BDOS facade entry, reached from `FBASE`. |
 | `facade_reset` | `EF2Ah` | Resets the facade's DMA tracking. |
 | `zephyr_sysinfo` | `EF6Eh` | System information block returned by function 203. |
-| `sercon_init` | `F844h` | Arms the serial console fallback at cold boot. |
-| `sercon_install` | `F854h` | Rebinds the serial console after warm boot. |
+| `sercon_init` | `A914h` | Arms the serial console fallback at cold boot. |
+| `sercon_install` | `A924h` | Rebinds the serial console after warm boot. |
 
 ## Bank 7 Implementation Symbols
 
