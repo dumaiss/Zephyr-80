@@ -16,11 +16,144 @@
 
 ---
 
-## Architecture at a glance
+# Part 0 — The Exploded View
 
-Two entry paths reach the same FAT files. The guide is largely about keeping
-them separate where their semantics differ and shared where their implementation
-can be common.
+This part names the parts. It describes how the system is built; it does not say
+what you may do to it. Every rule in this document lives in Part I, and every
+procedure in Part II. If a sentence here sounds like an instruction, it is
+describing a mechanism, not imposing a constraint.
+
+Read it once before the rest. The procedures in Part II assume you know what the
+facade is, what bank 7 is for, and why there are two ways to reach the same
+file; without that they read as arbitrary ceremony.
+
+---
+
+## 0.1 The machine
+
+A Z80 with a 64 KiB address space, more memory than fits in it, and a
+microcontroller that owns the hardware the Z80 cannot reach.
+
+Eight 64 KiB SRAM banks sit behind a banking latch. Bank 0 is the ordinary
+application bank and backs common memory; banks 1-6 are application banks; bank
+7 is the operating system and is never application memory — the bank primitives
+reject any attempt to select it.
+
+The latch carries a bank number and a two-bit memory mode:
+
+| Mode | Name | `0000h-1FFFh` | `2000h-DFFFh` | `E000h-FFFFh` |
+|---|---|---|---|---|
+| `00` | ROM | ROM page | ROM page | ROM page |
+| `01` | flat | bank N | bank N | bank N |
+| `10` | application | bank N | bank N | bank 0 |
+| `11` | OS | bank N | **bank 7** | bank 0 |
+
+Modes 10 and 11 differ by one bit, and only in the middle. That single
+difference is the whole banked design, and it produces **three address classes**
+that the rest of this document refers to constantly:
+
+**The caller window, `0000h-1FFFh`.** The running program's bank in *both*
+modes. It holds CP/M's page zero — the warm-boot vector at `0000h`, the BDOS
+vector at `0005h`, the default FCBs, the default DMA at `0080h`. Because it does
+not move, ZSDOS reads the program's real page zero while the OS is running, with
+no copies to keep synchronised, and the common case of a default FCB and DMA
+needs no marshalling at all.
+
+**The switchable body, `2000h-DFFFh`.** The application's bank in mode 10; bank 7
+in mode 11. This is the OS's private implementation space. A program's memory
+here *disappears* while the OS runs, which is why anything the OS must read from
+or write to the caller has to be staged.
+
+**Common memory, `E000h-FFFFh`.** Bank 0 in both modes, the same bytes always
+visible. This is where crossing code, interrupt handlers, staging buffers and
+the published entry points live — and it is only 8 KiB, every byte of which is
+subtracted from every program's address space.
+
+The latch keeps the application's bank number while the OS runs, so entering and
+leaving the OS is a single bit change and nothing has to remember which bank was
+suspended.
+
+Alongside the Z80 sits the **IO Controller**, a PIC microcontroller reached over
+a synchronous serial link with a command lane and a bulk lane. It owns the SD
+card, the USB keyboard, and — importantly — the FAT filesystem. No FAT
+implementation runs on the Z80.
+
+### The exploded diagram
+
+Where the software actually sits. Addresses are from the current default build;
+`docs/memory-map.md` is regenerated every build and is the authority.
+
+```text
+          MODE 10 — what a program sees          MODE 11 — what the OS sees
+
+ FFFFh  +=====================================================================+
+        |  COMMON MEMORY — bank 0, identical in both modes, 8 KiB total       |
+        |                                                                     |
+        |    EC00h  BDOS facade: CALL 5, FBASE, staging, functions 200-218    |
+        |    F000h  BIOS tables, boot, banking helpers, SIO core              |
+        |    F538h  crossing gates  ·  F730h interrupt dispatch               |
+        |    F958h  staging buffers ·  FD00h IM2 vector page                  |
+        |    FE01h  BIOS state      ·  FE80h ISR / gate / facade stacks       |
+        +=====================================================================+
+ EC00h  |  CCP (ZCPR2), E400h-EBFFh, restored on warm boot                    |
+ E400h  +---------------------------------------------------------------------+
+        |  E000h-E3FFh  reserved for the program's interrupt callbacks        |
+ E000h  +-------------------------------+-------------------------------------+
+        |                               |  BANK 7 — the OS body               |
+        |                               |                                     |
+        |                               |    C000h  BIOS stacks, SD scratch,  |
+        |                               |           pristine CCP, FAT state   |
+        |   TRANSIENT PROGRAM AREA      |    9000h  FAT BDOS personality,     |
+        |   0100h-EC05h, 58.8 KiB       |           FS2 client, read cache    |
+        |                               |    8000h  font, boot banner         |
+        |   in the program's own bank   |    6000h  DPH/DPB, dir buffer,      |
+        |   (N = 0..6)                  |           reclaimable cache pool    |
+        |                               |    4800h  console driver (slot 0)   |
+        |                               |    3000h  BIOS facades, drivers,    |
+        |                               |           IOC command + bulk lanes  |
+        |                               |    2000h  ZSDOS                     |
+ 2000h  +===============================+=====================================+
+        |  CALLER WINDOW — the program's bank in BOTH modes                   |
+        |    0100h-1FFFh  the bottom of the TPA                               |
+        |    0000h JP WBOOT · 0005h JP FBASE · 005Ch FCBs · 0080h default DMA |
+ 0000h  +=====================================================================+
+
+                                  |  synchronous serial: command + bulk lanes
+                                  v
+        +---------------------------------------------------------------------+
+        |  IO CONTROLLER (PIC18F57Q84)                                        |
+        |    FatFs filesystem manager · FS2 service · SD card · USB keyboard  |
+        +---------------------------------------------------------------------+
+```
+
+Three things in that picture explain most of the design:
+
+- The OS body and the program's memory occupy **the same addresses**. They cannot
+  both be visible.
+- Common memory is **small and shared**, so what goes there is rationed.
+- The filesystem is **on the other side of a serial link**, so file operations
+  are transactions with latency, not memory accesses.
+
+---
+
+## 0.2 The software pieces
+
+| Piece | Where it runs | What it is |
+|---|---|---|
+| **ZCPR2** | common, `E400h-EBFFh` | the command processor; a ZCPR2-family CCP, restored from a pristine copy in bank 7 on warm boot |
+| **ZSDOS** | bank 7, `2000h` | the BDOS. A ZSDOS build, not stock CP/M. Authoritative for current drive, USER, and write protection |
+| **BDOS facade** | common, `EC00h` | the only application-to-OS crossing. Publishes `FBASE`, stages caller objects, enters mode 11, restores the caller's mapping on the way out |
+| **bank-7 dispatcher** | bank 7 | decides, per call, whether Zephyr semantics apply or the call goes to ZSDOS unchanged |
+| **BIOS** | split | CP/M jump table and crossing gates in common memory; console, storage and transport bodies in bank 7 |
+| **drivers** | bank 7 slots | console and storage backends behind facades, selected at build time |
+| **CP/M FAT personality** | bank 7, `9000h` | translates FCBs, 128-byte records, extents, USER areas and SEARCH into byte-oriented file operations |
+| **native API** | bank 7 | `ZOPEN`/`ZREAD`/`ZWRITE`/`ZCHDIR`/`ZMKDIR`, reached through BDOS function 218. Paths and bytes, no FCBs |
+| **FS2 client** | bank 7 | the byte-oriented engine both personalities converge on: resolver, handles, 512-byte read cache |
+| **IOC transport** | bank 7 + common | `IOCALL` (32-byte mailbox), `IOCBULK`/`IOCBULKW` (block transfer) over the command and bulk lanes |
+| **FatFs** | IO Controller | the actual filesystem, on the MCU, over the SD card |
+| **resource layer** | above the native API | caching, prefetch, streaming and symbolic asset lookup. Not a filesystem |
+
+How they connect:
 
 ```mermaid
 flowchart TB
@@ -66,22 +199,185 @@ flowchart TB
 
 Reading it:
 
-- **ZSDOS stays on the CP/M path and owns CP/M state.** The FAT drive reaches
-  it as an ordinary BIOS drive through a synthetic DPH, which is what lets
-  drive selection, USER, and write protection keep working normally.
+- **ZSDOS stays on the CP/M path and owns CP/M state.** The FAT drive reaches it
+  as an ordinary BIOS drive through a synthetic DPH, which is what lets drive
+  selection, USER and write protection keep working normally.
 - **The two personalities converge at FS2, not above it.** The CP/M personality
-  translates FCBs, 128-byte records, USER areas, and SEARCH semantics. The
-  native API does not.
+  translates FCBs, records, USER areas and SEARCH semantics. The native API does
+  not.
 - **The facade is the only application/bank-7 crossing.** Caller pointers and
-  buffers are staged there, so its aliasing and status-preservation rules are
-  part of the ABI.
+  buffers are staged there, which is why its aliasing and status-preservation
+  behavior is part of the ABI.
 - **The controller owns FAT.** No FAT implementation runs on the Z80.
 
-The current drive map is A: ROM rescue, B: FAT personality, and C:/D:
-conventional CP/M volumes. Drive letters are configuration, not ABI. The FAT
-namespace root in the current implementation is still named `/CPM/D`; that
-on-card path and the CP/M drive letter are separate configuration concerns and
-must be changed deliberately together if desired.
+Authority for each piece of CP/M state — who is allowed to be the one true copy
+of the current drive, USER, write protection and the rest — is a rule rather
+than a description, and the table lives in Part I, §2.
+
+---
+
+## 0.3 The two personalities
+
+This is the single most important concept in the document.
+
+The same files on the same card are reachable two ways, and the two ways mean
+different things:
+
+```text
+                         FatFs / media
+                              |
+                     +--------+--------+
+                     |                 |
+              CP/M compatibility   native Zephyr
+                     |                 |
+                 FCB / USER         paths / bytes
+                 128-byte records   larger transfers
+                 synthetic extents  directories
+```
+
+**The CP/M personality exists for unmodified software.** PIP, STAT, CRC, an
+assembler written in 1981 — none of them know anything about FAT, and none of
+them should have to. So the FAT drive is presented as an ordinary CP/M drive:
+FCBs, 128-byte records, extents, USER numbers, SEARCH FIRST/NEXT. Everything
+CP/M software expects is synthesized on top of a filesystem that has none of it
+natively.
+
+**The native personality exists so that new software need not inherit CP/M's
+limits.** A 128-byte record and a 36-byte FCB are not a good interface to a file
+in 2026. The native API takes paths, transfers arbitrary byte counts, and knows
+about directories.
+
+A native call still arrives through `CALL 5`. That does **not** make it a CP/M
+filesystem operation — BDOS function 218 is a syscall gateway to native
+semantics, not a CP/M function.
+
+They converge at FS2, deliberately low. Everything CP/M-shaped — extent
+arithmetic, `e5h` directory slots, the USER-to-`@N` projection, SEARCH
+continuation state — lives in the CP/M personality above FS2 and nowhere else.
+Collapsing the two views into one would mean either giving native software
+CP/M's limits or giving CP/M software semantics it cannot survive.
+
+The CP/M personality reaches ZSDOS as a **synthetic BIOS drive**. It supplies a
+DPH, a DPB and an allocation vector that describe a plausible empty disk, so
+ZSDOS can select and log the drive by its ordinary machinery. Real file access
+happens above that layer. The synthetic disk is also a safety net: an operation
+that accidentally falls through to ordinary ZSDOS disk processing sees an empty
+disk rather than whatever conventional drive was selected before.
+
+---
+
+## 0.4 The boundaries
+
+Knowing which crossings are contractual is what keeps you from breaking one by
+accident.
+
+| Boundary | Kind | Notes |
+|---|---|---|
+| `CALL 5` / `FBASE` | **ABI** | the published program interface, including the Zephyr function range |
+| BDOS function 218 descriptor | **ABI** | versioned; the native syscall gateway |
+| page zero conventions | **ABI** | `0000h`, `0005h`, default FCBs, `0080h` DMA |
+| CP/M BIOS jump table | **ABI** | order and entry semantics are fixed; new calls append |
+| BDOS functions 27 / 31 returns | **ABI** | caller-visible copies, which is why they are copies |
+| IOC command and bulk protocol | **ABI across processors** | Z80 and MCU are flashed separately; both sides must agree, and capability level is part of the contract |
+| facade → bank-7 dispatcher | internal | staging and crossing mechanism, may change together |
+| dispatcher → ZSDOS | internal | but ZSDOS's own state authority is not internal |
+| CP/M personality → FS2 | internal | the convergence point |
+| native API → FS2 | internal | |
+| FS2 → IOC transport | internal | |
+| console facade → driver table | internal | seven-entry table; stable by convention, not published to programs |
+| storage facade → backend | internal | neutral `stg_a_*` entry points |
+| SIO0/B, SIO1 lanes | **hardware** | flow control, clocking and interrupt behavior are electrical facts |
+| banking latch | **hardware** | the decoder revision is part of the contract |
+
+The asymmetry worth internalizing: **anything a program or another processor can
+observe is contractual, and almost nothing else is.** The layering inside bank 7
+is yours to rearrange; the moment a value, pointer or packet crosses into an
+application or onto the wire, it is not.
+
+---
+
+## 0.5 The drive and namespace model
+
+Four drive letters, three kinds of backend:
+
+| Drive | Backend | Notes |
+|---|---|---|
+| `A:` | ROM rescue disk | read-only volume in flash; the recovery path, built from a manifest |
+| `B:` | FAT personality | synthetic DPH over FS2 and FatFs on the controller |
+| `C:`, `D:` | conventional CP/M volumes | real record-oriented CP/M filesystems on SD units |
+
+`C:` and `D:` matter beyond their own contents: they are the **oracle**. When a
+FAT behavior is in question, the same operation on a conventional drive shows
+what CP/M actually does.
+
+The FAT namespace projects CP/M's USER numbers onto directories:
+
+```text
+USER 0: /CPM/D/<relative-CWD>/<name>
+USER N: /CPM/D/@N/<relative-CWD>/<name>
+```
+
+Three separate things are easy to conflate here:
+
+- **The drive letter** (`B:`) is the CP/M-visible drive number. It is
+  configuration, not ABI, but it appears in more places than one constant —
+  layout definitions, dispatch arithmetic, utilities with compiled-in
+  assumptions, tests, and help text. Changing it is a coupled release.
+- **The on-card root** (`/CPM/D`) is a filesystem convention. The `D` is
+  historical and no longer matches the drive letter. That is legal, because the
+  root component is not the ABI drive number — but a future remap should state
+  deliberately whether the directory is renamed too.
+- **The USER projection** (`@N`) is a directory layer inside the root, owned by
+  the FAT personality. A relative current directory belongs to the USER that
+  selected it, and drive *availability* is a property of the root — not of
+  whatever subdirectory happens to be current.
+
+---
+
+## 0.6 Where changes usually land
+
+The reader's index. Find the shape of your change, then read the procedure.
+
+| I want to… | The relevant piece | Procedure |
+|---|---|---|
+| build an image, or change a build option | the Makefile and its validators | §9 |
+| change or intercept a BDOS function | facade + bank-7 dispatcher | §11 |
+| add a new native (non-CP/M) operation | native API + function 218 gate | §12 |
+| add or change an IOC command | FS2 / IOC protocol, both processors | §13 |
+| add a new kind of drive | storage personality + synthetic DPH | §14 |
+| write a driver for new hardware | driver slots, facades, driver tables | §15 |
+| make something writable that was not | personality + FS2 + mutation invalidation | §16 |
+| add a cache, handle or lease | resource pool + invalidation matrix | §17, Appendix C |
+| change USER, CWD or the drive map | personality namespace + every coupled consumer | §18 |
+| write or fix a `.COM` utility | CP/M/ZCPR transient conventions | §19 |
+| make something faster | measure first, then transaction count | §20 |
+| write a test for any of the above | the qkz80 harness | §21 |
+| find out what CP/M really does | characterization tools, conventional-drive oracle | §22, §27 |
+| know what to run before committing | the regression checklist | §31 |
+
+If your change does not fit a row, that is worth noticing before you start: it
+usually means either the change spans layers that were deliberately separated,
+or it belongs somewhere other than where you first looked.
+
+---
+
+## 0.7 What to read next
+
+- **Part I** is the constitution: what must remain true regardless of how the
+  code is arranged. Read it once in full. It is short, and every rule in it was
+  paid for.
+- **Part II** is the procedures, organized as "I want to change X." Read the one
+  section you need, plus §9 if you have not built the system before.
+- **Part III** is verification: how to prove both that your change works and
+  that you did not quietly redefine CP/M. Read §21 before writing a test and
+  §31 before committing.
+- **Appendix A** gives the current file names, symbols and addresses for
+  everything described above. This part is stable across refactors; Appendix A
+  is not, and the generated `docs/memory-map.md` supersedes both for any
+  address.
+- **`FAT-BRINGUP-LESSONS-LEARNED.md`** is the history: the bugs and experiments
+  that produced these rules. Nothing in this document depends on it, but it
+  explains why several of the rules are stricter than they look.
 
 ---
 
@@ -243,24 +539,14 @@ Path resolution belongs to the intercepted file/native operation after login.
 
 ## 4. Preserve personalities instead of collapsing them
 
-Zephyr deliberately presents more than one view of the same storage.
+Zephyr deliberately presents more than one view of the same storage. §0.3
+describes the two personalities and where they converge; this section is the
+constraint that keeps them apart.
 
-```text
-                         FatFs / media
-                              |
-                     +--------+--------+
-                     |                 |
-              CP/M compatibility   native Zephyr
-                     |                 |
-                 FCB / USER         paths / bytes
-                 128-byte records   larger transfers
-                 synthetic extents directories
-```
-
-The CP/M personality exists for unmodified software.
-
-The native personality exists so Zephyr software does not inherit CP/M's
-128-byte record and FCB limitations.
+Do not migrate CP/M-shaped semantics below the convergence point, and do not
+give the native API CP/M's limits in order to share code with the compatibility
+path. Extent arithmetic, directory-slot encoding, the USER-to-`@N` projection
+and SEARCH continuation state belong in the CP/M personality and nowhere else.
 
 A native call may still enter through CALL 5. That does **not** make it a CP/M
 filesystem operation. Function 218 is a syscall gateway to native Zephyr
@@ -526,7 +812,190 @@ Writable stale handles do not use the read-side reopen-and-retry policy.
 This part is organized by contributor task: "I want to change X; what is the
 safe procedure?"
 
-## 9. General alteration workflow
+## 9. How to build the OS
+
+Everything in this guide assumes you can produce an image and read what the
+build says about it. The build is also the first verification step: most layout
+and ABI mistakes are caught by the build itself, not by running the machine.
+
+### Where the build lives
+
+```text
+Code/HOST/CPM2.2/          the operating system: BIOS, ZCPR2, ZSDOS, tools
+  src/                     BIOS, drivers, layout declarations
+  cpm22/ zcpr2/ zsdos/     command processor and BDOS sources
+  tools/                   image builder, validators, doc generator, harness runners
+  tests/                   libqkz80 harnesses
+  config/                  payload map and the cpmtools disk definition
+  build/                   every generated artifact
+  docs/                    generated and hand-written documentation
+```
+
+All commands below run from `Code/HOST/CPM2.2`.
+
+### Prerequisites
+
+| Needed for | Tool |
+|---|---|
+| the image | GNU Make, Python 3, SDCC's `sdasz80`, `sdldz80`, `makebin` |
+| ZCPR2 and ZSDOS | a host C compiler; the CP/M emulator is vendored in `tools/runcpm` and compiled on first use |
+| drive A: contents | the sibling `Utilities` and `Monitor` projects, built automatically |
+| `make test` | a C++17 compiler and libqkz80 headers/library |
+
+Nothing is resolved from a checkout elsewhere on your disk. The period
+assemblers that build ZCPR2 and ZSDOS run under the vendored RunCPM, which is
+patched to select `CCP_ZCPR3`; an unmodified upstream RunCPM has never worked
+for this build, so do not point `RUNCPM=` at one.
+
+### The ordinary build
+
+```sh
+make
+```
+
+That produces the default machine: physical V9958 console, ROM drive A:, SD
+drive B: with the FAT personality enabled. It ends by printing the
+configuration it just built, and the name of the image to flash:
+
+```text
+  ROM built:  CCP=zcpr2  BDOS=zsdos
+    FAT drive: enabled
+    build/zephyr80.bin
+    build/zephyr80-zcpr2-zsdos.bin   <- flash this one to be sure
+```
+
+The stamped copy exists because `build/zephyr80.bin` is the same filename for
+every configuration. Verifying one configuration and then flashing "the ROM"
+has already shipped the wrong image once. Flash the stamped name.
+
+### Build-time configuration
+
+| Variable | Values | Meaning |
+|---|---|---|
+| `CONSOLE` | `v9958` (default), `vdrip` | which console backend is linked into the console slot |
+| `STORAGE_A` | `rom` (default), `vdrip` | which drive A: backend is linked |
+| `FAT_BIOS_M1` | `1` (default), `0` | `0` parks the synthetic FAT drive without moving anything; a recovery build |
+| `CCP` / `BDOS` | `zcpr2` / `zsdos` | fixed. The stock CP/M CCP and BDOS cannot run behind the banked OS, and the Makefile refuses any other pair. |
+
+Two combinations are constrained rather than free:
+
+- `STORAGE_A=vdrip` requires `CONSOLE=vdrip`, because both ride the shared
+  VDrip transport.
+- `CONSOLE=vdrip` currently does not build at all. The transport is 654 bytes
+  and the common-memory hole it used to occupy now holds the crossing gates,
+  the interrupt dispatcher and the serial console tee. This is arithmetic, not
+  a regression to hunt; `docs/vdrip-backend-restoration.md` has the
+  measurements.
+
+A `FAT_BIOS_M1=0` build is marked in the filename (`-nofat`). The other
+configurations are not, which is another reason to read the printed summary.
+
+### What the build actually does
+
+```text
+src/zephyr.asm
+  -> build/zephyr_build.asm      Makefile rewrites the console/storage/transport
+                                 .include lines and the feature flags for the
+                                 selected configuration
+  -> sdasz80                     one assembly of the whole address space
+  -> sdldz80 -> firmware.ihx     absolute .org layout, no relocation
+       check_overlap.py          FAILS on any byte emitted twice
+       check_diag_record.py      FAILS if the IOC failure record drifts from
+                                 the copy the CP/M tools assemble against
+  -> makebin -> firmware_flat.bin
+  -> split_banked_image.py       cuts the flat space into ROM page 0 (common
+                                 memory, reset vector) and the bank 7 payload,
+                                 installing ZCPR2 at CBASE and ZSDOS at its org
+  -> build_zephyr_image.py       assembles the 512 KiB burnable ROM from page 0,
+                                 bank 7 and the ROM-disk chunks; writes
+                                 build/layout.manifest and layout-report.md
+  -> generate_memory_docs.py     validates every declared region against its
+                                 limit and writes docs/memory-map.md and
+                                 docs/symbol-map.md
+```
+
+Two dependencies are worth knowing because they look like nothing:
+
+- ZSDOS is assembled against `build/firmware.map`. It jumps to `WBTRAP`, the
+  common warm-boot trap, by absolute address, and that address moves whenever
+  the BIOS is rebuilt. The address is generated, never written down; a stale
+  one would assemble cleanly and jump into the middle of something at run time.
+- ZCPR2 is assembled against `CBASE` and `CBIOS_BASE` read directly out of the
+  firmware sources, so the command processor cannot drift from the layout.
+
+### The ROM disk
+
+`make` rebuilds the sibling `Utilities` and `Monitor` projects every time and
+takes their binaries for drive A:. That is deliberate: their outputs used to be
+picked up as found, so a clean build here could still ship tools compiled
+against a different BIOS, and after one branch switch every IOC tool on A:
+failed with a transport error.
+
+Shipping a new transient on A: means adding a `MANIFEST` row in
+`tools/build_rom_disk.py`, not copying a file anywhere. Staging happens under
+`build/`; nothing in the tracked tree is rewritten.
+
+`images/*.cpm` are user-owned volumes. The build never writes them, and neither
+should you.
+
+### Reading the result
+
+Primary artifacts:
+
+| Artifact | Meaning |
+|---|---|
+| `build/zephyr80-<ccp>-<bdos>.bin` | the 512 KiB image to flash |
+| `build/firmware.bin` | ROM page 0: reset vector and common memory |
+| `build/bank7.bin` | bank 7 payload: ZSDOS, the BIOS and drivers |
+| `build/firmware.lst` | the listing; the symbol authority for harnesses |
+| `build/layout-report.md` | region placement as the image builder saw it |
+| `docs/memory-map.md` | generated map, per-region free space, validation report |
+| `docs/symbol-map.md` | generated jump tables, IM2 page and symbols |
+
+`docs/memory-map.md` and `docs/symbol-map.md` are generated on every build and
+are the address authority afterwards. Prose size comments in sources drift;
+these do not. Never hand-edit them.
+
+After a layout-affecting change, read the generated map and confirm:
+
+- every region still ends at or below its limit, and the free-space column is
+  what you expected;
+- the CP/M BIOS jump table is intact and in order;
+- the region you grew did not silently consume the slack another region was
+  relying on.
+
+### What the build refuses to do
+
+The build stops rather than producing a subtly wrong image when:
+
+- two sections emit bytes at the same address (`check_overlap.py` names the
+  nearest symbol on each side);
+- a declared region runs past its limit;
+- the IOC failure record definition and the CP/M tools' mirror of it disagree;
+- an unsupported `CONSOLE`, `STORAGE_A`, `FAT_BIOS_M1`, or `CCP`/`BDOS`
+  combination is requested;
+- a sibling binary the ROM disk manifest names has not been built.
+
+Do not work around these by moving something else out of the way until you have
+read the section on driver slots below.
+
+### Cleaning
+
+```sh
+make clean
+```
+
+removes `build/` here and cleans the sibling projects too.
+
+### Pairing
+
+The ROM must be paired with memory decoder revision 11 from
+`Code/HDL/WinCUPL`. An image built here and flashed onto a machine with an
+older decoder will not boot, and the failure looks like a BIOS fault.
+
+---
+
+## 10. General alteration workflow
 
 Before changing OS behavior:
 
@@ -558,7 +1027,7 @@ Before changing OS behavior:
 
 ---
 
-## 10. How to add or intercept a BDOS call
+## 11. How to add or intercept a BDOS call
 
 Use the existing common facade and bank-7 dispatcher.
 
@@ -656,7 +1125,7 @@ Function 30 (set attributes) is the current example: FAT attribute projection
 was deliberately removed.
 
 
-## 11. How to add a native Zephyr operation
+## 12. How to add a native Zephyr operation
 
 Function 218 is the current native-filesystem precedent.
 
@@ -736,7 +1205,7 @@ personalities reach the same file.
 
 ---
 
-## 12. How to extend FS2 or the IOC protocol
+## 13. How to extend FS2 or the IOC protocol
 
 Protocol growth is additive.
 
@@ -797,7 +1266,7 @@ nonce for host-side state that cannot survive such a reset in reality.
 
 ---
 
-## 13. How to add or change a storage personality
+## 14. How to add or change a storage personality
 
 A storage personality must separate three concerns:
 
@@ -843,7 +1312,195 @@ false after a drive-map change.
 
 ---
 
-## 14. How to implement writable behavior
+## 15. How to add a driver for new hardware
+
+This section is written for the case of a builder who has made a new card — a
+video card is the running example — and wants a BIOS driver for it.
+
+### The slot idea, and what it is really worth
+
+Driver code lives in fixed slots rather than being packed end to end. The slots
+trade a little internal slack for a stable map: a driver can grow without
+forcing every later driver to slide upward into a card castle, and the addresses
+in a listing mean the same thing across builds.
+
+The slack is the point. When your driver grows, the slack is what pays for it,
+and when the slack runs out the build tells you which symbol you collided with.
+
+### Where the slots actually are
+
+The declarations are in the "Fixed Driver Slots" block of `src/cbios_defs.inc`.
+Read that block, not this list, before placing anything — but read this first,
+because the declarations alone will mislead you:
+
+| Slot | Declared base | Reality |
+|---|---|---|
+| 0 | `BIOS7_BASE + 1800h` = `4800h`, bank 7 | **live** — the console driver slot |
+| 1-4 | `E400h`, `E800h`, `EC00h`, `F000h`, common | **vestigial** — those addresses now hold the CCP, the BDOS facade and the BIOS |
+| 5 | `F680h`, common | **oversubscribed** — the interrupt dispatcher and serial console tee now occupy that run |
+
+So the honest statement for a new card today is: **your driver goes in bank 7.**
+Slots 1-5 are not free real estate waiting for you; their constants survive
+because code still references them, not because the space is available. A patch
+that places a new driver at `E800h` will fail `check_overlap.py`, and that
+failure is correct.
+
+The console slot has room. In the current default build the console region runs
+`4800h-5FFFh` — 6144 bytes, of which the V9958 driver uses about 3.2 KiB and
+nearly 3 KiB is free. `docs/memory-map.md` prints the live numbers after every
+build; use those, not these.
+
+### Bank 7 by default; common memory only if you must
+
+Common memory is 8 KiB, and every byte you move there comes out of every
+program's address space. Only three kinds of thing belong there:
+
+- interrupt handlers and everything they touch;
+- code that changes the memory mode, and the stacks it runs on;
+- buffers that carry a program's data across the mapping.
+
+A video driver is none of these. Its parser, renderer, font handling, cursor
+state and port sequences all belong in bank 7. If you believe you need a byte in
+common memory, say which of the three cases it is.
+
+### Adding a console backend, step by step
+
+The console facade in `src/cbios_console.asm` keeps the CP/M entry points stable
+and dispatches through a driver table. Adding a backend means supplying that
+table and being selectable at build time.
+
+**1. Write `src/cbios_console_<name>.asm`.**
+
+Start it at the console slot base and bracket it with the region symbols the
+validator looks for:
+
+```asm
+	.module <name>_console
+
+	.area CODE (ABS)
+	.org CBIOS_DRIVER_SLOT0_BASE
+
+<NAME>_CONSOLE_CODE_START:
+	; ... table, entry points, state ...
+<NAME>_CONSOLE_CODE_END:
+```
+
+**2. Publish the driver table.** Seven 16-bit little-endian entries, in this
+order, at the head of the driver:
+
+```text
++00 const   -> A = FFh if input is available, A = 00h otherwise
++02 conin   -> blocking input, character returned in A
++04 conout  -> blocking output of the character in C
++06 list    -> list/printer output of C, or a no-op
++08 punch   -> punch output of C, or a no-op
++0A reader  -> reader input, A = character or CP/M EOF
++0C listst  -> A = FFh if the list device is ready, A = 00h otherwise
+```
+
+The order is the contract. An unimplemented device is a `ret`, not a missing
+entry.
+
+**3. Provide the neutral backend aliases.** The rest of the BIOS calls the
+selected backend by neutral name, so alias your own labels to them:
+
+| Alias | Called by | Purpose |
+|---|---|---|
+| `console_backend_driver` | `console_init` | your driver table |
+| `console_backend_cold_init` | cold boot | first-time hardware bring-up |
+| `console_backend_init` | `console_init`, warm boot | re-init preserving owned state |
+| `console_backend_send_frame` | `VIDEO_SEND` | one raw video request, payload ≤ 16 bytes |
+| `console_backend_data_write_block` | `VIDEO_SEND` | the block-data video request |
+| `console_backend_reset_display` | `VIDEO_SEND` with A = 00h or FFh | reinitialize the display |
+
+Cold init and warm init usually differ only in whether they establish or
+preserve driver-owned hardware shadow state. Warm boot reinitializes the console
+after a transient has taken over the display, so warm init must be able to
+rebuild the screen from driver state alone.
+
+**4. Wire it into the build.** Four places, all of which the build will catch if
+you miss them:
+
+- `Makefile`: add the name to `VALID_CONSOLES`. The selected source is included
+  by rewriting the `.include "cbios_console_vdrip.asm"` line in `src/zephyr.asm`
+  into `build/zephyr_build.asm`, so the file must be named
+  `src/cbios_console_<name>.asm`.
+- `tools/generate_memory_docs.py`: add a `CONSOLE_REGIONS` entry naming your
+  `_CODE_START` and `_CODE_END` symbols and the limit they must stay below.
+  Without this your driver is unvalidated and undocumented.
+- `tools/build_zephyr_image.py`: add the name to the `--console` choices; it is
+  recorded in the layout manifest and the report.
+- `src/cbios_defs.inc`: add a code-base symbol only if your driver needs one of
+  its own. A console backend normally reuses `CBIOS_DRIVER_SLOT0_BASE`.
+
+**5. Build, then read the map.**
+
+```sh
+make CONSOLE=<name>
+```
+
+Then open `docs/memory-map.md` and confirm your region appears, starts where you
+declared, ends below its limit, and left the free space you expected.
+
+### Rules your driver has to keep
+
+These come from the console path contract, and violating them produces faults
+that are expensive to find on hardware:
+
+- **Input and output are separate concerns.** `CONST` reports availability,
+  `CONIN` returns one byte, `CONOUT` emits one byte. A keyboard or packet
+  handler must never draw characters, move the cursor or scroll the display. An
+  echo test may do `CONIN -> CONOUT`; that is a harness behavior, not a shortcut
+  inside the driver.
+- **Do not expect `BC` to survive.** The facade preserves `DE` and `HL` around
+  the indirect call but not `BC` — the packed facade region has no free bytes to
+  save it. Callers must not hold a live value in `BC` across a console BIOS
+  call, and your backend may clobber it.
+- **You run on the console stack.** Dispatch switches to a private console stack
+  in the BIOS stack reserve and restores the caller's stack on return. Do not
+  assume the caller's stack depth, and do not switch stacks yourself.
+- **Never call `CALL 5` from bank 7**, and never call BDOS from an interrupt
+  handler. The facade is not reentrant.
+- **Keep interrupt work small.** No large redraws from an ISR, no expensive
+  parsing there, no waiting for transmit completion with interrupts disabled. A
+  receive sink should enqueue the byte, update flow control, and return.
+- **`E000h-E3FFh` belongs to the running program.** The operating system, your
+  driver included, must not use it.
+- **Document each public entry point** with its inputs, outputs, clobbered
+  registers, whether it may block, and whether it is ISR-safe. The existing
+  drivers do this and the headers are part of the design documentation.
+
+### Storage and other backends
+
+The same shape applies elsewhere. `src/cbios_storage.asm` owns the storage
+facade and the drive dispatcher routes A: to its build-selected backend; exactly
+one A: backend links per build, and they all `.org` at
+`CBIOS_STORAGE_A_CODE_BASE` and export the neutral `stg_a_*` entry points. A new
+storage backend is a new `src/cbios_storage_<name>.asm`, a new `STORAGE_A`
+value, and a new region entry — the same four wiring points.
+
+For anything that is not console or storage, prefer a private driver table
+behind an existing facade over a new publicly visible entry point.
+
+### If it does not fit
+
+Report the conflict; do not make room by eviction.
+
+State the exact ranges and sizes: what you need, what is there, and by how many
+bytes you are over. The `CONSOLE=vdrip` case in the Makefile is the model for
+this — 654 bytes of transport against a hole that no longer exists, written down
+as arithmetic with the addresses named, and left failing deliberately pending a
+decision. That is a better outcome than a build that fits because something else
+was quietly removed.
+
+Specifically, do not resolve a shortage by disabling a working subsystem,
+reordering the BIOS jump table, reusing an existing jump-table entry for new
+semantics, or moving a CP/M-visible entry point. If new BIOS calls are genuinely
+needed, append them after the existing entries.
+
+---
+
+## 16. How to implement writable behavior
 
 Writable support should be brought up in semantic layers.
 
@@ -904,7 +1561,7 @@ The application may need to reopen/re-stat and decide what recovery is safe.
 
 ---
 
-## 15. How to manage caches, leases, and scarce handles
+## 17. How to manage caches, leases, and scarce handles
 
 Correctness must not depend on caches.
 
@@ -1001,7 +1658,7 @@ The practical lesson is:
 
 ---
 
-## 16. How to manage USER, CWD, and drive mappings
+## 18. How to manage USER, CWD, and drive mappings
 
 For the current FAT personality:
 
@@ -1088,7 +1745,7 @@ state and make later path replay fail far from the formatter.
 
 ---
 
-## 17. How to write CP/M/ZCPR utilities
+## 19. How to write CP/M/ZCPR utilities
 
 Utilities that sit above the new native services still run under CP/M/ZCPR and
 must obey its transient conventions.
@@ -1161,7 +1818,7 @@ For a move, delete the source only after destination close/commit succeeds.
 
 ---
 
-## 18. How to optimize without breaking compatibility
+## 20. How to optimize without breaking compatibility
 
 Optimize from the bottom of the cost stack upward.
 
@@ -1225,7 +1882,156 @@ design.
 A contributor should be able to prove both "my feature works" and "I did not
 quietly redefine CP/M."
 
-## 19. Characterize before emulating
+## 21. The qkz80 harness: how to prepare a test
+
+The rest of Part III says what to prove. This section says how to build the
+thing that proves it.
+
+### What the harness is
+
+`make test` assembles nothing new. It takes the machine code the ordinary build
+already produced, loads it into libqkz80 — a Z80 CPU emulator — and calls
+routines in it directly, with the hardware mocked.
+
+```sh
+make            # the harness runs against build/ artifacts, so build first
+make test
+```
+
+Three harnesses exist today, and each proves a different kind of thing:
+
+| Runner | Harness | Proves |
+|---|---|---|
+| `tools/test_irq_core.py` | `tests/irq_core.cpp` | interrupt tokens, IOC error paths, registration, every CTC/SIO vector, context preservation, ISR stack high-water mark |
+| `tools/test_fat_bios_m1.py` | `tests/fat_bios_m1.cpp` | the synthetic FAT BIOS DPH, empty READ, WRITE failure, bounds, the disabled gate |
+| `tools/test_fat_bdos_ro.py` | `tests/fat_bdos_ro.cpp` | FAT BDOS routing, all-USER raw SEARCH, USER-relative CHDIR, the FS2 handle lifecycle, error mapping, the writable FCB personality |
+
+`test_irq_core.py` also does something no emulator can: before running anything
+it greps every source but `cbios_irq.asm` for `di`, `ei`, `reti`, `retn`, `im`
+and `ld i,a`, and fails the build if it finds one. The interrupt architecture is
+a source-level rule, so it is checked at source level.
+
+Needs a C++17 compiler and libqkz80, which is why `make test` is deliberately
+separate from `make`.
+
+### What it is not
+
+It is not a machine model. There is no banking, no SIO or CTC electronics, no
+timing, and the mocked ports answer however the harness says they answer. It
+does not replace `TIMTEST` or any other run on real hardware.
+
+What it earns you is the class of fault that is expensive to find on the
+machine: a lost IFF across an IOC lane, an unbalanced save/restore token, a CTC
+channel stopped at the wrong port, an ISR that outgrows its stack, a handle that
+is not closed on an error path, an off-by-one in extent arithmetic.
+
+### Anatomy of a harness
+
+Every existing harness has the same five parts. Copy the shape.
+
+**1. The runner (Python).** Parses `build/firmware.lst` for symbol addresses,
+adds the numeric constants from `src/cbios_defs.inc`, writes them to a plain
+`name value` text file, compiles the C++ harness against `-lqkz80`, and runs it
+with the flat image and the symbol file:
+
+```python
+symbols, _ = parse_listing(build / "firmware.lst")
+add_defs(symbols, root / "src/cbios_defs.inc")
+```
+
+Any label the listing shows is available — no `.globl` needed — and any
+`NAME = value` in `cbios_defs.inc` is available as a constant. Refer to
+addresses by symbol. A harness that hardcodes an address will keep passing after
+the layout moves.
+
+**2. The CPU subclass.** Override the I/O hooks and make the *unexpected* ones
+throw, so the test fails loudly rather than reading a silent zero:
+
+```cpp
+void port_out(qkz80_uint8, qkz80_uint8) override { throw runtime_error("unexpected I/O"); }
+```
+
+Note that this libqkz80 build omits `OUT (C),A`; a harness that needs it
+supplies that port-only opcode through the `block_io` hook.
+
+**3. The rig.** Loads `build/firmware_flat.bin` into all 64 KiB, loads the
+symbol table, sets an initial `SP`, and holds the mock state.
+
+**4. The call driver.** This is the part worth copying exactly:
+
+```cpp
+void call(const string &k) {
+    // push a sentinel return address, jump to the symbol
+    // run until PC reaches the sentinel, with an instruction budget
+    // intercept calls to IOCALL / IOCBULK / IOCBULKW and service them in C++
+    need(budget, "timeout " + k);
+    need(cpu.regs.SP.get_pair16() == sp, "stack " + k);
+}
+```
+
+Two of those lines are guarantees, not bookkeeping. The **budget** turns an
+infinite loop into a named failure instead of a hung test. The **stack equality
+check** catches unbalanced push/pop on every single call, for free — which is
+exactly the defect class that is hardest to see on hardware.
+
+**5. Mocked boundaries.** Rather than emulating the IO Controller, the harness
+intercepts `PC` at the published entry points and services them in C++, then
+fakes the return:
+
+```cpp
+if (pc == at("IOCALL"))        mock_iocall();
+else if (pc == at("IOCBULK"))  mock_iocbulk();
+else if (pc == at("IOCBULKW")) mock_iocbulkw();
+else cpu.execute();
+```
+
+The mock reads the request out of `FAT_TX` and writes the reply into `FAT_RX` at
+the real offsets, so reply lengths and status codes are exercised as the
+protocol defines them, not as the caller wishes they were.
+
+### Writing a new harness
+
+1. **Pick the boundary you are testing** — bank-7 worker, the crossing gate, or
+   the FCB personality. They prove different things and one does not substitute
+   for another.
+2. **Copy the nearest existing harness.** `fat_bdos_ro.cpp` if you need a
+   modelled controller; `irq_core.cpp` if you need mocked ports and interrupt
+   state.
+3. **Model the file or device, not the expected answer.** `fat_bdos_ro.cpp`
+   keeps a real `map<string, vector<unsigned char>>` behind the mock so that
+   open, read, write, extend, rename and unlink have to agree with each other.
+4. **Poison your defaults.** When the mock extends a file it fills with `0xCC`,
+   not zero, precisely so that a zero-fill guarantee in the implementation is
+   testable. A mock that helpfully provides the expected behavior makes its
+   test worthless.
+5. **Count round trips, not only results.** The read tests assert the exact
+   number of opens, reads and bulk transfers for a nine-record read. That is how
+   a silently broken deblock cache or a handle that stopped being reused gets
+   noticed, since the data would still be correct.
+6. **Put scratch where nothing owns it.** Test FCBs and DMA buffers must sit
+   outside live pools — the read cache leases lines from the resource cache pool
+   at `6600h-7FFFh`, and a harness that scribbled there was testing the cache,
+   not the code.
+7. **Add it to the `test` target** in the Makefile so it runs with the others.
+8. **Mutation-test it** before you trust it; the next section says how.
+
+### Standalone monitor-loaded tests
+
+A monitor-loaded test is a different tool and stays separate. It may have
+`.org 0x8000`, a `start:`, an echo loop, a standalone platform shim binding
+local adapter names to fixed helper addresses, and test-only constants.
+
+A BIOS driver may have none of those: no monitor org, no `start:`, no echo loop,
+no demo banner, no dashboard redraw, and no BIOS helper reached through a stale
+map-file address. Keep the binding in the shim, and let the BIOS-integrated
+build resolve the same adapter names to real BIOS symbols.
+
+Iterating on a CP/M transient does not require a ROM build. Rebuild the `.COM`
+and hand over its path.
+
+---
+
+## 22. Characterize before emulating
 
 Documentation is not the complete BDOS compatibility contract.
 
@@ -1253,7 +2059,7 @@ rule.
 
 ---
 
-## 20. Test both personalities
+## 23. Test both personalities
 
 CP/M FCB access and the native byte API are two views of the same files.
 
@@ -1296,7 +2102,7 @@ Adding a native operation therefore requires a direct native harness case.
 
 ---
 
-## 21. Model the real memory path
+## 24. Model the real memory path
 
 A harness must model the machine, not only the function signature.
 
@@ -1313,7 +2119,7 @@ Do not treat it as an exotic edge case.
 
 ---
 
-## 22. Mutation-test the tests
+## 25. Mutation-test the tests
 
 A passing assertion is not evidence that the test can detect the defect.
 
@@ -1332,7 +2138,7 @@ implementation itself must establish the guarantee.
 
 ---
 
-## 23. Boundary-value checklist
+## 26. Boundary-value checklist
 
 For byte/record/file operations, include boundaries around the actual
 abstractions:
@@ -1369,7 +2175,7 @@ runtime.
 
 ---
 
-## 24. Use the conventional drive as an oracle
+## 27. Use the conventional drive as an oracle
 
 A standard-BDOS compatibility test should run on both:
 
@@ -1395,7 +2201,7 @@ accidental.
 
 ---
 
-## 25. Cross-drive and USER regression matrix
+## 28. Cross-drive and USER regression matrix
 
 Always test both directions of explicit drive crossing.
 
@@ -1435,7 +2241,7 @@ Keep an equivalent asymmetric matrix as the system evolves.
 
 ---
 
-## 26. Application probes complement unit tests
+## 29. Application probes complement unit tests
 
 Different programs expose different assumptions.
 
@@ -1457,7 +2263,7 @@ actual BDOS calls.
 
 ---
 
-## 27. Failure triage
+## 30. Failure triage
 
 When a command fails, separate the layers before changing code.
 
@@ -1497,21 +2303,24 @@ Before debugging a new IOC feature:
 
 ---
 
-## 28. Minimum pre-commit regression checklist
+## 31. Minimum pre-commit regression checklist
 
 For a change touching BDOS/native storage integration, the minimum useful
 pre-commit suite is:
 
 ### Build/layout
 
-- host build succeeds;
+- host build succeeds (`make` in `Code/HOST/CPM2.2`, and in each affected
+  configuration, not only the default one);
 - IOC normal/diagnostic builds succeed where applicable;
-- generated memory map has no overlap;
+- generated memory map has no overlap, and `docs/memory-map.md` was read rather
+  than assumed;
 - common-memory growth is intentional and justified;
 - allocator-owned/reclaimable ranges remain allocator-owned.
 
 ### Host harness
 
+- `make test` passes;
 - bank-7 tests pass;
 - native API tests pass for any affected operation;
 - aliasing case passes where relevant;
