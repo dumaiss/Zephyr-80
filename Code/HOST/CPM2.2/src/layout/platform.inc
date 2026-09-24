@@ -75,3 +75,19 @@ SIO_WR1_TX_INT_ENABLE       = 0x02
 
 ; --- Dependent Aliases & Composites ---
 SIO_WR1_RX_TX_INT           = SIO_WR1_RX_INT_ALL | SIO_WR1_TX_INT_ENABLE
+
+; SIO status bits.  Here rather than in common/sio.asm because several
+; translation units test them and a constant cannot be linked.
+SIO_RX_READY			= RR0_RX_AVAILABLE
+SIO_TX_READY			= RR0_TX_EMPTY
+; Z80 SIO RR0 bit 5 is CTS.  A set bit means CTS asserted.
+SIO_RR0_CTS			= 0x20
+
+; SIO0/B port aliases.  Several units address the console SIO; a constant
+; cannot be linked, so it lives with the other port definitions.
+SIO0B_DATA_PORT		= SIOB_DATA
+SIO0B_CTRL_PORT		= SIOB_CTRL
+
+; SIO0/B WR5 values with RTS asserted and released.
+SIO0B_WR5_RTS_OFF	= 0xe8
+SIO0B_WR5_RTS_ON	= 0xea

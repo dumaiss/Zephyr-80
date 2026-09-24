@@ -4,7 +4,36 @@
 ; what lets the build check a file's directory against the addresses it emits.
 
 
-	.area CODE (ABS)
+; Assembled as its own translation unit.  Areas are namespaced to it: asxxxx
+; concatenates same-named areas across objects, which makes a following .org
+; relative rather than absolute (tools/check_org_placement.py).
+	.include "config.inc"
+	.include "layout/platform.inc"
+	.include "layout/memory.inc"
+	.include "drivers/transport/vdrip_protocol.inc"
+
+	.globl SIO0B_LAST_RX_ERROR
+	.globl VDRIP_MODE_READY
+	.globl VDRIP_MODE_STORAGE
+	.globl irq_restore
+	.globl irq_save_disable
+	.globl sio_register_rx_sink
+	.globl sio_rx_kick
+	.globl vdrip_idle_mode
+	.globl vdrip_pending_seq
+	.globl vdrip_pending_type
+	.globl vdrip_proxy_online
+	.globl vdrip_raw_callback
+	.globl vdrip_reply_error
+	.globl vdrip_reply_ready
+	.globl vdrip_rx_mode
+	.globl vdrip_rx_sink
+	.globl vdrip_rx_state
+	.globl vdrip_tx_len
+	.globl vdrip_tx_payload0
+	.globl vdrip_tx_ptr
+	.globl vdrip_tx_type
+	.area VDXPT_CODE (ABS)
 
 ; ---------------------------------------------------------------------------
 ; Bank 7: the foreground transport
@@ -14,7 +43,7 @@
 ; driver, the storage backend or boot -- never from an interrupt -- so none of
 ; it needs a common address.
 
-	.area CODE (ABS)
+	.area VDXPT_CODE (ABS)
 	.org CBIOS_VDRIP_TRANSPORT_BANK7_CODE_BASE
 
 VDRIP_TRANSPORT_BANK7_CODE_START:

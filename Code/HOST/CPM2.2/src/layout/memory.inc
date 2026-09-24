@@ -582,6 +582,18 @@ CBIOS_IOC_COMMAND_CODE_BASE     = BIOS7_BASE + 0x0400                  ; 3400h, 
 CBIOS_IOC_BULK_CODE_BASE        = BIOS7_BASE + 0x0a00                  ; 3A00h, bank 7
 
 ; ------------------------------------------------------------------------------
+; CP/M layout constants
+; ------------------------------------------------------------------------------
+; Moved here from zephyr.asm when the drivers became separate translation units:
+; these are assembly-time constants, so they cannot be resolved by the linker
+; and every unit that needs them must see the same definition.
+; The Makefile reads CBASE from this file to build ZCPR2 against it.
+CBASE			= 0xe400
+FBASE			= CBASE + 0x0806
+IOBYTE			= 0x0003
+TDRIVE			= 0x0004
+
+; ------------------------------------------------------------------------------
 ; CP/M Page Zero & Environment Setup
 ; ------------------------------------------------------------------------------
 PZWBOOT                         = 0x0000

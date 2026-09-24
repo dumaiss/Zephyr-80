@@ -65,9 +65,19 @@
 ; case -- clears the penalty immediately.  In healthy operation the penalty is
 ; always zero and costs one compare.
 
+; Assembled as its own translation unit: it carries the headers zephyr.asm
+; used to supply, and the linker resolves what it does not define.
+; Areas are namespaced to this translation unit.  asxxxx concatenates
+; same-named areas across objects, which makes a following .org relative
+; rather than absolute -- see tools/check_org_placement.py.
+	.include "config.inc"
+	.include "layout/platform.inc"
+	.include "layout/memory.inc"
+
+	.globl IOCALL
 	.globl hid_input_init,hid_input_status,hid_input_get
 
-	.area CODE (ABS)
+	.area HIDIN_CODE (ABS)
 	.org CBIOS_HID_INPUT_CODE_BASE
 
 HID_INPUT_CODE_START:
@@ -269,7 +279,7 @@ HID_INPUT_CODE_END:
 ; OUTCHAR at any moment, including with a storage request staged, so the two
 ; must not share.  This also keeps the state out of SD_STORAGE_ALV_BUFFER at
 ; FD00h-FDFFh; that entire page belongs to CP/M's SD allocation vector.
-	.area CODE (ABS)
+	.area HIDIN_CODE (ABS)
 	.org CBIOS_HID_INPUT_STATE_BASE
 
 HID_INPUT_STATE_START:

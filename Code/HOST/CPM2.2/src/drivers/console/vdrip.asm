@@ -77,6 +77,16 @@
 
 	.module vdrip_console
 
+; Assembled as its own translation unit.  Areas are namespaced to it: asxxxx
+; concatenates same-named areas across objects, which makes a following .org
+; relative rather than absolute (tools/check_org_placement.py).
+	.include "config.inc"
+	.include "layout/platform.inc"
+	.include "layout/memory.inc"
+	.include "drivers/transport/vdrip_protocol.inc"
+
+	.globl irq_restore
+	.globl irq_save_disable
 	.globl vdrip_console_driver
 	.globl vdrip_console_cold_init,vdrip_console_init,vdrip_console_const
 	.globl vdrip_console_conin,vdrip_console_conout
@@ -109,7 +119,6 @@
 VDRIP_DATA		= SIOB_DATA
 VDRIP_CTRL		= SIOB_CTRL
 SIO_RR0_TX_EMPTY	= 0x04
-SIO_RR0_CTS		= 0x20
 
 ; V9958 GRAPHIC 6 console layout. The 512x212 source bitmap is woven into
 ; 512x424 output by R#9 IL+LN. Logical cells and the glyph atlas are stored
@@ -214,7 +223,7 @@ CONST_HAS_CHAR		= 0xff
 ; Entry order must match the console facade contract:
 ;   const, conin, conout, list, punch, reader, listst.
 
-	.area CODE (ABS)
+	.area VDCON_CODE (ABS)
 	.org CBIOS_DRIVER_SLOT0_BASE
 
 VDRIP_CONSOLE_CODE_START:
@@ -3001,7 +3010,7 @@ VDRIP_CONSOLE_CODE_END:
 ; always refreshes it before the G6 atlas upload is performed.
 ; ---------------------------------------------------------------------------
 
-	.area FONT_DATA (ABS)
+	.area VDCON_FONT_DATA (ABS)
 	.org VDRIP_FONT_ROM_BASE
 
 	.include "assets/font_cp850_6x8.inc"

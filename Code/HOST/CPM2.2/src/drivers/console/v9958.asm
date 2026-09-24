@@ -37,6 +37,13 @@
 
 	.module v9958_console
 
+; Assembled as its own translation unit.  Areas are namespaced to it: asxxxx
+; concatenates same-named areas across objects, which makes a following .org
+; relative rather than absolute (tools/check_org_placement.py).
+	.include "config.inc"
+	.include "layout/platform.inc"
+	.include "layout/memory.inc"
+
 	.globl v9958_console_driver
 	.globl v9958_console_cold_init,v9958_console_init,v9958_console_const
 	.globl v9958_console_conin,v9958_console_conout
@@ -197,7 +204,7 @@ CONST_HAS_CHAR		= 0xff
 ; Entry order must match the console facade contract:
 ;   const, conin, conout, list, punch, reader, listst.
 
-	.area CODE (ABS)
+	.area V9958_CODE (ABS)
 	.org CBIOS_DRIVER_SLOT0_BASE
 
 V9958_CONSOLE_CODE_START:
@@ -2745,7 +2752,7 @@ V9958_CONSOLE_CODE_END:
 ; can overwrite it.  v9958_upload_font_atlas reads it there, in mode 11.
 ; ---------------------------------------------------------------------------
 
-	.area FONT_DATA (ABS)
+	.area V9958_FONT_DATA (ABS)
 	.org CONSOLE_FONT_ROM_BASE
 
 	.include "assets/font_cp850_6x8.inc"

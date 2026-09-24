@@ -9,7 +9,7 @@ import subprocess
 import re
 import sys
 sys.dont_write_bytecode = True
-from generate_memory_docs import parse_listing, add_defs
+from generate_memory_docs import parse_listings, add_defs
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--build-dir', type=Path, default=Path('build'))
@@ -24,7 +24,7 @@ for source in (root / 'src').glob('*.asm'):
         instruction = line.split(';', 1)[0].strip().lower()
         if re.match(r'(?:di|ei|reti|retn|im)\b|ld\s+(?:i,|a,i\b)', instruction):
             raise SystemExit(f'CPU interrupt policy outside IRQ core: {source}: {line}')
-symbols, _ = parse_listing(build / 'firmware.rst')
+symbols, _ = parse_listings(sorted(build.glob('*.rst')))
 add_defs(symbols, root / 'src/layout/memory.inc')
 symbol_file = build / 'irq-test-symbols.txt'
 symbol_file.write_text(''.join(f'{name} {value}\n' for name, value in symbols.items()))

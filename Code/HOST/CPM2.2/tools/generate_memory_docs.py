@@ -352,7 +352,8 @@ VALIDATION_NOTES = [
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--listing", required=True, type=Path)
+    parser.add_argument("--listing", required=True, type=Path, nargs="+",
+                        help="resolved listings (.rst); one per translation unit")
     parser.add_argument("--map", required=True, type=Path)
     parser.add_argument("--defs", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
@@ -367,6 +368,19 @@ def parse_args() -> argparse.Namespace:
 def require_file(path: Path) -> None:
     if not path.is_file():
         raise SystemExit(f"Missing input artifact: {path}")
+
+
+def parse_listings(paths) -> tuple[dict[str, int], dict[int, int]]:
+    """Merge several listings.  One translation unit per driver means one
+    resolved listing each, and the layout is the union of them."""
+    symbols: dict[str, int] = {}
+    emitted: dict[int, int] = {}
+    for p in paths:
+        s, e = parse_listing(Path(p))
+        for k, v in s.items():
+            symbols.setdefault(k, v)
+        emitted.update(e)
+    return symbols, emitted
 
 
 def parse_listing(path: Path) -> tuple[dict[str, int], dict[int, int]]:
@@ -819,7 +833,7 @@ def write_symbol_map(args: argparse.Namespace, layout: Layout) -> None:
         artifact_row("ROM page 0: reset vector and common memory", args.firmware_bin),
         artifact_row("Bank 7 payload", args.bank7_bin),
         artifact_row("Burnable image", args.final_image),
-        artifact_row("Assembler listing", args.listing),
+        *(artifact_row(f"Resolved listing ({x.name})", x) for x in args.listing),
         artifact_row("Linker symbol map", args.map),
         artifact_row("Layout manifest", args.manifest),
         "",
@@ -1022,7 +1036,7 @@ def main() -> int:
     args = parse_args()
     for path in (args.map, args.firmware_bin, args.bank7_bin, args.final_image):
         require_file(path)
-    symbols, emitted = parse_listing(args.listing)
+    symbols, emitted = parse_listings(args.listing)
     add_defs(symbols, args.defs)
     manifest = parse_manifest(args.manifest)
     layout = Layout(symbols, emitted, manifest)

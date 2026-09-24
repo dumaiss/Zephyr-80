@@ -22,20 +22,15 @@
 ; transport used to reserve become theirs.  sio_core.asm needs it too, for the
 ; SIO0/B diagnostics that only the transport reads.  This source stays the VDrip
 ; template, so 1.
-VDRIP_TRANSPORT_LINKED = 1
+	.include "config.inc"		; generated: VDRIP_TRANSPORT_LINKED, FAT_BIOS_M1_ENABLED
 
 ; FAT drive selection gate.  The Makefile rewrites this line from
 ; FAT_BIOS_M1; normal milestone-4 builds use one, while zero remains a recovery
 ; configuration that parks D: without changing linked placement.
-FAT_BIOS_M1_ENABLED = 0
 
 ; CP/M addresses the BIOS uses.  They came from the stock CP/M source, which is
 ; no longer assembled.  CBASE holds the CCP; FBASE, six bytes past the CCP slot,
 ; is the BDOS entry every program calls through page zero.
-CBASE			= 0xe400
-FBASE			= CBASE + 0x0806
-IOBYTE			= 0x0003
-TDRIVE			= 0x0004
 
 	.include "layout/platform.inc"
 	.include "layout/memory.inc"
@@ -72,25 +67,20 @@ TDRIVE			= 0x0004
 	.include "common/sio.asm"
 	.include "core/sio.asm"
 	.include "common/crossing.asm"
-; The Makefile rewrites the next transport/console/storage includes according
-; to CONSOLE and STORAGE_A. This source remains the VDrip compatibility
-; template so it can still be assembled directly for that legacy target.
+; The drivers are separate translation units now, chosen by the Makefile as link
+; inputs.  What stays here is the common half of each, under the same condition
+; as its driver -- expressed in the source, because config.inc puts the flag in
+; reach of the assembler.
+	.if VDRIP_TRANSPORT_LINKED
 	.include "common/vdrip.asm"
-	.include "drivers/transport/vdrip.asm"
+	.endif
 	.include "core/video_send.asm"
 	.include "core/iocall.asm"
-	.include "drivers/transport/ioc_command.asm"
-	.include "drivers/console/hid_input.asm"
 	.ifeq VDRIP_TRANSPORT_LINKED
 	.include "common/sercon.asm"
-	.include "drivers/console/sercon.asm"
 	.endif
-	.include "drivers/console/vdrip.asm"
 	.include "core/storage.asm"
-	.include "drivers/storage/vdrip.asm"
-	.include "drivers/storage/sd.asm"
 	.include "common/banking.asm"
-	.include "drivers/storage/fat.asm"
 	.include "common/gates.asm"
 	.include "common/irq.asm"
 	.include "common/facade.asm"

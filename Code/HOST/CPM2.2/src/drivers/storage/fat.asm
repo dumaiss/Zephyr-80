@@ -4,6 +4,16 @@
 ; operations through the controller FS2 service.  The BIOS-level disk remains
 ; deliberately empty: READ returns E5h-filled records and WRITE fails.
 
+; Assembled as its own translation unit.  Areas are namespaced to it: asxxxx
+; concatenates same-named areas across objects, which makes a following .org
+; relative rather than absolute (tools/check_org_placement.py).
+	.include "config.inc"
+	.include "layout/platform.inc"
+	.include "layout/memory.inc"
+
+	.globl IOCALL
+	.globl IOCBULK
+	.globl IOCBULKW
 	.globl FAT_BDOS_CODE_START,FAT_BDOS_CODE_END
 	.globl FAT_BDOS_STATE_START,FAT_BDOS_STATE_END
 	.globl FAT_BIOS_DPH,FAT_BIOS_DPB,FAT_BIOS_ALV
@@ -14,7 +24,7 @@
 	.globl fat_current_drive,fat_current_user,fat_context_reset
 	.globl cbios_dma_addr,fac_eff_dma
 
-	.area CODE (ABS)
+	.area FATP_CODE (ABS)
 	.org CBIOS_FAT_BDOS_CODE_BASE
 
 FAT_BDOS_CODE_START:
@@ -3182,7 +3192,7 @@ fat_component_b:
 
 FAT_BDOS_CODE_END:
 
-	.area WORK (ABS)
+	.area FATP_WORK (ABS)
 	.org CBIOS_FAT_BDOS_STATE_BASE
 
 FAT_BDOS_STATE_START:

@@ -35,6 +35,15 @@
 ; wording, so the write error is the whole mechanism.  `STAT A:=R/O` still sets
 ; the flag for the current session if you want the shorter message.
 
+; Assembled as its own translation unit: it carries the headers zephyr.asm
+; used to supply, and the linker resolves what it does not define.
+; Areas are namespaced to this translation unit.  asxxxx concatenates
+; same-named areas across objects, which makes a following .org relative
+; rather than absolute -- see tools/check_org_placement.py.
+	.include "config.inc"
+	.include "layout/platform.inc"
+	.include "layout/memory.inc"
+
 	.globl STORAGE_A_DPH,STORAGE_A_DPB,STORAGE_A_ALV
 	.globl stg_a_selected_drive,stg_a_track,stg_a_sector
 	.globl stg_a_home,stg_a_seldsk,stg_a_seldsk_unsupported
@@ -51,7 +60,7 @@
 
 ROMDISK_DIRBUF			= CBIOS_STORAGE_DIRBUF
 
-	.area CODE (ABS)
+	.area ROMDSK_CODE (ABS)
 	.org CBIOS_STORAGE_A_CODE_BASE
 
 STORAGE_A_CODE_START:
@@ -246,7 +255,7 @@ STORAGE_A_CODE_END:
 ; SD_STORAGE_DPH (this base + 20h).  DPH (16) + DPB (15) fills the 32 bytes
 ; below it exactly, so nothing may be added here.  ROMDISK_DIRBUF is the shared
 ; CP/M directory buffer; CSV is a null pointer because CKS is zero.
-	.area WORK (ABS)
+	.area ROMDSK_WORK (ABS)
 	.org VDRIP_STORAGE_DPHDPB_BASE
 STORAGE_A_DPH:
 ROMDISK_DPH:
@@ -275,13 +284,13 @@ ROMDISK_DPB:
 	.dw ROMDISK_CHECK_SIZE
 	.dw ROMDISK_OFFSET_TRACKS
 
-	.area WORK (ABS)
+	.area ROMDSK_WORK (ABS)
 	.org VDRIP_STORAGE_ALV_BUFFER
 STORAGE_A_ALV:
 ROMDISK_ALV:
 	.blkb ROMDISK_ALV_SIZE
 
-	.area WORK (ABS)
+	.area ROMDSK_WORK (ABS)
 	.org CBIOS_STORAGE_WORK_AREA
 STORAGE_STATE_START:
 ; Persistent storage backend state, in the BIOS runtime-state window rather than
@@ -297,10 +306,13 @@ stg_a_sector:
 rom_storage_sector:
 	.dw 0x0000
 
-	.area WORK (ABS)
+; Its own area, not a second .org into WORK: re-entering an ABS area makes the
+; following .org relative to where that area left off rather than absolute, which
+; silently moved this four bytes when the file became its own translation unit.
+	.area ROMDSK_WORK_CALLER_SP (ABS)
 	.org CBIOS_STORAGE_CALLER_SP
 storage_caller_sp:
 	.dw 0x0000
 STORAGE_STATE_END:
 
-	.area CODE (ABS)
+	.area ROMDSK_CODE (ABS)

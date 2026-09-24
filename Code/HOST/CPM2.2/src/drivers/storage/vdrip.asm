@@ -29,6 +29,17 @@
 ; The backend is deliberately not a RAM disk. The banked RAM disk backend that
 ; once shared this slot was retired; drive A: is now rom or vdrip.
 
+; Assembled as its own translation unit: it carries the headers zephyr.asm
+; used to supply, and the linker resolves what it does not define.
+; Areas are namespaced to this translation unit.  asxxxx concatenates
+; same-named areas across objects, which makes a following .org relative
+; rather than absolute -- see tools/check_org_placement.py.
+	.include "config.inc"
+	.include "layout/platform.inc"
+	.include "layout/memory.inc"
+	.include "drivers/transport/vdrip_protocol.inc"
+
+	.globl vdrip_rts_release_raw
 	.globl STORAGE_A_DPH,STORAGE_A_DPB,STORAGE_A_ALV
 	.globl stg_a_selected_drive,stg_a_track,stg_a_sector
 	.globl stg_a_home,stg_a_seldsk,stg_a_seldsk_unsupported
@@ -63,7 +74,7 @@ STORAGE_READ_DATA_OFF	= 0x02
 ; links per build (STORAGE_A in the Makefile).  These labels are addresses, not
 ; code, so they cost nothing.
 
-	.area CODE (ABS)
+	.area VDSTG_CODE (ABS)
 	.org CBIOS_STORAGE_VDRIP_CODE_BASE
 
 STORAGE_A_CODE_START:
@@ -382,7 +393,7 @@ STORAGE_A_CODE_END:
 ; block below.
 ;
 ; CKS is zero for fixed-disk behavior, so VDRIP_STORAGE_CSV is a zero-length label.
-	.area WORK (ABS)
+	.area VDSTG_WORK (ABS)
 	.org VDRIP_STORAGE_DPHDPB_BASE
 STORAGE_A_DPH:
 VDRIP_STORAGE_DPH:
@@ -411,13 +422,13 @@ VDRIP_STORAGE_DPB:
 	.dw VDRIP_STORAGE_CHECK_SIZE
 	.dw VDRIP_STORAGE_OFFSET_TRACKS
 
-	.area WORK (ABS)
+	.area VDSTG_WORK (ABS)
 	.org VDRIP_STORAGE_ALV_BUFFER
 STORAGE_A_ALV:
 VDRIP_STORAGE_ALV:
 	.blkb VDRIP_STORAGE_ALV_SIZE
 
-	.area WORK (ABS)
+	.area VDSTG_WORK (ABS)
 	.org CBIOS_STORAGE_WORK_AREA
 STORAGE_STATE_START:
 ; Persistent storage backend state. These bytes live in the BIOS runtime-state
@@ -443,7 +454,8 @@ vdrip_storage_active_seq:
 vdrip_storage_lba:
 	.dw 0x0000
 
-	.area WORK (ABS)
+; Its own area, not a second .org into WORK -- see the note in rom.asm.
+	.area VDSTG_WORK_CALLER_SP (ABS)
 	.org CBIOS_STORAGE_CALLER_SP
 storage_caller_sp:
 	.dw 0x0000
@@ -451,4 +463,4 @@ VDRIP_STORAGE_CSV:
 	.blkb VDRIP_STORAGE_CHECK_SIZE
 STORAGE_STATE_END:
 
-	.area CODE (ABS)
+	.area VDSTG_CODE (ABS)

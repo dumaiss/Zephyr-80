@@ -11,8 +11,15 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | ROM page 0: reset vector and common memory | `build/firmware.bin` | 65536 bytes |
 | Bank 7 payload | `build/bank7.bin` | 65536 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Assembler listing | `build/firmware.rst` | 1260360 bytes |
-| Linker symbol map | `build/firmware.map` | 65631 bytes |
+| Resolved listing (firmware.rst) | `build/firmware.rst` | 493901 bytes |
+| Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 205658 bytes |
+| Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 411551 bytes |
+| Resolved listing (drv_console_sercon.rst) | `build/drv_console_sercon.rst` | 202886 bytes |
+| Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 409779 bytes |
+| Resolved listing (drv_storage_sd.rst) | `build/drv_storage_sd.rst` | 279345 bytes |
+| Resolved listing (drv_transport_ioccmd.rst) | `build/drv_transport_ioccmd.rst` | 341457 bytes |
+| Resolved listing (drv_console_hid_input.rst) | `build/drv_console_hid_input.rst` | 206597 bytes |
+| Linker symbol map | `build/firmware.map` | 36199 bytes |
 | Layout manifest | `build/layout.manifest` | 1445 bytes |
 
 ## System Addresses

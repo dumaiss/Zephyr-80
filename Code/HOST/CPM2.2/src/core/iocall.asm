@@ -33,6 +33,9 @@
 ;   machine may restart before ioc_command_recv_frame returns.  A timeout or
 ;   non-return from IOCALL is the expected result for RESET callers.
 
+	.globl ioc_frame_stamp
+	.globl sio_command_wait_ready
+	.globl sio_command_get_byte
 	.globl IOCALL
 	.globl IOCTRL_CODE_START,IOCTRL_CODE_END
 	.globl sio_command_init,ioc_link_init_once

@@ -50,6 +50,10 @@
 ; bytes and there is no flow control: it covers ISR latency, not a burst.
 ; ---------------------------------------------------------------------------
 
+; Exported to the bank-7 half in drivers/console/sercon.asm.
+	.globl sercon_rx_sink
+	.globl sercon_rx_buffer
+
 	.globl sercon_init,sercon_install,sercon_console_driver
 	.globl SERCON_CODE_START,SERCON_CODE_END
 	.globl SERCON_BANK7_CODE_START,SERCON_BANK7_CODE_END

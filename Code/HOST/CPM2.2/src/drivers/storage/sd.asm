@@ -46,6 +46,16 @@
 ; SD_DEBLOCK_HITS / SD_DEBLOCK_MISSES are diagnostic and temporary; see
 ; docs/storage-profiling.md.
 
+; Assembled as its own translation unit.  Areas are namespaced to it: asxxxx
+; concatenates same-named areas across objects, which makes a following .org
+; relative rather than absolute (tools/check_org_placement.py).
+	.include "config.inc"
+	.include "layout/platform.inc"
+	.include "layout/memory.inc"
+
+	.globl IOCALL
+	.globl IOCBULK
+	.globl IOCBULKW
 	.globl SD_DEBLOCK_HITS,SD_DEBLOCK_MISSES
 	.globl sd_storage_home,sd_storage_settrk
 	.globl sd_storage_setsec,sd_storage_read,sd_storage_write
@@ -64,7 +74,7 @@
 	.globl SD_PROBE2_CODE_END
 	.globl cbios_dma_addr
 
-	.area CODE (ABS)
+	.area SDBK_CODE (ABS)
 	.org CBIOS_STORAGE_SD_CODE_BASE
 
 SD_STORAGE_CODE_START:
@@ -663,7 +673,7 @@ SD_STORAGE_CODE_END:
 ;
 ; CSV is empty because CKS is zero -- a fixed disk that CP/M never re-verifies.
 ; ---------------------------------------------------------------------------
-	.area CODE (ABS)
+	.area SDBK_CODE (ABS)
 	.org SD_STORAGE_DPH
 SD_STORAGE_DPH_DATA:
 	.dw 0x0000			; XLT: no skew table
@@ -678,7 +688,7 @@ SD_STORAGE_DPH_DATA:
 ; CP/M Drive Parameter Block for the SD volume:
 ;   SPT=4, BSH=5, BLM=31, EXM=1, DSM=2047, DRM=511, AL0=F0h, AL1=00h,
 ;   CKS=0, OFF=0.  Occupies the last 16 bytes of the DPH/DPB window.
-	.area CODE (ABS)
+	.area SDBK_CODE (ABS)
 	.org SD_STORAGE_DPB
 SD_STORAGE_DPB_DATA:
 	.dw SD_STORAGE_SECTORS_PER_TRACK
@@ -700,7 +710,7 @@ SD_STORAGE_DPB_DATA:
 ; the only thing CP/M will not let two drives share, and it is why a third drive
 ; costs 272 bytes rather than 16.
 ; ---------------------------------------------------------------------------
-	.area CODE (ABS)
+	.area SDBK_CODE (ABS)
 	.org SD_STORAGE_DPH2
 SD_STORAGE_DPH2_DATA:
 	.dw 0x0000			; XLT: no skew table
@@ -720,7 +730,7 @@ SD_STORAGE_DPH2_DATA:
 ; would have been handed CP/M's live allocation bitmap to overwrite -- and
 ; nothing would have reported it, because check_overlap.py only sees bytes that
 ; are emitted or reserved.
-	.area WORK (ABS)
+	.area SDBK_WORK (ABS)
 	.org SD_STORAGE_ALV2_BUFFER
 SD_STORAGE_ALV2:
 	.ds SD_STORAGE_ALV2_SIZE
@@ -748,7 +758,7 @@ SD_STORAGE_ALV2:
 ; initialization and IOCALL; emits IOC Command traffic, no Virtual Drip traffic.
 ; Foreground only: uses MOVE_BUFFER and is not ISR-safe.
 ; ---------------------------------------------------------------------------
-	.area CODE (ABS)
+	.area SDBK_CODE (ABS)
 ; ---------------------------------------------------------------------------
 ; Deblock line and its tag, placed into the bank 7 image
 ; ---------------------------------------------------------------------------
@@ -757,7 +767,7 @@ SD_STORAGE_ALV2:
 ; a fill has succeeded, and the valid byte below is what enforces that.
 ; Reserving it here is what makes a later allocation at CC00h collide at build
 ; time instead of quietly sharing the address.
-	.area CODE (ABS)
+	.area SDBK_CODE (ABS)
 	.org SD_DEBLOCK_BUFFER
 SD_DEBLOCK_BUFFER_START:
 	; EMITTED, not reserved.  check_overlap.py compares emitted bytes, so a
@@ -776,7 +786,7 @@ SD_DEBLOCK_BUFFER_IMAGE_END:
 ; read after power-on: the line would report a hit, and 512 bytes of ROM fill
 ; would be served to CP/M as disk data.  The IOC failure record's reserved bytes
 ; are explicit zeros for the same reason.
-	.area CODE (ABS)
+	.area SDBK_CODE (ABS)
 	.org SD_DEBLOCK_TAG
 SD_DEBLOCK_TAG_START:
 	.db 0				; sd_deblock_valid  -- invalid at cold boot
@@ -787,7 +797,7 @@ SD_DEBLOCK_TAG_START:
 	.dw 0				; sd_deblock_echo
 SD_DEBLOCK_TAG_IMAGE_END:
 
-	.area CODE (ABS)
+	.area SDBK_CODE (ABS)
 	.org CBIOS_SD_PROBE_CODE_BASE
 
 SD_PROBE_CODE_START:
@@ -818,7 +828,7 @@ SD_PROBE_CODE_END:
 ; ---------------------------------------------------------------------------
 ; C: selection probe, in its own region.
 ; ---------------------------------------------------------------------------
-	.area CODE (ABS)
+	.area SDBK_CODE (ABS)
 	.org CBIOS_SD_PROBE2_CODE_BASE
 stg_seldsk:
 	ld a,c

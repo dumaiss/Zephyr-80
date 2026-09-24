@@ -26,6 +26,17 @@
 ; Placement:
 ;   command helpers at F000h; overflow bulk-write helpers at ED00h.
 
+; Assembled as its own translation unit.  Areas are namespaced to it: asxxxx
+; concatenates same-named areas across objects, which makes a following .org
+; relative rather than absolute (tools/check_org_placement.py).
+	.include "config.inc"
+	.include "layout/platform.inc"
+	.include "layout/memory.inc"
+
+	.globl irq_disable
+	.globl irq_restore
+	.globl irq_save_disable
+	.globl sio_command_init
 	.globl sio_command_rts_assert,sio_command_rts_release
 	.globl sio_command_put_byte,sio_command_get_byte
 	.globl sio_command_wait_ready
@@ -45,7 +56,7 @@
 	.globl IOC_CMD_CODE_START,IOC_CMD_CODE_END
 	.globl IOC_BULK_CODE_START,IOC_BULK_CODE_END
 
-	.area CODE (ABS)
+	.area IOCCMD_CODE (ABS)
 	.org CBIOS_IOC_COMMAND_CODE_BASE
 
 IOC_CMD_CODE_START:
@@ -1355,7 +1366,7 @@ IOC_CMD_CODE_END:
 ; assembler error.  Two bytes is not worth that.
 ;
 ; In/Out: exactly the bodies' contracts.  HL, DE and A pass through untouched.
-	.area CODE (ABS)
+	.area IOCCMD_CODE (ABS)
 	.org CBIOS_XPORT_SHIM_CODE_BASE
 XPORT_SHIM_CODE_START:
 IOCBULK:
@@ -1387,7 +1398,7 @@ xport_iocbulkw_sp:
 	.dw 0
 XPORT_SHIM_CODE_END:
 
-	.area CODE (ABS)
+	.area IOCCMD_CODE (ABS)
 	.org CBIOS_IOC_BULK_CODE_BASE
 IOC_BULK_CODE_START:
 
@@ -2021,4 +2032,4 @@ IOCBULK_GET_READY:
 
 IOC_BULK_CODE_END:
 
-	.area CODE (ABS)
+	.area IOCCMD_CODE (ABS)

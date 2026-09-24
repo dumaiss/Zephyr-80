@@ -8,7 +8,7 @@ import sys
 
 sys.dont_write_bytecode = True
 
-from generate_memory_docs import add_defs, parse_listing
+from generate_memory_docs import add_defs, parse_listings
 
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -17,7 +17,7 @@ args = parser.parse_args()
 
 root = Path(__file__).resolve().parents[1]
 build = args.build_dir.resolve()
-symbols, _ = parse_listing(build / "firmware.rst")
+symbols, _ = parse_listings(sorted(build.glob("*.rst")))
 add_defs(symbols, root / "src/layout/memory.inc")
 
 symbol_file = build / "fat-bios-m1-test-symbols.txt"

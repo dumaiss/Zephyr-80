@@ -14,7 +14,29 @@
 ; It reads sercon_rx_buffer and SERCON_RX_HEAD/_COUNT, which stay in common
 ; because the sink writes them: bank 7 reads common freely in mode 11.
 
-	.area CODE (ABS)
+; Assembled as its own translation unit.  Areas are namespaced to it: asxxxx
+; concatenates same-named areas across objects, which makes a following .org
+; relative rather than absolute (tools/check_org_placement.py).
+	.include "config.inc"
+	.include "layout/platform.inc"
+	.include "layout/memory.inc"
+
+; Exported to the rest of the system.
+	.globl sercon_console_driver
+	.globl sercon_init
+	.globl sercon_install
+	.globl SERCON_BANK7_CODE_START
+	.globl SERCON_BANK7_CODE_END
+
+	.globl console_backend_driver
+	.globl console_set_driver
+	.globl irq_restore
+	.globl irq_save_disable
+	.globl sercon_rx_buffer
+	.globl sercon_rx_sink
+	.globl sio_register_rx_sink
+	.globl sio_send_byte
+	.area SERCN_CODE (ABS)
 	.org CBIOS_SERCON_BANK7_CODE_BASE
 
 SERCON_BANK7_CODE_START:
