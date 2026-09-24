@@ -13,7 +13,7 @@ a = p.parse_args()
 root = Path(__file__).resolve().parents[1]
 build = a.build_dir.resolve()
 symbols, _ = parse_listing(build / "firmware.rst")
-add_defs(symbols, root / "src/cbios_defs.inc")
+add_defs(symbols, root / "src/layout/memory.inc")
 names = build / "fat-bdos-ro-test-symbols.txt"
 names.write_text("".join(f"{k} {v}\n" for k, v in symbols.items()))
 exe = build / "fat-bdos-ro-test"

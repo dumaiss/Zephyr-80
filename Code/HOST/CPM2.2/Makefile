@@ -50,7 +50,7 @@ VALID_STORAGE_A := rom vdrip
 ifeq ($(filter $(STORAGE_A),$(VALID_STORAGE_A)),)
 $(error Unsupported STORAGE_A='$(STORAGE_A)'; choose one of: $(VALID_STORAGE_A))
 endif
-STORAGE_A_SRC ?= $(SRC_DIR)/cbios_storage_$(STORAGE_A).asm
+STORAGE_A_SRC ?= $(SRC_DIR)/drivers/storage/$(STORAGE_A).asm
 
 # Console backend linked into the fixed BIOS console slots:
 #   v9958    physical LunchCrema V9958 plus IOC HID input (default)
@@ -66,14 +66,16 @@ $(error STORAGE_A=vdrip requires CONSOLE=vdrip because both use the shared VDrip
 endif
 endif
 
-CONSOLE_SRC := $(SRC_DIR)/cbios_console_$(CONSOLE).asm
+CONSOLE_SRC := $(SRC_DIR)/drivers/console/$(CONSOLE).asm
 ifeq ($(CONSOLE),vdrip)
-VDRIP_TRANSPORT_SRC := $(SRC_DIR)/vdrip_transport.asm
-VDRIP_TRANSPORT_INCLUDE := .include "vdrip_transport.asm"
+VDRIP_TRANSPORT_SRC := $(SRC_DIR)/common/vdrip.asm $(SRC_DIR)/drivers/transport/vdrip.asm
+VDRIP_TRANSPORT_INCLUDE := .include "drivers/transport/vdrip.asm"
+VDRIP_COMMON_INCLUDE := .include "common/vdrip.asm"
 VDRIP_TRANSPORT_LINKED := 1
 else
 VDRIP_TRANSPORT_SRC :=
 VDRIP_TRANSPORT_INCLUDE :=
+VDRIP_COMMON_INCLUDE :=
 VDRIP_TRANSPORT_LINKED := 0
 endif
 
@@ -107,30 +109,35 @@ MAKEBIN_FLAGS ?= -s $(ROM_SIZE)
 
 RUNTIME_SRCS ?= \
 	$(SRC_DIR)/zephyr.asm \
-	$(SRC_DIR)/platform_zephyr80.inc \
-	$(SRC_DIR)/memory_modes.inc \
-	$(SRC_DIR)/cbios_defs.inc \
-	$(SRC_DIR)/boot_rom_copy.asm \
-	$(SRC_DIR)/cbios_boot.asm \
-	$(SRC_DIR)/cbios_console.asm \
-	$(SRC_DIR)/sio_core.asm \
-	$(SRC_DIR)/cbios_xing.asm \
-	$(SRC_DIR)/cbios_gate.asm \
-	$(SRC_DIR)/cbios_irq.asm \
-	$(SRC_DIR)/cbios_facade.asm \
+	$(SRC_DIR)/common/bios_table.asm \
+	$(SRC_DIR)/core/bios7_table.asm \
+	$(SRC_DIR)/layout/platform.inc \
+	$(SRC_DIR)/layout/modes.inc \
+	$(SRC_DIR)/layout/memory.inc \
+	$(SRC_DIR)/common/rom_copy.asm \
+	$(SRC_DIR)/common/boot.asm \
+	$(SRC_DIR)/core/banner.asm \
+	$(SRC_DIR)/core/console.asm \
+	$(SRC_DIR)/common/sio.asm \
+	$(SRC_DIR)/core/sio.asm \
+	$(SRC_DIR)/common/crossing.asm \
+	$(SRC_DIR)/common/gates.asm \
+	$(SRC_DIR)/common/irq.asm \
+	$(SRC_DIR)/common/facade.asm \
 	$(VDRIP_TRANSPORT_SRC) \
-	$(SRC_DIR)/cbios_bios_ext.asm \
-	$(SRC_DIR)/cbios_iocall.asm \
-	$(SRC_DIR)/cbios_ioc_command.asm \
-	$(SRC_DIR)/cbios_hid_input.asm \
-	$(SRC_DIR)/cbios_sercon.asm \
+	$(SRC_DIR)/core/video_send.asm \
+	$(SRC_DIR)/core/iocall.asm \
+	$(SRC_DIR)/drivers/transport/ioc_command.asm \
+	$(SRC_DIR)/drivers/console/hid_input.asm \
+	$(SRC_DIR)/common/sercon.asm \
+	$(SRC_DIR)/drivers/console/sercon.asm \
 	$(CONSOLE_SRC) \
-	$(SRC_DIR)/cbios_storage.asm \
+	$(SRC_DIR)/core/storage.asm \
 	$(STORAGE_A_SRC) \
-	$(SRC_DIR)/cbios_storage_sd.asm \
-	$(SRC_DIR)/cbios_bank_select.asm \
-	$(SRC_DIR)/cbios_bank.asm \
-	$(SRC_DIR)/cbios_fat_layout.asm
+	$(SRC_DIR)/drivers/storage/sd.asm \
+	$(SRC_DIR)/common/bank_select.asm \
+	$(SRC_DIR)/common/banking.asm \
+	$(SRC_DIR)/drivers/storage/fat.asm
 
 FIRMWARE_BIN ?= $(BUILD_DIR)/firmware.bin
 SYMBOLS_FILE ?= $(BUILD_DIR)/firmware.map
@@ -152,7 +159,7 @@ SYMBOL_MAP_DOC ?= $(DOCS_DIR)/symbol-map.md
 MEMORY_MAP_DOC ?= $(DOCS_DIR)/memory-map.md
 
 # The CP/M tools read the IOC failure record at fixed addresses through this
-# mirror of the layout in cbios_defs.inc.  Two hand-maintained copies have
+# mirror of the layout in src/layout/memory.inc.  Two hand-maintained copies have
 # already drifted once; check_diag_record.py is what notices.
 DIAG_RECORD_MIRROR ?= ../Utilities/src/ioc_diag_record.inc
 
@@ -238,7 +245,7 @@ docs: $(FINAL_IMAGE) $(FIRMWARE_RST) $(SYMBOLS_FILE) $(LAYOUT_MANIFEST) $(MEMORY
 	$(PYTHON) $(MEMORY_DOC_TOOL) \
 		--listing "$(FIRMWARE_RST)" \
 		--map "$(SYMBOLS_FILE)" \
-		--defs "$(SRC_DIR)/cbios_defs.inc" \
+		--defs "$(SRC_DIR)/layout/memory.inc" \
 		--manifest "$(LAYOUT_MANIFEST)" \
 		--firmware-bin "$(FIRMWARE_BIN)" \
 		--bank7-bin "$(BANK7_BIN)" \
@@ -265,7 +272,7 @@ check-inputs: $(BUILD_DIR) $(FIRMWARE_BIN) $(SYMBOLS_FILE)
 	@test -f "$(FIRMWARE_BIN)" || { echo "Missing firmware image: $(FIRMWARE_BIN)"; exit 1; }
 	@test -f "$(SYMBOLS_FILE)" || { echo "Missing firmware symbol map: $(SYMBOLS_FILE)"; exit 1; }
 	@test -f "$(CPMTOOLS_DISKDEF)" || { echo "Missing cpmtools disk definition: $(CPMTOOLS_DISKDEF)"; exit 1; }
-	@test -f "$(SRC_DIR)/cbios_defs.inc" || { echo "Missing CBIOS definitions: $(SRC_DIR)/cbios_defs.inc"; exit 1; }
+	@test -f "$(SRC_DIR)/layout/memory.inc" || { echo "Missing CBIOS definitions: $(SRC_DIR)/layout/memory.inc"; exit 1; }
 	@test -f "$(IMAGE_TOOL)" || { echo "Missing image tool: $(IMAGE_TOOL)"; exit 1; }
 	@test -f "$(MEMORY_DOC_TOOL)" || { echo "Missing memory documentation tool: $(MEMORY_DOC_TOOL)"; exit 1; }
 
@@ -276,11 +283,12 @@ runtime-sources-check:
 
 $(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm Makefile FORCE | $(BUILD_DIR)
 	sed \
-		-e 's|\.include "vdrip_transport.asm"|$(VDRIP_TRANSPORT_INCLUDE)|' \
+		-e 's|\.include "drivers/transport/vdrip.asm"|$(VDRIP_TRANSPORT_INCLUDE)|' \
+		-e 's|\.include "common/vdrip.asm"|$(VDRIP_COMMON_INCLUDE)|' \
 		-e 's|^VDRIP_TRANSPORT_LINKED = 1$$|VDRIP_TRANSPORT_LINKED = $(VDRIP_TRANSPORT_LINKED)|' \
 		-e 's|^FAT_BIOS_M1_ENABLED = 0$$|FAT_BIOS_M1_ENABLED = $(FAT_BIOS_M1)|' \
-		-e 's|\.include "cbios_console_vdrip.asm"|.include "cbios_console_$(CONSOLE).asm"|' \
-		-e 's|\.include "cbios_storage_vdrip.asm"|.include "cbios_storage_$(STORAGE_A).asm"|' \
+		-e 's|\.include "drivers/console/vdrip.asm"|.include "drivers/console/$(CONSOLE).asm"|' \
+		-e 's|\.include "drivers/storage/vdrip.asm"|.include "drivers/storage/$(STORAGE_A).asm"|' \
 		"$<" > "$@"
 
 $(FIRMWARE_REL): $(FIRMWARE_SRC) $(RUNTIME_SRCS) | $(BUILD_DIR)
@@ -290,7 +298,7 @@ $(FIRMWARE_IHX): $(FIRMWARE_REL)
 	$(SDLDZ80) $(LDFLAGS) $@ $<
 	$(PYTHON) $(TOOLS_DIR)/check_overlap.py "$@" --symbols "$(FIRMWARE_SYM)"
 	$(PYTHON) $(TOOLS_DIR)/check_diag_record.py \
-		--defs "$(SRC_DIR)/cbios_defs.inc" --mirror "$(DIAG_RECORD_MIRROR)"
+		--defs "$(SRC_DIR)/layout/memory.inc" --mirror "$(DIAG_RECORD_MIRROR)"
 
 # The command processor and BDOS.  The banked OS is built around ZSDOS in bank 7
 # behind the BDOS facade, and ZCPR2, whose program-exit call the interrupt
@@ -310,7 +318,7 @@ endif
 # The CCP and BIOS table addresses ZCPR2 is assembled against, read from the
 # firmware sources so they cannot drift from the layout.
 CBASE_ADDR := $(shell sed -n 's/^CBASE[[:space:]]*=[[:space:]]*\(0x[0-9a-fA-F]*\).*/\1/p' $(SRC_DIR)/zephyr.asm)
-CBIOS_BASE_ADDR := $(shell sed -n 's/^CBIOS_BASE[[:space:]]*=[[:space:]]*\(0x[0-9a-fA-F]*\).*/\1/p' $(SRC_DIR)/cbios_defs.inc)
+CBIOS_BASE_ADDR := $(shell sed -n 's/^CBIOS_BASE[[:space:]]*=[[:space:]]*\(0x[0-9a-fA-F]*\).*/\1/p' $(SRC_DIR)/layout/memory.inc)
 ZCPR2_BIN  ?= $(BUILD_DIR)/ccp-zcpr2.bin
 ZSDOS_BIN  ?= $(BUILD_DIR)/bdos-zsdos.bin
 PATCH_CPM  := $(TOOLS_DIR)/patch_cpm.py
@@ -344,7 +352,7 @@ $(RUNCPM_BIN): $(RUNCPM_SRCS)
 zcpr2: $(ZCPR2_BIN)
 zsdos: $(ZSDOS_BIN)
 
-$(ZCPR2_BIN): $(ZCPR2_SRCS) $(RUNCPM_BIN) $(SRC_DIR)/zephyr.asm $(SRC_DIR)/cbios_defs.inc | $(BUILD_DIR)
+$(ZCPR2_BIN): $(ZCPR2_SRCS) $(RUNCPM_BIN) $(SRC_DIR)/zephyr.asm $(SRC_DIR)/layout/memory.inc | $(BUILD_DIR)
 	RUNCPM="$(RUNCPM)" ./zcpr2/build-zcpr2.sh $(BUILD_DIR)/zcpr2-build $@ $(CBASE_ADDR) $(CBIOS_BASE_ADDR)
 
 # Depends on the symbol map: ZSDOS jumps to WBTRAP, the common warm-boot trap,
@@ -359,10 +367,10 @@ $(ZSDOS_BIN): $(ZSDOS_SRCS) $(SYMBOLS_FILE) $(TOOLS_DIR)/gen_zsdos_bios.py $(RUN
 # ZCPR2 installed at CBASE and ZSDOS at ZSDOS_ORG.
 SPLIT_TOOL := $(TOOLS_DIR)/split_banked_image.py
 
-$(FIRMWARE_BIN): $(FIRMWARE_IHX) $(ZCPR2_BIN) $(ZSDOS_BIN) $(SPLIT_TOOL) $(SRC_DIR)/cbios_defs.inc $(SRC_DIR)/zephyr.asm
+$(FIRMWARE_BIN): $(FIRMWARE_IHX) $(ZCPR2_BIN) $(ZSDOS_BIN) $(SPLIT_TOOL) $(SRC_DIR)/layout/memory.inc $(SRC_DIR)/zephyr.asm
 	$(MAKEBIN) $(MAKEBIN_FLAGS) $< $(FIRMWARE_FLAT)
 	$(PYTHON) $(SPLIT_TOOL) --flat $(FIRMWARE_FLAT) --ihx $(FIRMWARE_IHX) \
-		--defs $(SRC_DIR)/cbios_defs.inc --wrapper $(SRC_DIR)/zephyr.asm \
+		--defs $(SRC_DIR)/layout/memory.inc --wrapper $(SRC_DIR)/zephyr.asm \
 		--ccp $(ZCPR2_BIN) --zsdos $(ZSDOS_BIN) \
 		--page0 $@ --bank7 $(BANK7_BIN)
 
@@ -403,10 +411,10 @@ $(ROM_DISK_IMAGE): sibling-builds $(ROM_DISK_TOOL) $(CPMTOOLS_DISKDEF) $(ROM_DIS
 # Produced by the same run as the image above; no recipe of their own.
 $(ROM_DISK_CHUNKS): $(ROM_DISK_IMAGE) ;
 
-$(FINAL_IMAGE): check-inputs $(IMAGE_PREREQS) $(IMAGE_TOOL) $(SRC_DIR)/cbios_defs.inc
+$(FINAL_IMAGE): check-inputs $(IMAGE_PREREQS) $(IMAGE_TOOL) $(SRC_DIR)/layout/memory.inc
 	$(PYTHON) $(IMAGE_TOOL) \
 		--firmware "$(FIRMWARE_BIN)" \
-		--defs "$(SRC_DIR)/cbios_defs.inc" \
+		--defs "$(SRC_DIR)/layout/memory.inc" \
 		--output "$(FINAL_IMAGE)" \
 		--manifest "$(LAYOUT_MANIFEST)" \
 		--report "$(LAYOUT_REPORT)" \

@@ -18,7 +18,7 @@ args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 build = args.build_dir.resolve()
 symbols, _ = parse_listing(build / "firmware.rst")
-add_defs(symbols, root / "src/cbios_defs.inc")
+add_defs(symbols, root / "src/layout/memory.inc")
 
 symbol_file = build / "fat-bios-m1-test-symbols.txt"
 symbol_file.write_text("".join(f"{name} {value}\n" for name, value in symbols.items()))

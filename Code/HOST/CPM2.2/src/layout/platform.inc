@@ -45,7 +45,7 @@ SOUND_PSG_MUTE_TONE0        = 0x9f
 
 ; --- Memory & Bank Configuration ---
 MEM                         = 56
-.include "memory_modes.inc"
+.include "layout/modes.inc"
 
 ; --- SIO & CTC Commands / Bitmasks ---
 ;

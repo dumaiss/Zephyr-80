@@ -3004,4 +3004,4 @@ VDRIP_CONSOLE_CODE_END:
 	.area FONT_DATA (ABS)
 	.org VDRIP_FONT_ROM_BASE
 
-	.include "font_cp850_6x8.inc"
+	.include "assets/font_cp850_6x8.inc"

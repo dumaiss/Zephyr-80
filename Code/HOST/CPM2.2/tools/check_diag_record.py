@@ -3,7 +3,7 @@
 and the CP/M tools.
 
 The record at CBIOS_IOC_DIAG_BASE is read by .COM programs at fixed addresses.
-Its layout is declared twice: as offsets in the BIOS (src/cbios_defs.inc, the
+Its layout is declared twice: as offsets in the BIOS (src/layout/memory.inc, the
 authority) and as absolute addresses in the tools' mirror
 (../HelloWorld/src/ioc_diag_record.inc).
 
@@ -90,7 +90,7 @@ def parse_based(text: str, base_name: str) -> dict[str, int]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--defs", type=Path, required=True,
-                        help="BIOS src/cbios_defs.inc (the authority)")
+                        help="BIOS src/layout/memory.inc (the authority)")
     parser.add_argument("--mirror", type=Path, required=True,
                         help="CP/M tools ioc_diag_record.inc")
     args = parser.parse_args()

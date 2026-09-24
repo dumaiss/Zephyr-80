@@ -7,7 +7,7 @@ populates the card from flash with no host proxy involved.
 
 Each ROM page contributes 48 KiB of filesystem data at 0000h-BFFFh, so the volume
 is emitted as one 48 KiB chunk per page rather than a single blob.
-cbios_storage_rom.asm maps a CP/M record back to (page, offset) with the same
+src/drivers/storage/rom.asm maps a CP/M record back to (page, offset) with the same
 stride.  The unused 16 KiB tail of each page is outside the volume; the image
 builder mirrors the seven-byte ROM-read primitive there and re-checks that the
 filesystem bytes below it are unchanged.
@@ -198,7 +198,7 @@ MANIFEST = (
     ("utils", "fstat.com", "FSTAT.COM"),
 )
 
-# The volume is 144 KiB in 1 KiB blocks (DSM=143 in cbios_storage_rom.asm), of
+# The volume is 144 KiB in 1 KiB blocks (DSM=143 in src/drivers/storage/rom.asm), of
 # which 4 blocks are the 128-entry directory -- 140 blocks of content, and that
 # is a BIOS-side constant, not something this script can grow.
 #
@@ -341,7 +341,7 @@ def install_zcpr2_utility(data: bytes) -> bytes:
 
 
 def read_directory(image: bytes, args: argparse.Namespace) -> list[tuple]:
-    """Walk the CP/M directory the way cbios_storage_rom.asm's DPB describes it."""
+    """Walk the CP/M directory the way src/drivers/storage/rom.asm's DPB describes it."""
     entries = []
     for offset in range(0, args.dir_entries * 32, 32):
         entry = image[offset : offset + 32]

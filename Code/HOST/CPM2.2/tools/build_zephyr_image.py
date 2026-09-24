@@ -19,7 +19,7 @@ BANK_SIZE = 0x10000
 MAX_BANK = 7
 IMAGE_BANK_COUNT = 8  # physical ROM pages; only explicitly declared boot pages seed SRAM
 REQUIRED_SYMBOLS = ("MOVE", "XMOVE", "SELMEM", "SETBNK")
-DEFAULT_DEFS_PATH = Path("src/cbios_defs.inc")
+DEFAULT_DEFS_PATH = Path("src/layout/memory.inc")
 
 
 @dataclass(frozen=True)

@@ -25,7 +25,7 @@ for source in (root / 'src').glob('*.asm'):
         if re.match(r'(?:di|ei|reti|retn|im)\b|ld\s+(?:i,|a,i\b)', instruction):
             raise SystemExit(f'CPU interrupt policy outside IRQ core: {source}: {line}')
 symbols, _ = parse_listing(build / 'firmware.rst')
-add_defs(symbols, root / 'src/cbios_defs.inc')
+add_defs(symbols, root / 'src/layout/memory.inc')
 symbol_file = build / 'irq-test-symbols.txt'
 symbol_file.write_text(''.join(f'{name} {value}\n' for name, value in symbols.items()))
 exe = build / 'irq-core-test'
