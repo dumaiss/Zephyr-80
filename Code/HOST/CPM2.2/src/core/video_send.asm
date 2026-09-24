@@ -3,6 +3,7 @@
 ; VIDEO_SEND: selected-console raw video compatibility entry point.
 ; Code base: CBIOS_BIOS_EXT_CODE_BASE (DF50h).
 
+	.include "core/video_ops.inc"
 	.globl VIDEO_SEND
 	.globl BIOS_EXT_CODE_START,BIOS_EXT_CODE_END,BIOS_CODE_END
 
@@ -10,8 +11,6 @@
 	.globl console_backend_data_write_block
 	.globl console_backend_reset_display
 
-VIDEO_TYPE_VDP_DATA_BLOCK = 0x0b
-VIDEO_SINGLE_PAYLOAD_MAX  = 0x10
 
 	.area CODE (ABS)
 	.org CBIOS_BIOS_EXT_CODE_BASE
@@ -45,7 +44,7 @@ VIDEO_SEND:
 	dec a
 
 	push af
-	cp #VIDEO_TYPE_VDP_DATA_BLOCK
+	cp #VIDEO_OP_DATA_BLOCK
 	jr nz,video_send_single
 	pop af
 	call console_backend_data_write_block

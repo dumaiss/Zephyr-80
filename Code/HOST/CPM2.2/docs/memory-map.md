@@ -97,7 +97,7 @@ Data:
 | `6600h-7FFFh` | Reclaimable resource/cache pool | 13 lines of 512 bytes; no permanent owner. |
 | `8000h-87FFh` | Console font | CP850 6x8. |
 | `8800h-883Fh` | Boot banner text | |
-| `904Ah` | D: synthetic DPH and DPB | Read-only FAT compatibility geometry; selection gate is `1`. |
+| `904Ah` | B: synthetic DPH and DPB | Read-only FAT compatibility geometry; selection gate is `1`. |
 
 The last resident asset ends at `D100h`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.
 

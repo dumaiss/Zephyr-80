@@ -95,9 +95,11 @@ Where the software actually sits. Addresses are from the current default build;
         |    F958h  staging buffers ·  FD00h IM2 vector page                  |
         |    FE01h  BIOS state      ·  FE80h ISR / gate / facade stacks       |
         +=====================================================================+
- EC00h  |  CCP (ZCPR2), E400h-EBFFh, restored on warm boot                    |
+ EC00h  |  E400h-EBFFh  CCP (ZCPR2) — a user program, inside the TPA:         |
+        |               a transient may overwrite it, and warm boot           |
+        |               restores it from the bank-7 asset                     |
  E400h  +---------------------------------------------------------------------+
-        |  E000h-E3FFh  reserved for the program's interrupt callbacks        |
+        |  E000h-E3FFh  the running program's interrupt callbacks             |
  E000h  +-------------------------------+-------------------------------------+
         |                               |  BANK 7 — the OS body               |
         |                               |                                     |
@@ -105,7 +107,7 @@ Where the software actually sits. Addresses are from the current default build;
         |                               |           pristine CCP, FAT state   |
         |   TRANSIENT PROGRAM AREA      |    9000h  FAT BDOS personality,     |
         |   0100h-EC05h, 58.8 KiB       |           FS2 client, read cache    |
-        |                               |    8000h  font, boot banner         |
+        |   continues up through E000h  |    8000h  font, boot banner         |
         |   in the program's own bank   |    6000h  DPH/DPB, dir buffer,      |
         |   (N = 0..6)                  |           reclaimable cache pool    |
         |                               |    4800h  console driver (slot 0)   |
@@ -134,13 +136,20 @@ Three things in that picture explain most of the design:
 - The filesystem is **on the other side of a serial link**, so file operations
   are transactions with latency, not memory accesses.
 
+And one thing the picture can mislead about: common memory is 8 KiB, but the OS
+does not own all of it. `E000h-EBFFh` — the interrupt-callback reservation and
+the CCP — belongs to the running program. Page zero's `0006h` holds `EC06h`, so
+the transient program area really does run to `EC05h`, and the CCP is a user
+program sitting inside it, not a layer above it. The OS's share of common memory
+starts at the BDOS facade.
+
 ---
 
 ## 0.2 The software pieces
 
 | Piece | Where it runs | What it is |
 |---|---|---|
-| **ZCPR2** | common, `E400h-EBFFh` | the command processor; a ZCPR2-family CCP, restored from a pristine copy in bank 7 on warm boot |
+| **ZCPR2** | `E400h-EBFFh`, inside the TPA | the command processor. Not an OS component: a user program at a fixed high address, which a transient may overwrite and which warm boot restores from a pristine copy held in bank 7 |
 | **ZSDOS** | bank 7, `2000h` | the BDOS. A ZSDOS build, not stock CP/M. Authoritative for current drive, USER, and write protection |
 | **BDOS facade** | common, `EC00h` | the only application-to-OS crossing. Publishes `FBASE`, stages caller objects, enters mode 11, restores the caller's mapping on the way out |
 | **bank-7 dispatcher** | bank 7 | decides, per call, whether Zephyr semantics apply or the call goes to ZSDOS unchanged |
@@ -822,14 +831,24 @@ and ABI mistakes are caught by the build itself, not by running the machine.
 
 ```text
 Code/HOST/CPM2.2/          the operating system: BIOS, ZCPR2, ZSDOS, tools
-  src/                     BIOS, drivers, layout declarations
-  cpm22/ zcpr2/ zsdos/     command processor and BDOS sources
+  src/
+    zephyr.asm             the assembly root: include order and nothing else
+    layout/                the address authority: memory.inc, platform.inc, modes.inc
+    common/                code that must be mapped under more than one latch state
+    core/                  bank 7; defines the contracts
+    drivers/               bank 7; implements them -- console/ storage/ transport/
+    assets/                font and other read-only data
+  zcpr2/ zsdos/            command processor and BDOS sources
   tools/                   image builder, validators, doc generator, harness runners
   tests/                   libqkz80 harnesses
   config/                  payload map and the cpmtools disk definition
   build/                   every generated artifact
   docs/                    generated and hand-written documentation
 ```
+
+A file's directory states which memory class it belongs to, and the build checks
+that claim against the addresses the file actually emits. `common/` must land in
+`E000h-FFFFh`; `core/`, `drivers/` and `assets/` must land in bank 7.
 
 All commands below run from `Code/HOST/CPM2.2`.
 
@@ -893,15 +912,21 @@ configurations are not, which is another reason to read the printed summary.
 ### What the build actually does
 
 ```text
-src/zephyr.asm
-  -> build/zephyr_build.asm      Makefile rewrites the console/storage/transport
-                                 .include lines and the feature flags for the
-                                 selected configuration
-  -> sdasz80                     one assembly of the whole address space
+Makefile -> build/config.inc     the feature flags, as an assembler header every
+                                 translation unit includes
+
+src/zephyr.asm -> firmware.rel   one assembly: layout, common, core, and the
+                                 common half of each split driver
+src/drivers/**  -> drv_*.rel     each driver is its own translation unit; the
+                                 build selects which objects to link, so a
+                                 CONSOLE or STORAGE_A choice is a link input
   -> sdldz80 -> firmware.ihx     absolute .org layout, no relocation
+                -u               rewrites each .lst as a .rst with resolved
+                                 addresses; those are the symbol authority
        check_overlap.py          FAILS on any byte emitted twice
        check_diag_record.py      FAILS if the IOC failure record drifts from
                                  the copy the CP/M tools assemble against
+       check_org_placement.py    FAILS if an .org did not land on its constant
   -> makebin -> firmware_flat.bin
   -> split_banked_image.py       cuts the flat space into ROM page 0 (common
                                  memory, reset vector) and the bank 7 payload,
@@ -947,7 +972,7 @@ Primary artifacts:
 | `build/zephyr80-<ccp>-<bdos>.bin` | the 512 KiB image to flash |
 | `build/firmware.bin` | ROM page 0: reset vector and common memory |
 | `build/bank7.bin` | bank 7 payload: ZSDOS, the BIOS and drivers |
-| `build/firmware.lst` | the listing; the symbol authority for harnesses |
+| `build/firmware.rst`, `build/drv_*.rst` | linker-resolved listings; the symbol authority for the doc generator and the harnesses |
 | `build/layout-report.md` | region placement as the image builder saw it |
 | `docs/memory-map.md` | generated map, per-region free space, validation report |
 | `docs/symbol-map.md` | generated jump tables, IM2 page and symbols |
@@ -1098,7 +1123,7 @@ that already crossed the dispatcher.
 When adding a FAT-side intercepted BDOS function, there are four coupled edits:
 
 ```text
-1. cbios_facade.asm flags table
+1. common/facade.asm flags table
        F_FCB / F_SFCB / F_DMA_IN / F_DMA_OUT as required
 
 2. fat_bdos_dispatch
@@ -1329,7 +1354,7 @@ and when the slack runs out the build tells you which symbol you collided with.
 
 ### Where the slots actually are
 
-The declarations are in the "Fixed Driver Slots" block of `src/cbios_defs.inc`.
+The declarations are in the "Fixed Driver Slots" block of `src/layout/memory.inc`.
 Read that block, not this list, before placing anything — but read this first,
 because the declarations alone will mislead you:
 
@@ -1365,14 +1390,17 @@ common memory, say which of the three cases it is.
 
 ### Adding a console backend, step by step
 
-The console facade in `src/cbios_console.asm` keeps the CP/M entry points stable
+The console facade in `src/core/console.asm` keeps the CP/M entry points stable
 and dispatches through a driver table. Adding a backend means supplying that
 table and being selectable at build time.
 
-**1. Write `src/cbios_console_<name>.asm`.**
+**1. Write `src/drivers/console/<name>.asm`.**
 
-Start it at the console slot base and bracket it with the region symbols the
-validator looks for:
+It is its own translation unit, so it carries its own headers, and its areas are
+namespaced to it. That last point is not decorative: asxxxx concatenates
+same-named areas across objects, so a second unit's `CODE` starts after the
+first unit's and the `.org` that follows becomes relative instead of absolute.
+`check_org_placement.py` catches it, but the convention avoids it:
 
 ```asm
 	.module <name>_console
@@ -1421,17 +1449,20 @@ rebuild the screen from driver state alone.
 **4. Wire it into the build.** Four places, all of which the build will catch if
 you miss them:
 
-- `Makefile`: add the name to `VALID_CONSOLES`. The selected source is included
-  by rewriting the `.include "cbios_console_vdrip.asm"` line in `src/zephyr.asm`
-  into `build/zephyr_build.asm`, so the file must be named
-  `src/cbios_console_<name>.asm`.
+- `Makefile`: add the name to `VALID_CONSOLES`. Nothing rewrites your source --
+  `DRIVER_REL_CONSOLE` resolves to `build/drv_console_$(CONSOLE).rel`, so the
+  file must be `src/drivers/console/<name>.asm` and the build links your object
+  instead of someone else's.
 - `tools/generate_memory_docs.py`: add a `CONSOLE_REGIONS` entry naming your
-  `_CODE_START` and `_CODE_END` symbols and the limit they must stay below.
-  Without this your driver is unvalidated and undocumented.
+  `_CODE_START` and `_CODE_END` symbols, the limit they must stay below, the
+  `zone` (`driver`) and the `source` file. Without this your driver is
+  unvalidated and undocumented, and the source check cannot vouch for it.
 - `tools/build_zephyr_image.py`: add the name to the `--console` choices; it is
   recorded in the layout manifest and the report.
-- `src/cbios_defs.inc`: add a code-base symbol only if your driver needs one of
-  its own. A console backend normally reuses `CBIOS_DRIVER_SLOT0_BASE`.
+- `src/layout/memory.inc`: add a code base *and its own limit* if your driver
+  needs a region of its own. Give it a ceiling rather than letting it end where
+  the next region begins -- reserved slack is the whole point, and a region
+  bounded by its neighbour loses it the moment the neighbour moves.
 
 **5. Build, then read the map.**
 
@@ -1470,13 +1501,89 @@ that are expensive to find on hardware:
   registers, whether it may block, and whether it is ISR-safe. The existing
   drivers do this and the headers are part of the design documentation.
 
+### Known debt: the video contract speaks Virtual Drip
+
+If you are writing a video driver, read this before you design its interface.
+
+`VIDEO_SEND` — BDOS function 215 — is how a transient borrows the display from
+the console driver. It dispatches to `console_backend_send_frame`,
+`console_backend_data_write_block` and `console_backend_reset_display`, so it is
+the seam every display backend sits on. Its vocabulary, however, is a serial
+transport's:
+
+- `A` is a **Virtual Drip packet type**, and callers hardcode the protocol's
+  codes (`01h` VDP_CTRL_WRITE, `0Bh` VDP_DATA_BLOCK, `13h` PALETTE_WRITE);
+- every type except `0Bh` is capped at `VIDEO_SINGLE_PAYLOAD_MAX = 0x10`, which
+  the source itself calls "the historical 16-byte limit" — a frame size, not a
+  property of any video chip.
+
+**Partly fixed.** The contract now speaks device operations, declared in
+`src/core/video_ops.inc`:
+
+```text
+VIDEO_OP_CTRL_WRITE   VIDEO_OP_DATA_WRITE    VIDEO_OP_DATA_BLOCK
+VIDEO_OP_PALETTE_WRITE VIDEO_OP_INDIRECT_WRITE
+VIDEO_OP_RESET        VIDEO_OP_PRESENT
+```
+
+Implement those. The byte values behind them are still the Virtual Drip packet
+numbers, and they are frozen, because BDOS function 215 takes that byte and
+programs are compiled against it. But the values are now an ABI detail of one
+header rather than a vocabulary every driver has to learn: nothing in a backend
+names a packet any more, and the V9958 driver no longer carries its own copy of
+the numbering.
+
+What remains is the payload ceiling. `VIDEO_SINGLE_PAYLOAD_MAX = 0x10` is a
+Virtual Drip single-frame size, enforced in `VIDEO_SEND` above the contract, and
+it applies even to a chip on your own board that could take more. Making it
+something a backend declares is a behaviour change and has not been done.
+
+Function 215 itself is frozen — compiled programs use it. Only the internal
+backend contract changes.
+
+### If you are building the device-independent layer
+
+Zephyr has the GIOS half of a GSX-style graphics architecture and none of the
+GDOS half:
+
+```text
+GDOS   device-independent: primitives, coordinate transforms, clipping,
+       workstation capability model                            -- does not exist
+GIOS   device-dependent transport to the selected backend      -- VIDEO_SEND
+```
+
+That is why `mandelbrot_v9958.asm` writes VDP registers and computes VRAM
+addresses itself: the backend is swappable, but the application is not portable
+across backends, because nothing device-independent sits above the transport.
+
+If that layer gets built, it is **core** — it defines a contract, has one
+implementation, and lives in bank 7 — while each device remains a **driver** in
+a slot. The existing entity rules cover it without extension. Budget for it
+deliberately: a primitives-and-transforms layer is plausibly comparable in size
+to the FAT personality, which is a real claim on bank 7's driver headroom.
+
+Two cautions:
+
+- **Do not claim BDOS function 115 early.** 115 is GSX's documented entry, and
+  it carries an expectation: `DE` points at a parameter block of
+  `contrl`/`intin`/`ptsin`/`intout`/`ptsout` arrays. Answering 115 with a
+  different convention gives a real GSX program silent garbage instead of a
+  clean rejection, which is a worse outcome than not claiming it. Nothing in
+  this tree uses 115 today, so it stays available; being GSX-*shaped* at a
+  Zephyr function number costs nothing and hazards nothing.
+- **Earn it with a characterization test.** The claim to honour is "an
+  unmodified GSX application produces correct output," not "the opcodes look
+  similar." Characterize before emulating, as elsewhere in this guide. Moving
+  the entry to 115 afterwards is one comparison in the facade; un-claiming it
+  after programs depend on it is not.
+
 ### Storage and other backends
 
-The same shape applies elsewhere. `src/cbios_storage.asm` owns the storage
+The same shape applies elsewhere. `src/core/storage.asm` owns the storage
 facade and the drive dispatcher routes A: to its build-selected backend; exactly
 one A: backend links per build, and they all `.org` at
 `CBIOS_STORAGE_A_CODE_BASE` and export the neutral `stg_a_*` entry points. A new
-storage backend is a new `src/cbios_storage_<name>.asm`, a new `STORAGE_A`
+storage backend is a new `src/drivers/storage/<name>.asm`, a new `STORAGE_A`
 value, and a new region entry — the same four wiring points.
 
 For anything that is not console or storage, prefer a private driver table
@@ -1695,7 +1802,7 @@ Drive letters are configuration and appear in more places than one constant.
 Review, at minimum:
 
 ```text
-1. cbios_defs.inc
+1. layout/memory.inc
        SD_STORAGE_DRIVE / SD_STORAGE_DRIVE2 / SD_STORAGE_DRIVE_LIMIT
        FAT_BIOS_DRIVE
 
@@ -1907,7 +2014,7 @@ Three harnesses exist today, and each proves a different kind of thing:
 | `tools/test_fat_bdos_ro.py` | `tests/fat_bdos_ro.cpp` | FAT BDOS routing, all-USER raw SEARCH, USER-relative CHDIR, the FS2 handle lifecycle, error mapping, the writable FCB personality |
 
 `test_irq_core.py` also does something no emulator can: before running anything
-it greps every source but `cbios_irq.asm` for `di`, `ei`, `reti`, `retn`, `im`
+it greps every source but `common/irq.asm` for `di`, `ei`, `reti`, `retn`, `im`
 and `ld i,a`, and fails the build if it finds one. The interrupt architecture is
 a source-level rule, so it is checked at source level.
 
@@ -1929,18 +2036,23 @@ is not closed on an error path, an off-by-one in extent arithmetic.
 
 Every existing harness has the same five parts. Copy the shape.
 
-**1. The runner (Python).** Parses `build/firmware.lst` for symbol addresses,
-adds the numeric constants from `src/cbios_defs.inc`, writes them to a plain
-`name value` text file, compiles the C++ harness against `-lqkz80`, and runs it
-with the flat image and the symbol file:
+**1. The runner (Python).** Parses the linker-resolved listings for symbol
+addresses, adds the numeric constants from `src/layout/memory.inc`, writes them
+to a plain `name value` text file, compiles the C++ harness against `-lqkz80`,
+and runs it with the flat image and the symbol file:
 
 ```python
-symbols, _ = parse_listing(build / "firmware.lst")
-add_defs(symbols, root / "src/cbios_defs.inc")
+symbols, _ = parse_listings(sorted(build.glob("*.rst")))
+add_defs(symbols, root / "src/layout/memory.inc")
 ```
 
-Any label the listing shows is available — no `.globl` needed — and any
-`NAME = value` in `cbios_defs.inc` is available as a constant. Refer to
+`.rst`, not `.lst`: the linker rewrites each listing with resolved addresses,
+and there is one per translation unit, so the layout is the union of them. The
+`.map` is *not* usable for this — the ASxxxx symbol table truncates names to
+eight characters, and 285 of them are ambiguous at that length.
+
+Any label a listing shows is available — no `.globl` needed — and any
+`NAME = value` in `layout/memory.inc` is available as a constant. Refer to
 addresses by symbol. A harness that hardcodes an address will keep passing after
 the layout moves.
 
@@ -2357,17 +2469,17 @@ These names describe the current tree and are starting points, not permanent
 ABI.
 
 ```text
-Code/HOST/CPM2.2/src/cbios_facade.asm
+Code/HOST/CPM2.2/src/common/facade.asm
     common/application crossing
     fac_bdos
     native/Zephyr extension routing
 
-Code/HOST/CPM2.2/src/cbios_native_gate.asm
+Code/HOST/CPM2.2/src/common/native_gate.asm
     function-218 descriptor crossing
     application/native read-data staging
     preservation of native status across the crossing
 
-Code/HOST/CPM2.2/src/cbios_fat_layout.asm
+Code/HOST/CPM2.2/src/drivers/storage/fat.asm
     bank-7 FAT personality
     fat_bdos_dispatch
     fat_bdos_post
@@ -2391,7 +2503,7 @@ Code/HOST/Utilities/src/zcd.asm
 FS2
     additive to the existing /SHARED service
 
-Code/HOST/CPM2.2/src/cbios_irq.asm
+Code/HOST/CPM2.2/src/common/irq.asm
     BIOS-owned IM2 infrastructure
 
 Code/HOST/Utilities/src/bdoschar.asm
@@ -2403,6 +2515,12 @@ Code/HOST/CPM2.2/docs/characterization/
 
 Re-check the current source and generated maps before relying on an address,
 buffer size, or exact region boundary.
+
+The tree is organized by memory class: `layout/` declares addresses, `common/`
+holds what must be mapped under more than one latch state, and `core/` and
+`drivers/` are the contract-versus-implementation split inside bank 7. A file's
+directory is checked against the addresses it emits, so the path is a reliable
+guide to where something runs.
 
 ---
 

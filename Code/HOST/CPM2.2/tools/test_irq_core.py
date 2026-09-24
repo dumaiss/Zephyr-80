@@ -17,8 +17,15 @@ args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 build = args.build_dir.resolve()
 # CPU-global instructions may only be emitted by the IRQ core.
-for source in (root / 'src').glob('*.asm'):
-    if source.name == 'cbios_irq.asm':
+#
+# rglob, not glob: the sources moved into layout/ common/ core/ drivers/, and a
+# non-recursive glob quietly matched only zephyr.asm -- the check was scanning
+# one file and passing.  The count below is asserted so that cannot recur.
+sources = sorted((root / 'src').rglob('*.asm'))
+if len(sources) < 30:
+    raise SystemExit(f'interrupt-policy scan found only {len(sources)} sources; the glob is wrong')
+for source in sources:
+    if source.as_posix().endswith('common/irq.asm'):
         continue
     for line in source.read_text().splitlines():
         instruction = line.split(';', 1)[0].strip().lower()

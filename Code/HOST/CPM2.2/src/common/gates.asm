@@ -13,6 +13,7 @@
 ; reentrant.  Nothing reaches a gate from inside another: bank 7 code never calls
 ; a common jump-table entry, and interrupt handlers call nothing here.
 
+	.include "core/video_ops.inc"
 	.globl gate_const,gate_conin,gate_conout
 	.globl gate_iocall,gate_iocbulk,gate_iocbulkw,gate_video_send
 	.globl bios_inert_ret,bios_inert_reader,bios_inert_seldsk
@@ -194,7 +195,7 @@ gate_video_send:
 	jr z,gate_video_call		; reset: no payload
 	cp #0xff
 	jr z,gate_video_call
-	cp #VIDEO_TYPE_VDP_DATA_BLOCK
+	cp #VIDEO_OP_DATA_BLOCK
 	jr z,gate_video_block
 	ld d,a				; type
 	ld a,b
@@ -235,7 +236,7 @@ gate_video_block_have:
 	push hl				; next source
 	push bc
 	ld hl,#FAC_BULK_BUF
-	ld a,#VIDEO_TYPE_VDP_DATA_BLOCK
+	ld a,#VIDEO_OP_DATA_BLOCK
 	call xing_os_call_ix
 	pop de				; this chunk
 	pop hl				; next source

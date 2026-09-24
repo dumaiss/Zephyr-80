@@ -43,6 +43,7 @@
 	.include "config.inc"
 	.include "layout/platform.inc"
 	.include "layout/memory.inc"
+	.include "core/video_ops.inc"
 
 	.globl v9958_console_driver
 	.globl v9958_console_cold_init,v9958_console_init,v9958_console_const
@@ -152,13 +153,6 @@ V9958_R23_TEXT_BASE	= 0xfc		; four-line margin before row zero
 
 ; Historical VIDEO_SEND packet types accepted by the direct compatibility
 ; adapter. They name operations, but no Virtual Drip framing is generated.
-VIDEO_TYPE_VDP_CTRL_WRITE = 0x01
-VIDEO_TYPE_VDP_DATA_WRITE = 0x02
-VIDEO_TYPE_VDP_DATA_BLOCK = 0x0b
-VIDEO_TYPE_VDP_PALETTE_WRITE = 0x13
-VIDEO_TYPE_VDP_INDIRECT_WRITE = 0x14
-VIDEO_TYPE_RESET	= 0x06
-VIDEO_TYPE_FRAME_MARK	= 0x08
 
 ; Terminal parser states (for ANSI/VT-100 output processing).
 TERM_STATE_NORMAL	= 0x00
@@ -2484,9 +2478,9 @@ v9958_data_write_block_loop:
 ; Selected-console single-request implementation. The historical packet-type
 ; API remains usable, but supported operations go straight to physical ports.
 console_backend_send_frame:
-	cp #VIDEO_TYPE_RESET
+	cp #VIDEO_OP_RESET
 	jr z,v9958_video_send_reset
-	cp #VIDEO_TYPE_FRAME_MARK
+	cp #VIDEO_OP_PRESENT
 	jr z,v9958_video_send_present
 	ld d,a
 	ld a,b
@@ -2499,13 +2493,13 @@ console_backend_send_frame:
 	ld c,d
 	ld d,a
 	ld a,c
-	cp #VIDEO_TYPE_VDP_CTRL_WRITE
+	cp #VIDEO_OP_CTRL_WRITE
 	jr z,v9958_video_send_ctrl
-	cp #VIDEO_TYPE_VDP_DATA_WRITE
+	cp #VIDEO_OP_DATA_WRITE
 	jr z,v9958_video_send_data
-	cp #VIDEO_TYPE_VDP_PALETTE_WRITE
+	cp #VIDEO_OP_PALETTE_WRITE
 	jr z,v9958_video_send_palette
-	cp #VIDEO_TYPE_VDP_INDIRECT_WRITE
+	cp #VIDEO_OP_INDIRECT_WRITE
 	jr nz,v9958_video_send_error
 	ld a,d
 	out (V9958_INDIRECT_PORT),a
