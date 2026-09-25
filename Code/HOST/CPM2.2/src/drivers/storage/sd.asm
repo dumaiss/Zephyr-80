@@ -863,7 +863,7 @@ stg_sel_bad:
 stg_sel_fat:
 	; The complete FAT personality is linked in every build.  The gate is
 	; retained only for the recovery image that deliberately parks B:.
-	ld a,#FAT_BIOS_M1_ENABLED
+	ld a,#FAT_DRIVE_ENABLED
 	or a
 	jr z,stg_sel_bad
 	ld a,#FAT_BIOS_DRIVE

@@ -89,10 +89,12 @@ Where the software actually sits. Addresses are from the current default build;
  FFFFh  +=====================================================================+
         |  COMMON MEMORY — bank 0, identical in both modes, 8 KiB total       |
         |                                                                     |
-        |    EC00h  BDOS facade: CALL 5, FBASE, staging, functions 200-218    |
-        |    F000h  BIOS tables, boot, banking helpers, SIO core              |
-        |    F538h  crossing gates  ·  F730h interrupt dispatch               |
-        |    F958h  staging buffers ·  FD00h IM2 vector page                  |
+        |  Four zones, each ONE contiguous run, growing up from EC00h:        |
+        |    EC00h  Z1 ABI      facade (CALL 5, FBASE, 200-218), BIOS tables |
+        |    F1B0h  Z2 crossing SIO return, 218 gate, banking, gates         |
+        |    F4F0h  Z3 interrupt CTC, SIO core, dispatch, policy, registration|
+        |    F850h  Z4 driver   the console driver's ISR half, either-or      |
+        |    FA00h  staging buffers ·  FD00h IM2 vector page                  |
         |    FE01h  BIOS state      ·  FE80h ISR / gate / facade stacks       |
         +=====================================================================+
  EC00h  |  E400h-EBFFh  CCP (ZCPR2) — a user program, inside the TPA:         |
@@ -105,12 +107,14 @@ Where the software actually sits. Addresses are from the current default build;
         |                               |                                     |
         |                               |    C000h  BIOS stacks, SD scratch,  |
         |                               |           pristine CCP, FAT state   |
-        |   TRANSIENT PROGRAM AREA      |    9000h  FAT BDOS personality,     |
-        |   0100h-EC05h, 58.8 KiB       |           FS2 client, read cache    |
-        |   continues up through E000h  |    8000h  font, boot banner         |
-        |   in the program's own bank   |    6000h  DPH/DPB, dir buffer,      |
-        |   (N = 0..6)                  |           reclaimable cache pool    |
-        |                               |    4800h  console driver (slot 0)   |
+        |   TRANSIENT PROGRAM AREA      |    B800h  SIO, console tee,         |
+        |   0100h-EC05h, 58.8 KiB       |           VDrip transport (bank 7)  |
+        |   continues up through E000h  |    A000h  FAT BDOS personality,     |
+        |   in the program's own bank   |           FS2 client, read cache    |
+        |   (N = 0..6)                  |    9000h  console driver slot       |
+        |                               |    8000h  font, boot banner         |
+        |                               |    6000h  DPH/DPB, dir buffer,      |
+        |                               |           reclaimable cache pool    |
         |                               |    3000h  BIOS facades, drivers,    |
         |                               |           IOC command + bulk lanes  |
         |                               |    2000h  ZSDOS                     |
@@ -225,7 +229,225 @@ than a description, and the table lives in Part I, §2.
 
 ---
 
-## 0.3 The two personalities
+## 0.3 The source tree
+
+The tree is organized by **memory class**, not by subsystem. That is the first
+thing to understand about it, because it is unusual and it is load-bearing: a
+file's directory tells you which memory it ends up in, and therefore which rules
+apply to it.
+
+```
+Code/HOST/CPM2.2/
+├── src/
+│   ├── layout/      the address authority — no code at all
+│   │   ├── memory.inc      every base, every ceiling, the ASCII maps
+│   │   ├── modes.inc       latch values and bank constants
+│   │   └── platform.inc    ports and board wiring
+│   ├── common/      code that lives in common memory (E000h–FFFFh)
+│   ├── core/        bank 7 — defines contracts
+│   ├── drivers/     bank 7 — implements contracts
+│   │   ├── console/
+│   │   ├── storage/
+│   │   └── transport/
+│   ├── assets/      bank 7 — data read at boot (the font)
+│   └── zephyr.asm   the wrapper that includes the common and core units
+├── tools/           build, layout validation, documentation generators
+├── tests/           libqkz80 harnesses (C++)
+├── docs/            generated maps plus design notes
+└── config/          banks.ini (ROM payloads), diskdef (cpmtools)
+```
+
+**The directory is a promise, and the build checks it.** `DIRECTORY_CLASS` in
+`tools/generate_memory_docs.py` maps each top-level directory to a memory class,
+and every region declares which file it came from. If a module under `core/`
+assembles to an address in common memory, or a module under `common/` lands in
+bank 7, the build stops and names the file. That check exists because the
+boundary used to be a matter of memory and convention, and modules drifted across
+it.
+
+### What is in each directory
+
+**`common/`** — the small set of things that genuinely must be addressable under
+more than one bank latch. The test for belonging here is in §3: an object belongs
+in common only if its address must resolve to the same bytes under more than one
+latch state. Three situations qualify — an interrupt (the latch is unknown), a
+mode switch (the latch is changing), and an object written under one mapping and
+read under another.
+
+| File | What it is |
+|---|---|
+| `boot.asm` | cold boot, warm boot, page zero, the runnable-bank setup |
+| `rom_copy.asm` | the reset-vector bootstrap that copies ROM into SRAM |
+| `bios_table.asm` | the CP/M BIOS jump table and the Zephyr extension table |
+| `facade.asm` | `CALL 5` — the BDOS ABI surface, functions 200–218 |
+| `gates.asm` | the crossing gates into bank 7, and the warm-boot trap |
+| `crossing.asm` | mode-preserving bank select; the ROM-access primitive |
+| `banking.asm`, `bank_select.asm` | `SELMEM`, `SETBNK`, `XMOVE`, `MOVE` |
+| `irq.asm` | the IM2 dispatcher, policy, CTC mapping, callback registration |
+| `sio.asm` | the SIO core: init, receive sinks, the RX interrupt body |
+| `sercon.asm`, `vdrip.asm` | the ISR-reachable halves of two console drivers |
+| `native_gate.asm`, `native_stage.asm` | function 218 and its staging |
+
+Note the last row of drivers in `common/`: those files hold **only** the part of
+a driver an interrupt can reach. The rest of each driver is in `drivers/`. That
+split is deliberate and is the subject of §15.
+
+**`core/`** — bank 7, and the layer that *defines* an interface for something
+else to implement. `console.asm` is the console facade every backend plugs into;
+`storage.asm` is the disk facade and drive dispatcher; `video_send.asm` is the
+raw video request path; `iocall.asm` and `sio.asm` are the IO Controller and SIO
+services reached from bank 7; `bios7_table.asm` is the table ZSDOS calls;
+`banner.asm` prints the boot banner.
+
+**`drivers/`** — bank 7, and the layer that *implements* one of those contracts
+for a particular device. A driver is a backend. `console/v9958.asm` and
+`console/vdrip.asm` are alternative console backends selected by `CONSOLE=`;
+`storage/rom.asm`, `storage/sd.asm`, `storage/fat.asm` and `storage/vdrip.asm`
+are drive backends; `transport/ioc_command.asm` and `transport/vdrip.asm` are
+link transports.
+
+**`layout/`** — no code, only addresses. `memory.inc` is the single authority for
+where everything lives: every region's base, every region's ceiling, the state
+and stack addresses, and two ASCII maps kept in step with the generated
+documentation. When an address in this guide and an address in `memory.inc`
+disagree, `memory.inc` is right; when `memory.inc` and `docs/memory-map.md`
+disagree, the generated map is right, because it is measured from the build.
+
+### How a build assembles it
+
+`zephyr.asm` is the wrapper: it includes the `layout/` headers, then the
+`common/` and `core/` units, and assembles as one translation unit. Each driver
+assembles **separately**, into its own `.rel`, and the Makefile chooses which
+objects to link. So a configuration choice is a link input, not a rewritten
+`.include` — which is why `CONSOLE=vdrip` and `CONSOLE=v9958` are the same source
+tree with different objects.
+
+Each driver's areas are namespaced per file. That is not cosmetic: same-named
+`.area` blocks concatenate across translation units in `sdasz80`, which once
+silently placed a driver 164 bytes past where its `.org` said. `tools/check_org_placement.py`
+now compares every `.org <symbol>` against that symbol's resolved address on
+every build.
+
+---
+
+## 0.4 How the machine boots
+
+Boot is four stages, and the interesting part of each is what is *not* safe to do
+yet.
+
+### Stage 1 — reset, in ROM, no RAM and no stack
+
+The Z80 resets to `0000h` with the latch in mode 00: ROM page 0 is mapped, there
+is no usable RAM, and therefore no stack and no `CALL`. `rom_copy.asm` runs from
+the reset vector and does exactly one job — get the system into RAM:
+
+1. copy all 64 KiB of ROM page 0 into SRAM bank 0;
+2. switch the latch to ROM page 7 and copy all 64 KiB into SRAM bank 7;
+3. switch to mode 10 (application) and fall through into `boot`.
+
+Step 2 contains the only real trick in the boot path. The code switches the ROM
+page *while executing*, so the instruction after the `out` must exist, with
+identical bytes, at the same address in both ROM pages. The source says so at the
+point it matters:
+
+```asm
+	ld a,#(BOOT_OS_ROM_PAGE << ROM_PAGE_SHIFT) | MEM_MODE_ROM | OS_BANK
+	out (BANK_PORT),a
+	; The next instruction has identical bytes at this address in page 7.
+	ld hl,#0x0000
+```
+
+The whole bootstrap has a byte budget in page zero, asserted at assembly time,
+because it has to fit below the CP/M vectors it will later install.
+
+### Stage 2 — cold boot: `boot`
+
+Now RAM exists. The order here is a sequence of preconditions, and almost every
+line has one:
+
+| Step | Why it is where it is |
+|---|---|
+| latch to mode 11, **then** set `SP` | the BIOS stack is in bank 7, so bank 7 must be mapped before `SP` points into it |
+| `irq_boot_prepare` | sets `I` = `FDh` and IM 2 before anything can interrupt |
+| `sound_silence_psgs` | the PSGs power up making noise |
+| `sio_core_init` | brings up the console link — needed by the next step to report failure |
+| **`bank7_check`** | nothing in bank 7 may be called until it is known to hold *this build's* image. It reports over SIO0/B, which is common, and halts |
+| `sio1_ioc_init` | SIO1/A is a **cold-only** device; see below |
+| `ioc_link_bringup` | fixes the IOCALL character boundary now rather than lazily. Failure is deliberately unchecked — SIO1 shares nothing with the console or A: |
+| `console_backend_cold_init` | the build-selected display and input backend |
+| `sercon_init` | after the backend, because it copies the backend's driver table; before the banner, so an already-armed terminal sees the boot messages |
+| `boot_print_banner` | the first thing a human sees |
+| `prepare_runnable_bank` | installs page zero: `JP WBOOT` at `0000h`, `JP FBASE` at `0005h`, DMA at `0080h` |
+| `facade_reset`, `boot_fat_context_reset`, zero `IOBYTE`/`TDRIVE`/`DMA_BANK` | OS state to a known point |
+| `sio_core_enable_interrupts`, `irq_enable` | interrupts come on **last**, only once console state, banking state and page zero are coherent |
+| `SP` → `FAC_STACK_TOP`, latch to mode 10, `SP` → `APP_STACK_TOP` | the BIOS stack is in bank 7; an interrupt between the latch switch and the CCP setting its own stack would otherwise push into bank 0's `C000h–DFFFh` |
+| `jp CCP_CLEARBUF_ENTRY` with `C` = 0 | drive A: |
+
+### Stage 3 — warm boot: `WBOOT`
+
+Warm boot is entered from the BIOS jump table and from page zero's `JP` at
+`0000h` — which means **it can be entered from any bank, with any latch state,
+with a stack pointing anywhere.** That single fact shapes the first six
+instructions:
+
+```asm
+wboot_masked:
+	ld a,#OS_EXEC_LATCH
+	out (BANK_PORT),a          ; latch first
+	xor a
+	ld (CURRENT_BANK),a
+	ld (DMA_BANK), a
+	ld sp,#CBIOS_STACK_TOP     ; only now is a stack safe
+```
+
+No stack use and no helper `CALL` happens before the latch is set. `wboot` itself
+is a two-instruction trampoline into `wboot_resident` precisely so that this
+protected body can be validated as its own region.
+
+After that it rebuilds the CP/M environment:
+
+- `irq_boot_prepare` and `sound_silence_psgs` return application-owned devices
+  and callbacks to CP/M ownership;
+- **`console_wait_key`** holds the screen so the operator can read whatever the
+  program left before the console is cleared. Interrupts are on for this wait, so
+  a serial console can answer it, and the wait gives up on its own — a program
+  that broke console input cannot strand the machine;
+- `sio_core_init` rebuilds **the console only**;
+- `restore_ccp_from_os` copies a pristine CCP from protected bank-7 SRAM, not
+  from ROM, so warm boot never maps ROM;
+- page zero, facade and FAT context are rebuilt as in cold boot;
+- `console_init` reinitializes the display. The font is in bank 7 where no
+  program can overwrite it, so no restore from ROM is needed;
+- `sercon_install` rebinds the serial console tee — `console_init` just reset
+  `CONSOLE_DRIVER` and `sio_core_init` cleared the RX sink, so without this the
+  tee dies on the first warm boot. `install`, not `init`, because it must
+  preserve the armed flags;
+- interrupts on, stack handoff, mode 10, `jp CCP_CLEARBUF_ENTRY` with
+  `C` = `TDRIVE` — the selected drive survives a warm boot.
+
+### Cold versus warm, at a glance
+
+| | Cold | Warm |
+|---|---|---|
+| ROM → SRAM copy | yes, both banks | never |
+| `bank7_check` | yes | no — already validated |
+| SIO1/A (`sio1_ioc_init`) | yes | **no** |
+| `ioc_link_bringup` | yes | no |
+| CCP source | the ROM image already in bank 7 | pristine copy in bank 7 |
+| Console | `console_backend_cold_init` | `console_init` |
+| Serial tee | `sercon_init` | `sercon_install` (preserves armed flags) |
+| Screen hold | no | `console_wait_key` |
+| Selected drive | A: | `TDRIVE` preserved |
+
+The SIO1/A row is the one to remember. **Warm boot must not repeat
+`sio1_ioc_init`:** its channel reset would destroy the persistent External-Sync
+character boundary on the Bulk lane while the host and MCU sync flags remain set,
+and the link would then be silently misframed. The console link is rebuilt on
+every warm boot; the IO Controller link is established exactly once per power-on.
+
+---
+
+## 0.5 The two personalities
 
 This is the single most important concept in the document.
 
@@ -275,7 +497,7 @@ disk rather than whatever conventional drive was selected before.
 
 ---
 
-## 0.4 The boundaries
+## 0.6 The boundaries
 
 Knowing which crossings are contractual is what keeps you from breaking one by
 accident.
@@ -305,7 +527,7 @@ application or onto the wire, it is not.
 
 ---
 
-## 0.5 The drive and namespace model
+## 0.7 The drive and namespace model
 
 Four drive letters, three kinds of backend:
 
@@ -343,12 +565,14 @@ Three separate things are easy to conflate here:
 
 ---
 
-## 0.6 Where changes usually land
+## 0.8 Where changes usually land
 
 The reader's index. Find the shape of your change, then read the procedure.
 
 | I want to… | The relevant piece | Procedure |
 |---|---|---|
+| find my way around the source | the tree, organized by memory class | §0.3 |
+| understand what happens at power-on or warm boot | the four boot stages | §0.4 |
 | build an image, or change a build option | the Makefile and its validators | §9 |
 | change or intercept a BDOS function | facade + bank-7 dispatcher | §11 |
 | add a new native (non-CP/M) operation | native API + function 218 gate | §12 |
@@ -370,7 +594,7 @@ or it belongs somewhere other than where you first looked.
 
 ---
 
-## 0.7 What to read next
+## 0.9 What to read next
 
 - **Part I** is the constitution: what must remain true regardless of how the
   code is arranged. Read it once in full. It is short, and every rule in it was
@@ -500,6 +724,56 @@ free ranges are not.
 Reclaimable 512-byte arenas remain allocator-owned and must not silently become
 permanent module storage.
 
+### The residency test, and the four zones
+
+The list above is examples. The test is one sentence:
+
+> **An object belongs in common memory if and only if its address must resolve
+> to the same bytes under more than one latch state.**
+
+Three situations qualify, and nothing else does: the latch is *unknown* (an
+interrupt can arrive under any mapping), the latch is *changing* (the code
+performing a mode switch must survive it), or the object is written under one
+mapping and read under another. "It is convenient" and "there is room" are not on
+the list.
+
+Every common region declares which of these applies, as a **zone**:
+
+| Zone | Meaning |
+|---|---|
+| `abi` | a published address — programs or the other processor see it |
+| `crossing` | changes the memory mode, or stages caller objects across it |
+| `interrupt` | reached from an ISR, so the latch is unknown |
+| `driver-isr` | a driver's ISR-reachable tail, and **only** that |
+
+Bank 7 has its own four: `core` defines a contract, `driver` implements one,
+`state` is private data, `asset` is data read at boot. `core` is deliberately
+absent from the common set — defining a contract is no reason to be addressable
+under two mappings — and `crossing` and `interrupt` are absent from bank 7 for the
+mirror reason.
+
+Three rules are enforced on every build, and each exists because it was once
+violated silently:
+
+1. **Each common zone occupies exactly one contiguous run.** Placing a routine in
+   whatever hole happened to exist is how the interrupt zone came to have islands
+   at `FC98h`, `FCE0h` and `FF60h` sitting inside the data region. The build now
+   fails and names the zone.
+2. **Every region has its own declared ceiling.** Regions used to end wherever
+   the next one began, so their slack was the neighbour's leftovers and moved
+   when the neighbour moved — growing the V9958 console by eight bytes once
+   shifted an unrelated transport shim. An overrun now reports the region and the
+   exact byte count.
+3. **A file's directory must match the memory it occupies** (§0.3).
+
+Bank 7 is additionally laid out in **512-byte granules**: every base 512-aligned,
+every size a multiple of 512. A module grows into its own reserved slack or the
+build stops; it never pushes its neighbours along.
+
+`driver-isr` is the strictest zone: it must be exactly one run, because a
+driver's ISR-reachable half goes in the common driver slot or it does not go in
+common at all. Everything else about a driver belongs in bank 7.
+
 ### The facade is an ABI boundary, not a trampoline
 
 Before adding a crossing, answer:
@@ -548,7 +822,7 @@ Path resolution belongs to the intercepted file/native operation after login.
 
 ## 4. Preserve personalities instead of collapsing them
 
-Zephyr deliberately presents more than one view of the same storage. §0.3
+Zephyr deliberately presents more than one view of the same storage. §0.5
 describes the two personalities and where they converge; this section is the
 constraint that keeps them apart.
 
@@ -877,15 +1151,21 @@ drive B: with the FAT personality enabled. It ends by printing the
 configuration it just built, and the name of the image to flash:
 
 ```text
-  ROM built:  CCP=zcpr2  BDOS=zsdos
+  ROM built:  CCP=zcpr2  BDOS=zsdos  CONSOLE=v9958  STORAGE_A=rom
     FAT drive: enabled
     build/zephyr80.bin
-    build/zephyr80-zcpr2-zsdos.bin   <- flash this one to be sure
+    build/zephyr80-zcpr2-zsdos-v9958-rom.bin   <- flash this one to be sure
 ```
 
 The stamped copy exists because `build/zephyr80.bin` is the same filename for
 every configuration. Verifying one configuration and then flashing "the ROM"
 has already shipped the wrong image once. Flash the stamped name.
+
+The stamp covers `CONSOLE` and `STORAGE_A` because at first it did not — it named
+only the CCP, the BDOS and the FAT gate, so a `CONSOLE=vdrip` build wrote the same
+filename as the default. That is the same failure the stamping was introduced to
+prevent, in a dimension it did not cover, and it shipped: a Virtual Drip ROM was
+burned and came up on the V9958 console.
 
 ### Build-time configuration
 
@@ -969,7 +1249,7 @@ Primary artifacts:
 
 | Artifact | Meaning |
 |---|---|
-| `build/zephyr80-<ccp>-<bdos>.bin` | the 512 KiB image to flash |
+| `build/zephyr80-<ccp>-<bdos>-<console>-<storage_a>[-nofat].bin` | the 512 KiB image to flash |
 | `build/firmware.bin` | ROM page 0: reset vector and common memory |
 | `build/bank7.bin` | bank 7 payload: ZSDOS, the BIOS and drivers |
 | `build/firmware.rst`, `build/drv_*.rst` | linker-resolved listings; the symbol authority for the doc generator and the harnesses |
@@ -988,6 +1268,35 @@ After a layout-affecting change, read the generated map and confirm:
 - the CP/M BIOS jump table is intact and in order;
 - the region you grew did not silently consume the slack another region was
   relying on.
+
+### Building somewhere other than `build/`
+
+`make BUILD_DIR=/somewhere/else` works, and every artifact goes there. Two things
+used to not follow, and the failure was silent rather than noisy, so it is worth
+knowing what was wrong in case something like it returns.
+
+The ROM image embeds payloads — bank 7 and the ROM-disk pages — listed in
+`config/banks.ini`. Those paths were once written literally as `build/bank7.bin`,
+which the packer resolves against the working directory. So a build into another
+directory linked its *own* bank 7 and then packed the one left in `build/` by some
+earlier build of a different configuration. `tools/build_rom_disk.py` had the same
+defect in reverse: its chunk output defaulted to `build/`, so an out-of-tree build
+overwrote the project's ROM-disk chunks.
+
+The resulting image was internally inconsistent — common memory from one link,
+bank 7 from another, two halves of an OS disagreeing about every address — and
+nothing said so. It was verified by symbols, burned, and came up running the
+other configuration's console. The programmer's verification had proved the right
+driver was *linked*; nothing had proved it was in the *image*.
+
+Both are fixed. Payload paths are written `${build_dir}/...` and expanded from an
+explicit `--build-dir`; a `${build_dir}` with no `--build-dir` is a hard error
+rather than a silent fallback; and a `kind = boot` payload must live in the same
+directory as the firmware it boots with, since it comes from the same link. That
+last check is structural rather than a measurement, so it cannot go stale.
+
+The general lesson, which applies well beyond the build system: **verify the
+artifact, not the process that produced it.**
 
 ### What the build refuses to do
 
@@ -1358,22 +1667,33 @@ The declarations are in the "Fixed Driver Slots" block of `src/layout/memory.inc
 Read that block, not this list, before placing anything — but read this first,
 because the declarations alone will mislead you:
 
-| Slot | Declared base | Reality |
-|---|---|---|
-| 0 | `BIOS7_BASE + 1800h` = `4800h`, bank 7 | **live** — the console driver slot |
-| 1-4 | `E400h`, `E800h`, `EC00h`, `F000h`, common | **vestigial** — those addresses now hold the CCP, the BDOS facade and the BIOS |
-| 5 | `F680h`, common | **oversubscribed** — the interrupt dispatcher and serial console tee now occupy that run |
+Bank 7 is laid out in **512-byte granules**: every module's base is 512-aligned
+and every module's size is a multiple of 512. Each has reserved slack of its
+own, so it can grow without pushing its neighbours along -- which is what this
+layout used to do, and what the per-module ceilings now prevent.
 
-So the honest statement for a new card today is: **your driver goes in bank 7.**
-Slots 1-5 are not free real estate waiting for you; their constants survive
-because code still references them, not because the space is available. A patch
-that places a new driver at `E800h` will fail `check_overlap.py`, and that
-failure is correct.
+There is one console driver slot, and it is in bank 7:
 
-The console slot has room. In the current default build the console region runs
-`4800h-5FFFh` — 6144 bytes, of which the V9958 driver uses about 3.2 KiB and
-nearly 3 KiB is free. `docs/memory-map.md` prints the live numbers after every
-build; use those, not these.
+| Slot | Base | Size | Occupant |
+|---|---|---|---|
+| Console driver | `CBIOS_DRIVER_SLOT0_BASE` = `9000h`, bank 7 | 4096 | the linked console driver; V9958 uses 3191, Virtual Drip 3309 |
+| Common driver slot | `CBIOS_COMMON_DRIVER_SLOT_BASE` = `F850h`, common | 432 | the linked console driver's **ISR-reachable half only** |
+
+The old slots 1-5 are gone. They were declared at `E400h`, `E800h`, `EC00h`,
+`F000h` and `F680h` in common, and every one of those addresses had come to hold
+something else -- the CCP, the BDOS facade, the BIOS tables, the interrupt
+dispatcher. Nothing referenced them, so the constants were deleted rather than
+corrected. If you meet that table in an older copy of this guide or an older
+comment in `src/layout/memory.inc`, this is what it was describing.
+
+So the statement for a new card is simple: **your driver goes in bank 7, at
+`9000h`, and it may use 4096 bytes.** If its receive path must run from an
+interrupt, that part -- and only that part -- goes in the common driver slot,
+which is 432 bytes and has 14 free in a Virtual Drip build. Everything else
+about a driver belongs in bank 7.
+
+`docs/memory-map.md` prints the live numbers after every build, free bytes per
+module included; use those, not these.
 
 ### Bank 7 by default; common memory only if you must
 

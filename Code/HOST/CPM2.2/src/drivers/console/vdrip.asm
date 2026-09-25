@@ -85,6 +85,7 @@
 	.include "layout/memory.inc"
 	.include "drivers/transport/vdrip_protocol.inc"
 
+	.globl vdrip_kbd_drain
 	.globl irq_restore
 	.globl irq_save_disable
 	.globl vdrip_console_driver
@@ -399,6 +400,15 @@ vdrip_console_wait_ready:
 vdrip_console_const:
 	push hl
 
+	; The interrupt half only enqueues; this is where received bytes become
+	; textq entries.  It calls into bank 7, so it must happen here in the
+	; foreground and not in the SIO sink.
+	push bc
+	push de
+	call vdrip_kbd_drain
+	pop de
+	pop bc
+
 	; Publish pending output before input polling. Programs such as TP3 poll
 	; CONST between echoed characters without necessarily entering CONIN, so a
 	; flush without OP_PRESENT would leave each character invisible until the
@@ -477,6 +487,8 @@ vdrip_console_conin:
 	push de
 	push hl
 
+	call vdrip_kbd_drain		; interrupt half enqueues; drain in foreground
+
 	; Check for proxy reconnection before blocking.
 	ld a,(vdrip_ready_seq_count)
 	cp #0x02
@@ -510,6 +522,11 @@ vdrip_console_conin:
 vdrip_console_conin_wait:
 	ld a,#SIO_CH_CONSOLE
 	call sio_rx_kick
+	; Drain inside the spin, not just on entry: the interrupt half enqueues
+	; while this loop waits, and textq is what the loop actually tests.  Without
+	; this, a byte that arrives after the drain above would sit in the ring and
+	; CONIN would block on it forever.
+	call vdrip_kbd_drain
 	ld a,(textq_count)
 	or a
 	jr nz,vdrip_console_conin_have_char

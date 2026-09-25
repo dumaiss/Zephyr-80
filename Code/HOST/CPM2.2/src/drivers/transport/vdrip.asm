@@ -12,9 +12,21 @@
 	.include "layout/memory.inc"
 	.include "drivers/transport/vdrip_protocol.inc"
 
+	.globl vdrip_transport_wait_reply
+	.globl vdrip_transport_wait_ready
+	.globl vdrip_transport_set_raw_callback
+	.globl vdrip_transport_set_idle_mode
+	.globl vdrip_transport_register_sink
+	.globl vdrip_transport_end_storage
+	.globl vdrip_transport_begin_storage
+	.globl vdrip_send_packet1
+	.globl vdrip_send_packet0
+	.globl vdrip_send_packet
+	.globl vdrip_send_frame
+	.globl console_backend_send_frame
+	.globl VDRIP_TRANSPORT_BANK7_CODE_START
+	.globl VDRIP_TRANSPORT_BANK7_CODE_END
 	.globl SIO0B_LAST_RX_ERROR
-	.globl VDRIP_MODE_READY
-	.globl VDRIP_MODE_STORAGE
 	.globl irq_restore
 	.globl irq_save_disable
 	.globl sio_register_rx_sink
@@ -33,6 +45,9 @@
 	.globl vdrip_tx_payload0
 	.globl vdrip_tx_ptr
 	.globl vdrip_tx_type
+	.globl vdrip_kbd_drain
+	.globl vdrip_kbd_head,vdrip_kbd_tail,vdrip_kbd_count,vdrip_kbd_ring
+	.globl vdrip_call_raw_callback
 	.area VDXPT_CODE (ABS)
 
 ; ---------------------------------------------------------------------------
@@ -301,3 +316,33 @@ VDRIP_TRANSPORT_BANK7_CODE_END:
 	.ifgt (VDRIP_TRANSPORT_BANK7_CODE_END - VDRIP_TRANSPORT_BANK7_CODE_START) - (CBIOS_VDRIP_TRANSPORT_BANK7_CODE_LIMIT - CBIOS_VDRIP_TRANSPORT_BANK7_CODE_BASE)
 	.error 1			; VDrip foreground transport overflows its bank-7 region
 	.endif
+
+; Drain the console receive ring, which the interrupt half fills.
+;
+; Foreground only, and in bank 7 deliberately: it calls the registered callback,
+; which is the console driver's textq producer and lives here in bank 7.  Only
+; the enqueue side has to be in common, because only that side runs in the
+; interrupt frame.
+; the registered callback, which is in bank 7, so it must run in mode 11 -- which
+; is where the console facade calls it from.
+;
+; Clobbers AF, BC, DE, HL.  Not ISR-safe by design.
+vdrip_kbd_drain:
+	ld a,(vdrip_kbd_count)
+	or a
+	ret z
+	ld hl,#vdrip_kbd_tail
+	ld e,(hl)
+	inc (hl)
+	ld a,(hl)
+	and #VDRIP_KBD_MASK
+	ld (hl),a
+	ld d,#0x00
+	ld hl,#vdrip_kbd_ring
+	add hl,de
+	ld c,(hl)
+	ld hl,#vdrip_kbd_count
+	dec (hl)
+	ld a,c
+	call vdrip_call_raw_callback
+	jr vdrip_kbd_drain

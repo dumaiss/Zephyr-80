@@ -4,63 +4,128 @@
 ; source in cpm22/.
 ;
 ; ------------------------------------------------------------------------------
-; Transitional fixed-slot BIOS map, with Virtual Drip
+; Memory map
 ; ------------------------------------------------------------------------------
 ;
+; The OS runs from SRAM bank 7, visible at 2000h-DFFFh only in latch mode 11.
+; Common memory, E000h-FFFFh, is SRAM bank 0 in both modes 10 and 11.  The low
+; 8 KiB is the caller window: the running program's bank in BOTH modes, which is
+; how ZSDOS reads the real page zero while the OS is mapped.
+;
+; docs/memory-map.md is generated from each build and is the authority; this is
+; the shape, not the numbers.
+;
+;   Common memory is four contiguous code zones growing up from EC00h, then the
+;   data and stacks.  Each zone is exactly ONE run; the build fails if that ever
+;   stops being true (check_zone_fragmentation).
+;
 ;   FFFFh ┌──────────────────────────────────────────────┐
-;         │ BIOS stack / reserve                         │
-;   FFF0h │   CBIOS_STACK_TOP                            │
-;   FF80h │   CBIOS_CONSOLE_STACK_TOP                    │
-;         │   stack grows downward                       │
-;   FE80h ├──────────────────────────────────────────────┤
-;   FE7Fh │ Runtime state end                            │
-;   FE00h │ IM2 FFh-vector high-byte guard               │
-;   FE01h │ Runtime state: CURRENT_BANK / DMA / XMOVE     │
-;         │   storage state                              │
-;         │   SIO core state                             │
-;         │   console driver state                       │
+;   FFA0h │ unallocated                    96            │
+;   FF60h │ facade copies: search FCB, DPB, register blk │
+;         │ facade stack              FF00h-FF5Fh        │
+;         │ gate stack                FEC0h-FEFFh        │
+;         │ ISR stack                 FE82h-FEBFh        │
+;   FE80h │ interrupted SP            FE80h-FE81h        │
+;   FE01h │ BIOS runtime state        FE01h-FE7Fh        │
+;   FE00h │   IM2 FFh-vector guard                       │
+;   FD00h │ IM2 vector page           FD00h-FDFFh        │
+;   FC00h │ ALV copy (function 27)    FC00h-FCFFh        │
+;   FA00h │ staging buffer            FA00h-FBFFh        │
+;         ╞══════════════ code below ════════════════════╡
+;   F850h │ Z4 COMMON DRIVER SLOT     F850h-F9FFh   432  │
+;         │   EITHER-OR, never both.  One console driver │
+;         │   is linked per build, and only its          │
+;         │   ISR-reachable half lives here:             │
+;         │     CONSOLE=v9958  sercon sink       84/432  │
+;         │     CONSOLE=vdrip  sink + kbd ring  418/432  │
 ;         ├──────────────────────────────────────────────┤
-;   FDFFh │ Scratch / staging end                        │
-;   FC00h │   VDRIP_STORAGE_ALV                         │
-;   FB80h │   VDRIP_STORAGE_DIRBUF                      │
-;   FA80h │   MOVE_BUFFER                                │
+;   F7C0h │    IRQ registration       F7C0h-F84Fh        │
+;   F7A0h │    CTC channel mapping                       │
+;   F758h │    IRQ policy                                │
+;   F660h │ Z3 interrupt dispatch     F660h-F757h   880  │
+;         │      FFh-vector stub      F6F6h              │
+;   F500h │    SIO core               F500h-F65Fh        │
+;   F4F0h │    CTC reset                                 │
 ;         ├──────────────────────────────────────────────┤
-;   FA7Fh │ Driver slot 5 end                            │
-;   F7EBh │   VDrip storage backend                      │
-;   F680h │ Driver slot 5 start: IOCALL / storage        │
-;         │                                              │
-;   F3FFh │ Driver slot 4 end                            │
-;   F000h │ Driver slot 4 start: Virtual Drip console    │
-;         │                                              │
-;   EFFFh │ Driver slot 3 end                            │
-;   EC00h │ Driver slot 3 start: Virtual Drip console    │
-;         │                                              │
-;   EBFFh │ Driver slot 2 end                            │
-;   E800h │ Driver slot 2 start: Virtual Drip console    │
-;         │                                              │
-;   E7FFh │ Driver slot 1 end                            │
-;   E400h │ Driver slot 1 start: Virtual Drip console    │
-;         │                                              │
-;   E3FFh │ Driver slot 0 end                            │
-;   E000h │ Driver slot 0 start: Virtual Drip console    │
+;   F308h │    crossing gates         F308h-F4EFh        │
+;   F2E8h │    crossing layer (ROM access F2FAh)         │
+;   F210h │ Z2 banking services       F210h-F2E7h   832  │
+;   F1D2h │    native file gate (function 218)           │
+;   F1B0h │    SIO ownership return                      │
 ;         ├──────────────────────────────────────────────┤
-;   DFFFh │ Core BIOS end                                │
-;   DF50h │   VIDEO_SEND (BIOS display extension)         │
-;   DD10h │   SIO core + exact IM2 vector entry          │
-;   DC00h │   banking / XMOVE                            │
-;   DBC0h │   storage facade                             │
-;   DB79h │   console facade                             │
-;   DA00h │ CBIOS_BASE / jump table / boot / WBOOT       │
+;   F000h │    CP/M BIOS jump table, boot, warm boot     │
+;   EFF8h │    transport level byte                      │
+;   EFA0h │ Z1 IOC link failure record            1456   │
+;   EC06h │    FBASE -- the BDOS entry                   │
+;   EC00h │    BDOS facade, CALL 5    EC00h-EF9Fh        │
+;         ├──────────────────────────────────────────────┤
+;   E400h │ CCP (ZCPR2) -- a user program, inside the TPA │
+;   E000h │ program reservation: interrupt callbacks      │
+;         ╞══════════════════════════════════════════════╡
+;         │ TPA 0100h-EC05h, in the program's own bank    │
+;   2000h ╞══════════════════════════════════════════════╡
+;         │ BANK 7, mode 11 only -- see the block below   │
+;   0000h ╞══════════════════════════════════════════════╡
+;         │ caller window: page zero, the program's bank   │
+;         └──────────────────────────────────────────────┘
+;
+; Bank 7, mode 11 only.  Every module sits in a 512-byte granule: each base is
+; 512-aligned and each size is a multiple of 512, so a module can grow into its
+; own reserved slack without moving its neighbours.  Free bytes are for the
+; default CONSOLE=v9958 build.
+;
+;   DFFFh ┌──────────────────────────────────────────────┐
+;   D610h │ unallocated                     10736        │
+;   CE10h │ FAT BDOS persistent state                    │
+;   CC00h │ SD deblock line and tag                      │
+;   C400h │ pristine CCP restore asset                   │
+;   C300h │ SD transaction scratch (MOVE_BUFFER)         │
+;   C000h │ BIOS private stacks                          │
+;         ├──────────────────────────────────────────────┤
+;   BE00h │ unallocated                       512        │
+;   BC00h │ VDrip transport, bank 7 half  297/512  (vdrip)│
+;   BA00h │ serial console tee            211/512  (v9958)│
+;   B800h │ SIO services                  121/512        │
+;   A000h │ FAT BDOS personality         5128/6144       │
+;   9000h │ CONSOLE DRIVER SLOT          3191/4096       │
+;         │   v9958 3191 · VDrip 3309                    │
+;   8C00h │ boot banner printer            56/1024       │
+;   8800h │ boot banner text               64/1024       │
+;   8000h │ console font (CP850 6x8)     2048/2048       │
+;   6600h │ reclaimable resource/cache pool   6656       │
+;   6000h │ DPH/DPB, directory buffer, allocation vectors│
+;         ├──────────────────────────────────────────────┤
+;   5A00h │ unallocated                      1536        │
+;   5800h │ drive dispatcher              179/512        │
+;   5600h │ drive A: backend              164/512        │
+;   5400h │ B: select probe                23/512        │
+;   4E00h │ SD-card backend               745/1536       │
+;   4C00h │ USB keyboard state             57/512        │
+;   4A00h │ USB keyboard input            186/512        │
+;   4400h │ IOC bulk lane                 558/1536       │
+;   4200h │ bulk entries                   43/512        │
+;   3A00h │ IOC command lane             1037/2048       │
+;   3800h │ IOCALL                        140/512        │
+;   3600h │ VIDEO_SEND                     40/512        │
+;   3400h │ storage facade                 26/512        │
+;   3200h │ console facade                125/512        │
+;   3000h │ ZSDOS's BIOS jump table        59/512        │
+;   2000h │ ZSDOS                                        │
 ;         └──────────────────────────────────────────────┘
 ;
 ; Important IM2 note:
-;   The SIO core emits one exact two-byte IM2 table entry. SIO0/B WR2 is set to
+;   The SIO core emits one exact two-byte IM2 table entry.  SIO0/B WR2 is set to
 ;   the low byte of that entry, and WR1 status-affects-vector is kept disabled.
 ;
-;   I register          = DDh
+;   I register          = FDh
 ;   SIO WR2 vector      = 10h
-;   CPU reads word at   = DD10h/DD11h
-;   Table word there    = sio_core_isr
+;   CPU reads word at   = FD10h/FD11h
+;   Table word there    = xing_isr
+;
+;   An unclaimed bus supplies FFh instead.  Its pointer is fetched from FDFFh and
+;   FE00h -- the high byte of the page's last entry, and the guard byte -- so the
+;   stub they select must sit at an address whose low byte is that high byte.
+;   See the palindrome note in common/irq.asm; the build asserts it.
 ;
 ; ------------------------------------------------------------------------------
 
@@ -95,10 +160,11 @@ BANK_REJECTED                   = 0xff
 ; Bank 7 (tools/split_banked_image.py; loaded from ROM page 7 at cold boot):
 ;   2000h  ZSDOS, ZSDOS_SIZE bytes, linked there by zsdos/build-zsdos.sh
 ;   3000h  ZSDOS's BIOS jump table: ZSDOS computes its BIOS as ZSDOS+1000h
-;   3040h  console dispatch, storage stubs, VIDEO_SEND, IOC transport, HID,
-;          SD and ROM-disk backends, V9958 console; 6000h disk structures;
-;          8000h font; 8800h boot banner.  Cold boot installs the whole 64 KiB
-;          page, so initialized content may extend to DFFFh.
+;   3200h  console dispatch, storage stubs, VIDEO_SEND, IOC transport, HID,
+;          SD and ROM-disk backends; 6000h disk structures and cache pool;
+;          8000h font; 8800h boot banner; 9000h console driver; A000h FAT.
+;          Cold boot installs the whole 64 KiB page, so initialized content may
+;          extend to DFFFh.
 ;   C000h  BIOS private stacks and SD scratch, then the pristine CCP at
 ;          CCP_RESTORE_BASE, which WBOOT restores without mapping ROM.
 ; Common:
@@ -122,25 +188,62 @@ BIOS7_BASE                      = ZSDOS_ORG + ZSDOS_SIZE        ; 3000h
 
 PROGRAM_ISR_AREA                = 0xe000                        ; E000h-E3FFh
 CBIOS_FACADE_BASE               = 0xec00                        ; CBASE + 800h
-CBIOS_SIO_QUIESCE_BASE          = 0xefa0 ; unused facade tail
-FACADE_CODE_LIMIT               = CBIOS_SIO_QUIESCE_BASE                        ; CBIOS_BASE
-CBIOS_NATIVE_GATE_BASE          = 0xefc2 ; immediately after sio0a_quiesce
-CBIOS_NATIVE_GATE_LIMIT         = 0xf000
+FACADE_CODE_LIMIT               = 0xefa0
+CBIOS_SIO_QUIESCE_BASE          = 0xf1b0
+CBIOS_NATIVE_GATE_BASE          = 0xf1d2 ; immediately after sio0a_quiesce
+CBIOS_NATIVE_GATE_LIMIT         = 0xf210
 ; COMMON REQUIRED: function 218 must copy write data while the caller's bank
 ; is visible and read data after bank-7 returns.  This small helper occupies
 ; otherwise unused boot-region tail; filesystem logic and state remain bank 7.
 CBIOS_NATIVE_STAGE_BASE         = CBIOS_BASE + 0x0160      ; F160h
-CBIOS_NATIVE_STAGE_LIMIT        = CBIOS_BANKING_CODE_BASE ; F1B0h
-CBIOS_GATE_CODE_BASE            = 0xf538
-CBIOS_GATE_CODE_LIMIT           = 0xf730
-CBIOS_IRQ_CODE_BASE             = 0xf730
-CBIOS_IRQ_CODE_LIMIT            = 0xf830
-CBIOS_IRQ_POLICY_BASE           = 0xfc98 ; formerly unallocated, below IM2
-CBIOS_IRQ_POLICY_LIMIT          = 0xfce0
-CBIOS_CTC_HELPER_BASE            = 0xfce0
-CBIOS_CTC_HELPER_LIMIT           = 0xfd00
-CBIOS_IRQ_REG_BASE              = 0xff60 ; formerly unallocated, above facade stack
-CBIOS_IRQ_REG_LIMIT             = 0x10000
+CBIOS_NATIVE_STAGE_LIMIT        = CBIOS_BIOS_CODE_LIMIT   ; F1B0h
+CBIOS_GATE_CODE_BASE            = 0xf308
+CBIOS_GATE_CODE_LIMIT           = 0xf4f0
+CBIOS_IRQ_CODE_BASE             = 0xf660
+CBIOS_IRQ_CODE_LIMIT            = 0xf758
+
+; The common driver slot.  Whichever console driver is linked puts its
+; ISR-reachable half here and nothing else may use it, so the reservation is
+; unconditional even though its occupant is not:
+;
+;   CONSOLE=v9958   the serial console tee's receive sink   84 bytes
+;   CONSOLE=vdrip   the VDrip transport's sink and parser  357 bytes
+;
+; 432 bytes.  Measured occupancy, which the build now reports because both
+; occupants finally have region entries:
+;
+;   CONSOLE=v9958    84 used, 348 free
+;   CONSOLE=vdrip   418 used,  14 free
+;
+; The VDrip figure is the whole ISR-reachable half -- sink, keyboard ring and
+; registration -- not the sink alone, and 14 bytes is the tightest margin in
+; common memory.  An earlier note here guessed "roughly 44 bytes plus a ring"
+; for it; that was an estimate written before the region was measurable, and it
+; was wrong by an order of magnitude.  Grow the ring or the sink and this is
+; where the build stops.
+CBIOS_COMMON_DRIVER_SLOT_BASE   = 0xf850
+CBIOS_COMMON_DRIVER_SLOT_LIMIT  = 0xfa00
+
+; Offset of the floating FFh vector stub within the interrupt region.
+; It is chosen so the stub's low byte equals irq_unexpected's high byte -- see
+; the palindrome note in common/irq.asm.  Change the region base and this must
+; be re-picked; the assertion there will say so.
+; The code before the stub occupies exactly 96h, and the stub must land on
+; F6F6h for the FFh vector to resolve, so this offset is both the minimum and
+; the only value that works at this region base.  It is what caps the base at
+; F660h and therefore what the regions below it are sized against.
+CBIOS_IRQ_FF_STUB_OFFSET        = 0x96
+CBIOS_IRQ_FF_STUB               = CBIOS_IRQ_CODE_BASE + CBIOS_IRQ_FF_STUB_OFFSET
+
+CBIOS_IRQ_POLICY_BASE           = 0xf758
+CBIOS_IRQ_POLICY_LIMIT          = 0xf7a0
+CBIOS_CTC_HELPER_BASE            = 0xf7a0
+CBIOS_CTC_HELPER_LIMIT           = 0xf7c0
+; 144, not 160.  The whole reorder is 16 bytes short of closing -- see the Z3
+; note above -- and this region had the most unused reserve of the three that
+; could give it up without moving the dispatch block off F660h.  121 used.
+CBIOS_IRQ_REG_BASE              = 0xf7c0
+CBIOS_IRQ_REG_LIMIT             = 0xf850
 IRQ_SOURCE_SIO0                 = 0x04
 IRQ_SOURCE_COUNT                = 0x04                          ; CTC channels 0-3
 CTC_VECTOR_BASE                 = 0x00
@@ -149,7 +252,7 @@ CTC_VECTOR_BASE                 = 0x00
 ; overlap: a gate, a cross-bank MOVE and a facade call each run to completion,
 ; and within one facade call a staged DMA and a staged FCB take separate parts.
 FAC_BULK_SIZE                   = 0x0200
-FAC_BULK_BUF                    = 0xf958        ; F958h-FB57h, above the serial console
+FAC_BULK_BUF                    = 0xfa00        ; FA00h-FBFFh, above the common driver slot
 FAC_DMA_BUF                     = FAC_BULK_BUF                  ; 128
 FAC_FCB_BUF                     = FAC_BULK_BUF + 0x0080         ; 36
 FAC_TIME_BUF                    = FAC_BULK_BUF                  ; 6
@@ -158,10 +261,14 @@ GATE_TX_BUF                     = FAC_BULK_BUF                  ; 32
 GATE_RX_BUF                     = FAC_BULK_BUF + 0x0020         ; 32
 MOVE_XBUF                       = FAC_BULK_BUF                  ; MOVE chunks
 ; These outlive the call that fills them.
-FAC_SFCB_BUF                    = 0xfb58        ; 36: search-first FCB, for search-next
-FAC_DPB_COPY                    = 0xfb7c        ; 16: function 31 result
-FAC_REGBLK                      = 0xfb8c        ; 7: Zephyr function register block
-FAC_ALV_COPY                    = 0xfb98        ; 256: function 27 result
+; The ALV copy stays below the IM2 page; the three small copies move above the
+; stacks, into FF60h-FF9Fh.  That split is what lets the code run reach F9FFh:
+; the 160 bytes above the stacks cannot hold the 256-byte ALV copy, so 64 bytes
+; of small copies are the most that can be lifted out of the run below.
+FAC_ALV_COPY                    = 0xfc00        ; 256: function 27 result
+FAC_SFCB_BUF                    = 0xff60        ; 36: search-first FCB, for search-next
+FAC_DPB_COPY                    = 0xff84        ; 16: function 31 result
+FAC_REGBLK                      = 0xff94        ; 7: Zephyr function register block
 GATE_STACK_TOP                  = 0xff00        ; FEC0h-FEFFh
 FAC_STACK_TOP                   = 0xff60        ; FF00h-FF5Fh
 
@@ -573,13 +680,13 @@ SIO_COMMAND_TIMEOUT_OUTER       = 0x08
 ;
 ; MOVE_BUFFER was NOT reclaimed for this.  Despite looking idle it is live
 ; scratch for the VDrip storage backend and cbios_bank's cross-bank MOVE.
-CBIOS_IOC_COMMAND_CODE_BASE     = BIOS7_BASE + 0x0400                  ; 3400h, bank 7
+CBIOS_IOC_COMMAND_CODE_BASE     = BIOS7_BASE + 0x0a00                  ; 3A00h, bank 7
 
 ; Overflow half of the unified IOC transport.  The active VDrip console image
 ; ends at ECB9h, leaving ED00h-EFFFh unused inside its reserved slot-3
 ; headroom.  IOCBULKW and the small link helpers live here so the SD backend
 ; remains contiguous and no scratch/TPA allocation is consumed.
-CBIOS_IOC_BULK_CODE_BASE        = BIOS7_BASE + 0x0a00                  ; 3A00h, bank 7
+CBIOS_IOC_BULK_CODE_BASE        = BIOS7_BASE + 0x1400                  ; 4400h, bank 7
 
 ; ------------------------------------------------------------------------------
 ; CP/M layout constants
@@ -640,15 +747,13 @@ CBIOS_BASE                      = 0xf000
 ;   DC00h  banking / XMOVE / LAUNCH
 ;   DD10h  SIO core
 
-CBIOS_CORE_BASE                 = CBIOS_BASE
-CBIOS_CORE_LIMIT                = 0xe000
-CBIOS_CORE_END                  = CBIOS_CORE_LIMIT - 1
-CBIOS_CORE_SIZE                 = CBIOS_CORE_LIMIT - CBIOS_CORE_BASE
+; CBIOS_CORE_* removed: BASE was CBIOS_BASE (F000h) and LIMIT 0xe000, so the
+; "core" ran from F000h to DFFFh and CBIOS_CORE_SIZE was negative.  Unreferenced.
 
 ; Existing public symbols kept.
 CBIOS_JUMP_TABLE                = CBIOS_BASE
-CBIOS_CONSOLE_CODE_BASE         = BIOS7_BASE + 0x0040                  ; 3040h, bank 7
-CBIOS_STORAGE_CODE_BASE         = BIOS7_BASE + 0x0100                  ; 3100h, bank 7
+CBIOS_CONSOLE_CODE_BASE         = BIOS7_BASE + 0x0200                  ; 3200h, bank 7
+CBIOS_STORAGE_CODE_BASE         = BIOS7_BASE + 0x0400                  ; 3400h, bank 7
 
 ; Banking is core BIOS, not a driver.
 ; Existing public symbol name kept, moved into the core BIOS region.
@@ -663,7 +768,7 @@ CBIOS_STORAGE_CODE_BASE         = BIOS7_BASE + 0x0100                  ; 3100h, 
 ; ccp_clear_redraw, which sat between the storage stubs and banking; that
 ; helper served only the stock BDOS and is gone.  The console and storage stubs
 ; that preceded banking are in bank 7 now.
-CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x01b0      ; F1B0h
+CBIOS_BANKING_CODE_BASE         = 0xf210                   ; F210h
 
 ; ---------------------------------------------------------------------------
 ; Independent ceilings for the common code regions
@@ -680,12 +785,12 @@ CBIOS_BANKING_CODE_BASE         = CBIOS_BASE + 0x01b0      ; F1B0h
 ; that growing one region now reports against its own limit instead of silently
 ; eating into the next.  See docs/entity-placement-gap-analysis.md section 6.1.
 CBIOS_BIOS_CODE_LIMIT           = CBIOS_BASE + 0x01b0      ; F1B0h
-CBIOS_BANKING_CODE_LIMIT        = CBIOS_BASE + 0x0288      ; F288h
-CBIOS_CTC_RESET_CODE_LIMIT      = CBIOS_BASE + 0x0298      ; F298h
-CBIOS_IOC_DIAG_CODE_LIMIT       = CBIOS_BASE + 0x02f0      ; F2F0h
-CBIOS_SIO_CORE_CODE_LIMIT       = CBIOS_BASE + 0x0510      ; F510h
-CBIOS_XPORT_LEVEL_CODE_LIMIT    = CBIOS_BASE + 0x0538      ; F538h
-CBIOS_SIO_QUIESCE_CODE_LIMIT    = CBIOS_NATIVE_GATE_BASE   ; EFC2h
+CBIOS_BANKING_CODE_LIMIT        = 0xf2e8                   ; F2E8h
+CBIOS_CTC_RESET_CODE_LIMIT      = 0xf500                   ; F500h
+CBIOS_IOC_DIAG_CODE_LIMIT       = 0xeff8                   ; EFF8h
+CBIOS_SIO_CORE_CODE_LIMIT       = 0xf660                   ; F660h (349 used with CONSOLE=vdrip)
+CBIOS_XPORT_LEVEL_CODE_LIMIT    = 0xf000                   ; F000h
+CBIOS_SIO_QUIESCE_CODE_LIMIT    = CBIOS_NATIVE_GATE_BASE   ; F1D2h
 
 ; ------------------------------------------------------------------------------
 ; Fixed Driver Slots
@@ -707,23 +812,20 @@ CBIOS_SIO_QUIESCE_CODE_LIMIT    = CBIOS_NATIVE_GATE_BASE   ; EFC2h
 ;   6. update validation expectations,
 ;   7. regenerate the memory documentation.
 
-CBIOS_DRIVER_SLOT_SIZE          = 0x0400
-
-CBIOS_DRIVER_SLOT0_BASE         = BIOS7_BASE + 0x1800                  ; 4800h, bank 7: console driver
-CBIOS_DRIVER_SLOT0_LIMIT        = CBIOS_DRIVER_SLOT0_BASE + CBIOS_DRIVER_SLOT_SIZE
-CBIOS_DRIVER_SLOT0_END          = CBIOS_DRIVER_SLOT0_LIMIT - 1
-
-CBIOS_DRIVER_SLOT1_BASE         = 0xe400
-CBIOS_DRIVER_SLOT1_LIMIT        = CBIOS_DRIVER_SLOT1_BASE + CBIOS_DRIVER_SLOT_SIZE
-CBIOS_DRIVER_SLOT1_END          = CBIOS_DRIVER_SLOT1_LIMIT - 1
-
-CBIOS_DRIVER_SLOT2_BASE         = 0xe800
-CBIOS_DRIVER_SLOT2_LIMIT        = CBIOS_DRIVER_SLOT2_BASE + CBIOS_DRIVER_SLOT_SIZE
-CBIOS_DRIVER_SLOT2_END          = CBIOS_DRIVER_SLOT2_LIMIT - 1
-
-CBIOS_DRIVER_SLOT3_BASE         = 0xec00
-CBIOS_DRIVER_SLOT3_LIMIT        = CBIOS_DRIVER_SLOT3_BASE + CBIOS_DRIVER_SLOT_SIZE
-CBIOS_DRIVER_SLOT3_END          = CBIOS_DRIVER_SLOT3_LIMIT - 1
+; The console driver slot.  This is the one surviving DRIVER_SLOT name, and the
+; only one that ever described the banked design: 4800h in bank 7, where
+; drivers/console/v9958.asm and drivers/console/vdrip.asm both .org.  Its
+; ceiling is CBIOS_CONSOLE_DRIVER_CODE_LIMIT with the other bank-7 limits, not a
+; uniform slot size.
+;
+; Slots 1-5 and CBIOS_DRIVER_SLOT_SIZE are gone.  They described the flat
+; pre-banked map and had become false in a way that reads as authoritative:
+; slot 1 at E400h is the CCP, slot 3 at EC00h the BDOS facade, slot 4 at F000h
+; the BIOS tables, slot 5 at F680h the interrupt dispatcher.  Nothing referenced
+; them, and a uniform 1 KiB granule never matched a population running from 23
+; bytes to 5 KiB.  Reserved slack per region is what replaced them; see the
+; _LIMIT block near the end of this file.
+CBIOS_DRIVER_SLOT0_BASE         = BIOS7_BASE + 0x6000                  ; 9000h, bank 7: console driver
 
 ; Stack-switch shims for the two published bulk entry points, in the slack
 ; between the console driver's code end and the Bulk lane's base at ED00h.
@@ -735,20 +837,9 @@ CBIOS_DRIVER_SLOT3_END          = CBIOS_DRIVER_SLOT3_LIMIT - 1
 ; until the console's idle-spin delay grew the driver by eight bytes.  Growing
 ; the console again means moving this up again, and the slack is what pays for
 ; it -- check_overlap.py names this symbol when the two collide.
-CBIOS_XPORT_SHIM_CODE_BASE      = BIOS7_BASE + 0x0900                  ; 3900h, bank 7
+CBIOS_XPORT_SHIM_CODE_BASE      = BIOS7_BASE + 0x1200                  ; 4200h, bank 7
 
 
-CBIOS_DRIVER_SLOT4_BASE         = 0xf000
-CBIOS_DRIVER_SLOT4_LIMIT        = CBIOS_DRIVER_SLOT4_BASE + CBIOS_DRIVER_SLOT_SIZE
-CBIOS_DRIVER_SLOT4_END          = CBIOS_DRIVER_SLOT4_LIMIT - 1
-
-CBIOS_DRIVER_SLOT5_BASE         = 0xf680
-CBIOS_DRIVER_SLOT5_LIMIT        = CBIOS_DRIVER_SLOT5_BASE + CBIOS_DRIVER_SLOT_SIZE
-CBIOS_DRIVER_SLOT5_END          = CBIOS_DRIVER_SLOT5_LIMIT - 1
-
-CBIOS_DRIVER_SLOTS_BASE         = CBIOS_DRIVER_SLOT0_BASE
-CBIOS_DRIVER_SLOTS_LIMIT        = CBIOS_DRIVER_SLOT5_LIMIT
-CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 
 ; ------------------------------------------------------------------------------
 ; Current Transitional Driver Placement
@@ -778,7 +869,15 @@ CBIOS_DRIVER_SLOTS_END          = CBIOS_DRIVER_SLOTS_LIMIT - 1
 ;
 ; Both builds now use the same ORDER -- probe, then drive A: backend, then
 ; headroom -- so the two configurations differ only in where the run starts.
-CBIOS_VDRIP_TRANSPORT_CODE_BASE       = CBIOS_DRIVER_SLOT5_BASE              ; F680h
+; The VDrip transport's ISR-reachable half: the RX sink, the keyboard ring it
+; enqueues into, and the registration the SIO core calls.  Everything else --
+; the packet parser, the send path, the handshake -- is bank 7.
+;
+; It shares the common driver slot with the serial console tee, which is why
+; both take the slot's ceiling: the two are mutually exclusive, selected by
+; CONSOLE, and only one is ever linked.
+CBIOS_VDRIP_TRANSPORT_CODE_BASE       = CBIOS_COMMON_DRIVER_SLOT_BASE        ; F850h
+CBIOS_VDRIP_TRANSPORT_CODE_LIMIT      = CBIOS_COMMON_DRIVER_SLOT_LIMIT       ; FA00h
 
 ; The consolidated SD selection probe.  Fixed window rather than "whatever is
 ; left", so the drive A: backend that follows has a stable base; the probe is
@@ -799,17 +898,19 @@ CBIOS_SD_PROBE_CODE_SIZE              = 0x30
 ; does not fit: 649 + 41 + 356 = 1046 bytes in a 1024-byte slot, and that build
 ; fails layout validation by 29 bytes.  See the STORAGE_A comment in the
 ; Makefile; it is a known, documented state, not a regression.
-CBIOS_SD_PROBE_CODE_BASE              = BIOS7_BASE + 0x1300            ; 4300h, bank 7
+CBIOS_SD_PROBE_CODE_BASE              = BIOS7_BASE + 0x2400            ; 5400h, bank 7
 	.else
 ; Nothing precedes it: the slot head is the slot head.
-CBIOS_SD_PROBE_CODE_BASE              = BIOS7_BASE + 0x1300            ; 4300h, bank 7
+CBIOS_SD_PROBE_CODE_BASE              = BIOS7_BASE + 0x2400            ; 5400h, bank 7
 	.endif
 
 ; Neutral name for the drive A: backend code slot.  Exactly one A: backend links
 ; per build (see STORAGE_A in the Makefile); they are mutually exclusive because
 ; the common window has no room for two.  cbios_storage_rom.asm and the retained
 ; cbios_storage_vdrip.asm both .org here.
-CBIOS_STORAGE_A_CODE_BASE             = CBIOS_SD_PROBE_CODE_BASE + CBIOS_SD_PROBE_CODE_SIZE
+; Absolute, not probe-base-plus-probe-size.  A slot base that follows its
+; neighbour's length is the card castle this step exists to end.
+CBIOS_STORAGE_A_CODE_BASE             = BIOS7_BASE + 0x2600            ; 5600h, bank 7
 
 ; Compatibility alias.  The VDrip backend still names this.
 CBIOS_STORAGE_VDRIP_CODE_BASE         = CBIOS_STORAGE_A_CODE_BASE
@@ -834,7 +935,7 @@ CBIOS_STORAGE_VDRIP_CODE_BASE         = CBIOS_STORAGE_A_CODE_BASE
 ;
 ; The generated memory map's Headroom table is the authority on what is left
 ; here; do not assume this region is open.
-CBIOS_SPARE_CODE_BASE           = CBIOS_BASE + 0x0288                  ; F288h
+CBIOS_SPARE_CODE_BASE           = 0xf4f0                                ; F4F0h
 
 ; Link diagnostic block, at a FIXED address so a .COM can read it directly when
 ; the link itself is too broken to answer a PING.  The command portion is
@@ -848,7 +949,7 @@ CBIOS_SPARE_CODE_BASE           = CBIOS_BASE + 0x0288                  ; F288h
 ; saw.  Fabricated evidence in the one report consulted when the link is dead
 ; is why this is now a last-failure record with an explicit "nothing recorded"
 ; state rather than a set of always-printed slots.
-CBIOS_IOC_DIAG_BASE             = CBIOS_BASE + 0x0298                  ; F298h
+CBIOS_IOC_DIAG_BASE             = 0xefa0                                ; EFA0h
 
 ; ---------------------------------------------------------------------------
 ; FROZEN: IOC link failure record
@@ -979,7 +1080,7 @@ IOC_BULK_REASON_CRC             = 0x07
 ; IOCALL, and the pre-storage gap at F41Bh is only 21 bytes before
 ; CBIOS_STORAGE_SD_CODE_BASE.  This fills slot 3; check_overlap.py enforces the
 ; EFFFh ceiling.
-CBIOS_HID_INPUT_CODE_BASE       = BIOS7_BASE + 0x0d00                  ; 3D00h, bank 7
+CBIOS_HID_INPUT_CODE_BASE       = BIOS7_BASE + 0x1a00                  ; 4A00h, bank 7
 ; HID mailbox/queue state occupies the otherwise-unused gap immediately after
 ; the SD backend.  It must not live in MOVE_BUFFER because CONST can fire from
 ; BDOS OUTCHAR while a storage request is staged, and it must not live at FD00h:
@@ -989,19 +1090,20 @@ CBIOS_HID_INPUT_CODE_BASE       = BIOS7_BASE + 0x0d00                  ; 3D00h, 
 ; full 32-byte mailbox.  Together with the 32-byte reply, 16-byte queue and four
 ; queue-control bytes, the state occupies 57 bytes: F642h-F67Ah.  The VDrip
 ; transport begins at F680h, leaving five guard bytes.
-CBIOS_HID_INPUT_STATE_BASE      = BIOS7_BASE + 0x0e00                  ; 3E00h, bank 7
+CBIOS_HID_INPUT_STATE_BASE      = BIOS7_BASE + 0x1c00                  ; 4C00h, bank 7
 
-CBIOS_SIO_CORE_CODE_BASE        = CBIOS_BASE + 0x02f0                  ; F2F0h
-CBIOS_VDREP_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
-CBIOS_V9958_CONSOLE_CODE_BASE   = CBIOS_DRIVER_SLOT0_BASE              ; E000h
-CBIOS_BIOS_EXT_CODE_BASE        = BIOS7_BASE + 0x0200                  ; 3200h, bank 7
-CBIOS_IOCTRL_CODE_BASE          = BIOS7_BASE + 0x0280                  ; 3280h, bank 7
+CBIOS_SIO_CORE_CODE_BASE        = 0xf500                                ; F500h
+; Both console drivers .org at CBIOS_DRIVER_SLOT0_BASE directly.  The two
+; aliases here were unreferenced and their ; E000h comments were four bank
+; revisions stale; one was spelled VDREP.
+CBIOS_BIOS_EXT_CODE_BASE        = BIOS7_BASE + 0x0600                  ; 3600h, bank 7
+CBIOS_IOCTRL_CODE_BASE          = BIOS7_BASE + 0x0800                  ; 3800h, bank 7
 
 ; Common crossing layer (banked OS, Phase 1 step 3): the SIO interrupt entry
 ; with its stack switch, and the mode-preserving bank select.  The gap between
 ; the SIO core's end and the BIOS extensions.
-CBIOS_XING_CODE_BASE            = CBIOS_BASE + 0x0510                  ; F510h
-CBIOS_XING_CODE_LIMIT           = CBIOS_BASE + 0x0530                  ; F530h
+CBIOS_XING_CODE_BASE            = 0xf2e8                                ; F2E8h
+CBIOS_XING_CODE_LIMIT           = 0xf308                                ; F308h
 
 ; Transport level, readable directly from ROM at a fixed address.
 ;
@@ -1025,7 +1127,7 @@ CBIOS_XING_CODE_LIMIT           = CBIOS_BASE + 0x0530                  ; F530h
 ;      protocol is unchanged at this level; only what a .COM may read out of
 ;      CBIOS_IOC_DIAG_BASE is.  Tools gate their decode on this value.
 ZBIOS_XPORT_LEVEL               = 0x08
-ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_BASE + 0x0530                  ; F530h; tools read it through function 203
+ZBIOS_XPORT_LEVEL_ADDR          = 0xeff8                                ; EFF8h; tools read it through function 203
 
 ; VDrip CP850 font placement in bank 0 TPA.
 ; Font data lives at VDRIP_FONT_ROM_BASE in the firmware binary (bank 0 ROM).
@@ -1045,7 +1147,7 @@ ZBIOS_XPORT_LEVEL_ADDR          = CBIOS_BASE + 0x0530                  ; F530h; 
 ;
 ; 8A00h rather than 8840h, immediately after the banner text: the FAT BDOS qkz80
 ; harness uses 8840h-893Fh as unowned scratch, and this keeps clear of it.
-CBIOS_BOOT_BANNER_CODE_BASE     = BIOS7_BASE + 0x5a00                  ; 8A00h, bank 7
+CBIOS_BOOT_BANNER_CODE_BASE     = BIOS7_BASE + 0x5c00                  ; 8C00h, bank 7
 
 ; ---------------------------------------------------------------------------
 ; Serial console fallback (cbios_sercon.asm)
@@ -1060,10 +1162,32 @@ CBIOS_BOOT_BANNER_CODE_BASE     = BIOS7_BASE + 0x5a00                  ; 8A00h, 
 ; state in either build (v9958 ends at FE74h, vdrip at FE76h), so SERCON_FLAGS
 ; is at a FIXED address that a .COM can poke without knowing the build.
 	.ifeq VDRIP_TRANSPORT_LINKED
-CBIOS_SERCON_CODE_BASE          = 0xf830
+
+; ---------------------------------------------------------------------------
+; Common code consolidation
+; ---------------------------------------------------------------------------
+; The free space in common used to sit in two unusable pieces: 214 bytes in the
+; SIO core's tail and 296 in the serial-console region.  Neither could hold the
+; VDrip transport's 357-byte interrupt half, so CONSOLE=vdrip could not link --
+; not for want of space, but because the space was in the wrong places.
+;
+; The four regions between those two holes move down, merging them into one run
+; at the top, and that run becomes the common driver slot: the reserved home for
+; whichever console driver's ISR-reachable half is linked.  Each region keeps a
+; ceiling of its own, so its slack stays reserved rather than inherited.
+;
+;   F2F0h  SIO core            349 used of 352 (vdrip is the larger build)
+;   F450h  crossing layer       26 of 32     (ROM_ACCESS_BASE moves with it)
+;   F470h  transport level       1 of 8
+;   F478h  crossing gates      476 of 488
+;   F660h  interrupt dispatch  238 of 248
+;   F758h  COMMON DRIVER SLOT  384 reserved -- VDrip 357, SERCON 84
+;   F908h  headroom             80, the only free space left in common
+;   F958h  staging buffer      unchanged
+CBIOS_SERCON_CODE_BASE          = CBIOS_COMMON_DRIVER_SLOT_BASE
 ; The receive ring at the end of the region is written from interrupt context,
 ; so it must stay clear of the staging buffer a facade call may be filling.
-CBIOS_SERCON_CODE_LIMIT         = FAC_BULK_BUF
+CBIOS_SERCON_CODE_LIMIT         = CBIOS_COMMON_DRIVER_SLOT_LIMIT
 	.endif
 
 SERCON_STATE_BASE               = CBIOS_WORK_AREA + 0x0078      ; FE78h
@@ -1109,40 +1233,45 @@ SERCON_RX_BUFFER_SIZE           = 0x08
 ; W5 may move it, but it costs no resident BIOS bytes where it is.
 BOOT_BANNER_ROM_BASE            = 0x8800                ; follows the 2 KiB font
 
+; Ceilings for the two boot-time assets at 8000h-89FFh.  They had none: the
+; region table skipped straight from the V9958 console at 5FFFh to the banner
+; printer at 8A00h, so 6000h-89FFh -- 10,752 bytes holding the drive tables, the
+; resource pool, the font and the banner text -- was a blind spot.  The font is
+; fixed size; the banner text is the one that grows.
+; Derived from the banner base rather than FONT_CP850_6X8_SIZE, which is declared
+; in assets/font_cp850_6x8.inc and is not visible here.  The atlas is exactly
+; 2 KiB -- 256 glyphs of 8 bytes -- so the two agree, and the region reports as
+; full because it is.
+CONSOLE_FONT_ROM_END            = BOOT_BANNER_ROM_BASE       ; 8800h, exclusive like every other _END
+CONSOLE_FONT_ROM_LIMIT          = BOOT_BANNER_ROM_BASE   ; 8800h
+
+; The banner text may grow to 8A00h, where the printer starts: 512 bytes, of
+; which 64 are used.  It cannot grow upward past the printer, because the FAT
+; BDOS backend starts at 9000h.  Growing it further means reclaiming the font's
+; 2 KiB below it -- see the note on CONSOLE_FONT_ROM_BASE.
+BOOT_BANNER_TEXT_LIMIT          = CBIOS_BOOT_BANNER_CODE_BASE  ; 8C00h
+
 ; Reply offset carrying the controller's own IOC_FW_LEVEL, in a PING response.
 IOC_OFF_PING_LEVEL              = 20
 
 CONSOLE_FONT_ROM_BASE           = 0x8000                ; font, bank 7
 VDRIP_FONT_ROM_BASE             = CONSOLE_FONT_ROM_BASE ; compatibility alias
 
-; Resident code region ends before scratch.
-; LIMIT is one byte past the end.
-CBIOS_CODE_LIMIT                = CBIOS_DRIVER_SLOT5_LIMIT
-CBIOS_CODE_END                  = CBIOS_CODE_LIMIT - 1
+; There is deliberately no single CBIOS_CODE_LIMIT.  It used to say FA80h, which
+; was false: common code also runs at FC98h, FCE0h and FF60h-FFFFh.  Making one
+; number true again is the contiguity reorder (plan step 4.2b); until then each
+; region reports against its own ceiling and no aggregate is claimed.
 
 ; ------------------------------------------------------------------------------
-; Scratch Area & Buffers
+; Staging Buffers
 ; ------------------------------------------------------------------------------
-; FA80h-FDFFh = BIOS scratch / staging.
-;
-; Current active buffers:
-;   FA80h-FB3Fh MOVE_BUFFER          (192 bytes; max storage transaction = 134)
-;   FB40h-FB7Fh VDRIP_STORAGE_DPHDPB       (DPH+DPB, relocated out of the code slot)
-;   FB80h-FBFFh VDRIP_STORAGE_DIRBUF
-;   FC00h-FCFFh VDRIP_STORAGE_ALV
-;
-; VDRIP_STORAGE_ALV is 256 bytes for the 4 KiB allocation-block VDrip disk format.
-;
-; MOVE_BUFFER was shrunk from 256 to 192 bytes to carve VDRIP_STORAGE_DPHDPB out of
-; the scratch area.  The DPH/DPB previously lived at the tail of the VDrip
-; storage code slot, which overflowed past FA80h and overlapped MOVE_BUFFER's
-; low bytes; every storage transfer then corrupted the DPH ALV pointer and the
-; DPB geometry.  A 192-byte MOVE_BUFFER still covers the largest transaction
-; (a 134-byte WRITE request: 6-byte header + 128-byte record).
-
-CBIOS_SCRATCH_BASE              = CBIOS_DRIVER_SLOT5_LIMIT             ; FA80h
-CBIOS_SCRATCH_LIMIT             = CBIOS_SCRATCH_BASE + 0x0380          ; FE00h
-CBIOS_SCRATCH_END               = CBIOS_SCRATCH_LIMIT - 1
+; There is no longer a "BIOS scratch area" in common memory, and CBIOS_SCRATCH_*
+; is gone with it.  It claimed FA80h-FDFFh and listed MOVE_BUFFER,
+; VDRIP_STORAGE_DPHDPB, VDRIP_STORAGE_DIRBUF and VDRIP_STORAGE_ALV inside it.
+; Every one of those moved to bank 7 -- MOVE_BUFFER to C300h, the VDrip storage
+; structures to 6000h -- and the range it named now holds the facade staging
+; buffer, the facade copies, two interrupt code islands and the IM2 vector page.
+; The common staging that does remain is declared with the regions that own it.
 
 MOVE_BUFFER                     = 0xc300                               ; bank 7 runtime: SD scratch
 MOVE_BUFFER_SIZE                = 0x00c0                               ; 192 bytes
@@ -1186,9 +1315,11 @@ CBIOS_IM2_VECTOR_END            = CBIOS_IM2_VECTOR_LIMIT - 1
 ;
 ; Keep existing public work-area names so current source keeps assembling.
 
-CBIOS_WORK_AREA                 = CBIOS_SCRATCH_LIMIT              ; FE00h
+; Anchored directly, not derived.  This was CBIOS_SCRATCH_LIMIT, so the address
+; of every piece of BIOS runtime state was computed from the end of a scratch
+; area that did not exist.
+CBIOS_WORK_AREA                 = 0xfe00                            ; FE00h
 CBIOS_WORK_AREA_LIMIT           = CBIOS_WORK_AREA + 0x0080          ; FE80h
-CBIOS_WORK_AREA_END             = CBIOS_WORK_AREA_LIMIT - 1
 
 CBIOS_CONSOLE_WORK_AREA         = CBIOS_WORK_AREA + 0x0004
 CBIOS_BANK_WORK_AREA            = CBIOS_WORK_AREA + 0x0020
@@ -1196,12 +1327,13 @@ CBIOS_STORAGE_WORK_AREA         = CBIOS_WORK_AREA + 0x0040
 CBIOS_VDRIP_TRANSPORT_WORK_AREA = CBIOS_WORK_AREA + 0x004b
 CBIOS_STORAGE_CALLER_SP         = CBIOS_WORK_AREA + 0x0068
 CBIOS_SIO_CORE_WORK_AREA        = CBIOS_WORK_AREA + 0x0070
-CBIOS_CONSOLE_DRIVER_WORK_AREA  = CBIOS_WORK_AREA + 0x0080
+; CBIOS_CONSOLE_DRIVER_WORK_AREA was CBIOS_WORK_AREA + 0x0080 = FE80h, which is
+; CBIOS_ISR_SP_SAVE.  Unreferenced, so it never fired; a console driver that
+; had used it would have overwritten the interrupted stack pointer.
 
 ; Optional clearer aliases for docs / validation.
 CBIOS_RUNTIME_STATE_BASE        = CBIOS_WORK_AREA
 CBIOS_RUNTIME_STATE_LIMIT       = CBIOS_WORK_AREA_LIMIT
-CBIOS_RUNTIME_STATE_END         = CBIOS_WORK_AREA_END
 
 ; ------------------------------------------------------------------------------
 ; Stack & Guard
@@ -1288,8 +1420,8 @@ VDRIP_STORAGE_PROTO_DRIVE             = 0x00
 ; below ends around F611h with roughly 110 spare bytes before FA80h, so the
 ; cheapest space is on this side of the boundary.  check_overlap.py enforces
 ; both ends, so a mistake here fails the build rather than the machine.
-CBIOS_STORAGE_SD_CODE_BASE            = BIOS7_BASE + 0x1000            ; 4000h, bank 7
-CBIOS_STORAGE_SD_CODE_LIMIT           = BIOS7_BASE + 0x1300            ; 4300h
+CBIOS_STORAGE_SD_CODE_BASE            = BIOS7_BASE + 0x1e00            ; 4E00h, bank 7
+CBIOS_STORAGE_SD_CODE_LIMIT           = BIOS7_BASE + 0x2400            ; 5400h
 ; The select probe is split across exact, otherwise-unused fixed-layout gaps.
 ; The generated memory-layout checks validate every fragment independently.
 ; The probe was split across four gaps -- DFEDh in the core BIOS tail, F41Bh in
@@ -1346,12 +1478,12 @@ RESOURCE_CACHE_LINE_COUNT             = 0x000d                         ; 13
 ; The initial non-cache estimate is 1552 bytes (384 + 192 + 192 + 528 + 256).
 ; Reserve 2 KiB so that estimate fits with 496 bytes for alignment and measured
 ; growth.  The separate 512-byte cache lines remain leases from the pool above.
-CBIOS_FAT_BDOS_CODE_BASE              = BIOS7_BASE + 0x6000            ; 9000h
+CBIOS_FAT_BDOS_CODE_BASE              = BIOS7_BASE + 0x7000            ; A000h
 ; Grown from A000h for Milestone 6: the writable FCB personality adds MAKE,
 ; the three WRITE forms with their zero-fill, DELETE's directory enumeration
 ; and RENAME.  A000h-BFFFh carries no other owner; check_overlap.py is the
 ; authority that this stays true.
-CBIOS_FAT_BDOS_CODE_LIMIT             = BIOS7_BASE + 0x7800            ; A800h
+CBIOS_FAT_BDOS_CODE_LIMIT             = BIOS7_BASE + 0x8800            ; B800h
 
 ; ---------------------------------------------------------------------------
 ; SIO services that do not need common memory (sio_core.asm, bank 7 block)
@@ -1374,37 +1506,43 @@ CBIOS_FAT_BDOS_CODE_LIMIT             = BIOS7_BASE + 0x7800            ; A800h
 ;
 ; Values are exactly where the neighbours sit today: nothing moves.  What
 ; changes is that each region now reports against a ceiling of its own.
-CBIOS_BIOS7_TABLE_LIMIT               = BIOS7_BASE + 0x0040            ; 3040h
-CBIOS_CONSOLE_CODE_LIMIT              = BIOS7_BASE + 0x0100            ; 3100h
-CBIOS_STORAGE_CODE_LIMIT              = BIOS7_BASE + 0x0200            ; 3200h
-CBIOS_BIOS_EXT_CODE_LIMIT             = BIOS7_BASE + 0x0280            ; 3280h
-CBIOS_IOCTRL_CODE_LIMIT               = BIOS7_BASE + 0x0400            ; 3400h
-CBIOS_IOC_COMMAND_CODE_LIMIT          = BIOS7_BASE + 0x0900            ; 3900h
-CBIOS_XPORT_SHIM_CODE_LIMIT           = BIOS7_BASE + 0x0A00            ; 3A00h
-CBIOS_IOC_BULK_CODE_LIMIT             = BIOS7_BASE + 0x0D00            ; 3D00h
-CBIOS_HID_INPUT_CODE_LIMIT            = BIOS7_BASE + 0x0E00            ; 3E00h
-CBIOS_HID_INPUT_STATE_LIMIT           = BIOS7_BASE + 0x1000            ; 4000h
-CBIOS_SD_PROBE_CODE_LIMIT             = BIOS7_BASE + 0x1330            ; 4330h
-CBIOS_STORAGE_A_CODE_LIMIT            = BIOS7_BASE + 0x1400            ; 4400h
-CBIOS_SD_PROBE2_CODE_LIMIT            = BIOS7_BASE + 0x1800            ; 4800h
+CBIOS_BIOS7_TABLE_LIMIT               = BIOS7_BASE + 0x0200            ; 3200h
+CBIOS_CONSOLE_CODE_LIMIT              = BIOS7_BASE + 0x0400            ; 3400h
+CBIOS_STORAGE_CODE_LIMIT              = BIOS7_BASE + 0x0600            ; 3600h
+CBIOS_BIOS_EXT_CODE_LIMIT             = BIOS7_BASE + 0x0800            ; 3800h
+CBIOS_IOCTRL_CODE_LIMIT               = BIOS7_BASE + 0x0A00            ; 3A00h
+CBIOS_IOC_COMMAND_CODE_LIMIT          = BIOS7_BASE + 0x1200            ; 4200h
+CBIOS_XPORT_SHIM_CODE_LIMIT           = BIOS7_BASE + 0x1400            ; 4400h
+CBIOS_IOC_BULK_CODE_LIMIT             = BIOS7_BASE + 0x1A00            ; 4A00h
+CBIOS_HID_INPUT_CODE_LIMIT            = BIOS7_BASE + 0x1C00            ; 4C00h
+CBIOS_HID_INPUT_STATE_LIMIT           = BIOS7_BASE + 0x1E00            ; 4E00h
+CBIOS_SD_PROBE_CODE_LIMIT             = BIOS7_BASE + 0x2600            ; 5600h
+CBIOS_STORAGE_A_CODE_LIMIT            = BIOS7_BASE + 0x2800            ; 5800h
+CBIOS_SD_PROBE2_CODE_LIMIT            = BIOS7_BASE + 0x2A00            ; 5A00h
 CBIOS_BOOT_BANNER_CODE_LIMIT          = BIOS7_BASE + 0x6000            ; 9000h
 
+; The console driver slot's own ceiling.  It was VDRIP_STORAGE_DPHDPB_BASE --
+; the drive tables -- so the largest driver in the system was bounded by a data
+; structure that happened to follow it.  Step 4.4a missed this one because the
+; console region is built per configuration rather than listed with the rest.
+CBIOS_CONSOLE_DRIVER_CODE_LIMIT       = BIOS7_BASE + 0x7000            ; A000h
+
 CBIOS_SIO_BANK7_CODE_BASE             = CBIOS_FAT_BDOS_CODE_LIMIT      ; A800h
-CBIOS_SIO_BANK7_CODE_LIMIT            = CBIOS_SIO_BANK7_CODE_BASE + 0x100
+CBIOS_SIO_BANK7_CODE_LIMIT            = CBIOS_SIO_BANK7_CODE_BASE + 0x200
 
 ; The polled half of the serial console tee (cbios_sercon.asm).  Only the
 ; registered RX sink needs a common address; the driver table, init, the
 ; CONST/CONIN/CONOUT tee and TX are reached through the console facade in
 ; bank 7 and from boot after bank7_check.  211 bytes returned to common.
 CBIOS_SERCON_BANK7_CODE_BASE          = CBIOS_SIO_BANK7_CODE_LIMIT     ; A900h
-CBIOS_SERCON_BANK7_CODE_LIMIT         = CBIOS_SERCON_BANK7_CODE_BASE + 0x100
+CBIOS_SERCON_BANK7_CODE_LIMIT         = CBIOS_SERCON_BANK7_CODE_BASE + 0x200
 
 ; The foreground half of the VDrip transport (vdrip_transport.asm).  Only the
 ; registered RX sink and the parser it calls inline need common addresses; the
 ; send path, handshake and registration are foreground.  297 bytes.
 ; Linked only when VDRIP_TRANSPORT_LINKED; the region costs nothing otherwise.
 CBIOS_VDRIP_TRANSPORT_BANK7_CODE_BASE  = CBIOS_SERCON_BANK7_CODE_LIMIT  ; AA00h
-CBIOS_VDRIP_TRANSPORT_BANK7_CODE_LIMIT = CBIOS_VDRIP_TRANSPORT_BANK7_CODE_BASE + 0x180
+CBIOS_VDRIP_TRANSPORT_BANK7_CODE_LIMIT = CBIOS_VDRIP_TRANSPORT_BANK7_CODE_BASE + 0x200
 CBIOS_FAT_BDOS_CODE_SIZE              = CBIOS_FAT_BDOS_CODE_LIMIT - CBIOS_FAT_BDOS_CODE_BASE
 CBIOS_FAT_BDOS_STATE_BASE             = BIOS7_BASE + 0x9e10            ; CE10h
 CBIOS_FAT_BDOS_STATE_LIMIT            = BIOS7_BASE + 0xa610            ; D610h
@@ -1423,7 +1561,7 @@ CBIOS_FAT_BDOS_STATE_SIZE             = CBIOS_FAT_BDOS_STATE_LIMIT - CBIOS_FAT_B
 ; beyond adjacency.  This is a named region with a declared size, not an
 ; incidental hole -- which is the distinction docs/memory-map.md's headroom
 ; table exists to preserve.
-CBIOS_SD_PROBE2_CODE_BASE             = BIOS7_BASE + 0x1400            ; 4400h, bank 7
+CBIOS_SD_PROBE2_CODE_BASE             = BIOS7_BASE + 0x2800            ; 5800h, bank 7
 CBIOS_SD_PROBE2_CODE_SIZE             = 0x00a0
 CBIOS_SD_PROBE2_CODE_END              = CBIOS_SD_PROBE2_CODE_BASE + CBIOS_SD_PROBE2_CODE_SIZE - 1
 SD_STORAGE_DPH                        = VDRIP_STORAGE_DPHDPB_BASE + 0x20  ; FB60h
@@ -1545,7 +1683,7 @@ SD_STORAGE_DRIVE_LIMIT                = 0x04
 ; B: is the FAT-backed personality: the hierarchical volume with the files a
 ; PC wrote.  It sits directly after the ROM rescue disk because it is the
 ; drive the machine is normally used from; the fixed-geometry CP/M volumes
-; follow it.  FAT_BIOS_M1=0 parks it for a recovery build.
+; follow it.  FAT_DRIVE=0 parks it for a recovery build.
 FAT_BIOS_DRIVE                        = 0x01       ; B:
 FAT_BIOS_EMPTY_BYTE                   = 0xe5
 FAT_BIOS_RECORD_BYTES                 = 0x0080
@@ -1728,39 +1866,15 @@ ROMDISK_ALV_SIZE                      = 0x0012     ; (DSM/8)+1 = 18 bytes
 ; ------------------------------------------------------------------------------
 ; Build-Time Validation Boundaries
 ; ------------------------------------------------------------------------------
-; Keep old validation symbol names where possible, but point them at the new map.
-;
-; The original RESERVED_BIOS_CODE_END pointed at CBIOS_CODE_LIMIT, so preserve
-; that behavior for compatibility: this is a LIMIT, not an inclusive end.
-
-RESERVED_BIOS_CODE_START        = CBIOS_BASE
-RESERVED_BIOS_CODE_END          = CBIOS_CODE_LIMIT
-
-RESERVED_WORK_AREA_START        = CBIOS_WORK_AREA
-RESERVED_WORK_AREA_END          = CBIOS_WORK_AREA_END
-
-RESERVED_STACK_START            = CBIOS_STACK_GUARD
-RESERVED_STACK_END              = CBIOS_AREA_END
+; The RESERVED_* family is gone.  It was the validation vocabulary of the flat
+; design, every name was unreferenced, and half of them pointed at constants
+; that had themselves become fiction (CBIOS_CODE_LIMIT, CBIOS_SCRATCH_*,
+; CBIOS_CORE_*, CBIOS_DRIVER_SLOTS_*).  Validation now works from the per-region
+; _LIMIT constants and the zone/source classification, both enforced by
+; tools/generate_memory_docs.py on every build.
 
 WBOOT_PROTECTED_START           = CBIOS_BASE
 WBOOT_PROTECTED_END             = CBIOS_AREA_END
-
-; New validation helpers for the fixed-slot map.
-
-RESERVED_BIOS_CORE_START        = CBIOS_CORE_BASE
-RESERVED_BIOS_CORE_END          = CBIOS_CORE_END
-
-RESERVED_DRIVER_SLOTS_START     = CBIOS_DRIVER_SLOTS_BASE
-RESERVED_DRIVER_SLOTS_END       = CBIOS_DRIVER_SLOTS_END
-
-RESERVED_SCRATCH_START          = CBIOS_SCRATCH_BASE
-RESERVED_SCRATCH_END            = CBIOS_SCRATCH_END
-
-RESERVED_IM2_START              = CBIOS_IM2_VECTOR_TABLE
-RESERVED_IM2_END                = CBIOS_IM2_VECTOR_END
-
-RESERVED_RUNTIME_STATE_START    = CBIOS_RUNTIME_STATE_BASE
-RESERVED_RUNTIME_STATE_END      = CBIOS_RUNTIME_STATE_END
 
 ; ------------------------------------------------------------------------------
 ; Transitional Slot Ownership
@@ -1777,8 +1891,6 @@ RESERVED_RUNTIME_STATE_END      = CBIOS_RUNTIME_STATE_END
 VDRIP_STORAGE_SLOT_FIRST       = 5
 VDRIP_STORAGE_SLOT_LAST        = 5
 
-LEGACY_CONSOLE_SLOT_FIRST       = 1
-LEGACY_CONSOLE_SLOT_LAST        = 1
 
 ; Cold-boot sources are independent of the destination SRAM selectors.
 BOOT_OS_ROM_PAGE                = 7
@@ -1787,5 +1899,9 @@ CCP_RESTORE_BASE                = 0xc400
 CCP_RESTORE_SIZE                = 0x0800
 ; Common crossing primitive; only these seven bytes are mirrored into the
 ; non-filesystem tails of drive-A ROM pages. No bootstrap is placed there.
-ROM_ACCESS_BASE                 = 0xf522
+; Moves with the crossing layer, keeping its 0x12 offset into that region.
+; The only placement rule is the image builder's: it must sit above the
+; filesystem data in a ROM page tail, so that mirroring it leaves instruction
+; fetches in ROM across the latch switch.
+ROM_ACCESS_BASE                 = 0xf2fa
 ROM_ACCESS_SIZE                 = 7

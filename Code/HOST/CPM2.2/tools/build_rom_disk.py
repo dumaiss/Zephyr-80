@@ -241,7 +241,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--format", dest="disk_format", default="zephyr80-rom")
     parser.add_argument("--build-dir", type=Path, default=Path("build"))
     parser.add_argument("--image", type=Path, default=Path("build/romdisk.img"))
-    parser.add_argument("--chunk-prefix", type=Path, default=Path("build/romdisk.p"))
+    # No default directory: it used to be build/, so a BUILD_DIR=elsewhere build
+    # wrote its image beside the rest of that build and its chunks into the
+    # project's build/ -- clobbering another configuration's, and feeding the
+    # image packer chunks that were not this build's.  Derived from --image.
+    parser.add_argument("--chunk-prefix", type=Path)
     parser.add_argument("--page-bytes", type=lambda v: int(v, 0), default=0xC000)
     parser.add_argument("--page-count", type=int, default=3)
     parser.add_argument("--block-size", type=lambda v: int(v, 0), default=1024)
@@ -252,6 +256,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--user must be between 0 and 15")
     if args.page_count < 1:
         parser.error("--page-count must be positive")
+    if args.chunk_prefix is None:
+        args.chunk_prefix = args.image.parent / "romdisk.p"
     return args
 
 

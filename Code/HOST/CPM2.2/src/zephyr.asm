@@ -22,10 +22,10 @@
 ; transport used to reserve become theirs.  sio_core.asm needs it too, for the
 ; SIO0/B diagnostics that only the transport reads.  This source stays the VDrip
 ; template, so 1.
-	.include "config.inc"		; generated: VDRIP_TRANSPORT_LINKED, FAT_BIOS_M1_ENABLED
+	.include "config.inc"		; generated: VDRIP_TRANSPORT_LINKED, FAT_DRIVE_ENABLED
 
 ; FAT drive selection gate.  The Makefile rewrites this line from
-; FAT_BIOS_M1; normal milestone-4 builds use one, while zero remains a recovery
+; FAT_DRIVE; a normal build uses one, while zero remains a recovery
 ; configuration that parks D: without changing linked placement.
 
 ; CP/M addresses the BIOS uses.  They came from the stock CP/M source, which is

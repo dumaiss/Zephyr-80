@@ -4,6 +4,7 @@
 ; must be bounded. AF/BC/DE/HL/IX/IY and both alternate sets are preserved.
 ; I, IM and interrupt policy remain core-owned. No NMI service is installed.
 
+	.globl irq_ff_unexpected,irq_unexpected
 	.globl irq_init,irq_reset,irq_register,irq_register_kernel,irq_unregister
 	.globl irq_unregister_kernel,irq_program_exit,irq_save_disable,irq_restore,irq_disable,irq_enable
 	.globl xing_isr
@@ -121,12 +122,34 @@ irq_sio_slot:
 	.dw 0
 
 ; Keep the floating FFh vector target fixed, independent of code growth.
-	.ifgt (. - IRQ_CODE_START) - 0xc7
-	.error 1
+	.ifgt (. - IRQ_CODE_START) - CBIOS_IRQ_FF_STUB_OFFSET
+	.error 1			; code before the FFh stub outgrew its offset
 	.endif
-	.ds 0xc7 - (. - IRQ_CODE_START)
+	.ds CBIOS_IRQ_FF_STUB_OFFSET - (. - IRQ_CODE_START)
 irq_ff_unexpected:
 	jp irq_unexpected
+
+; The floating FFh vector is a palindrome, and it is easy to break silently.
+;
+; An unclaimed bus supplies vector FFh.  The CPU fetches its pointer from FDFFh
+; and FE00h.  FDFFh is not a byte anyone wrote on purpose: it is the HIGH byte of
+; the vector page's last entry, which is irq_unexpected.  FE00h is the guard byte
+; in the runtime state, which is derived from this stub's own high byte.
+;
+; So the pointer is  (high byte of this stub) << 8 | (high byte of irq_unexpected)
+; and for it to select this stub, the stub's LOW byte must equal
+; irq_unexpected's HIGH byte.  F7F7h satisfied that by being the address whose
+; two bytes are both F7h; any other placement has to satisfy it deliberately.
+;
+; The old check only confirmed irq_unexpected was still in page F7xx.  That
+; stayed true when the interrupt region moved and the stub landed at F717h,
+; while the pointer still resolved to F7F7h -- which was by then somebody else's
+; code.  This checks the identity that actually matters.
+; Expressed with same-area label differences plus the region base, because the
+; assembler will not subtract a constant from a label across areas.
+	.ifne ((CBIOS_IRQ_CODE_BASE + (irq_ff_unexpected - IRQ_CODE_START)) & 0xff) - ((CBIOS_IRQ_CODE_BASE + (irq_unexpected - IRQ_CODE_START)) >> 8)
+	.error 1			; FFh vector does not resolve to irq_ff_unexpected
+	.endif
 
 ; PROGRAM_EXIT also returns the application-owned serial channel to CP/M.
 ; In: any IFF. Out: A=0. Clobbers F/BC/HL. Foreground only, no traffic.

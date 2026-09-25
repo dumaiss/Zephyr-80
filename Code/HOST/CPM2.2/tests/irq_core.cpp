@@ -157,7 +157,13 @@ int main(int argc,char **argv) try {
     require(!t.cpu.command_data_read_with_irq,"command reply byte read with interrupts enabled");
     require(r.IFF1,"command reply error did not restore IFF");
     t.cpu.command_reply=false;t.cpu.rx=0;
-    for(unsigned ptr:{0xe000,0xefff,0xf958,0xffff}) {
+    // Derived, not hardcoded: irq_register_kernel accepts D in
+    // [CBIOS_BASE>>8, FAC_BULK_BUF>>8), so the samples that must be refused are
+    // just below the BIOS and at or above the data region.  Writing them as
+    // literals made this test fail the contiguity reorder for the wrong reason:
+    // F958h was the staging buffer and is now inside the common driver slot, so
+    // accepting it had become correct.
+    for(unsigned ptr:{0xe000u, t.at("CBIOS_BASE")-1, t.at("FAC_BULK_BUF"), 0xffffu}) {
         r.BC.set_high(4);r.DE.set_pair16(ptr);t.call("irq_register_kernel");
         require(r.AF.get_high()==0xff,"unsafe kernel entry accepted");
     }

@@ -49,6 +49,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--firmware", required=True, type=Path)
     parser.add_argument("--payload-config", type=Path)
+    parser.add_argument("--build-dir", type=Path,
+                        help="expands ${build_dir} in payload paths; required if any use it")
     parser.add_argument("--monitor", type=Path)
     parser.add_argument("--bbcbasic", type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -81,7 +83,17 @@ def payload_key(name: str) -> str:
     return key or "payload"
 
 
-def payloads_from_config(path: Path) -> list[Payload]:
+def payloads_from_config(path: Path, build_dir: Path | None) -> list[Payload]:
+    """Read the payload sections.
+
+    Payload paths are written against ${build_dir} rather than a literal
+    directory.  They used to say "build/..." outright, which is correct only
+    when BUILD_DIR happens to be build/: a `make BUILD_DIR=elsewhere` linked its
+    own bank 7, then packed the bank 7 left in build/ by some earlier build of a
+    different configuration.  The image was internally inconsistent and nothing
+    said so -- a CONSOLE=vdrip ROM was verified by its symbols, burned, and came
+    up on the V9958 console, because page 7 was the V9958 build's.
+    """
     require_file(path, "payload configuration")
 
     config = configparser.ConfigParser()
@@ -103,9 +115,15 @@ def payloads_from_config(path: Path) -> list[Payload]:
         if "path" not in values:
             raise SystemExit(f"Missing path in payload section: {section}")
 
+        raw_path = values["path"].strip()
+        if "${build_dir}" in raw_path:
+            if build_dir is None:
+                raise SystemExit(f"{section}.path uses ${{build_dir}}; pass --build-dir")
+            raw_path = raw_path.replace("${build_dir}", str(build_dir))
+
         bank = parse_int(values["bank"], f"{section}.bank")
         entry = parse_int(values.get("entry", f"{APP_BASE:04X}h"), f"{section}.entry")
-        payload = Payload(key=key, name=name, bank=bank, path=Path(values["path"]), entry=entry,
+        payload = Payload(key=key, name=name, bank=bank, path=Path(raw_path), entry=entry,
                           kind=values.get("kind", "data"),
                           ram_bank=parse_int(values["ram_bank"], f"{section}.ram_bank") if "ram_bank" in values else None)
         if key in seen_keys:
@@ -310,15 +328,24 @@ def main() -> int:
     require_file(args.firmware, "firmware image")
 
     if args.payload_config:
-        payloads = payloads_from_config(args.payload_config)
+        payloads = payloads_from_config(args.payload_config, args.build_dir)
     elif args.monitor and args.bbcbasic:
         payloads = legacy_payloads(args)
     else:
         payloads = []
     if args.payload_config and config_has_section(args.payload_config, "ramdisk"):
         raise SystemExit("The RAM disk backend was retired; remove the [ramdisk] section")
+    firmware_dir = args.firmware.resolve().parent
     for payload in payloads:
         require_file(payload.path, f"{payload.name} payload")
+        # A boot payload is an SRAM image produced by the same link as the
+        # firmware, so it lives beside it.  One from another directory is another
+        # build's, and the two halves of the OS would disagree.  See
+        # payloads_from_config.
+        if payload.kind == "boot" and payload.path.resolve().parent != firmware_dir:
+            raise SystemExit(
+                f"{payload.name} payload {payload.path} is not in the firmware's "
+                f"build directory {firmware_dir}; it belongs to another build")
         validate_payload(payload)
 
     symbol_status = validate_symbols(args.symbols)

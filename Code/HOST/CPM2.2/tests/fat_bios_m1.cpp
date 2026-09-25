@@ -106,7 +106,7 @@ int main(int argc, char **argv) try {
     t.call("fat_bios_write");
     require(r.AF.get_high() == 1, "synthetic WRITE succeeded");
 
-    if (!t.at("FAT_BIOS_M1_ENABLED")) {
+    if (!t.at("FAT_DRIVE_ENABLED")) {
         r.BC.set_low(3);
         t.call("stg_seldsk");
         require(r.HL.get_pair16() == 0, "disabled D: was exposed");

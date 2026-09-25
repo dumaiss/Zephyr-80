@@ -62,3 +62,14 @@ OP_SET_GLYPH_BASE       = 0x44
 OP_SET_ATLAS_CONFIG     = 0x46
 OP_SET_DISP_OFFSET      = 0x47
 OP_PRESENT              = 0xfe
+
+; Receive-mode selectors.  Here rather than in common/vdrip.asm because both
+; halves of the transport test them and a constant cannot be linked.
+VDRIP_MODE_READY	= 0x01
+VDRIP_MODE_STORAGE	= 0x02
+
+; Console receive ring depth.  Small on purpose: the policy on overflow is to
+; drop and let RTS back-pressure hold the proxy, so this only has to cover the
+; gap between one CONST/CONIN and the next, not buffer a burst.
+VDRIP_KBD_SIZE		= 0x20
+VDRIP_KBD_MASK		= VDRIP_KBD_SIZE - 1

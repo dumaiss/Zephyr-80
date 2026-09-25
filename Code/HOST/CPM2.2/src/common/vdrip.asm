@@ -18,6 +18,17 @@
 
 	.include "drivers/transport/vdrip_protocol.inc"
 
+	.globl vdrip_call_raw_callback
+	.globl vdrip_kbd_enqueue
+	.globl vdrip_kbd_head,vdrip_kbd_tail,vdrip_kbd_count,vdrip_kbd_ring
+	.globl vdrip_tx_type
+	.globl vdrip_tx_ptr
+	.globl vdrip_tx_payload0
+	.globl vdrip_tx_len
+	.globl vdrip_rx_state
+	.globl vdrip_rx_mode
+	.globl vdrip_raw_callback
+	.globl vdrip_idle_mode
 	.globl VDRIP_TRANSPORT_CODE_START,VDRIP_TRANSPORT_CODE_END
 	.globl VDRIP_TRANSPORT_BANK7_CODE_START,VDRIP_TRANSPORT_BANK7_CODE_END
 	.globl VDRIP_TRANSPORT_STATE_START,VDRIP_TRANSPORT_STATE_END
@@ -38,8 +49,6 @@
 	.globl SIO_CH_CONSOLE,SIO0B_LAST_RX_ERROR
 
 VDRIP_MODE_RAW		= 0x00
-VDRIP_MODE_READY	= 0x01
-VDRIP_MODE_STORAGE	= 0x02
 VDRIP_MODE_PACKET	= 0x03
 
 VDRIP_RX_WAIT_SYNC0	= 0x00
@@ -82,7 +91,7 @@ vdrip_rx_sink:
 	or a
 	jr nz,vdrip_rx_sink_framed
 	ld a,c
-	call vdrip_call_raw_callback
+	call vdrip_kbd_enqueue
 	jr vdrip_rx_sink_done
 vdrip_rx_sink_framed:
 	ld a,c
@@ -93,6 +102,40 @@ vdrip_rx_sink_done:
 	pop bc
 	pop af
 	ret
+
+; Receive ring: the interrupt half's only job for a console byte.
+;
+; The registered callback lives in bank 7 -- it is the console driver's textq
+; producer -- and bank 7 is not mapped while an application runs.  Jumping to it
+; from the SIO0/B interrupt frame therefore executed whatever the transient had
+; loaded at that address.  That is what made this configuration crash under
+; SNTracker and fail its startup handshake about three times in four.
+;
+; So the interrupt half enqueues here and returns, and the foreground drains.
+; On overflow the byte is dropped: RTS back-pressure is the mechanism that keeps
+; the proxy from running ahead, and a ring that silently overwrote would defeat
+; it.
+;
+; In: A = received byte.  Clobbers AF, HL, DE.  ISR-safe, bounded, no traffic.
+vdrip_kbd_enqueue:
+	ld hl,#vdrip_kbd_count
+	ld a,(hl)
+	cp #VDRIP_KBD_SIZE
+	ret nc				; full: drop, flow control holds the proxy
+	inc (hl)
+	ld a,c
+	ld hl,#vdrip_kbd_head
+	ld e,(hl)
+	inc (hl)
+	ld a,(hl)
+	and #VDRIP_KBD_MASK
+	ld (hl),a
+	ld d,#0x00
+	ld hl,#vdrip_kbd_ring
+	add hl,de
+	ld (hl),c
+	ret
+
 
 vdrip_call_raw_callback:
 	ld hl,(vdrip_raw_callback)
@@ -242,7 +285,7 @@ vdrip_dispatch_console_loop:
 	push bc
 	push hl
 	ld c,a
-	call vdrip_call_raw_callback
+	call vdrip_kbd_enqueue		; interrupt frame: enqueue, never call bank 7
 	pop hl
 	pop bc
 	inc hl
@@ -289,6 +332,22 @@ vdrip_parser_reset:
 	ld (vdrip_rx_state),a
 	ret
 
+; Console receive ring.  Written from the interrupt frame, drained by the
+; foreground; see vdrip_kbd_enqueue.
+;
+; Here, in the driver slot with the ISR code, and NOT in the transport's work
+; area: that window is 17 bytes inside the runtime state block, and a ring placed
+; there ran over sd_storage_unit, storage_caller_sp and the SIO and SERCON state.
+; check_overlap did not object, because .ds reserves space without emitting the
+; bytes that check looks for.
+vdrip_kbd_head:
+	.db 0
+vdrip_kbd_tail:
+	.db 0
+vdrip_kbd_count:
+	.db 0
+vdrip_kbd_ring:
+	.ds VDRIP_KBD_SIZE
 VDRIP_TRANSPORT_CODE_END:
 
 	.area WORK (ABS)

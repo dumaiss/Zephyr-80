@@ -17,34 +17,40 @@ CPMTOOLS_DISKDEF ?= config/diskdef
 #
 #   rom      read-only CP/M volume in flash pages 1-3 (default)
 #   vdrip    proxy storage over the host serial link (the previous default)
-#            *** CURRENTLY DOES NOT BUILD -- see below ***
+#            *** GATED -- requires CONSOLE=vdrip; see below ***
 #
 # The banked RAM disk backend was retired.  It had not been maintained, its
 # geometry assumed RAM banks 2-7 (which the current bank model assigns to
 # applications and the OS), and the image builder's support for embedding its
 # payload had already become unreachable.
 #
-# CONSOLE=vdrip DOES NOT BUILD, with any STORAGE_A.  The VDrip transport is 654
-# bytes and common memory no longer has a hole that size: driver slot 5 was
-# reallocated to the crossing gates, the interrupt dispatcher and the serial
-# console tee, so the build fails in check_overlap naming vdrip_tr, ctc0_isr and
-# irq_ff_u.  docs/vdrip-backend-restoration.md has the measurements and what
-# restoring it would take.  The note below is the older, narrower story and is
-# kept only because the arithmetic is still the arithmetic.  This is
-# arithmetic, not a regression to hunt: that configuration needs the VDrip
-# transport (649 bytes) plus the consolidated SD probe (41) plus the VDrip
-# storage backend (356) = 1046 bytes in a 1024-byte slot.
+# CONSOLE=vdrip builds and boots.  It did not for a long time: the VDrip
+# transport was 654 bytes and common memory had no hole that size, because
+# driver slot 5 had been reallocated to the crossing gates, the interrupt
+# dispatcher and the serial console tee.  Two changes fixed it -- the common
+# consolidation, which gathered the fragments into one 432-byte driver slot, and
+# the sink fix, which made the RX ISR enqueue a byte and return as the project's
+# own SIO rule requires, instead of parsing and rendering from interrupt
+# context.  The second is what did the work: it cut the common-resident part
+# from 357 bytes to roughly 44 plus the queue.
+# docs/vdrip-backend-restoration.md records the pre-consolidation state.
 #
-# It only ever fit because 36 of the probe's 49 bytes lived OUTSIDE slot 5 --
-# 16 in the core BIOS tail at DFEDh and 20 in the packed extension at F41Bh --
-# wedged into whatever holes existed when each piece was written.  Pulling them
-# into one block is the point of the slot 5 realignment, and no 41-byte
-# contiguous hole exists anywhere else in that build (the packed extension has
-# 31 bytes across two pieces; the core BIOS has at most 19).
+# STORAGE_A=vdrip stays gated on CONSOLE=vdrip, and that gate is now a decision
+# rather than a limitation: drive A: is always the ROM disk.  VDrip storage
+# existed because there was no SD card; there is one now, and A: is where the
+# rescue volume lives, which is the last place to put a backend that depends on
+# a host proxy being connected.  Lifting the gate was Phase 5.1 of
+# docs/memory-model-implementation-plan.md; it will not be done, and the
+# four-way CONSOLE x STORAGE_A matrix behind it is not a meaningful test set.
+# The backend itself is still linked and may be retired outright later.
 #
-# Left failing deliberately, pending a decision on whether to retire this
-# backend or give it a two-way split probe.  CONSOLE=vdrip STORAGE_A=rom and
-# the default CONSOLE=v9958 STORAGE_A=rom both build normally.
+# The arithmetic that originally closed the combination, kept because it
+# explains the shape of the problem rather than the current numbers: it needed
+# the VDrip transport (649 bytes) plus the consolidated SD probe (41) plus the
+# VDrip storage backend (356) = 1046 bytes in a 1024-byte slot.  It only ever
+# fit because 36 of the probe's 49 bytes lived OUTSIDE slot 5 -- 16 in the core
+# BIOS tail at DFEDh and 20 in the packed extension at F41Bh -- wedged into
+# whatever holes existed when each piece was written.
 STORAGE_A ?= rom
 VALID_STORAGE_A := rom vdrip
 ifeq ($(filter $(STORAGE_A),$(VALID_STORAGE_A)),)
@@ -79,14 +85,14 @@ endif
 
 # FAT drive selection.  The FAT personality is complete and writable, and the
 # normal image is simply the machine: it exposes the FAT drive and carries no
-# suffix.  FAT_BIOS_M1=0 is the exception -- a recovery build that parks the
+# suffix.  FAT_DRIVE=0 is the exception -- a recovery build that parks the
 # synthetic drive without changing placement -- so that is the one that gets
-# marked in the filename.  (The M1 in the name is historical: it was the
-# Milestone-1 gate, and it now gates the whole personality.)
-FAT_BIOS_M1 ?= 1
-VALID_FAT_BIOS_M1 := 0 1
-ifeq ($(filter $(FAT_BIOS_M1),$(VALID_FAT_BIOS_M1)),)
-$(error Unsupported FAT_BIOS_M1='$(FAT_BIOS_M1)'; choose 0 or 1)
+# marked in the filename.  (It was FAT_BIOS_M1 until the name outlived the
+# milestone it referred to; it gates the whole personality, not a phase of it.)
+FAT_DRIVE ?= 1
+VALID_FAT_DRIVE := 0 1
+ifeq ($(filter $(FAT_DRIVE),$(VALID_FAT_DRIVE)),)
+$(error Unsupported FAT_DRIVE='$(FAT_DRIVE)'; choose 0 or 1)
 endif
 
 ASFLAGS ?= -o -l -s
@@ -96,11 +102,6 @@ ASFLAGS ?= -o -l -s
 # to eight characters (622 truncated, 285 of them ambiguous -- `fat_nati`
 # alone appears 79 times), so it cannot identify a symbol.  With ABS .org the
 # .lst and .rst agree; once an area is relocatable only the .rst is right.
-# Relocatable driver areas, placed here rather than by an .org in the source.
-# DRV_STORAGE_A is the build-selected drive A: backend; 4330h is where
-# CBIOS_STORAGE_A_CODE_BASE used to .org it.
-DRIVER_AREAS ?= -b DRV_STORAGE_A=0x4330
-
 LDFLAGS ?= -i -u
 ROM_SIZE ?= 65536
 MAKEBIN_FLAGS ?= -s $(ROM_SIZE)
@@ -207,7 +208,7 @@ ROM_DISK_INPUTS := $(wildcard $(UTILITIES_BUILD)/*.com) \
 
 # Bank 7, the OS image, is a payload in every build; the ROM disk chunks only
 # when drive A: is the ROM disk.
-PAYLOAD_ARGS := --payload-config "$(PAYLOAD_CONFIG)"
+PAYLOAD_ARGS := --payload-config "$(PAYLOAD_CONFIG)" --build-dir "$(BUILD_DIR)"
 ifeq ($(STORAGE_A),rom)
 IMAGE_PREREQS := $(ROM_DISK_CHUNKS) $(BANK7_BIN)
 else
@@ -231,15 +232,23 @@ all: image
 # Deferred (=), not immediate (:=): CCP and BDOS are defined further down this
 # file, so an immediate assignment here expands them as empty and produces
 # "zephyr80--.bin".
-FAT_BIOS_M1_SUFFIX = $(if $(filter 1,$(FAT_BIOS_M1)),,-nofat)
-CPM_CONFIG = $(CCP)-$(BDOS)$(FAT_BIOS_M1_SUFFIX)
+#
+# CONSOLE and STORAGE_A are in the name too, and they were not at first: the
+# stamp covered CCP, BDOS and the FAT gate only, so a CONSOLE=vdrip build wrote
+# the same zephyr80-zcpr2-zsdos.bin as the default.  The build then told you to
+# flash "this one to be sure" and the name could not tell the two apart -- which
+# is the same failure this stamping was introduced to prevent, in a dimension it
+# did not cover.  It happened: a VDrip ROM was burned and came up on the V9958
+# console.
+FAT_DRIVE_SUFFIX = $(if $(filter 1,$(FAT_DRIVE)),,-nofat)
+CPM_CONFIG = $(CCP)-$(BDOS)-$(CONSOLE)-$(STORAGE_A)$(FAT_DRIVE_SUFFIX)
 STAMPED_IMAGE = $(BUILD_DIR)/zephyr80-$(CPM_CONFIG).bin
 
 image: $(FINAL_IMAGE) docs
 	@cp "$(FINAL_IMAGE)" "$(STAMPED_IMAGE)"
 	@echo ""
-	@echo "  ROM built:  CCP=$(CCP)  BDOS=$(BDOS)"
-	@echo "    FAT drive: $(if $(filter 1,$(FAT_BIOS_M1)),enabled,PARKED (recovery build))"
+	@echo "  ROM built:  CCP=$(CCP)  BDOS=$(BDOS)  CONSOLE=$(CONSOLE)  STORAGE_A=$(STORAGE_A)"
+	@echo "    FAT drive: $(if $(filter 1,$(FAT_DRIVE)),enabled,PARKED (recovery build))"
 	@echo "    $(FINAL_IMAGE)"
 	@echo "    $(STAMPED_IMAGE)   <- flash this one to be sure"
 	@echo ""
@@ -293,9 +302,15 @@ runtime-sources-check:
 # rewrote, which only works while there is exactly one translation unit.
 CONFIG_INC ?= $(BUILD_DIR)/config.inc
 
-$(CONFIG_INC): Makefile | $(BUILD_DIR)
-	@printf '; Generated by the Makefile.  Do not edit.\nVDRIP_TRANSPORT_LINKED = %s\nFAT_BIOS_M1_ENABLED = %s\n' \
-		"$(VDRIP_TRANSPORT_LINKED)" "$(FAT_BIOS_M1)" > $@
+# FORCE, like $(FIRMWARE_SRC) below: this file's contents depend on CONSOLE and
+# FAT_DRIVE, which are command-line variables, not prerequisites.  Depending on
+# the Makefile alone let it go stale -- a build with one configuration left a
+# config.inc that the next configuration then assembled against, silently.  It is
+# rewritten every build and only its content decides whether anything rebuilds.
+$(CONFIG_INC): Makefile FORCE | $(BUILD_DIR)
+	@printf '; Generated by the Makefile.  Do not edit.\nVDRIP_TRANSPORT_LINKED = %s\nFAT_DRIVE_ENABLED = %s\n' \
+		"$(VDRIP_TRANSPORT_LINKED)" "$(FAT_DRIVE)" > $@.tmp
+	@cmp -s $@.tmp $@ 2>/dev/null && rm -f $@.tmp || mv -f $@.tmp $@
 
 $(FIRMWARE_SRC): $(SRC_DIR)/zephyr.asm Makefile FORCE | $(BUILD_DIR)
 	cp "$<" "$@"
@@ -438,6 +453,7 @@ $(ROM_DISK_IMAGE): sibling-builds $(ROM_DISK_TOOL) $(CPMTOOLS_DISKDEF) $(ROM_DIS
 		--stock-dir1 "$(SOFTWARE_DIR)/disk1/1" \
 		--build-dir "$(BUILD_DIR)" \
 		--image "$(ROM_DISK_IMAGE)" \
+		--chunk-prefix "$(BUILD_DIR)/romdisk.p" \
 		--page-count $(ROM_DISK_PAGES)
 
 # Produced by the same run as the image above; no recipe of their own.

@@ -301,7 +301,7 @@ RUNTIME_WORK_AREA_START:
 ; pointer byte here.  FDFFh is F7h, so keep FE00h at F7h to select the dedicated
 ; EI/RETI stub at F7F7h.  This byte is immutable after the ROM image is loaded.
 IM2_VECTOR_FF_HIGH:
-	.db 0xf7
+	.db (CBIOS_IRQ_FF_STUB >> 8)	; derived: see the palindrome note in common/irq.asm
 CURRENT_BANK:
 	.db 0x00
 cbios_dma_addr:

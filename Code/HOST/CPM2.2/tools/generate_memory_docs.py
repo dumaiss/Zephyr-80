@@ -104,9 +104,31 @@ class Region:
 # has no reason to be addressable under more than one latch state.  `crossing`
 # and `interrupt` are absent from bank 7 for the mirror reason.
 #
-# This checks classification, not contiguity.  Zones are not required to occupy
-# disjoint address ranges; consolidating them is separate work (see
-# entity-placement-gap-analysis.md section 8.5).
+# Classification is checked above.  Contiguity is checked by
+# check_zone_fragmentation below, as a ratchet rather than a rule: the zones do
+# not yet occupy disjoint address ranges, and making them do so is the reorder
+# in entity-placement-gap-analysis.md section 8.5.  What the ratchet prevents is
+# the habit that produced the current state -- placing a routine wherever a hole
+# happened to be, which is how `interrupt` came to have islands at FC98h, FCE0h
+# and FF60h sitting inside the data region.
+#
+# A zone's run count may go down (that is the reorder making progress) but never
+# up.  Adding a region to a zone at an address that does not touch that zone's
+# existing runs fails the build and names the zone.
+ZONE_RUN_BASELINE = {
+    # zone: the number of disjoint address runs it occupies today.  All four are
+    # 1 since the contiguity reorder; they were 4, 4, 5 and 1.  There is nothing
+    # left to ratchet down, so from here the check is a plain rule: a common zone
+    # occupies exactly one run.
+    "abi": 1,
+    "crossing": 1,
+    "interrupt": 1,
+    # Z4, declared by plan step 4.3.  One run, and it is required to stay one
+    # run: a driver's ISR-reachable tail goes in the common driver slot or it
+    # does not go in common at all.
+    "driver-isr": 1,
+}
+ZONE_SINGLE_RUN = {"driver-isr"}
 # What each source directory promises about where its code lands.  The
 # reorganization split every module that straddled the boundary, so each file
 # now belongs to exactly one class and the promise is checkable.
@@ -157,6 +179,14 @@ COMMON_REGIONS = [
            "Atomic user/kernel callback registration.", zone="interrupt", source="common/irq.asm"),
     Region("Serial console", "SERCON_CODE_START", "SERCON_CODE_END", "CBIOS_SERCON_CODE_LIMIT",
            "Serial console tee and input switch.", optional=True, zone="driver-isr", source="common/sercon.asm"),
+    # The other occupant of the common driver slot, and for a long time an
+    # unreported one: it had no region entry and no ceiling constant, so in the
+    # configuration where the slot actually carries a driver, `driver-isr`
+    # reported zero runs and nothing checked the sink against the slot's end.
+    Region("VDrip transport sink", "VDRIP_TRANSPORT_CODE_START", "VDRIP_TRANSPORT_CODE_END",
+           "CBIOS_VDRIP_TRANSPORT_CODE_LIMIT",
+           "Virtual Drip receive sink and keyboard ring; the parser and send path are bank 7.",
+           optional=True, zone="driver-isr", source="common/vdrip.asm"),
 ]
 
 BANK7_REGIONS = [
@@ -190,8 +220,18 @@ BANK7_REGIONS = [
            "Routes A: to its backend, gated B: to the synthetic FAT BIOS, and C:/D: to SD units.", zone="core", source="core/storage.asm"),
     Region("SIO services (bank 7)", "SIO_BANK7_CODE_START", "SIO_BANK7_CODE_END", "CBIOS_SIO_BANK7_CODE_LIMIT",
            "`sio1_ioc_init`, `sio_core_enable_interrupts`, `sio_register_rx_sink`: reached only from bank 7 or from boot after `bank7_check`.", zone="core", source="core/sio.asm"),
+    # The third region that had no entry: the transport's bank-7 half, present
+    # only with CONSOLE=vdrip, so it never appeared in the default build's map.
+    Region("VDrip transport (bank 7)", "VDRIP_TRANSPORT_BANK7_CODE_START",
+           "VDRIP_TRANSPORT_BANK7_CODE_END", "CBIOS_VDRIP_TRANSPORT_BANK7_CODE_LIMIT",
+           "Packet parser, send path and handshake; the sink is in common.",
+           optional=True, zone="driver", source="drivers/transport/vdrip.asm"),
     Region("Serial console tee (bank 7)", "SERCON_BANK7_CODE_START", "SERCON_BANK7_CODE_END", "CBIOS_SERCON_BANK7_CODE_LIMIT",
            "Driver table, init/install, the CONST/CONIN/CONOUT tee and TX; polled through the console facade.", optional=True, zone="driver", source="drivers/console/sercon.asm"),
+    Region("Console font", "CONSOLE_FONT_ROM_BASE", "CONSOLE_FONT_ROM_END", "CONSOLE_FONT_ROM_LIMIT",
+           "CP850 6x8 glyph atlas, read once at boot.", zone="asset", source="assets/font_cp850_6x8.inc"),
+    Region("Boot banner text", "BOOT_BANNER_TEXT", "BOOT_BANNER_TEXT_END", "BOOT_BANNER_TEXT_LIMIT",
+           "Banner string, CP850 to match the console atlas.", zone="asset", source="core/banner.asm"),
     Region("Boot banner printer", "BOOT_BANNER_CODE_START", "BOOT_BANNER_CODE_END", "CBIOS_BOOT_BANNER_CODE_LIMIT",
            "Prints the banner text beside it; runs once from cold boot, in mode 11.", zone="asset", source="core/banner.asm"),
     Region("FAT BDOS backend", "FAT_BDOS_CODE_START", "FAT_BDOS_CODE_END", "CBIOS_FAT_BDOS_CODE_LIMIT",
@@ -200,10 +240,10 @@ BANK7_REGIONS = [
 
 CONSOLE_REGIONS = {
     "v9958": Region("V9958 console", "V9958_CONSOLE_CODE_START", "V9958_CONSOLE_CODE_END",
-                    "VDRIP_STORAGE_DPHDPB_BASE",
+                    "CBIOS_CONSOLE_DRIVER_CODE_LIMIT",
                     "Direct LunchCrema V9958 console: parser, renderer, cursor and state.", zone="driver", source="drivers/console/v9958.asm"),
     "vdrip": Region("Virtual Drip console", "VDRIP_CONSOLE_CODE_START", "VDRIP_CONSOLE_CODE_END",
-                    "VDRIP_STORAGE_DPHDPB_BASE",
+                    "CBIOS_CONSOLE_DRIVER_CODE_LIMIT",
                     "Retained Virtual Drip console.", zone="driver", source="drivers/console/vdrip.asm"),
 }
 
@@ -464,6 +504,10 @@ class Layout:
     def error(self, message: str) -> None:
         self.errors.append(f"ERROR: {message}")
 
+    def note(self, message: str) -> None:
+        """Report without failing: a rule held better than its recorded baseline."""
+        print(f"NOTE: {message}")
+
     def emitted_in(self, start: int, limit: int) -> list[int]:
         return sorted(a for a in self.emitted if start <= a < limit)
 
@@ -543,7 +587,52 @@ def check_regions(layout: Layout, regions: list[Region], area: str) -> list[tupl
             layout.error(
                 f"{area} {left.name} ({xspan(l_start, l_end)}) overlaps {right.name} starting {h4(r_start)}"
             )
+    if area == "common":
+        check_zone_fragmentation(layout, placed)
     return placed
+
+
+def zone_runs(placed: list[tuple[Region, int, int, int]], zone: str) -> list[tuple[int, int]]:
+    """The disjoint address runs a zone occupies, by reserved extent.
+
+    Reserved extents, not used bytes: two regions that abut are one run even if
+    the first has slack, because the slack belongs to it and a third region
+    cannot be wedged into it.
+    """
+    spans = sorted((start, limit) for region, start, _, limit in placed if region.zone == zone)
+    runs: list[tuple[int, int]] = []
+    for start, limit in spans:
+        if runs and start <= runs[-1][1]:
+            runs[-1] = (runs[-1][0], max(runs[-1][1], limit))
+        else:
+            runs.append((start, limit))
+    return runs
+
+
+def check_zone_fragmentation(layout: Layout, placed: list[tuple[Region, int, int, int]]) -> None:
+    for zone, baseline in sorted(ZONE_RUN_BASELINE.items()):
+        runs = zone_runs(placed, zone)
+        if not runs:
+            continue
+        if zone in ZONE_SINGLE_RUN and len(runs) > 1:
+            where = ", ".join(xspan(a, b - 1) for a, b in runs)
+            layout.error(
+                f"common zone '{zone}' must occupy one run and occupies {len(runs)}: {where}. "
+                f"A driver's ISR-reachable tail belongs in the common driver slot; "
+                f"the rest of the driver belongs in bank 7"
+            )
+        elif len(runs) > baseline:
+            where = ", ".join(xspan(a, b - 1) for a, b in runs)
+            layout.error(
+                f"common zone '{zone}' now occupies {len(runs)} disjoint runs, up from "
+                f"{baseline}: {where}. Something was placed in a hole rather than beside "
+                f"its zone; extend an existing run or move it to bank 7"
+            )
+        elif len(runs) < baseline:
+            layout.note(
+                f"common zone '{zone}' is down to {len(runs)} runs from {baseline}; "
+                f"lower ZONE_RUN_BASELINE to hold the gain"
+            )
 
 
 def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
@@ -576,8 +665,11 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
         layout.error("FACADE_CODE_START is not CBIOS_FACADE_BASE")
     if s("FBASE") != s("CBIOS_FACADE_BASE") + 6:
         layout.error(f"FBASE = {h4(s('FBASE'))} is not six bytes into the facade")
-    if s("FACADE_CODE_LIMIT") != s("CBIOS_SIO_QUIESCE_BASE"):
-        layout.error("facade limit does not meet the SIO ownership-return region")
+    # The facade's neighbour is now the IOC link failure record: the zone reorder
+    # put the whole ABI surface together, so the SIO ownership return -- which is
+    # crossing, not abi -- moved out from behind the facade into Z2.
+    if s("FACADE_CODE_LIMIT") != s("CBIOS_IOC_DIAG_BASE"):
+        layout.error("facade limit does not meet the IOC link failure record")
     if s("SIO_QUIESCE_END") != s("CBIOS_NATIVE_GATE_BASE"):
         layout.error("native file gate does not immediately follow SIO ownership return")
     if s("NATIVE_GATE_END") > s("CBIOS_NATIVE_GATE_LIMIT"):
@@ -716,9 +808,18 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
         if start < cursor:
             layout.error(f"{name} at {h4(start)} overlaps {previous}")
         cursor, previous = start + size, name
-    if cursor > s("CBIOS_IRQ_POLICY_BASE") or s("CBIOS_CTC_HELPER_LIMIT") > im2_start:
-        layout.error(f"{previous} ends at {h4(cursor - 1)}, inside the IM2 vector page")
-    facts["staging_end"] = cursor
+    # The copies no longer form one run below the IM2 page.  The 160 bytes left
+    # above the stacks cannot hold the 256-byte ALV copy, so the ALV copy stays
+    # below the vector page and the three small copies sit above the stacks.
+    # What must still hold: no copy straddles the vector page or the state and
+    # stack block, and none runs off the end of memory.
+    im2_through_stacks = range(im2_start, s("FAC_STACK_TOP"))
+    for name, start, size in copies:
+        if start in im2_through_stacks or (start + size - 1) in im2_through_stacks:
+            layout.error(f"{name} ({xspan(start, start + size)}) overlaps the IM2 page, runtime state or the stacks")
+        if start + size > 0x10000:
+            layout.error(f"{name} ({xspan(start, start + size)}) runs past FFFFh")
+    facts["staging_end"] = min(c[1] + c[2] for c in copies if c[1] < im2_start)
 
     state_base = s("CBIOS_RUNTIME_STATE_BASE")
     state_limit = s("CBIOS_RUNTIME_STATE_LIMIT")
@@ -739,8 +840,11 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
     if isr_save < state_limit or tops != sorted(tops) or s("FAC_STACK_TOP") > 0x10000:
         layout.error("common stacks are not ordered state < ISR SP save < ISR stack < gate stack < facade stack <= FFFFh")
 
-    if s("FAC_STACK_TOP") > s("CBIOS_IRQ_REG_BASE"):
-        layout.error("facade stack overlaps IRQ registration code")
+    # IRQ registration used to live above the facade stack, at FF60h, because that
+    # was where a hole was.  It is now inside the Z3 interrupt run, so the check
+    # that matters is the opposite one: it must stay out of the data region.
+    if s("CBIOS_IRQ_REG_LIMIT") > s("FAC_BULK_BUF"):
+        layout.error("IRQ registration runs into the staging buffer")
 
     # The stacks climb from C000h independently of how far the installed image
     # reaches: cold boot now writes all 64 KiB, so OS_IMAGE_LIMIT is no longer
@@ -978,7 +1082,7 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         f"| `{xspan(s('RESOURCE_CACHE_POOL_BASE'), s('RESOURCE_CACHE_POOL_LIMIT'))}` | Reclaimable resource/cache pool | {s('RESOURCE_CACHE_LINE_COUNT')} lines of {s('RESOURCE_CACHE_LINE_SIZE')} bytes; no permanent owner. |",
         f"| `{xspan(s('CONSOLE_FONT_ROM_BASE'), s('CONSOLE_FONT_ROM_BASE') + s('FONT_CP850_6X8_SIZE'))}` | Console font | CP850 6x8. |",
         f"| `{xspan(s('BOOT_BANNER_TEXT'), s('BOOT_BANNER_TEXT_END'))}` | Boot banner text | |",
-        f"| `{h4(s('FAT_BIOS_DPH'))}` | B: synthetic DPH and DPB | Read-only FAT compatibility geometry; selection gate is `{s('FAT_BIOS_M1_ENABLED')}`. |",
+        f"| `{h4(s('FAT_BIOS_DPH'))}` | B: synthetic DPH and DPB | Read-only FAT compatibility geometry; selection gate is `{s('FAT_DRIVE_ENABLED')}`. |",
         "",
         f"The last resident asset ends at `{h4(facts['bank7_image_end'] - 1)}`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.",
         "",
@@ -1018,7 +1122,7 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         "",
         f"The burnable image `{args.final_image}` is {args.final_image.stat().st_size} bytes. "
         f"Console backend: `{manifest.get('console.backend')}`. Drive A: backend: `{manifest.get('storage.backend')}`. "
-        f"FAT drive selection gate: `{s('FAT_BIOS_M1_ENABLED')}`.",
+        f"FAT drive selection gate: `{s('FAT_DRIVE_ENABLED')}`.",
         "",
         "## Validation Report",
         "",

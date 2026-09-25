@@ -11,15 +11,15 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | ROM page 0: reset vector and common memory | `build/firmware.bin` | 65536 bytes |
 | Bank 7 payload | `build/bank7.bin` | 65536 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Resolved listing (firmware.rst) | `build/firmware.rst` | 503501 bytes |
-| Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 206318 bytes |
-| Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 416396 bytes |
-| Resolved listing (drv_console_sercon.rst) | `build/drv_console_sercon.rst` | 203148 bytes |
-| Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 410439 bytes |
-| Resolved listing (drv_storage_sd.rst) | `build/drv_storage_sd.rst` | 280005 bytes |
-| Resolved listing (drv_transport_ioccmd.rst) | `build/drv_transport_ioccmd.rst` | 342117 bytes |
-| Resolved listing (drv_console_hid_input.rst) | `build/drv_console_hid_input.rst` | 207257 bytes |
-| Linker symbol map | `build/firmware.map` | 36377 bytes |
+| Resolved listing (firmware.rst) | `build/firmware.rst` | 520150 bytes |
+| Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 220336 bytes |
+| Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 430418 bytes |
+| Resolved listing (drv_console_sercon.rst) | `build/drv_console_sercon.rst` | 217166 bytes |
+| Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 424461 bytes |
+| Resolved listing (drv_storage_sd.rst) | `build/drv_storage_sd.rst` | 294021 bytes |
+| Resolved listing (drv_transport_ioccmd.rst) | `build/drv_transport_ioccmd.rst` | 356135 bytes |
+| Resolved listing (drv_console_hid_input.rst) | `build/drv_console_hid_input.rst` | 221275 bytes |
+| Linker symbol map | `build/firmware.map` | 35098 bytes |
 | Layout manifest | `build/layout.manifest` | 1445 bytes |
 
 ## System Addresses
@@ -56,70 +56,70 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 |---|---:|---|
 | `BOOT` | `F000h` | `F05Ch` `boot` |
 | `WBOOT` | `F003h` | `F0B1h` `wboot` |
-| `CONST` | `F006h` | `F550h` `gate_const` |
-| `CONIN` | `F009h` | `F55Fh` `gate_conin` |
-| `CONOUT` | `F00Ch` | `F56Eh` `gate_conout` |
-| `LIST` | `F00Fh` | `F671h` `bios_inert_ret` |
-| `PUNCH` | `F012h` | `F671h` `bios_inert_ret` |
-| `READER` | `F015h` | `F672h` `bios_inert_reader` |
-| `HOME` | `F018h` | `F671h` `bios_inert_ret` |
-| `SELDSK` | `F01Bh` | `F675h` `bios_inert_seldsk` |
-| `SETTRK` | `F01Eh` | `F671h` `bios_inert_ret` |
-| `SETSEC` | `F021h` | `F671h` `bios_inert_ret` |
-| `SETDMA` | `F024h` | `F671h` `bios_inert_ret` |
-| `READ` | `F027h` | `F679h` `bios_inert_error` |
-| `WRITE` | `F02Ah` | `F679h` `bios_inert_error` |
-| `LISTST` | `F02Dh` | `F67Ch` `bios_inert_listst` |
-| `SECTRAN` | `F030h` | `F66Fh` `bios_inert_sectran` |
+| `CONST` | `F006h` | `F320h` `gate_const` |
+| `CONIN` | `F009h` | `F32Fh` `gate_conin` |
+| `CONOUT` | `F00Ch` | `F33Eh` `gate_conout` |
+| `LIST` | `F00Fh` | `F441h` `bios_inert_ret` |
+| `PUNCH` | `F012h` | `F441h` `bios_inert_ret` |
+| `READER` | `F015h` | `F442h` `bios_inert_reader` |
+| `HOME` | `F018h` | `F441h` `bios_inert_ret` |
+| `SELDSK` | `F01Bh` | `F445h` `bios_inert_seldsk` |
+| `SETTRK` | `F01Eh` | `F441h` `bios_inert_ret` |
+| `SETSEC` | `F021h` | `F441h` `bios_inert_ret` |
+| `SETDMA` | `F024h` | `F441h` `bios_inert_ret` |
+| `READ` | `F027h` | `F449h` `bios_inert_error` |
+| `WRITE` | `F02Ah` | `F449h` `bios_inert_error` |
+| `LISTST` | `F02Dh` | `F44Ch` `bios_inert_listst` |
+| `SECTRAN` | `F030h` | `F43Fh` `bios_inert_sectran` |
 
 ## Zephyr Extension Table (common)
 
 | BDOS function | Entry | Address | Target |
 |---:|---|---:|---|
-| 210 | `MOVE` | `F033h` | `F1F0h` `MOVE` |
-| 211 | `XMOVE` | `F036h` | `F1D5h` `XMOVE` |
-| 212 | `SELMEM` | `F039h` | `F1B0h` `SELMEM` |
-| 213 | `SETBNK` | `F03Ch` | `F1CAh` `SETBNK` |
-| 214 | `IOCALL` | `F03Fh` | `F585h` `gate_iocall` |
-| 215 | `VIDEO_SEND` | `F042h` | `F607h` `gate_video_send` |
-| 216 | `IOCBULK` | `F045h` | `F5B6h` `gate_iocbulk` |
-| 217 | `IOCBULKW` | `F048h` | `F5DAh` `gate_iocbulkw` |
+| 210 | `MOVE` | `F033h` | `F250h` `MOVE` |
+| 211 | `XMOVE` | `F036h` | `F235h` `XMOVE` |
+| 212 | `SELMEM` | `F039h` | `F210h` `SELMEM` |
+| 213 | `SETBNK` | `F03Ch` | `F22Ah` `SETBNK` |
+| 214 | `IOCALL` | `F03Fh` | `F355h` `gate_iocall` |
+| 215 | `VIDEO_SEND` | `F042h` | `F3D7h` `gate_video_send` |
+| 216 | `IOCBULK` | `F045h` | `F386h` `gate_iocbulk` |
+| 217 | `IOCBULKW` | `F048h` | `F3AAh` `gate_iocbulkw` |
 
 ## ZSDOS's BIOS Jump Table (bank 7)
 
 | Entry | Address | Target |
 |---|---:|---|
-| `BOOT` | `3000h` | `F67Eh` `wbtrap` |
-| `WBOOT` | `3003h` | `F67Eh` `wbtrap` |
-| `CONST` | `3006h` | `304Dh` `const` |
-| `CONIN` | `3009h` | `3051h` `conin` |
-| `CONOUT` | `300Ch` | `3055h` `conout` |
-| `LIST` | `300Fh` | `3059h` `list` |
-| `PUNCH` | `3012h` | `305Dh` `punch` |
-| `READER` | `3015h` | `3061h` `reader` |
-| `HOME` | `3018h` | `3100h` `home` |
-| `SELDSK` | `301Bh` | `3109h` `seldsk` |
-| `SETTRK` | `301Eh` | `3103h` `settrk` |
-| `SETSEC` | `3021h` | `3106h` `setsec` |
-| `SETDMA` | `3024h` | `3115h` `setdma` |
-| `READ` | `3027h` | `310Ch` `read` |
-| `WRITE` | `302Ah` | `310Fh` `write` |
-| `LISTST` | `302Dh` | `3065h` `listst` |
-| `SECTRAN` | `3030h` | `3112h` `sectran` |
+| `BOOT` | `3000h` | `F44Eh` `wbtrap` |
+| `WBOOT` | `3003h` | `F44Eh` `wbtrap` |
+| `CONST` | `3006h` | `320Dh` `const` |
+| `CONIN` | `3009h` | `3211h` `conin` |
+| `CONOUT` | `300Ch` | `3215h` `conout` |
+| `LIST` | `300Fh` | `3219h` `list` |
+| `PUNCH` | `3012h` | `321Dh` `punch` |
+| `READER` | `3015h` | `3221h` `reader` |
+| `HOME` | `3018h` | `3400h` `home` |
+| `SELDSK` | `301Bh` | `3409h` `seldsk` |
+| `SETTRK` | `301Eh` | `3403h` `settrk` |
+| `SETSEC` | `3021h` | `3406h` `setsec` |
+| `SETDMA` | `3024h` | `3415h` `setdma` |
+| `READ` | `3027h` | `340Ch` `read` |
+| `WRITE` | `302Ah` | `340Fh` `write` |
+| `LISTST` | `302Dh` | `3225h` `listst` |
+| `SECTRAN` | `3030h` | `3412h` `sectran` |
 
 ## IM2 Vector Page
 
-`I` = `FDh`. The BIOS programs the CTC vector base `00h` and SIO0/B WR2 `10h`. A floating `FFh` vector straddles `FDFFh-FE00h` and reaches `F7F7h`.
+`I` = `FDh`. The BIOS programs the CTC vector base `00h` and SIO0/B WR2 `10h`. A floating `FFh` vector straddles `FDFFh-FE00h` and reaches `F6F6h`.
 
 | Vectors | Entry | Target |
 |---|---:|---|
-| 00h | `FD00h` | `F730h` `ctc0_isr` |
-| 02h | `FD02h` | `F73Bh` `ctc1_isr` |
-| 04h | `FD04h` | `F747h` `ctc2_isr` |
-| 06h | `FD06h` | `F753h` `ctc3_isr` |
-| 08h-0Eh | `FD08h` | `F7A7h` `irq_unexpected` |
-| 10h-1Eh | `FD10h` | `F75Fh` `xing_isr` |
-| 20h-FEh | `FD20h` | `F7A7h` `irq_unexpected` |
+| 00h | `FD00h` | `F660h` `ctc0_isr` |
+| 02h | `FD02h` | `F66Bh` `ctc1_isr` |
+| 04h | `FD04h` | `F677h` `ctc2_isr` |
+| 06h | `FD06h` | `F683h` `ctc3_isr` |
+| 08h-0Eh | `FD08h` | `F6D7h` `irq_unexpected` |
+| 10h-1Eh | `FD10h` | `F68Fh` `xing_isr` |
+| 20h-FEh | `FD20h` | `F6D7h` `irq_unexpected` |
 
 ## Common Implementation Symbols
 
@@ -135,45 +135,45 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | `restore_ccp_from_os` | `F0FDh` | Copies `CBASE` through `FBASE-1` from the pristine CCP in bank 7. |
 | `prepare_runnable_bank` | `F109h` | Page zero and default DMA. |
 | `init_page_zero` | `F113h` | Installs `JP WBOOT` and `JP FBASE`. |
-| `ctc_disable_interrupts` | `F288h` | Resets the CTC and programs its vector base. |
-| `boot_print_banner` | `8A00h` | Prints the boot banner. |
-| `SELMEM` | `F1B0h` | Selects a program bank, keeping the RAM mode. |
-| `SETBNK` | `F1CAh` | Records the next disk DMA bank. |
-| `XMOVE` | `F1D5h` | Arms a cross-bank `MOVE`. |
-| `MOVE` | `F1F0h` | Same-bank or cross-bank move through the staging buffer. |
-| `sio_core_init` | `F2F0h` | Initializes SIO0/B and clears receive sinks. |
-| `sio1_ioc_init` | `A800h` | Initializes SIO1 for the IO Controller link; cold boot only. |
-| `sio_core_enable_interrupts` | `A833h` | Loads `I`, enters IM2, programs SIO0/B WR2. |
-| `sio_register_rx_sink` | `A864h` | Registers a receive sink for a BIOS-owned SIO channel. |
-| `sio_send_byte` | `F343h` | Blocking send on a BIOS-owned SIO channel. |
-| `sio_core_isr` | `F3B6h` | SIO interrupt body, called on the ISR stack. |
-| `xing_isr` | `F75Fh` | SIO IM2 entry under the shared IRQ dispatcher. |
-| `xing_select_ram_bank` | `F510h` | Selects a RAM bank while keeping mode 10 or mode 11. |
-| `xing_os_call_ix` | `F538h` | Calls a bank 7 routine in mode 11 and restores the latch. |
-| `gate_const` | `F550h` | `CONST` gate for programs. |
-| `gate_conin` | `F55Fh` | `CONIN` gate for programs. |
-| `gate_conout` | `F56Eh` | `CONOUT` gate for programs. |
-| `gate_iocall` | `F585h` | `IOCALL` gate; stages both mailboxes. |
-| `gate_iocbulk` | `F5B6h` | `IOCBULK` gate; delivers from the staging buffer. |
-| `gate_iocbulkw` | `F5DAh` | `IOCBULKW` gate; stages the payload first. |
-| `gate_video_send` | `F607h` | `VIDEO_SEND` gate; stages frames, chunks data blocks. |
-| `bios_inert_seldsk` | `F675h` | Inert `SELDSK`: returns `HL = 0`. |
-| `bios_inert_error` | `F679h` | Inert `READ`/`WRITE`: returns an error. |
-| `wbtrap` | `F67Eh` | Warm-boot trap: common stack, mode 10, `JP 0000h`. |
-| `xing_rom_copy_record` | `F693h` | Drive A: stackless ROM-read primitive with exact latch restoration. |
-| `bank7_check` | `F6A9h` | Verifies the `BANK7OS1` marker at cold boot. |
-| `ctc0_isr` | `F730h` | CTC channel 0 entry. |
-| `irq_register` | `FF60h` | BDOS function 200. |
-| `irq_unregister` | `FFB3h` | BDOS function 201. |
-| `irq_program_exit` | `F7FAh` | BDOS function 202; ZCPR2 calls it when a transient returns. |
-| `irq_reset` | `F7B1h` | Clears user registrations; cold and warm boot. |
-| `irq_unexpected` | `F7A7h` | `EI`/`RETI` stub for unprogrammed vectors. |
-| `irq_ctc_slots` | `F7BCh` | Callback entry per CTC channel; zero is unregistered. |
+| `ctc_disable_interrupts` | `F4F0h` | Resets the CTC and programs its vector base. |
+| `boot_print_banner` | `8C00h` | Prints the boot banner. |
+| `SELMEM` | `F210h` | Selects a program bank, keeping the RAM mode. |
+| `SETBNK` | `F22Ah` | Records the next disk DMA bank. |
+| `XMOVE` | `F235h` | Arms a cross-bank `MOVE`. |
+| `MOVE` | `F250h` | Same-bank or cross-bank move through the staging buffer. |
+| `sio_core_init` | `F500h` | Initializes SIO0/B and clears receive sinks. |
+| `sio1_ioc_init` | `B800h` | Initializes SIO1 for the IO Controller link; cold boot only. |
+| `sio_core_enable_interrupts` | `B833h` | Loads `I`, enters IM2, programs SIO0/B WR2. |
+| `sio_register_rx_sink` | `B864h` | Registers a receive sink for a BIOS-owned SIO channel. |
+| `sio_send_byte` | `F553h` | Blocking send on a BIOS-owned SIO channel. |
+| `sio_core_isr` | `F5C6h` | SIO interrupt body, called on the ISR stack. |
+| `xing_isr` | `F68Fh` | SIO IM2 entry under the shared IRQ dispatcher. |
+| `xing_select_ram_bank` | `F2E8h` | Selects a RAM bank while keeping mode 10 or mode 11. |
+| `xing_os_call_ix` | `F308h` | Calls a bank 7 routine in mode 11 and restores the latch. |
+| `gate_const` | `F320h` | `CONST` gate for programs. |
+| `gate_conin` | `F32Fh` | `CONIN` gate for programs. |
+| `gate_conout` | `F33Eh` | `CONOUT` gate for programs. |
+| `gate_iocall` | `F355h` | `IOCALL` gate; stages both mailboxes. |
+| `gate_iocbulk` | `F386h` | `IOCBULK` gate; delivers from the staging buffer. |
+| `gate_iocbulkw` | `F3AAh` | `IOCBULKW` gate; stages the payload first. |
+| `gate_video_send` | `F3D7h` | `VIDEO_SEND` gate; stages frames, chunks data blocks. |
+| `bios_inert_seldsk` | `F445h` | Inert `SELDSK`: returns `HL = 0`. |
+| `bios_inert_error` | `F449h` | Inert `READ`/`WRITE`: returns an error. |
+| `wbtrap` | `F44Eh` | Warm-boot trap: common stack, mode 10, `JP 0000h`. |
+| `xing_rom_copy_record` | `F463h` | Drive A: stackless ROM-read primitive with exact latch restoration. |
+| `bank7_check` | `F479h` | Verifies the `BANK7OS1` marker at cold boot. |
+| `ctc0_isr` | `F660h` | CTC channel 0 entry. |
+| `irq_register` | `F7C0h` | BDOS function 200. |
+| `irq_unregister` | `F813h` | BDOS function 201. |
+| `irq_program_exit` | `F6F9h` | BDOS function 202; ZCPR2 calls it when a transient returns. |
+| `irq_reset` | `F6E1h` | Clears user registrations; cold and warm boot. |
+| `irq_unexpected` | `F6D7h` | `EI`/`RETI` stub for unprogrammed vectors. |
+| `irq_ctc_slots` | `F6ECh` | Callback entry per CTC channel; zero is unregistered. |
 | `facade_entry` | `EC09h` | BDOS facade entry, reached from `FBASE`. |
 | `facade_reset` | `EF2Ah` | Resets the facade's DMA tracking. |
 | `zephyr_sysinfo` | `EF6Eh` | System information block returned by function 203. |
-| `sercon_init` | `A914h` | Arms the serial console fallback at cold boot. |
-| `sercon_install` | `A924h` | Rebinds the serial console after warm boot. |
+| `sercon_init` | `BA14h` | Arms the serial console fallback at cold boot. |
+| `sercon_install` | `BA24h` | Rebinds the serial console after warm boot. |
 
 ## Bank 7 Implementation Symbols
 
@@ -183,40 +183,40 @@ Visible at these addresses only in operating-system mode.
 |---|---:|---|
 | `BIOS7_TABLE` | `3000h` | ZSDOS's BIOS jump table. |
 | `BIOS7_MAGIC` | `3033h` | `BANK7OS1` image marker. |
-| `console_init` | `3040h` | Installs the console driver table. |
-| `const` | `304Dh` | Console status. |
-| `conin` | `3051h` | Console input. |
-| `conout` | `3055h` | Console output. |
-| `seldsk` | `3109h` | Storage `SELDSK` entry. |
-| `read` | `310Ch` | Storage `READ` entry. |
-| `write` | `310Fh` | Storage `WRITE` entry. |
-| `stg_seldsk` | `4400h` | Drive dispatcher. |
-| `stg_a_seldsk` | `4341h` | Drive A: select. |
-| `stg_a_read` | `4355h` | Drive A: record read. |
-| `sd_storage_probe` | `4300h` | B: select probe. |
-| `sd_storage_probe2` | `4478h` | C: select probe. |
-| `VIDEO_SEND` | `3200h` | Raw video request. |
-| `IOCALL` | `32F2h` | IO Controller command/reply. |
-| `IOCBULK` | `3900h` | IO Controller bulk receive. |
-| `IOCBULKW` | `3918h` | IO Controller bulk transmit. |
-| `ioc_link_bringup` | `3B59h` | Establishes command-lane sync at cold boot. |
-| `console_backend_cold_init` | `480Eh` | Selected console backend cold init. |
+| `console_init` | `3200h` | Installs the console driver table. |
+| `const` | `320Dh` | Console status. |
+| `conin` | `3211h` | Console input. |
+| `conout` | `3215h` | Console output. |
+| `seldsk` | `3409h` | Storage `SELDSK` entry. |
+| `read` | `340Ch` | Storage `READ` entry. |
+| `write` | `340Fh` | Storage `WRITE` entry. |
+| `stg_seldsk` | `5800h` | Drive dispatcher. |
+| `stg_a_seldsk` | `5611h` | Drive A: select. |
+| `stg_a_read` | `5625h` | Drive A: record read. |
+| `sd_storage_probe` | `5400h` | B: select probe. |
+| `sd_storage_probe2` | `5878h` | C: select probe. |
+| `VIDEO_SEND` | `3600h` | Raw video request. |
+| `IOCALL` | `3872h` | IO Controller command/reply. |
+| `IOCBULK` | `4200h` | IO Controller bulk receive. |
+| `IOCBULKW` | `4218h` | IO Controller bulk transmit. |
+| `ioc_link_bringup` | `4559h` | Establishes command-lane sync at cold boot. |
+| `console_backend_cold_init` | `900Eh` | Selected console backend cold init. |
 | `STORAGE_A_DPH` | `6000h` | Drive A: DPH. |
 | `SD_STORAGE_DPH` | `6020h` | B: DPH. |
 | `SD_STORAGE_DPH2` | `6500h` | C: DPH. |
-| `FAT_BIOS_DPH` | `904Ah` | B: synthetic FAT DPH. |
-| `FAT_BIOS_DPB` | `905Ah` | Synthetic FAT compatibility geometry. |
-| `fat_bios_read` | `9021h` | E5-filled synthetic disk record read. |
-| `fat_bios_write` | `9047h` | Synthetic disk write failure. |
+| `FAT_BIOS_DPH` | `A04Ah` | B: synthetic FAT DPH. |
+| `FAT_BIOS_DPB` | `A05Ah` | Synthetic FAT compatibility geometry. |
+| `fat_bios_read` | `A021h` | E5-filled synthetic disk record read. |
+| `fat_bios_write` | `A047h` | Synthetic disk write failure. |
 | `FAT_BIOS_ALV` | `CE14h` | B: synthetic allocation vector. |
 | `CBIOS_STORAGE_DIRBUF` | `6040h` | Shared directory buffer. |
 | `CONSOLE_FONT_ROM_BASE` | `8000h` | Console font. |
 | `BOOT_BANNER_TEXT` | `8800h` | Boot banner text. |
 | `RESOURCE_CACHE_POOL_BASE` | `6600h` | Start of the 13-line reclaimable resource/cache pool. |
-| `FAT_BDOS_CODE_START` | `9000h` | Fixed FAT compatibility code region. |
+| `FAT_BDOS_CODE_START` | `A000h` | Fixed FAT compatibility code region. |
 | `FAT_BDOS_STATE_START` | `CE10h` | Fixed FAT persistent-state region. |
-| `v9958_console_driver` | `4800h` | V9958 console driver table. |
-| `v9958_console_init` | `4814h` | V9958 warm initialization. |
+| `v9958_console_driver` | `9000h` | V9958 console driver table. |
+| `v9958_console_init` | `9014h` | V9958 warm initialization. |
 
 ## Runtime State Symbols
 
@@ -243,4 +243,4 @@ Visible at these addresses only in operating-system mode.
 | `SIO1_RX_SINK` | `FE72h` | SIO1 receive sink. |
 | `SIO_CORE_IRQ_ENABLED` | `FE74h` | SIO interrupt mode flag. |
 | `SERCON_FLAGS` | `FE78h` | Serial console flags; programs find it through function 203. |
-| `IOC_DIAG_STATUS` | `F298h` | IOC link failure record; programs find it through function 203. |
+| `IOC_DIAG_STATUS` | `EFA0h` | IOC link failure record; programs find it through function 203. |
