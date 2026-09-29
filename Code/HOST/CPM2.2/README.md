@@ -257,12 +257,21 @@ Supported console values are `v9958` (default) and `vdrip`. `STORAGE_A`
 selects the drive A backend: `rom` (default) or `vdrip`. The Makefile documents
 the limits on each. The banked RAM disk backend was retired.
 
+The direct V9958 console defaults to its current 85x26 CP850 6x8 interlaced
+layout. Select the experimental 128x35 CP850 4x6 non-interlaced layout with:
+
+```sh
+make V9958_TEXT_MODE=128x35
+```
+
+Use `V9958_TEXT_MODE=85x26` (or omit the variable) to switch back.
+
 Primary generated artifacts:
 
 | Artifact | Meaning |
 |---|---|
 | `build/zephyr80.bin` | 512 KiB burnable ROM image |
-| `build/zephyr80-zcpr2-zsdos.bin` | the same image, named for its CCP and BDOS |
+| `build/zephyr80-zcpr2-zsdos-v9958-rom-85x26.bin` | default image, stamped with all selectable backends and V9958 geometry |
 | `build/firmware.bin` | ROM page 0: reset vector and common memory |
 | `build/bank7.bin` | bank 7 payload: ZSDOS, the BIOS and drivers |
 | `docs/memory-map.md` | generated memory map, free space and validation report |

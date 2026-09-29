@@ -59,18 +59,37 @@
 ; Constants
 ; ===========================================================================
 
-; V9958 GRAPHIC 6 console layout. The 512x212 source bitmap is woven into
-; 512x424 output by R#9 IL+LN. The text bitmap uses all 256 command-coordinate
-; lines of page zero as a circular surface selected by R#23. Both precolored
-; glyph atlases and the sprite cursor remain in page one.
+; V9958 GRAPHIC 6 console layout. V9958_TEXT_MODE selects the established
+; 85x26 6x8 interlaced display or the experimental 128x35 4x6 non-interlaced
+; display. The text bitmap uses all 256 command-coordinate lines of page zero
+; as a circular surface selected by R#23. Both precolored glyph atlases and the
+; sprite cursor remain in page one.
+	.if V9958_TEXT_128X35
+TEXT_LOG_COLUMNS	= 128
+TEXT_ROWS		= 35
+TEXT_CELL_WIDTH		= 4
+TEXT_CELL_HEIGHT	= 6
+TEXT_DISPLAY_OFFSET	= 1		; 210-line text area centered in 212 lines
+FONT_GLYPH_BYTES	= 6
+FONT_BYTES		= 1536
+ATLAS_ROW_BYTES		= 64		; 32 glyphs * 4 pixels / 2 pixels per byte
+V9958_R9_MODE		= 0x80		; 212-line, non-interlaced
+	.else
 TEXT_LOG_COLUMNS	= 85
 TEXT_ROWS		= 26
+TEXT_CELL_WIDTH		= 6
+TEXT_CELL_HEIGHT	= 8
+TEXT_DISPLAY_OFFSET	= 4		; 208-line text area at source lines 4..211
+FONT_GLYPH_BYTES	= 8
+FONT_BYTES		= 2048
+ATLAS_ROW_BYTES		= 96		; 32 glyphs * 6 pixels / 2 pixels per byte
+V9958_R9_MODE		= 0x88		; 212-line, interlaced
+	.endif
+
 TEXT_SCROLL_TOP		= 0
 TEXT_SCROLL_BOTTOM	= TEXT_ROWS - 1
 TEXT_SCROLL_ROWS	= TEXT_ROWS
-TEXT_CELL_WIDTH		= 6
-TEXT_CELL_HEIGHT	= 8
-TEXT_DISPLAY_OFFSET	= 4		; 208-line text area (26 rows) at source lines 4..211
+TEXT_PIXEL_WIDTH	= TEXT_LOG_COLUMNS * TEXT_CELL_WIDTH
 
 G6_BITMAP_BASE		= 0x00000
 G6_BITMAP_BYTES		= 256 * 256
@@ -79,7 +98,8 @@ V9958_ATLAS_REVERSE_BASE = 0x14000
 V9958_ATLAS_COLS	= 32
 V9958_ATLAS_ROWS	= 8
 V9958_ATLAS_PITCH	= 256
-V9958_ATLAS_BYTES	= V9958_ATLAS_ROWS * 8 * V9958_ATLAS_PITCH
+V9958_ATLAS_SCANLINES	= V9958_ATLAS_ROWS * TEXT_CELL_HEIGHT
+V9958_ATLAS_BYTES	= V9958_ATLAS_SCANLINES * V9958_ATLAS_PITCH
 
 ; Sprite-mode-2 cursor allocations. SAT includes sprite zero plus terminator.
 V9958_CURSOR_COLOR_BASE	= 0x1f000
@@ -115,9 +135,7 @@ V9958_CURSOR_COLOR	= 0x0b
 ; A residual that does NOT move with it is not coming from this loop.
 V9958_CONIN_SPIN_DELAY	= 3800
 
-FONT_BYTES		= 2048
 PRINT_RUN_SIZE		= 64
-ATLAS_ROW_BYTES		= V9958_ATLAS_COLS * 3
 
 ; V9958 command-engine register block, R#32 through R#46.
 VDP_CMD_SX_LO		= 0
@@ -149,7 +167,7 @@ V9958_R1_DISPLAY_ON	= 0x40
 V9958_R8_64K_DRAM	= 0x08
 V9958_R25_WAIT_OFF	= 0x00
 V9958_R25_WAIT_ON	= 0x04
-V9958_R23_TEXT_BASE	= 0xfc		; four-line margin before row zero
+V9958_R23_TEXT_BASE	= 0x100 - TEXT_DISPLAY_OFFSET
 
 ; Historical VIDEO_SEND packet types accepted by the direct compatibility
 ; adapter. They name operations, but no Virtual Drip framing is generated.
@@ -1857,6 +1875,34 @@ v9958_atlas_scanline_loop:
 	ld hl,#command_buffer
 	ld (atlas_dest),hl
 
+	; Locate this scanline in the glyph-sequential resident font. The 6x8
+	; layout has a convenient 100h-byte group stride; the 4x6 layout uses
+	; 32 * 6 = 192 bytes per atlas row.
+	.if V9958_TEXT_128X35
+	ld a,(atlas_scanline)
+	ld c,#0x00
+v9958_atlas_4x6_divide:
+	cp #TEXT_CELL_HEIGHT
+	jr c,v9958_atlas_4x6_divided
+	sub #TEXT_CELL_HEIGHT
+	inc c
+	jr v9958_atlas_4x6_divide
+v9958_atlas_4x6_divided:
+	ld e,a				; scanline within the glyph
+	ld a,c
+	add a,a
+	add a,c				; glyph group * 3
+	ld h,a
+	ld l,#0x00
+	srl h
+	rr l
+	srl h
+	rr l				; glyph group * 3 * 64 = * 192
+	ld d,#0x00
+	add hl,de
+	ld de,#font_cp850_4x6
+	add hl,de
+	.else
 	; font address = 8000h + (glyph_group * 100h) + glyph_scanline
 	ld a,(atlas_scanline)
 	ld c,a
@@ -1868,6 +1914,7 @@ v9958_atlas_scanline_loop:
 	srl a
 	add a,#0x80
 	ld h,a
+	.endif
 
 	ld b,#V9958_ATLAS_COLS
 v9958_atlas_glyph_loop:
@@ -1875,12 +1922,12 @@ v9958_atlas_glyph_loop:
 	push hl
 	call v9958_expand_font_row
 	pop hl
-	ld de,#0x0008
+	ld de,#FONT_GLYPH_BYTES
 	add hl,de
 	djnz v9958_atlas_glyph_loop
 
 	; normal atlas = 10000h; reverse atlas = 14000h. Each scanline is one
-	; 256-byte G6 pitch apart and only the first 96 bytes contain glyph data.
+	; 256-byte G6 pitch apart; ATLAS_ROW_BYTES contains the packed glyph data.
 	ld a,(atlas_scanline)
 	ld d,a
 	ld a,(atlas_reverse_flag)
@@ -1899,7 +1946,7 @@ v9958_atlas_have_address:
 	ld a,(atlas_scanline)
 	inc a
 	ld (atlas_scanline),a
-	cp #(V9958_ATLAS_ROWS * 8)
+	cp #V9958_ATLAS_SCANLINES
 	jr nz,v9958_atlas_scanline_loop
 	ret
 
@@ -1926,6 +1973,8 @@ v9958_expand_font_row:
 	call v9958_pair_to_color
 	ld (hl),a
 	inc hl
+	.if V9958_TEXT_128X35
+	.else
 	ld a,c
 	rrca
 	rrca
@@ -1933,6 +1982,7 @@ v9958_expand_font_row:
 	call v9958_pair_to_color
 	ld (hl),a
 	inc hl
+	.endif
 	ld (atlas_dest),hl
 	ret
 
@@ -2028,7 +2078,7 @@ v9958_render_character:
 
 	ld a,(render_char)
 	and #0x1f
-	call v9958_multiply_by_six
+	call v9958_multiply_by_cell_width
 	ld a,l
 	ld (command_buffer + VDP_CMD_SX_LO),a
 	ld a,h
@@ -2040,10 +2090,8 @@ v9958_render_character:
 	srl a
 	srl a
 	srl a
-	add a,a
-	add a,a
-	add a,a
-	ld c,a
+	call v9958_multiply_by_cell_height
+	ld c,l
 	ld a,(current_attr)
 	and #0x01
 	jr z,v9958_render_normal_atlas
@@ -2057,7 +2105,7 @@ v9958_render_normal_atlas:
 	ld (command_buffer + VDP_CMD_SY_HI),a
 
 	ld a,(render_col)
-	call v9958_multiply_by_six
+	call v9958_multiply_by_cell_width
 	ld a,l
 	ld (command_buffer + VDP_CMD_DX_LO),a
 	ld a,h
@@ -2073,6 +2121,33 @@ v9958_render_normal_atlas:
 	ld (command_buffer + VDP_CMD_NY_LO),a
 	ld a,#V9958_COMMAND_HMMM
 	ld (command_buffer + VDP_CMD_CODE),a
+
+	; With a six-line cell, circular scrolling eventually places a glyph at
+	; line 252 or 254. Split that HMMM at line 255 so it wraps within bitmap
+	; page zero instead of overwriting the normal atlas in page one.
+	.if V9958_TEXT_128X35
+	ld a,(command_buffer + VDP_CMD_DY_LO)
+	add a,#TEXT_CELL_HEIGHT
+	jr nc,v9958_render_start
+	ld (render_wrap_height),a	; scanlines after the page-zero wrap
+	ld a,(command_buffer + VDP_CMD_DY_LO)
+	neg
+	ld (command_buffer + VDP_CMD_NY_LO),a
+	call v9958_start_command
+	ld a,(render_wrap_height)
+	or a
+	ret z
+	ld a,(command_buffer + VDP_CMD_NY_LO)
+	ld c,a
+	ld a,(command_buffer + VDP_CMD_SY_LO)
+	add a,c
+	ld (command_buffer + VDP_CMD_SY_LO),a
+	xor a
+	ld (command_buffer + VDP_CMD_DY_LO),a
+	ld a,(render_wrap_height)
+	ld (command_buffer + VDP_CMD_NY_LO),a
+v9958_render_start:
+	.endif
 	jp v9958_start_command
 
 ; Input: D=column, E=row, B=width in cells, C=height in cells.
@@ -2089,7 +2164,7 @@ v9958_fill_cells:
 	call v9958_clear_command_buffer
 
 	ld a,(fill_col)
-	call v9958_multiply_by_six
+	call v9958_multiply_by_cell_width
 	ld a,l
 	ld (command_buffer + VDP_CMD_DX_LO),a
 	ld a,h
@@ -2100,7 +2175,7 @@ v9958_fill_cells:
 	ld (command_buffer + VDP_CMD_DY_LO),a
 
 	ld a,(fill_width)
-	call v9958_multiply_by_six
+	call v9958_multiply_by_cell_width
 	ld a,l
 	ld (command_buffer + VDP_CMD_NX_LO),a
 	ld a,h
@@ -2119,10 +2194,9 @@ v9958_fill_have_color:
 	; A multi-row erase may cross the circular page-zero boundary. Split it
 	; there so the command engine does not continue into the font page.
 	ld a,(fill_height)
-	add a,a
-	add a,a
-	add a,a
-	ld b,a
+	call v9958_multiply_by_cell_height
+	ld b,l
+	ld a,l
 	ld (command_buffer + VDP_CMD_NY_LO),a
 	ld a,(command_buffer + VDP_CMD_DY_LO)
 	add a,b
@@ -2143,7 +2217,9 @@ v9958_fill_start:
 	jp v9958_start_command
 
 ; Input: A=source logical row, D=destination row, B=row count, C=ARG.
-; Each eight-line cell row is copied separately so page-zero wrap is safe.
+; Each cell row is copied separately. In 4x6 mode, a row which straddles the
+; page-zero boundary is copied as six one-line HMMMs so neither source nor
+; destination can run into the font page.
 ; DIY selects bottom-to-top order for overlapping insert-line moves.
 v9958_copy_rows:
 	ld (copy_src_row),a
@@ -2176,15 +2252,42 @@ v9958_copy_rows_loop:
 	ld a,(copy_dst_row)
 	call v9958_logical_row_to_vram_y
 	ld (command_buffer + VDP_CMD_DY_LO),a
-	ld a,#0xfe			; 85 cells * 6 pixels = 510
+	ld a,#(TEXT_PIXEL_WIDTH & 0xff)
 	ld (command_buffer + VDP_CMD_NX_LO),a
-	ld a,#0x01
+	ld a,#(TEXT_PIXEL_WIDTH >> 8)
 	ld (command_buffer + VDP_CMD_NX_HI),a
 	ld a,#TEXT_CELL_HEIGHT
 	ld (command_buffer + VDP_CMD_NY_LO),a
 	ld a,#V9958_COMMAND_HMMM
 	ld (command_buffer + VDP_CMD_CODE),a
+	.if V9958_TEXT_128X35
+	ld a,(command_buffer + VDP_CMD_SY_LO)
+	add a,#TEXT_CELL_HEIGHT
+	jr c,v9958_copy_rows_split
+	ld a,(command_buffer + VDP_CMD_DY_LO)
+	add a,#TEXT_CELL_HEIGHT
+	jr c,v9958_copy_rows_split
 	call v9958_start_command
+	jr v9958_copy_rows_command_done
+v9958_copy_rows_split:
+	ld a,#0x01
+	ld (command_buffer + VDP_CMD_NY_LO),a
+	ld a,#TEXT_CELL_HEIGHT
+	ld (copy_scanline_count),a
+v9958_copy_rows_scanline_loop:
+	call v9958_start_command
+	ld hl,#(command_buffer + VDP_CMD_SY_LO)
+	inc (hl)
+	ld hl,#(command_buffer + VDP_CMD_DY_LO)
+	inc (hl)
+	ld a,(copy_scanline_count)
+	dec a
+	ld (copy_scanline_count),a
+	jr nz,v9958_copy_rows_scanline_loop
+v9958_copy_rows_command_done:
+	.else
+	call v9958_start_command
+	.endif
 
 	ld a,(copy_argument)
 	and #V9958_ARGUMENT_DIY
@@ -2205,18 +2308,18 @@ v9958_copy_rows_store_dst:
 	ld a,(copy_row_count)
 	dec a
 	ld (copy_row_count),a
-	jr nz,v9958_copy_rows_loop
+	jp nz,v9958_copy_rows_loop
 	ret
 
 v9958_scroll_up_one:
-	; Advance logical row zero by one eight-line cell. R#23 then makes the VDP
+	; Advance logical row zero by one cell. R#23 then makes the VDP
 	; fetch the existing rows from their new screen positions without a bitmap
 	; copy. Only the discarded half-row margin and new last row need clearing.
 	ld a,(v9958_scroll_origin)
 	add a,#TEXT_CELL_HEIGHT
 	ld (v9958_scroll_origin),a
 
-	; The fixed four-line margin immediately precedes logical row zero.
+	; The fixed display margin immediately precedes logical row zero.
 	call v9958_clear_command_buffer
 	ld a,(v9958_scroll_origin)
 	sub #TEXT_DISPLAY_OFFSET
@@ -2350,27 +2453,63 @@ v9958_clear_have_color:
 	call v9958_start_command
 	jp v9958_present
 
-; Input: A=logical text row. Output: A=page-zero physical scanline. The origin
-; and row height are both multiples of eight, so an eight-line cell never
-; crosses from command page zero into the atlas page.
+; Input: A=logical text row. Output: A=page-zero physical scanline.
+; Preserves: DE, HL. Clobbers: C.
+;
+; The cursor writer keeps its SAT-buffer pointer in HL across this call. The
+; configured-height multiply uses HL/DE internally, so preserve the helper's
+; original register contract explicitly.
 v9958_logical_row_to_vram_y:
-	add a,a
-	add a,a
-	add a,a
-	ld c,a
+	push de
+	push hl
+	call v9958_multiply_by_cell_height
+	ld c,l
+	pop hl
+	pop de
 	ld a,(v9958_scroll_origin)
 	add a,c
 	ret
 
-; A * 6 -> HL. Clobbers DE.
-v9958_multiply_by_six:
+; A * configured cell width -> HL. Clobbers DE.
+v9958_multiply_by_cell_width:
 	ld l,a
 	ld h,#0x00
 	add hl,hl
+	.if V9958_TEXT_128X35
+	add hl,hl
+	.else
 	ld e,l
 	ld d,h
 	add hl,hl
 	add hl,de
+	.endif
+	ret
+
+; A * configured cell height -> HL. Clobbers DE.
+v9958_multiply_by_cell_height:
+	ld l,a
+	ld h,#0x00
+	add hl,hl
+	.if V9958_TEXT_128X35
+	ld e,l
+	ld d,h
+	add hl,hl
+	add hl,de
+	.else
+	add hl,hl
+	add hl,hl
+	.endif
+	ret
+
+; Convert a text column to the 256-wide sprite coordinate space.
+v9958_multiply_by_cursor_width:
+	.if V9958_TEXT_128X35
+	add a,a
+	.else
+	ld e,a
+	add a,a
+	add a,e
+	.endif
 	ret
 
 ; ---------------------------------------------------------------------------
@@ -2433,9 +2572,7 @@ v9958_cursor_store_y:
 	ld (hl),a
 	inc hl
 	ld a,(text_col)
-	ld e,a
-	add a,a
-	add a,e
+	call v9958_multiply_by_cursor_width
 	ld (hl),a
 	inc hl
 	xor a
@@ -2582,7 +2719,7 @@ v9958_config_shadow:
 	.db 0x00
 
 ; Physical page-zero scanline containing logical text row zero. R#23 is this
-; value minus TEXT_DISPLAY_OFFSET, preserving the four-line top margin.
+; value minus TEXT_DISPLAY_OFFSET, preserving the configured top margin.
 v9958_scroll_origin:
 	.db 0x00
 
@@ -2611,7 +2748,11 @@ cursor_visible:
 cursor_sat:
 	.ds 0x08
 cursor_pattern:
+	.if V9958_TEXT_128X35
+	.db 0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,0x00,0x00
+	.else
 	.db 0xe0,0xe0,0xe0,0xe0,0xe0,0xe0,0xe0,0xe0
+	.endif
 cursor_colors:
 	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
 	.db V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR,V9958_CURSOR_COLOR
@@ -2630,7 +2771,7 @@ v9958_g6_registers:
 	.db 0x3f			; R#6: sprite pattern table
 	.db 0x04			; R#7: text/background color baseline
 	.db V9958_R8_64K_DRAM	; R#8: VR=1, 64Kx4 DRAMs
-	.db 0x88			; R#9: PAL + 212-line mode
+	.db V9958_R9_MODE		; R#9: configured 212-line interlace state
 	.db 0x00			; R#10
 	.db 0x03			; R#11
 
@@ -2657,6 +2798,10 @@ render_col:
 	.db 0x00
 render_row:
 	.db 0x00
+	.if V9958_TEXT_128X35
+render_wrap_height:
+	.db 0x00
+	.endif
 fill_col:
 	.db 0x00
 fill_row:
@@ -2673,6 +2818,10 @@ copy_row_count:
 	.db 0x00
 copy_argument:
 	.db 0x00
+	.if V9958_TEXT_128X35
+copy_scanline_count:
+	.db 0x00
+	.endif
 
 ; ANSI output parser state.
 ; Applies only to CONOUT bytes. Keyboard input must not use this state machine.
@@ -2743,10 +2892,15 @@ V9958_CONSOLE_CODE_END:
 ; Placed in a separate absolute area so the driver CODE area ends cleanly at
 ; V9958_CONSOLE_CODE_END.  8000h is in the OS body, so the 256-glyph CP850 font
 ; is part of the bank 7 image the cold-boot page copy loads, and no program
-; can overwrite it.  v9958_upload_font_atlas reads it there, in mode 11.
+; can overwrite it. v9958_upload_font_atlas reads the build-selected font there,
+; in mode 11.
 ; ---------------------------------------------------------------------------
 
 	.area V9958_FONT_DATA (ABS)
 	.org CONSOLE_FONT_ROM_BASE
 
+	.if V9958_TEXT_128X35
+	.include "assets/font_cp850_4x6.inc"
+	.else
 	.include "assets/font_cp850_6x8.inc"
+	.endif
