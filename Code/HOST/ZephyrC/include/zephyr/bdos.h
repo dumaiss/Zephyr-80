@@ -2,7 +2,8 @@
  *
  * Standard CP/M and ZSDOS calls come from z88dk: <stdio.h> for files and
  * <cpm.h> for bdos(), struct fcb and friends.  This header adds the ZSDOS clock
- * and file stamps, and the Zephyr BDOS extensions (functions 200-217).
+ * and file stamps, and the low-level Zephyr BDOS extensions.  Native files
+ * (function 218) have their own public interface in <zephyr/fs.h>.
  */
 #ifndef ZEPHYR_BDOS_H
 #define ZEPHYR_BDOS_H

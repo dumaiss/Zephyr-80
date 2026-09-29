@@ -49,7 +49,6 @@ struct Rig {
         if (f == 9) { unsigned a = de; while (byte(a) != '$') output.push_back(char(byte(a++))); ret_bdos(0); return; }
         if (f == 25) { ret_bdos(drive); return; }
         if (f == 26) { dma = de; ret_bdos(0); return; }
-        if (f == 37) { dir_open = false; dir_released = true; ret_bdos(0); return; }
         if (f == 17 || f == 18) {   // SEARCH FIRST / NEXT
             if (f == 17) search_at = 0;
             if (search_at >= entries.size()) { ret_bdos(0xff); return; }
@@ -75,6 +74,12 @@ struct Rig {
                 put(d + 3, e.dir ? 0x10 : 0x00);
                 put(d + 6, e.size & 255); put(d + 7, (e.size >> 8) & 255);
                 put(d + 8, (e.size >> 16) & 255); put(d + 9, (e.size >> 24) & 255);
+                put(d + 2, 0); ret_bdos(0); return;
+            }
+            if (op == 20) {             // CLOSEDIR
+                need(dir_open, "LS closed a directory it had not opened");
+                need(byte(d + 4) == 1, "LS passed the wrong directory handle");
+                dir_open = false; dir_released = true;
                 put(d + 2, 0); ret_bdos(0); return;
             }
             throw runtime_error("unexpected native op " + to_string(op));

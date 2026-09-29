@@ -76,11 +76,11 @@ System common code ends at `F8A3h`.
 | `5400h-55FFh` | B: select probe | driver | 23 | 489 | Card availability, then the B: DPH. |
 | `5600h-57FFh` | Drive A: backend | driver | 164 | 348 | The build-selected A: backend. |
 | `5800h-59FFh` | Drive dispatcher | core | 179 | 333 | Routes A: to its backend, gated B: to the synthetic FAT BIOS, and C:/D: to SD units. |
-| `8000h-87FFh` | Console font | asset | 2048 | 0 | CP850 6x8 glyph atlas, read once at boot. |
+| `8000h-87FFh` | Console font | asset | 2048 | 0 | Build-selected CP850 glyph source, read once at boot. |
 | `8800h-8BFFh` | Boot banner text | asset | 64 | 960 | Banner string, CP850 to match the console atlas. |
 | `8C00h-8FFFh` | Boot banner printer | asset | 56 | 968 | Prints the banner text beside it; runs once from cold boot, in mode 11. |
-| `9000h-9FFFh` | V9958 console | driver | 3191 | 905 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
-| `A000h-B7FFh` | FAT BDOS backend | driver | 5128 | 1016 | FS2 client, native file manager, writable FAT BDOS personality, read cache, DPH and DPB. |
+| `9000h-9FFFh` | V9958 console | driver | 3277 | 819 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
+| `A000h-B7FFh` | FAT BDOS backend | driver | 5190 | 954 | FS2 client, native file manager, writable FAT BDOS personality, read cache, DPH and DPB. |
 | `B800h-B9FFh` | SIO services (bank 7) | core | 121 | 391 | `sio1_ioc_init`, `sio_core_enable_interrupts`, `sio_register_rx_sink`: reached only from bank 7 or from boot after `bank7_check`. |
 | `BA00h-BBFFh` | Serial console tee (bank 7) | driver | 211 | 301 | Driver table, init/install, the CONST/CONIN/CONOUT tee and TX; polled through the console facade. |
 
@@ -97,7 +97,7 @@ Data:
 | `6500h` | C: DPH and DPB | SD unit 1. |
 | `6510h-65FFh` | Unallocated | Deliberate gap after the C: DPH. |
 | `6600h-7FFFh` | Reclaimable resource/cache pool | 13 lines of 512 bytes; no permanent owner. |
-| `8000h-87FFh` | Console font | CP850 6x8. |
+| `8000h-85FFh` | Console font | CP850 4x6. |
 | `8800h-883Fh` | Boot banner text | |
 | `A04Ah` | B: synthetic DPH and DPB | Read-only FAT compatibility geometry; selection gate is `1`. |
 

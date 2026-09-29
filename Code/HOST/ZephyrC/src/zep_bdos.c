@@ -93,3 +93,9 @@ uint8_t zep_ioc_bulk_write(const uint8_t *src, uint16_t n)
 {
     return bulk(217, (uint16_t)src, n);
 }
+
+uint8_t zep__fs_native(uint8_t descriptor[32])
+{
+    (void)bdos(218, (int)descriptor);
+    return descriptor[2];
+}

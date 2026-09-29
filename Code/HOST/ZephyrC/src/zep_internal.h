@@ -21,6 +21,11 @@ void     zep__otir(uint8_t port, const uint8_t *src, uint16_t n);
 void     zep__inir(uint8_t port, uint8_t *dst, uint16_t n);
 void     zep__outn(uint8_t port, uint8_t value, uint16_t n);
 
+/* Native filesystem internals.  Function 218 reports through its descriptor,
+ * not through HL or z88dk's bdos() return value. */
+uint8_t zep__fs_native(uint8_t descriptor[32]);
+uint8_t zep__fs_pack_name(uint8_t packed[11], const char *name);
+
 #define zep__out(port, value) zep__out2(((uint16_t)(uint8_t)(value) << 8) | (uint8_t)(port))
 
 /* Serial polling with millisecond timeouts (src/zep_serial.asm). */

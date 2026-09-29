@@ -3,7 +3,7 @@
 #   make            library, example and tests
 #   make lib        build/zephyr.lib
 #   make examples   build/MANDEL.COM
-#   make tests      build/TICKTEST.COM build/SERTEST.COM
+#   make tests      host tests and all test .COM files, including FSTEST.COM
 #
 # z88dk is a snap on the development host and cannot see /tmp: keep build
 # directories inside the home tree.
@@ -13,6 +13,7 @@ Z80ASM  ?= z88dk-z80asm
 SDASZ80 ?= sdasz80
 SDLDZ80 ?= sdldz80
 PYTHON  ?= python3
+HOST_CC ?= cc
 
 BUILD := build
 OBJ   := $(BUILD)/obj
@@ -27,13 +28,15 @@ LIB_OBJS := $(patsubst src/%.c,$(OBJ)/%.o,$(wildcard src/*.c)) \
             $(patsubst src/%.asm,$(OBJ)/%.o,$(wildcard src/*.asm)) \
             $(OBJ)/zep_stub_image.o
 
-.PHONY: all lib examples tests clean
+.PHONY: all lib examples tests host-tests clean
 .SECONDARY:
 
 all: lib examples tests
 lib: $(LIB)
 examples: $(BUILD)/MANDEL.COM
-tests: $(BUILD)/TICKTEST.COM $(BUILD)/SERTEST.COM $(BUILD)/VDPTEST.COM $(BUILD)/TIMTEST.COM $(BUILD)/TONETEST.COM $(BUILD)/PCTRACE.COM $(BUILD)/IRQTEST.COM
+tests: host-tests $(BUILD)/FSTEST.COM $(BUILD)/TICKTEST.COM $(BUILD)/SERTEST.COM $(BUILD)/VDPTEST.COM $(BUILD)/TIMTEST.COM $(BUILD)/TONETEST.COM $(BUILD)/PCTRACE.COM $(BUILD)/IRQTEST.COM
+host-tests: $(BUILD)/fs-host-test
+	$(BUILD)/fs-host-test
 
 $(OBJ) $(GEN):
 	mkdir -p $@
@@ -67,6 +70,13 @@ $(BUILD)/TICKTEST.COM: tests/ticktest.c tests/tick_call.asm $(LIB)
 
 $(BUILD)/SERTEST.COM: tests/sertest.c $(LIB)
 	$(ZCC) $(CFLAGS) $< $(LINK) -o $@
+
+$(BUILD)/FSTEST.COM: tests/fstest.c $(LIB)
+	$(ZCC) $(CFLAGS) $< $(LINK) -o $@
+
+$(BUILD)/fs-host-test: tests/fs_host.c src/zep_fs.c include/zephyr/fs.h src/zep_internal.h | $(BUILD)
+	$(HOST_CC) -std=c99 -Wall -Wextra -Wno-pointer-to-int-cast \
+		-D__z88dk_fastcall= -Iinclude -Isrc tests/fs_host.c src/zep_fs.c -o $@
 
 $(BUILD)/VDPTEST.COM: tests/vdptest.c $(LIB)
 	$(ZCC) $(CFLAGS) $< $(LINK) -o $@

@@ -23,12 +23,10 @@ BDOS_SEARCH_FIRST = 17
 BDOS_SEARCH_NEXT = 18
 BDOS_GET_DRIVE = 25
 BDOS_SETDMA = 26
-BDOS_RESET_DRIVE = 37
 FCB1 = 0x005c
 CMDTAIL = 0x0080
 
 FAT_DRIVE = 1				; B:, zero-based as BDOS 25 reports it
-FAT_DRIVE_BIT = 0x0002			; function 37 vector bit for B:
 FS2_ATTR_DIR = 0x10			; as ZREADDIR reports it in ZN_FLAGS
 
 start:
@@ -83,16 +81,17 @@ ls_fat_file:
 	jr ls_fat_loop
 ls_fat_done:
 	call release_dir
+	jp nz,failed
 	jp summary
 
-; There is no native CLOSEDIR, and the controller has a single directory slot
-; that CP/M's own SEARCH also uses.  Leaving it open makes the next DIR on
-; this drive fail with "no handle".  Function 37 resets the drive, which the
-; FAT backend answers by dropping every open context, this one included.
+; Release the controller's single directory context without resetting the
+; drive or disturbing unrelated native file handles.
 release_dir:
-	ld de,#FAT_DRIVE_BIT
-	ld c,#BDOS_RESET_DRIVE
-	jp BDOS
+	call op_begin
+	ld a,#1
+	ld (desc + ZN_HANDLE),a
+	ld a,#ZN_CLOSEDIR
+	jp do_op
 
 ; ---------------------------------------------------------------------------
 ; Conventional CP/M volume: names only, one per file rather than per extent.

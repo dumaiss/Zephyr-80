@@ -1,9 +1,9 @@
 # ZephyrC API
 
 Status: **implemented**, except the parts that wait on work outside this
-library (section 11). The library, the `MANDEL` example and the two tests
-build; `README.md` says what has been run and where. Nothing has run on the
-real machine yet.
+library (section 11). The library, the `MANDEL` example and the test programs
+build; `README.md` says what has been run and where. Filesystem hardware
+acceptance is still pending.
 
 ZephyrC is the C library for Zephyr-80 programs cross-compiled on a PC. It gives
 C programs the machine's serial ports, V9958, sound card, CTC, banked memory,
@@ -154,6 +154,100 @@ sign-extends `A` into `H` as well), so a returned pointer or 16-bit value is
 lost. Function 203 is the one that matters here, and `zep_sysinfo` uses an
 assembly helper that leaves `HL` alone. The rest of the Zephyr range answers in
 `A`, where `bdos()` is correct.
+
+### Native filesystem: `<zephyr/fs.h>`
+
+This is the native byte-oriented FAT view behind BDOS function 218. It is not
+z88dk stdio and does not use CP/M FCBs, records, extents, drive prefixes or IOC
+tokens. Existing programs keep using `<stdio.h>`; new programs that need
+hierarchy, byte counts or native error detail use this API.
+
+```c
+typedef uint8_t zep_fs_handle_t;
+typedef uint8_t zep_fs_dir_t;
+typedef uint8_t zep_fs_status_t;
+
+zep_fs_status_t zep_fs_open(const char *, zep_fs_open_mode_t, zep_fs_handle_t *);
+zep_fs_status_t zep_fs_close(zep_fs_handle_t);
+zep_fs_status_t zep_fs_read(zep_fs_handle_t, void *, uint16_t, uint16_t *);
+zep_fs_status_t zep_fs_write(zep_fs_handle_t, const void *, uint16_t, uint16_t *);
+zep_fs_status_t zep_fs_seek(zep_fs_handle_t, uint32_t);
+zep_fs_status_t zep_fs_tell(zep_fs_handle_t, uint32_t *);
+zep_fs_status_t zep_fs_sync(zep_fs_handle_t);
+zep_fs_status_t zep_fs_truncate(zep_fs_handle_t, uint32_t);
+
+zep_fs_status_t zep_fs_stat(const char *, zep_fs_stat_t *);
+zep_fs_status_t zep_fs_delete(const char *);
+zep_fs_status_t zep_fs_rename(const char *, const char *);
+zep_fs_status_t zep_fs_mkdir(const char *);
+zep_fs_status_t zep_fs_rmdir(const char *);
+
+zep_fs_status_t zep_fs_root(void);
+zep_fs_status_t zep_fs_cdup(void);
+zep_fs_status_t zep_fs_chdir(const char *);
+zep_fs_status_t zep_fs_getcwd(char *, uint16_t);
+
+zep_fs_status_t zep_fs_opendir(zep_fs_dir_t *);
+zep_fs_status_t zep_fs_readdir(zep_fs_dir_t, zep_fs_dirent_t *);
+zep_fs_status_t zep_fs_closedir(zep_fs_dir_t);
+zep_fs_status_t zep_fs_space(uint32_t *, uint32_t *);
+```
+
+The open modes are read, update, create-new and create-always. Stat and
+directory entries contain an exact 32-bit byte size and native flags;
+`ZEP_FS_FLAG_DIRECTORY` is the structural directory bit. Directory names are
+returned as conventional NUL-terminated `NAME.EXT` strings.
+
+Names passed to file and namespace calls are one 1-8 plus optional 1-3
+component. Lowercase ASCII is folded to uppercase. Wildcards, slashes, drive
+prefixes, empty extensions and characters rejected by FS2 are rejected locally
+with `ZEP_FS_BAD_NAME`. Rename is within the current resolver directory; the
+API does not advertise cross-directory rename.
+
+`zep_fs_chdir` is the path convenience call. It walks slash-separated 8.3
+components with the native CHDIR operation, accepts a leading `/`, and handles
+`.` and `..` using no-op and CDUP. The walk changes global CWD one component
+at a time and is therefore not atomic: if a later component fails, earlier
+components remain selected. `zep_fs_root` selects the current USER's FAT root,
+`zep_fs_cdup` stays at root when already there, and `zep_fs_getcwd`
+reconstructs a printable slash path from native CWD components.
+
+The namespace is the FAT-backed current drive and is relative to the ZSDOS USER
+that was selected by function 32. None of these calls changes USER, accepts an
+arbitrary drive-qualified path, or temporarily changes CWD for an ordinary
+open/stat operation.
+
+One function-218 transfer can stage at most 512 bytes. `zep_fs_read` and
+`zep_fs_write` hide that limit and accept any `uint16_t` length. Zero returns
+success and zero bytes without a syscall. Reads stop at a short chunk/EOF.
+Writes count only successful chunks and stop on the first error.
+
+Filesystem results are not collapsed into `ZEP_EIO`:
+
+```text
+00 OK             40 NOT_FOUND       41 END
+42 EXISTS         43 BAD_NAME        44 READ_ONLY
+45 NO_SPACE       46 NOT_DIR         47 IS_DIR
+48 NO_HANDLE      49 STALE           4A RANGE
+4B NO_MEDIA       4C TRANSPORT       4D UNKNOWN_WRITE
+4E IO             FF UNSUPPORTED
+```
+
+`ZEP_FS_UNKNOWN_WRITE` means the payload may have committed but completion
+could not be proved. The wrapper returns it unchanged, does not count that
+chunk, and never retries it. The application must inspect/reopen/re-stat and
+choose recovery. Read-side stale recovery remains an OS responsibility.
+
+The OS currently has two native file slots and one directory context.
+`zep_fs_opendir` opens the current directory, `ZEP_FS_END` is normal
+exhaustion, and every successful open must be paired with
+`zep_fs_closedir` even after END. CLOSEDIR is append-only function-218
+operation 20; it releases the already-existing FS2 directory context.
+
+This is a single-program CP/M API. Calls use stack-local descriptors and have
+no library-global filesystem state, but the underlying CWD, file-slot pool and
+single directory iterator are OS-global. Do not treat it as reentrant or call
+it from an interrupt.
 
 ---
 
@@ -574,6 +668,7 @@ right root boundary; and how the heap is split between common memory and banks.
 | Part | Built | Exercised so far |
 |---|---|---|
 | `bdos.h` | yes | `zep_sysinfo` under RunCPM (correctly reports "not a Zephyr BIOS"); IOCALL, bulk and stamps need the machine |
+| `fs.h` | yes | host model covers descriptors, names, chunking, statuses, hierarchy and directory lifecycle; `FSTEST.COM` awaits real-card acceptance |
 | `sound.h` | yes | compiles and is called by `MANDEL`; nothing has been heard yet |
 | `timer.h` | yes | `TICKTEST` proves the tick stub, phase accumulator, saturation and per-channel isolation without a CTC |
 | `serial.h` | yes | `SERTEST` opens the console port, exchanges a line and times out on a quiet line, against a pty peer |

@@ -11,15 +11,15 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | ROM page 0: reset vector and common memory | `build/firmware.bin` | 65536 bytes |
 | Bank 7 payload | `build/bank7.bin` | 65536 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Resolved listing (firmware.rst) | `build/firmware.rst` | 520150 bytes |
-| Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 220336 bytes |
-| Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 430418 bytes |
-| Resolved listing (drv_console_sercon.rst) | `build/drv_console_sercon.rst` | 217166 bytes |
-| Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 424461 bytes |
-| Resolved listing (drv_storage_sd.rst) | `build/drv_storage_sd.rst` | 294021 bytes |
-| Resolved listing (drv_transport_ioccmd.rst) | `build/drv_transport_ioccmd.rst` | 356135 bytes |
-| Resolved listing (drv_console_hid_input.rst) | `build/drv_console_hid_input.rst` | 221275 bytes |
-| Linker symbol map | `build/firmware.map` | 35098 bytes |
+| Resolved listing (firmware.rst) | `build/firmware.rst` | 520262 bytes |
+| Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 220448 bytes |
+| Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 434053 bytes |
+| Resolved listing (drv_console_sercon.rst) | `build/drv_console_sercon.rst` | 217278 bytes |
+| Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 426828 bytes |
+| Resolved listing (drv_storage_sd.rst) | `build/drv_storage_sd.rst` | 294133 bytes |
+| Resolved listing (drv_transport_ioccmd.rst) | `build/drv_transport_ioccmd.rst` | 356247 bytes |
+| Resolved listing (drv_console_hid_input.rst) | `build/drv_console_hid_input.rst` | 221387 bytes |
+| Linker symbol map | `build/firmware.map` | 35145 bytes |
 | Layout manifest | `build/layout.manifest` | 1445 bytes |
 
 ## System Addresses

@@ -507,6 +507,34 @@ int main(int ac,char**av)try{
         need(t.mem.fetch_mem(desc+2)==0,"SPACE status");
         need(t.get32(desc+t.at("ZNATIVE_OFF_POSITION"))==0x20000000u,"SPACE free bytes");
         need(t.get32(desc+t.at("ZNATIVE_OFF_SPACE_TOTAL"))==0x40000000u,"SPACE total bytes");
+
+        // OPENDIR's controller context is public native state, so function 218
+        // must also provide a matching release operation.  A wrong handle must
+        // not discard the live context; a successful close must, and repeated
+        // open/close cycles must not leak the single controller directory.
+        auto dir_op=[&](unsigned op,unsigned handle){
+            for(unsigned i=0;i<32;i++)t.mem.store_mem(desc+i,0);
+            t.mem.store_mem(desc,1);
+            t.mem.store_mem(desc+t.at("ZNATIVE_OFF_OP"),op);
+            t.mem.store_mem(desc+t.at("ZNATIVE_OFF_HANDLE"),handle);
+            r.DE.set_pair16(desc);t.call("fat_native_entry");
+            return t.mem.fetch_mem(desc+t.at("ZNATIVE_OFF_STATUS"));
+        };
+        need(dir_op(t.at("ZNATIVE_OPENDIR"),0)==0&&t.dir_open,
+             "native OPENDIR did not acquire the controller context");
+        need(dir_op(t.at("ZNATIVE_CLOSEDIR"),2)==0x48&&t.dir_open,
+             "native CLOSEDIR accepted a wrong handle or lost the context");
+        need(dir_op(t.at("ZNATIVE_CLOSEDIR"),1)==0&&!t.dir_open,
+             "native CLOSEDIR did not release the controller context");
+        unsigned after_close=t.cmdcount_total();
+        need(dir_op(t.at("ZNATIVE_READDIR"),1)==0x48&&
+             t.cmdcount_total()==after_close,
+             "READDIR after CLOSEDIR touched the controller");
+        need(dir_op(t.at("ZNATIVE_CLOSEDIR"),1)==0x48,
+             "repeated native CLOSEDIR did not report NO_HANDLE");
+        need(dir_op(t.at("ZNATIVE_OPENDIR"),0)==0&&
+             dir_op(t.at("ZNATIVE_CLOSEDIR"),1)==0&&!t.dir_open,
+             "native directory context leaked across reopen");
     }
     // ---------------- Milestone 6: the writable FCB personality -------------
     // These run against the real file model, so a record written through the

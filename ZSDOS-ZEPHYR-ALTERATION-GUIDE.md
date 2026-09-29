@@ -1522,6 +1522,13 @@ Examples of useful patterns:
 - a multi-component result such as the current directory can take an index and
   return one component plus the total count per call.
 
+Native resource acquisition needs a native release operation.  Function 218
+originally exposed OPENDIR/READDIR while FS2's existing CLOSEDIR primitive had
+no application crossing, which made a well-formed C iterator impossible.
+CLOSEDIR is therefore append-only version-1 operation 20.  It reuses HANDLE,
+does not change any existing operation number or descriptor offset, and must
+retire the single native directory context even after READDIR returned END.
+
 Use the existing crossing helper rather than adding another common stub.
 
 When an operation is answerable entirely from bank-7 state, state that fact in

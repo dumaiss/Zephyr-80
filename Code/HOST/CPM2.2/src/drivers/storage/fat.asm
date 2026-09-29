@@ -2279,6 +2279,8 @@ fat_native_entry:
 	jp z,fat_native_space
 	cp #ZNATIVE_CDUP
 	jp z,fat_native_cdup
+	cp #ZNATIVE_CLOSEDIR
+	jp z,fat_native_closedir
 fat_native_bad:
 	ld a,#0xff
 	jp fat_native_return
@@ -3122,6 +3124,36 @@ fat_native_readdir:
 	jp fat_native_return
 fat_native_dir_bad:
 	ld a,#FS2_STATUS_NO_HANDLE
+	jp fat_native_return
+
+; Release the controller's single native directory context.  This operation is
+; deliberately additive: OPENDIR/READDIR already publish handle 1, and existing
+; function-218 operation numbers and descriptor fields remain unchanged.
+fat_native_closedir:
+	ld a,(fat_native_dir_active)
+	or a
+	jr z,fat_native_dir_bad
+	ld hl,(fat_native_desc)
+	ld de,#ZNATIVE_OFF_HANDLE
+	add hl,de
+	ld a,(hl)
+	cp #1
+	jr nz,fat_native_dir_bad
+	call fat_zero_frames
+	ld a,#FS2_CMD_CLOSEDIR
+	ld (FAT_TX),a
+	ld a,#2
+	ld (FAT_TX + IOC_OFF_LEN),a
+	ld hl,(fat_native_dir_token)
+	ld (FAT_TX + IOC_OFF_PAYLOAD),hl
+	ld a,#FS2_RSP_CLOSEDIR
+	call fat_exchange
+	push af
+	xor a
+	ld (fat_native_dir_active),a
+	ld (fat_native_dir_token),a
+	ld (fat_native_dir_token + 1),a
+	pop af
 	jp fat_native_return
 
 fat_native_chdir:

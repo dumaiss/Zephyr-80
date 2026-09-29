@@ -17,7 +17,7 @@ the same hardware they describe it the same way.
 make            # library, example and tests
 make lib        # build/zephyr.lib
 make examples   # build/MANDEL.COM
-make tests      # build/TICKTEST.COM, build/SERTEST.COM
+make tests      # host tests and all test .COM files, including FSTEST.COM
 ```
 
 Needs z88dk (`zcc`, `z88dk-z80asm`), the SDCC assembler and linker
@@ -63,6 +63,7 @@ block on the way out.
 | Header | Covers |
 |---|---|
 | `zephyr/bdos.h` | `zep_sysinfo`, the BDOS 210-217 register block, IOCALL and bulk transfers, the ZSDOS clock and file stamps |
+| `zephyr/fs.h` | Native FAT files, byte transfers, hierarchy, directory iteration and free-space queries through BDOS 218 |
 | `zephyr/serial.h` | SIO0/A (RS-232) and SIO0/B (the USB console port, borrowed from the BIOS) |
 | `zephyr/vdp.h` | V9958: registers, palette, modes, VRAM, the command engine, sprites |
 | `zephyr/timer.h` | CTC ticks at 1-180 Hz, raw CTC, common memory and interrupt callbacks |
@@ -71,6 +72,17 @@ block on the way out.
 | `zephyr/input.h` | USB keyboard through BDOS, gamepads from the controller latches |
 
 ## Example and tests
+
+- `tests/fs_host.c` — runs `zep_fs.c` against a host-side function-218
+  model. It covers name canaries, 0/1/127/128/129/511/512/513 and multi-chunk
+  transfers, EOF/short reads, exact native status propagation (including
+  `UNKNOWN_WRITE` without replay), hierarchy, free space and directory
+  open/read/end/close/reopen.
+- `tests/fstest.c` — builds `FSTEST.COM`, the real-card public-API
+  acceptance test. It owns `/ZCFSTEST` in the current USER namespace, tests
+  read/write/readback, seek/tell, truncate, mutation, nesting, iteration and
+  space, and cleans up results whose completion is known. It stops immediately
+  on `ZEP_FS_UNKNOWN_WRITE`.
 
 - `examples/mandel/mandel.c` — `MANDEL.COM`, the direct-V9958 Mandelbrot from
   `../HelloWorld/src/mandelbrot_v9958_real.asm`, ported to C. Same screen, same
@@ -131,6 +143,22 @@ A bad return address can prevent the probe from reaching its capture code.
 Passing therefore narrows the investigation; it does not prove interrupt
 handling is safe under foreground I/O or full OS workloads. `MANDEL` remains
 useful as that stress workload.
+
+### Native filesystem hardware acceptance
+
+1. Build with `make tests` and copy `build/FSTEST.COM` to a disk the Zephyr
+   can execute.
+2. Boot a current OS/IOC pair, select the FAT-backed B: drive and the USER area
+   to test, then run `FSTEST`.
+3. Expect `FSTEST: all passed`. Every failure prints the raw `ZEP_FS_*`
+   byte. If status `4D` is printed, do not rerun or clean up until the card is
+   inspected: that chunk's commit is unknown.
+4. Confirm `ZCFSTEST` is absent afterward. A remaining directory means the
+   test reported a known failure and deliberately left evidence, or completion
+   became unknown.
+
+`FSTEST.COM` returns through the normal C startup/ZCPR path; it does not force
+a warm boot.
 
 ## Where it has run
 
