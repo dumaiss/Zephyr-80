@@ -229,7 +229,7 @@ BANK7_REGIONS = [
     Region("Serial console tee (bank 7)", "SERCON_BANK7_CODE_START", "SERCON_BANK7_CODE_END", "CBIOS_SERCON_BANK7_CODE_LIMIT",
            "Driver table, init/install, the CONST/CONIN/CONOUT tee and TX; polled through the console facade.", optional=True, zone="driver", source="drivers/console/sercon.asm"),
     Region("Console font", "CONSOLE_FONT_ROM_BASE", "CONSOLE_FONT_ROM_END", "CONSOLE_FONT_ROM_LIMIT",
-           "CP850 6x8 glyph atlas, read once at boot.", zone="asset", source="assets/font_cp850_6x8.inc"),
+           "Build-selected CP850 glyph source, read once at boot.", zone="asset", source="drivers/console/v9958.asm"),
     Region("Boot banner text", "BOOT_BANNER_TEXT", "BOOT_BANNER_TEXT_END", "BOOT_BANNER_TEXT_LIMIT",
            "Banner string, CP850 to match the console atlas.", zone="asset", source="core/banner.asm"),
     Region("Boot banner printer", "BOOT_BANNER_CODE_START", "BOOT_BANNER_CODE_END", "CBIOS_BOOT_BANNER_CODE_LIMIT",
@@ -1012,6 +1012,8 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
     isr_save = s("CBIOS_ISR_SP_SAVE")
     bulk, bulk_size = s("FAC_BULK_BUF"), s("FAC_BULK_SIZE")
     last_common_code = max(end for _, _, end, _ in common)
+    font_size = s("FONT_BYTES")
+    font_description = "CP850 4x6." if font_size == 1536 else "CP850 6x8."
 
     lines = [
         "# Zephyr-80 CP/M 2.2 Memory Map",
@@ -1080,7 +1082,7 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         f"| `{h4(s('SD_STORAGE_DPH2'))}` | C: DPH and DPB | SD unit 1. |",
         f"| `{xspan(s('SD_STORAGE_DPH2') + 0x10, s('RESOURCE_CACHE_POOL_BASE'))}` | Unallocated | Deliberate gap after the C: DPH. |",
         f"| `{xspan(s('RESOURCE_CACHE_POOL_BASE'), s('RESOURCE_CACHE_POOL_LIMIT'))}` | Reclaimable resource/cache pool | {s('RESOURCE_CACHE_LINE_COUNT')} lines of {s('RESOURCE_CACHE_LINE_SIZE')} bytes; no permanent owner. |",
-        f"| `{xspan(s('CONSOLE_FONT_ROM_BASE'), s('CONSOLE_FONT_ROM_BASE') + s('FONT_CP850_6X8_SIZE'))}` | Console font | CP850 6x8. |",
+        f"| `{xspan(s('CONSOLE_FONT_ROM_BASE'), s('CONSOLE_FONT_ROM_BASE') + font_size)}` | Console font | {font_description} |",
         f"| `{xspan(s('BOOT_BANNER_TEXT'), s('BOOT_BANNER_TEXT_END'))}` | Boot banner text | |",
         f"| `{h4(s('FAT_BIOS_DPH'))}` | B: synthetic DPH and DPB | Read-only FAT compatibility geometry; selection gate is `{s('FAT_DRIVE_ENABLED')}`. |",
         "",

@@ -1237,11 +1237,10 @@ BOOT_BANNER_ROM_BASE            = 0x8800                ; follows the 2 KiB font
 ; region table skipped straight from the V9958 console at 5FFFh to the banner
 ; printer at 8A00h, so 6000h-89FFh -- 10,752 bytes holding the drive tables, the
 ; resource pool, the font and the banner text -- was a blind spot.  The font is
-; fixed size; the banner text is the one that grows.
-; Derived from the banner base rather than FONT_CP850_6X8_SIZE, which is declared
-; in assets/font_cp850_6x8.inc and is not visible here.  The atlas is exactly
-; 2 KiB -- 256 glyphs of 8 bytes -- so the two agree, and the region reports as
-; full because it is.
+; allocated at the size of the largest selectable font; the banner text is the
+; one that grows. Derived from the banner base rather than a font include's size,
+; because the selected include is not visible here. The 6x8 font fills the 2 KiB
+; allocation; the 4x6 font uses 1536 bytes and leaves the remainder reserved.
 CONSOLE_FONT_ROM_END            = BOOT_BANNER_ROM_BASE       ; 8800h, exclusive like every other _END
 CONSOLE_FONT_ROM_LIMIT          = BOOT_BANNER_ROM_BASE   ; 8800h
 
@@ -1781,6 +1780,7 @@ ZNATIVE_RMDIR                         = 0x10
 ZNATIVE_CWD                           = 0x11
 ZNATIVE_SPACE                         = 0x12
 ZNATIVE_CDUP                          = 0x13
+ZNATIVE_CLOSEDIR                      = 0x14
 ZNATIVE_OPEN_READ                     = 0x00
 ZNATIVE_OPEN_UPDATE                   = 0x01
 ZNATIVE_OPEN_CREATE_NEW               = 0x02
