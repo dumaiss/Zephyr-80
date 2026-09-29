@@ -2,7 +2,7 @@
 #
 #   make            library, example and tests
 #   make lib        build/zephyr.lib
-#   make examples   build/MANDEL.COM
+#   make examples   build/MANDEL.COM and build/FARCALL.COM
 #   make tests      host tests and all test .COM files, including FSTEST.COM
 #
 # z88dk is a snap on the development host and cannot see /tmp: keep build
@@ -33,7 +33,7 @@ LIB_OBJS := $(patsubst src/%.c,$(OBJ)/%.o,$(wildcard src/*.c)) \
 
 all: lib examples tests
 lib: $(LIB)
-examples: $(BUILD)/MANDEL.COM
+examples: $(BUILD)/MANDEL.COM $(BUILD)/FARCALL.COM
 tests: host-tests $(BUILD)/FSTEST.COM $(BUILD)/TICKTEST.COM $(BUILD)/SERTEST.COM $(BUILD)/VDPTEST.COM $(BUILD)/TIMTEST.COM $(BUILD)/TONETEST.COM $(BUILD)/PCTRACE.COM $(BUILD)/IRQTEST.COM
 host-tests: $(BUILD)/fs-host-test
 	$(BUILD)/fs-host-test
@@ -64,6 +64,9 @@ $(LIB): $(LIB_OBJS)
 
 $(BUILD)/MANDEL.COM: examples/mandel/mandel.c $(LIB)
 	$(ZCC) $(CFLAGS) $< $(LINK) -o $@
+
+$(BUILD)/FARCALL.COM: examples/farcall/farcall.c examples/farcall/far_code.asm $(LIB)
+	$(ZCC) $(CFLAGS) examples/farcall/farcall.c examples/farcall/far_code.asm $(LINK) -o $@
 
 $(BUILD)/TICKTEST.COM: tests/ticktest.c tests/tick_call.asm $(LIB)
 	$(ZCC) $(CFLAGS) tests/ticktest.c tests/tick_call.asm $(LINK) -o $@

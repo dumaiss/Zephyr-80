@@ -512,6 +512,10 @@ uint16_t zep_bank_call(uint8_t bank, uint16_t entry, uint16_t hl);  /* through a
   `0000h-DFFFh`; copies go through the BIOS's common scratch buffer.
 - `zep_bank_call` runs code that was built for, and copied into, another bank.
   The trampoline lives in `E000h-E3FFh`; the stack is already common.
+- `examples/farcall/` is the smallest complete example: a relocatable assembly
+  payload is copied to bank 1, entered with an argument in `HL`, and returns its
+  result in `HL`. The payload deliberately uses no globals or operating-system
+  calls, because the program's bank-0 code and data are not mapped during it.
 - Direct `SELMEM` is not exposed: it unmaps the C code that would call it.
   Section 10 is the supported way to run C in other banks.
 
@@ -603,10 +607,12 @@ Both new commands follow the three-edit rule in `../Utilities/README.md`
 
 ## 10. Banked programs: far calls
 
-A second startup code, `crt_zephyr_banked`, lets a program put functions in
-banks 1-6 and call them like any other function. It is built on SDCC's banked
-function support: a function declared `__banked` is called through
-`___sdcc_bcall_ehl`, which needs only `get_bank` and `set_bank` routines.
+A planned second startup code, `crt_zephyr_banked`, will let a program put
+functions in banks 1-6 and call them like any other function. It is built on
+SDCC's banked-function support. Under the current zcc pipeline, the final
+object uses z88dk's `banked_call` ABI and a 32-bit target relocation; a common
+trampoline, bank-aware linker layout and overlay loader are therefore all
+required. `DOC/far-call-gaps.md` is the implementation work list.
 
 ```c
 void draw_level(uint8_t n) __banked;     /* lives in whichever bank it was linked into */
@@ -674,7 +680,7 @@ right root boundary; and how the heap is split between common memory and banks.
 | `serial.h` | yes | `SERTEST` opens the console port, exchanges a line and times out on a quiet line, against a pty peer |
 | `vdp.h` | yes, minus vsync | `MANDEL` renders a correct set through a V9958 model in the harness |
 | `input.h` | keyboard and latch | keyboard through BDOS in `MANDEL`; the latches need hardware |
-| `bank.h` | yes | untested: RunCPM has no BDOS 210-217 |
+| `bank.h` | yes | `FARCALL.COM` builds; hardware run pending (RunCPM has no BDOS 210-217) |
 | Banked startup, far calls | no | section 10 |
 
 Next, in this order:

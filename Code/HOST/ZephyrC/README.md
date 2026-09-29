@@ -16,7 +16,7 @@ the same hardware they describe it the same way.
 ```sh
 make            # library, example and tests
 make lib        # build/zephyr.lib
-make examples   # build/MANDEL.COM
+make examples   # build/MANDEL.COM and build/FARCALL.COM
 make tests      # host tests and all test .COM files, including FSTEST.COM
 ```
 
@@ -88,6 +88,10 @@ block on the way out.
   `../HelloWorld/src/mandelbrot_v9958_real.asm`, ported to C. Same screen, same
   fixed-point arithmetic and palette, so the two images can be compared. It also
   uses the timer, sound, input and `zep_sysinfo`.
+- `examples/farcall/` — `FARCALL.COM`, a minimal far call. It copies a small
+  position-independent assembly routine into bank 1, calls it through
+  `zep_bank_call`, and checks the value returned in `HL`. It needs the Zephyr
+  BIOS bank services and therefore does not run under RunCPM.
 - `tests/ticktest.c` — `TICKTEST.COM` drives the tick callback the way the BIOS
   dispatcher does and checks the phase accumulator, saturation and counters. It
   needs no CTC and runs under an emulator.
