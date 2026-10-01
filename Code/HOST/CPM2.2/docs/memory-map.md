@@ -79,7 +79,7 @@ System common code ends at `F8A3h`.
 | `8000h-87FFh` | Console font | asset | 2048 | 0 | Build-selected CP850 glyph source, read once at boot. |
 | `8800h-8BFFh` | Boot banner text | asset | 64 | 960 | Banner string, CP850 to match the console atlas. |
 | `8C00h-8FFFh` | Boot banner printer | asset | 56 | 968 | Prints the banner text beside it; runs once from cold boot, in mode 11. |
-| `9000h-9FFFh` | V9958 console | driver | 3277 | 819 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
+| `9000h-9FFFh` | V9958 console | driver | 3315 | 781 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
 | `A000h-B7FFh` | FAT BDOS backend | driver | 5190 | 954 | FS2 client, native file manager, writable FAT BDOS personality, read cache, DPH and DPB. |
 | `B800h-B9FFh` | SIO services (bank 7) | core | 121 | 391 | `sio1_ioc_init`, `sio_core_enable_interrupts`, `sio_register_rx_sink`: reached only from bank 7 or from boot after `bank7_check`. |
 | `BA00h-BBFFh` | Serial console tee (bank 7) | driver | 211 | 301 | Driver table, init/install, the CONST/CONIN/CONOUT tee and TX; polled through the console facade. |

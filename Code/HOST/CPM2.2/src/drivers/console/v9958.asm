@@ -2342,14 +2342,36 @@ v9958_scroll_up_one:
 	ld b,#TEXT_LOG_COLUMNS
 	ld c,#0x01
 	call v9958_fill_cells
+
+	; The 35 six-line rows occupy 210 of the 212 visible source lines, with
+	; one margin line on each edge. R#23 selects a different physical bottom
+	; margin after every circular scroll, so clear that newly visible line as
+	; well; otherwise it can expose a scanline left by an older glyph row.
+	.if V9958_TEXT_128X35
+	call v9958_clear_command_buffer
+	ld a,(v9958_scroll_origin)
+	add a,#(TEXT_ROWS * TEXT_CELL_HEIGHT)
+	ld (command_buffer + VDP_CMD_DY_LO),a
+	xor a
+	ld (command_buffer + VDP_CMD_NX_LO),a
+	ld a,#0x02
+	ld (command_buffer + VDP_CMD_NX_HI),a
+	ld a,#0x01
+	ld (command_buffer + VDP_CMD_NY_LO),a
+	ld a,#0x44
+	ld (command_buffer + VDP_CMD_COLOR),a
+	ld a,#V9958_COMMAND_HMMV
+	ld (command_buffer + VDP_CMD_CODE),a
+	call v9958_start_command
+	.endif
 	call v9958_wait_command
 
 	; Commit the new circular origin immediately. An earlier revision waited
 	; for S#2.VR here so the origin changed only during vertical retrace. That
 	; wait costs up to a full field (16.7 ms NTSC / 20 ms PAL, ~8 ms average)
 	; on *every* scrolled line, which caps scrolling output at the field rate
-	; and made this driver slower than the VDrip console. The two fills above
-	; are ~0.3 ms of command-engine time, so the retrace wait was more than
+	; and made this driver slower than the VDrip console. The edge and row fills
+	; above take a fraction of a millisecond, so the retrace wait was more than
 	; twenty times the cost of the work it protected. Writing R#23 mid-field
 	; can tear one field; during continuous output that is not visible, and it
 	; is the only artifact this trades away.

@@ -13,7 +13,7 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
 | Resolved listing (firmware.rst) | `build/firmware.rst` | 520262 bytes |
 | Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 220448 bytes |
-| Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 434053 bytes |
+| Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 435694 bytes |
 | Resolved listing (drv_console_sercon.rst) | `build/drv_console_sercon.rst` | 217278 bytes |
 | Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 426828 bytes |
 | Resolved listing (drv_storage_sd.rst) | `build/drv_storage_sd.rst` | 294133 bytes |
