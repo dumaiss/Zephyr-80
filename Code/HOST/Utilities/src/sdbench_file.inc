@@ -1,10 +1,17 @@
-; sdbench_file.inc — the two file-level read benchmarks.
+; sdbench_file.inc — the file-level read benchmarks.
 ;
 ; ---------------------------------------------------------------------------
 ; WHAT EACH ONE ACTUALLY MEASURES
 ; ---------------------------------------------------------------------------
 ;
-; BDOS mode is the path an ordinary CP/M program takes, end to end:
+; Native mode is selected automatically for B:, the Zephyr FS2 volume.  One
+; function-218 ZREAD moves at most 512 bytes because both the common-memory
+; crossing buffer and the FS2 wire transaction have that ceiling.  Logical
+; requests above 512 bytes deliberately group consecutive ZREADs inside one
+; timed sample.  That exposes the crossing/block tax without pretending the
+; controller accepted a larger wire transaction.
+;
+; BDOS mode is the path an ordinary CP/M program takes on A:/C:/D:, end to end:
 ;
 ;   BDOS 20 -> BIOS READ -> CMD_SD_READ_REC -> READY -> 128 bytes on the bulk
 ;   lane -> the controller's block cache -> the card
@@ -31,23 +38,24 @@
 ; the one thing this benchmark exists to avoid.
 ;
 ; ---------------------------------------------------------------------------
-; THE TWO MODES DO NOT READ THE SAME FILE
+; THE MODES DO NOT READ THE SAME FILE NAMESPACE
 ; ---------------------------------------------------------------------------
 ;
-; BDOS mode reads a file inside a CP/M volume; FS mode reads a file in /SHARED/
-; on the FAT card.  Same card, same cache, different files.  The rows are
-; comparable as transport measurements and are not two views of one file.
+; Native mode reads a B: FS2 file, BDOS mode reads inside a CP/M volume, and
+; FS mode reads a file in /SHARED/ on the FAT card.  The rows are comparable as
+; path measurements and are not different views of one file.
 ;
 ; ---------------------------------------------------------------------------
 ; THE CACHE IS IN THE MEASUREMENT, AND IT BELONGS THERE
 ; ---------------------------------------------------------------------------
 ;
-; The controller keeps eight 512-byte slots in front of the card, LRU, and both
-; paths above go through it -- FatFs shares it rather than keeping its own.  So
-; in BDOS mode one record in four misses and reaches the card and three hit
-; SRAM, which is why the latency histogram is bimodal and why the mean is a poor
-; guide to what a streaming reader must survive.  That IS the application-visible
-; path; it is not a distortion of it.
+; The controller keeps eight 512-byte slots in front of the card, LRU, and the
+; filesystem paths above go through it -- FatFs shares it rather than keeping
+; its own.  In C:/D: BDOS mode one record in four misses the host deblock line
+; and reaches the controller while three hit host SRAM, which is why the
+; latency histogram is bimodal and why the mean is a poor guide to what a
+; streaming reader must survive.  That IS the application-visible path; it is
+; not a distortion of it.
 ;
 ; What would be a distortion is re-reading something small enough to still be
 ; resident.  Eight slots is 4 KiB, so any file of a few hundred KiB read forward
@@ -104,6 +112,19 @@ MAX_BYTES_HI	= 0x40		; 4 MiB, tested against the high two bytes
 ; ===========================================================================
 ; BDOS sequential read
 ; ===========================================================================
+
+; Out: A = effective BDOS drive, zero based.  An explicit FCB drive is one
+; based; zero means the CCP's current drive.
+fb_effective_drive:
+	ld a,(FCB1)
+	or a
+	jr z,fb_effective_default
+	dec a
+	ret
+fb_effective_default:
+	ld c,#BDOS_CURDSK
+	jp BDOS
+
 bench_bdos:
 	call fb_make_fcb
 	ld de,#fb_fcb
@@ -293,6 +314,15 @@ fb_print:
 	call puts
 	call pass_report
 
+	; The BIOS's 512-byte deblock line exists only under the SD-backed CP/M
+	; volumes C: and D:.  A: is ROM and B: is native FS2, so presenting the
+	; common-memory counters for either would falsely label unrelated zeros.
+	ld a,(file_drive)
+	cp #2				; C:
+	jr c,fb_deblock_na
+	cp #4				; one past D:
+	jr nc,fb_deblock_na
+
 	; The BIOS's 512-byte deblock line keeps a hit/miss tally in the IOC
 	; failure record's reserved bytes -- common memory, because a transient
 	; runs in latch mode 10 where bank 7 is not visible.  Thousands of reads
@@ -315,6 +345,10 @@ fb_print:
 	call n_acc_from_hl
 	call print_dec32
 	call crlf
+	jp finish
+fb_deblock_na:
+	ld de,#msg_deblock_na
+	call puts
 	jp finish
 
 ; A clean FCB from the one the CCP parsed: drive and name, everything else zero.
@@ -446,6 +480,352 @@ fb_timer_on:
 	call print_x100
 	ld de,#msg_timer_us
 	jp puts
+
+; ===========================================================================
+; Native Zephyr FS2 read through BDOS function 218 (B:)
+; ===========================================================================
+
+NB_DESC		= tx_frame		; exactly one 32-byte native descriptor
+NB_PIECE_MAX	= 512			; function-218 and FS2 wire ceiling
+
+bench_native:
+	ld a,#1
+	ld (nb_stage),a			; OPEN
+	call nb_open
+	or a
+	jp nz,nb_fail
+
+	ld hl,#fs_size
+	call n_load_acc
+	call n_acc_is_zero
+	jr nz,nb_not_empty
+	call nb_close
+	ld de,#msg_empty
+	call puts
+	jp finish
+nb_not_empty:
+	ld a,(fs_size + 3)
+	or a
+	jr nz,nb_too_big
+	ld a,(fs_size + 2)
+	cp #MAX_BYTES_HI
+	jr c,nb_size_ok
+nb_too_big:
+	call nb_close
+	ld de,#msg_too_big
+	call puts
+	jp finish
+nb_size_ok:
+	call nb_say_file
+	call tk_start
+	or a
+	jr z,nb_timer_ok
+	push af
+	call nb_close
+	pop af
+	jp fb_no_timer
+nb_timer_ok:
+	call fb_say_timer
+	ld hl,#nb_sizes
+	ld (fs_size_p),hl
+	xor a
+	ld (fs_row),a
+
+nb_next_size:
+	ld hl,(fs_size_p)
+	ld a,(hl)
+	inc hl
+	ld h,(hl)
+	ld l,a
+	ld a,h
+	or l
+	jr z,nb_all_done
+	ld (fs_chunk),hl
+	call nb_one_pass
+	or a
+	jr nz,nb_pass_failed
+	ld hl,(fs_size_p)
+	inc hl
+	inc hl
+	ld (fs_size_p),hl
+	ld a,(fs_row)
+	inc a
+	ld (fs_row),a
+	jr nb_next_size
+
+nb_all_done:
+	call tk_stop
+	ld a,#4
+	ld (nb_stage),a			; CLOSE
+	call nb_close
+	or a
+	jp nz,nb_fail
+	call fs_table
+	jp finish
+
+nb_pass_failed:
+	ld (fail_info),a
+	call tk_stop
+	call nb_close			; best-effort cleanup; retain original status
+	ld a,(fail_info)
+	jp nb_fail
+
+; One complete forward pass.  fs_chunk is the logical application request
+; size; each timed request contains as many <=512-byte ZREAD calls as needed.
+; Out: A = native status, zero on success.
+nb_one_pass:
+	ld a,#2
+	ld (nb_stage),a			; SEEK
+	call nb_seek_zero
+	or a
+	ret nz
+	call pass_reset
+	ld hl,#fs_size
+	call n_load_acc
+	ld hl,#fs_left
+	call n_store_acc
+	ld hl,#0
+	ld (fs_got),hl
+	ld (fs_got + 2),hl
+	xor a
+	ld (fb_sum),a
+
+	ld de,#msg_native_pass
+	call puts
+	ld hl,(fs_chunk)
+	call print_dec_word
+	ld de,#msg_native_pass_tail
+	call puts
+
+nb_pass_loop:
+	ld hl,#fs_left
+	call n_load_acc
+	call n_acc_is_zero
+	jp z,nb_pass_ok
+
+	; logical length = min(request size, bytes left in the file)
+	ld hl,(fs_chunk)
+	call n_acc_from_hl
+	ld hl,#fs_left
+	call n_load_arg
+	call n_cmp
+	jr c,nb_logical_full
+	ld hl,(fs_left)
+	jr nb_logical_set
+nb_logical_full:
+	ld hl,(fs_chunk)
+nb_logical_set:
+	ld (fs_len),hl
+	ld (nb_piece_left),hl
+
+	call tk_read
+	ld hl,#fb_t0
+	call n_store_acc
+
+nb_piece_loop:
+	; piece length = min(512, bytes remaining in this logical request)
+	ld hl,(nb_piece_left)
+	ld de,#NB_PIECE_MAX + 1
+	or a
+	sbc hl,de
+	jr c,nb_piece_tail
+	ld hl,#NB_PIECE_MAX
+	jr nb_piece_set
+nb_piece_tail:
+	ld hl,(nb_piece_left)
+nb_piece_set:
+	ld (nb_piece_len),hl
+	ld a,#3
+	ld (nb_stage),a			; READ
+	call nb_read_piece
+	ld (fb_status),a
+	or a
+	jr nz,nb_logical_done
+
+	ld a,(ref_buf)
+	ld hl,#fb_sum
+	add a,(hl)
+	ld (hl),a
+	ld hl,(nb_piece_left)
+	ld de,(nb_piece_len)
+	or a
+	sbc hl,de
+	ld (nb_piece_left),hl
+	ld a,h
+	or l
+	jr nz,nb_piece_loop
+
+nb_logical_done:
+	call tk_read
+	ld hl,#fb_t0
+	call n_load_arg
+	call n_sub
+	ld a,(fb_status)
+	or a
+	ret nz
+
+	call pass_latency
+	call pass_sample
+
+	; got += logical length; left -= logical length
+	ld hl,(fs_len)
+	ld (fs_len32),hl
+	ld hl,#0
+	ld (fs_len32 + 2),hl
+	ld hl,#fs_got
+	ld de,#fs_len32
+	call n_add_to
+	ld hl,#fs_left
+	ld de,#fs_len32
+	call n_sub_from
+	jp nb_pass_loop
+
+nb_pass_ok:
+	ld hl,#fs_got
+	call n_load_acc
+	ld hl,#p_bytes
+	call n_store_acc
+	call pass_report
+	call fs_store_row
+	xor a
+	ret
+
+; Clear and initialise the shared native descriptor.
+nb_begin:
+	ld hl,#NB_DESC
+	ld b,#ZN_DESC_BYTES
+	xor a
+nb_begin_loop:
+	ld (hl),a
+	inc hl
+	djnz nb_begin_loop
+	ld a,#ZN_API_VERSION
+	ld (NB_DESC + ZN_VERSION),a
+	ret
+
+; A = operation.  Returns the function-218 status with flags set from it.
+nb_do:
+	ld (NB_DESC + ZN_OP),a
+	ld de,#NB_DESC
+	jp zb_native
+
+nb_open:
+	call nb_begin
+	ld a,#ZN_OPEN_READ
+	ld (NB_DESC + ZN_FLAGS),a
+	ld hl,#FCB1 + 1
+	ld de,#NB_DESC + ZN_NAME
+	ld bc,#11
+	ldir
+	ld a,#ZN_OPEN
+	call nb_do
+	or a
+	ret nz
+	ld a,(NB_DESC + ZN_HANDLE)
+	or a
+	jr nz,nb_open_handle
+	ld a,#ZN_ERR_NO_HANDLE
+	or a
+	ret
+nb_open_handle:
+	ld (fs_handle),a
+	ld hl,#NB_DESC + ZN_POSITION
+	ld de,#fs_size
+	ld bc,#4
+	ldir
+	xor a
+	ret
+
+nb_seek_zero:
+	call nb_begin
+	ld a,(fs_handle)
+	ld (NB_DESC + ZN_HANDLE),a
+	ld a,#ZN_SEEK
+	jp nb_do
+
+; Read one physical native/FS2 piece into ref_buf.  The pass has already
+; bounded nb_piece_len to 1..512.  A short result is an I/O failure because
+; the pass derived every request from OPEN's authoritative file size.
+nb_read_piece:
+	call nb_begin
+	ld a,(fs_handle)
+	ld (NB_DESC + ZN_HANDLE),a
+	ld hl,#ref_buf
+	ld (NB_DESC + ZN_BUFFER),hl
+	ld hl,(nb_piece_len)
+	ld (NB_DESC + ZN_LENGTH),hl
+	ld a,#ZN_READ
+	call nb_do
+	or a
+	ret nz
+	ld hl,(NB_DESC + ZN_RESULT)
+	ld de,(nb_piece_len)
+	or a
+	sbc hl,de
+	ret z
+	ld a,#ZN_ERR_IO
+	or a
+	ret
+
+nb_close:
+	call nb_begin
+	ld a,(fs_handle)
+	ld (NB_DESC + ZN_HANDLE),a
+	ld a,#ZN_CLOSE
+	jp nb_do
+
+nb_say_file:
+	ld de,#msg_file
+	call puts
+	ld e,#'B'
+	ld c,#BDOS_CONOUT
+	call BDOS
+	ld e,#':'
+	ld c,#BDOS_CONOUT
+	call BDOS
+	ld hl,#FCB1 + 1
+	ld b,#8
+	call fb_say_field
+	ld e,#'.'
+	ld c,#BDOS_CONOUT
+	call BDOS
+	ld hl,#FCB1 + 9
+	ld b,#3
+	call fb_say_field
+	ld de,#msg_size
+	call puts
+	ld hl,#fs_size
+	call n_load_acc
+	call print_dec32
+	ld de,#msg_size_bytes
+	jp puts
+
+nb_fail:
+	ld (fail_info),a
+	ld de,#msg_native_fail
+	call puts
+	ld a,(nb_stage)
+	cp #1
+	ld de,#msg_native_open
+	jr z,nb_fail_stage
+	cp #2
+	ld de,#msg_native_seek
+	jr z,nb_fail_stage
+	cp #3
+	ld de,#msg_native_read
+	jr z,nb_fail_stage
+	ld de,#msg_native_close
+nb_fail_stage:
+	call puts
+	ld de,#msg_native_fail_mid
+	call puts
+	ld a,(fail_info)
+	call print_hex_byte
+	call crlf
+	jp finish
+
+nb_sizes:
+	.dw 128,256,512,1024,2048,4096,0
 
 ; ===========================================================================
 ; IO Controller FS bulk read, /SHARED/<name>
@@ -886,11 +1266,25 @@ fs_table:
 	ld hl,#fs_rows
 	ld (fs_size_p),hl
 	ld hl,#fs_sizes
+	ld a,(mode)
+	cp #4
+	jr nz,fs_table_sizes_ready
+	ld hl,#nb_sizes
+fs_table_sizes_ready:
 	ld (fs_row_p),hl
 	ld b,#3
+	ld a,(mode)
+	cp #4
+	jr nz,fs_table_loop
+	ld b,#6
 fs_table_loop:
 	push bc
 	ld de,#msg_table_lead
+	ld a,(mode)
+	cp #4
+	jr nz,fs_table_lead_ready
+	ld de,#msg_table_native
+fs_table_lead_ready:
 	call puts
 	ld hl,(fs_row_p)
 	ld a,(hl)
@@ -1346,12 +1740,15 @@ fs_len32:	.ds 4
 fs_chunk:	.ds 2
 fs_size_p:	.ds 2
 fs_row_p:	.ds 2
-fs_rows:	.ds 36
+fs_rows:	.ds 72
 fs_handle:	.ds 1
 fs_exp:		.ds 1
 fs_stage:	.ds 1
 fs_row:		.ds 1
 fs_cached:	.ds 1
+nb_stage:	.ds 1
+nb_piece_left:	.ds 2
+nb_piece_len:	.ds 2
 ; Split into words by the assembler, not by hand.  FS_CACHE_TOTAL is 65536, and
 ; `.dw 65536` truncates to zero WITHOUT A DIAGNOSTIC -- which set the byte count
 ; to nothing and made the whole cached pass report zeros before its first read.

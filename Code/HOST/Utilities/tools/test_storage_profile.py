@@ -15,7 +15,9 @@ from generate_memory_docs import parse_listing, add_defs
 for project, name in [(root, 'ioc_sdbench'), (bios, 'firmware')]:
     symbols, _ = parse_listing(project / 'build' / (name + '.lst'))
     if project == bios:
-        add_defs(symbols, bios / 'src/cbios_defs.inc')
+        driver_symbols, _ = parse_listing(bios / 'build/drv_storage_sd.lst')
+        symbols.update(driver_symbols)
+        add_defs(symbols, bios / 'src/layout/memory.inc')
     (root / 'build' / (name + '-profile-symbols.txt')).write_text(
         ''.join(f'{n} {v}\n' for n, v in symbols.items()))
 exe = root / 'build/storage-profile-test'

@@ -14,15 +14,25 @@ struct CPU:qkz80 { CPU(qkz80_cpu_mem *m):qkz80(m){set_cpu_mode(MODE_Z80);}
 };
 struct Rig {
  qkz80_cpu_mem m; CPU c{&m}; map<string,unsigned> s; unsigned calls=0,ticks=0,fail_at=0; bool loop=false, profile=false, bad_page=false;
- unsigned mock_status=0,mock_class=0x8b;
+ unsigned mock_status=0,mock_class=0x8b,current_disk=1; bool timer_mock=false;
+ vector<unsigned> native_ops,native_lengths;
  Rig(const char *bin,const char *symbols,unsigned base){fill(m.get_mem(),m.get_mem()+65536,0);ifstream f(bin,ios::binary);f.read((char*)m.get_mem()+base,65536-base);check(f.gcount()>0,"binary missing");ifstream sy(symbols);string n;unsigned a;while(sy>>n>>a)s[n]=a;c.regs.SP.set_pair16(0xd000);}
- unsigned a(const string&n){return s.at(n);} unsigned byte(unsigned p){return m.fetch_mem(p);} unsigned word(unsigned p){return byte(p)|(byte(p+1)<<8);}
+ unsigned a(const string&n){auto i=s.find(n);if(i==s.end())throw runtime_error("missing symbol "+n);return i->second;} unsigned byte(unsigned p){return m.fetch_mem(p);} unsigned word(unsigned p){return byte(p)|(byte(p+1)<<8);} unsigned dword(unsigned p){return word(p)|(word(p+2)<<16);}
  void put(unsigned p,unsigned v){m.store_mem(p,v);} void w(unsigned p,unsigned v){m.store_mem16(p,v);}
  void d(unsigned p,unsigned v){w(p,v);w(p+2,v>>16);} void ret(){unsigned sp=c.regs.SP.get_pair16();c.regs.PC.set_pair16(word(sp));c.regs.SP.set_pair16(sp+2);}
  void result(unsigned v){c.regs.AF.set_high(v);ret();}
  void step(){unsigned pc=c.regs.PC.get_pair16();
   if(pc==5){
    unsigned fn=c.regs.BC.get_low();
+   if(fn==25){result(current_disk);return;}
+   if(fn==218){
+    unsigned dsc=c.regs.DE.get_pair16(),op=byte(dsc+1);check(byte(dsc)==1,"bad native descriptor version");native_ops.push_back(op);
+    if(op==1){check(byte(dsc+3)==0,"native OPEN is not read-only");string n;for(unsigned i=0;i<11;i++)n+=char(byte(dsc+18+i));check(n=="SONG    VGM","native OPEN name");put(dsc+4,1);d(dsc+6,8192);result(0);return;}
+    if(op==4){check(byte(dsc+4)==1&&dword(dsc+6)==0,"native SEEK");result(0);return;}
+    if(op==3){unsigned len=word(dsc+10),buf=word(dsc+12);check(byte(dsc+4)==1&&len>0&&len<=512,"native READ framing");native_lengths.push_back(len);for(unsigned i=0;i<len;i++)put(buf+i,i);w(dsc+16,len);ticks+=10;result(0);return;}
+    if(op==2){check(byte(dsc+4)==1,"native CLOSE handle");result(0);return;}
+    throw runtime_error("unexpected native op "+to_string(op));
+   }
    if(!loop){check(fn==2||fn==9,"unexpected parser BDOS call");result(0);return;}
    check(fn==20,"non-read CALL 5 inside timed region");++calls;ticks+=10;
    unsigned f=c.regs.DE.get_pair16(); check(f==a("fb_fcb"),"FCB pointer");
@@ -31,6 +41,8 @@ struct Rig {
    if(fail_at==calls){result(1);return;}
    put(f+32,byte(f+32)+1); unsigned h=word(0xe100);w(0xe100,min(h+1,65535u));result(0);return;
   }
+  if(timer_mock && pc==a("tk_read")){d(a("acc32"),ticks);ret();return;}
+  if(timer_mock && pc==a("tk_stop")){ret();return;}
   if(loop && pc==a("tk_read")){d(a("acc32"),ticks);ret();return;}
   if(loop && pc==a("tk_stop")){ret();return;}
   if(profile && pc==a("IOCALL")){
@@ -47,6 +59,19 @@ struct Rig {
  void setup_loop(){loop=true;calls=ticks=0;unsigned f=a("fb_fcb");for(unsigned i=0;i<36;i++)put(f+i,0);for(unsigned i=16;i<32;i++)put(f+i,i+30);put(a("hh_ex"),0);put(a("hh_s2"),0x80);put(a("hh_cr"),0);w(a("hh_cache_ptr"),0xe100);w(a("hh_xport_ptr"),0xe110);w(0xe100,20);w(0xe102,8);w(0xe110,65534);w(0xe112,100);}
 };
 int main(int argc,char**argv){try {check(argc==5,"arguments");Rig u(argv[1],argv[2],0x100);
+ check(u.a("CTC_POLLED")==0x27,"SDBENCH CTC prescaler is not /256");
+ u.put(u.a("ctc_tc"),16);u.d(u.a("acc32"),625);u.call("ms_from_ticks");check(u.dword(u.a("acc32"))==16,"625 ticks is not 16 ms");
+ u.d(u.a("acc32"),625);u.call("msx100_from_ticks");check(u.dword(u.a("acc32"))==1600,"625 ticks is not 16.00 ms");
+ u.c.regs.HL.set_pair16(0xfe2d);u.call("tk_unwrap_skew");check(u.c.regs.HL.get_pair16()==0x002d,"short CRT skew did not unwrap");
+ u.c.regs.HL.set_pair16(0xfdff);u.call("tk_unwrap_skew");check(u.c.regs.HL.get_pair16()==0xfdff,"safe CRT range was altered");
+ u.put(0x5c,0);u.current_disk=1;u.call("fb_effective_drive");check(u.c.regs.AF.get_high()==1,"default B: did not select native mode");
+ u.put(0x5c,3);u.call("fb_effective_drive");check(u.c.regs.AF.get_high()==2,"explicit C: drive decode");
+ u.put(0x5c,2);string native_name="SONG    VGM";for(unsigned i=0;i<11;i++)u.put(0x5d+i,native_name[i]);
+ u.call("nb_open");check(u.c.regs.AF.get_high()==0&&u.byte(u.a("fs_handle"))==1&&u.dword(u.a("fs_size"))==8192,"native OPEN result");
+ u.d(u.a("fs_size"),4096);u.native_lengths.clear();u.timer_mock=true;u.ticks=0;u.w(u.a("fs_chunk"),4096);u.put(u.a("fs_row"),0);u.put(u.a("ctc_tc"),16);u.call("nb_one_pass");u.timer_mock=false;
+ check(u.c.regs.AF.get_high()==0&&u.native_lengths.size()==8&&all_of(u.native_lengths.begin(),u.native_lengths.end(),[](unsigned n){return n==512;}),"4096-byte logical request was not eight 512-byte ZREADs");
+ check(u.dword(u.a("p_reads"))==1&&u.dword(u.a("p_bytes"))==4096,"native logical pass totals");
+ u.call("nb_close");check(u.c.regs.AF.get_high()==0,"native CLOSE");
  for(auto t:vector<pair<string,int>>{{"FILE /H",3},{"FILE /h /n",3},{"FILE /S /P",2},{"FILE /s /c /p",2},{"FILE",1}}){u.tail(t.first,true);check(u.c.regs.AF.get_high()==0&&u.byte(u.a("mode"))==unsigned(t.second),"valid options "+t.first);}
  for(auto t:{"/H","/P","/S /P"}){u.tail(t,false);check(u.c.regs.AF.get_high()!=0,"missing filename");}
  for(auto t:{"FILE /H /S","FILE /H /C","FILE /H /P","FILE /P"}){u.tail(t,true);check(u.c.regs.AF.get_high()!=0,"conflicting switches");}
@@ -59,5 +84,5 @@ int main(int argc,char**argv){try {check(argc==5,"arguments");Rig u(argv[1],argv
  u.mock_status=1;u.call("sp_end");check(u.c.regs.AF.get_high()!=0,"error profile accepted");u.mock_status=0;u.mock_class=0xff;u.call("sp_end");check(u.c.regs.AF.get_high()!=0,"normal firmware accepted");
  Rig b(argv[3],argv[4],0);b.put(b.a("sd_deblock_valid"),1);b.put(b.a("sd_deblock_unit"),0);b.put(b.a("sd_storage_unit"),0);b.w(b.a("sd_deblock_block"),0x1234);b.w(b.a("sd_deblock_want"),0x1234);b.call("sd_deblock_match");check(b.zero(),"resident block mismatch");
  for(auto n:{"sd_deblock_valid","sd_deblock_unit","sd_deblock_block"}){unsigned p=b.a(n),old=b.byte(p);b.put(p,old^1);b.call("sd_deblock_match");check(!b.zero(),"false deblock hit");b.put(p,old);}
- cout<<"PASS: assembled SDBENCH parsing, 4096 fn20 calls, rewind/map preservation, aggregate timing, invalid/saturated counters, profile framing/decoding; BIOS deblock match\n";
+ cout<<"PASS: assembled SDBENCH /256 timer conversion, native FS2 4096/512 grouping, CRT unwrap, parsing, 4096 fn20 calls, rewind/map preservation, aggregate timing, invalid/saturated counters, profile framing/decoding; BIOS deblock match\n";
  }catch(const exception&e){cerr<<e.what()<<'\n';return 1;}}

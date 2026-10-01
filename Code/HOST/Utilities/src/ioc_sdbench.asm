@@ -1,10 +1,12 @@
 ; IOC_SDBENCH.COM — what storage actually costs a program on this machine.
 ;
-; Three measurements, at three different depths of the same stack.  Which one
+; Four measurements, at different depths of the same stack.  Which one
 ; you want depends on what you are about to design.
 ;
-;   SDBENCH [d:]name        BDOS sequential read of a CP/M file.
-;                           The path an ordinary program takes.  READ ONLY.
+;   SDBENCH B:name          Native Zephyr FS2 reads of a FAT file, grouped
+;                           into 128..4096-byte logical requests.  READ ONLY.
+;   SDBENCH [A:|C:|D:]name BDOS sequential read of a CP/M file.
+;                           One 128-byte record per call.  READ ONLY.
 ;   SDBENCH name /S         IO Controller FS bulk read of /SHARED/name at
 ;                           128, 256 and 512 bytes per transaction.  READ ONLY.
 ;   SDBENCH                 raw 512-byte card read and write, no filesystem.
@@ -23,7 +25,7 @@
 ; with the filesystem taken out of the way, timed by the controller's own
 ; millisecond counters.  It answers "how fast is this card".
 ;
-; The two file modes answer the question a resource or streaming library
+; The file modes answer the question a resource or streaming library
 ; actually has to be designed against: what does a READ COST THE PROGRAM, from
 ; the call it makes down to the card and back.  They are timed on the Z80, by
 ; the CTC, because that is where the program experiences the cost.
@@ -38,11 +40,10 @@
 ; WHAT IS NOT MEASURED, AND WILL NOT BE
 ; ---------------------------------------------------------------------------
 ;
-; There is no 1024-byte or larger row, and there is no "512-byte BDOS read".
-; CP/M 2.2's sequential read moves one 128-byte record per call and the
-; controller's FS chunk maximum is 512 bytes.  Four calls grouped behind a
-; bigger buffer are four transactions; labelling them as one larger transfer
-; would misreport the only number this program exists to produce.  See
+; There is no "512-byte BDOS read": CP/M 2.2's sequential read moves one
+; 128-byte record per call.  Native FS2 logical rows above 512 are explicitly
+; groups of 512-byte ZREAD calls inside one timed application request; the
+; output says so rather than mislabelling them as one wire transaction.  See
 ; sdbench_file.inc for what each mode really does on the wire.
 ;
 ; ---------------------------------------------------------------------------
@@ -50,7 +51,7 @@
 ; ---------------------------------------------------------------------------
 ;
 ; Raw mode writes LBA 00100000h (512 MiB offset) 128 times and does not restore
-; it.  Test cards only.  It prompts first.  The two file modes never write
+; it.  Test cards only.  It prompts first.  The file modes never write
 ; anything and never prompt.
 ;
 ; Raw mode deliberately bypasses the controller's record cache and uses the raw
@@ -132,10 +133,8 @@ start:
 	jr z,mode_raw
 
 	; A file mode needs Zephyr BDOS function 200 for the timer, so the BIOS
-	; has to be a Zephyr BIOS.  It does not need the controller firmware to be
-	; any particular level: BDOS mode speaks no IOC protocol at all, and
-	; refusing to measure good hardware over a level it never uses would be
-	; nothing but obstruction.
+	; has to be a Zephyr BIOS.  Native B: and /S use production filesystem
+	; services; none of the read-only file modes requires diagnostic firmware.
 	call zb_xport_level
 	cp #ZBIOS_XPORT_LEVEL
 	jr z,mode_file
@@ -153,6 +152,18 @@ mode_file:
 	; STORAGE_PROFILE host experiment.
 	cp #3
 	jp z,bench_hit
+	; B: is the native Zephyr FS2 volume.  Its ordinary BDOS personality is
+	; useful for CP/M compatibility, but it hides the byte-oriented interface
+	; this benchmark is meant to characterize.  A:/C:/D: remain on the CP/M
+	; sequential-record path.
+	call fb_effective_drive
+	ld (file_drive),a
+	cp #1				; BDOS drive number: B: = 1
+	jr nz,mode_bdos
+	ld a,#4
+	ld (mode),a
+	jp bench_native
+mode_bdos:
 	jp bench_bdos
 
 	; Raw mode speaks the protocol, so it checks the controller too.
@@ -1059,7 +1070,7 @@ scratch_lba:
 	.db 0x00,0x00,0x10,0x00	; LBA 00100000h = 512 MiB offset
 
 msg_banner:
-	.ascii "Zephyr-80 SD Benchmark (timer fix r5: 1.6us ticks)"
+	.ascii "Zephyr-80 SD Benchmark (timer fix r7: /256, 25.6us ticks)"
 	.db 13,10,'$'
 msg_normal_build:
 	.ascii "This controller runs NORMAL firmware. A normal build does not"
@@ -1074,7 +1085,9 @@ msg_normal_build:
 	.db 13,10
 	.ascii "on the Z80 and need none of those commands."
 	.db 13,10
-	.ascii "  SDBENCH [d:]FILE      BDOS 128-byte records"
+	.ascii "  SDBENCH B:FILE        native FS2 logical 128..4096 bytes"
+	.db 13,10
+	.ascii "  SDBENCH C:FILE        CP/M BDOS 128-byte records (also D:)"
 	.db 13,10
 	.ascii "  SDBENCH FILE /S       FS bulk at 128, 256 and 512 bytes"
 	.db 13,10,'$'
@@ -1186,7 +1199,7 @@ msg_size_bytes:
 msg_timer:
 	.ascii "Timer:  CTC3+CTC1 polled, no interrupt, 1 tick = $"
 msg_timer_us:
-	.ascii " us, range 104 ms per read"
+	.ascii " us, range 1664.6144 ms per read"
 	.db 13,10,'$'
 msg_timer_off:
 	.ascii "Timer:  none (/N). Correctness only; every time below reads zero."
@@ -1250,6 +1263,29 @@ msg_deblock:
 	.ascii "  deblock line: hits $"
 msg_deblock_miss:
 	.ascii " misses $"
+msg_deblock_na:
+	.ascii "  deblock line: n/a (not an SD CP/M volume)"
+	.db 13,10,'$'
+
+msg_native_pass:
+	.ascii "Native FS2 logical read, $"
+msg_native_pass_tail:
+	.ascii " bytes (512-byte ZREAD pieces)"
+	.db 13,10,'$'
+msg_native_fail:
+	.ascii "Native FS2 $"
+msg_native_fail_mid:
+	.ascii " failed, status 0x$"
+msg_native_open:
+	.ascii "open$"
+msg_native_seek:
+	.ascii "seek$"
+msg_native_read:
+	.ascii "read$"
+msg_native_close:
+	.ascii "close$"
+msg_table_native:
+	.ascii "FS2 logical $"
 
 ; Eight labels, each its own $-terminated string, walked in order beside the
 ; eight counters.  The bucket edges are computed from the time constant in use,
@@ -1300,6 +1336,7 @@ io_buf:		.ds 512
 mode:		.ds 1
 want_fs:	.ds 1
 no_timer:	.ds 1
+file_drive:	.ds 1			; effective BDOS drive, zero based
 opt_want:	.ds 1
 opt_end:	.ds 2
 stack_space:	.ds 192			; BDOS nesting under an interrupt frame

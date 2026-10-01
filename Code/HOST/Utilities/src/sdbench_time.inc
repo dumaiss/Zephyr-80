@@ -8,12 +8,10 @@
 ; CTC channels 3 and 1, both timer mode, INTERRUPT DISABLED, read with a single
 ; IN each.  Nothing here ever vectors.
 ;
-; MEASURED TICK RATE: on this board one counter step is 10 MHz / 16 = 1.6 us.
-; The control word's prescaler bit D5 has NO OBSERVED EFFECT here: 27h (/16)
-; and 2Fh (/256) both produced a 1.6 us step, which is how every reported time
-; came out sixteen times the wall clock until the arithmetic below was
-; rescaled.  Do not re-enable /256 arithmetic, or change the control word in
-; the hope of one, without re-measuring the step rate on hardware.
+; One counter step is 10 MHz / 256 = 25.6 us.  D5 selects the prescaler: 07h
+; is /16 and 27h is /256.  Keep 27h here: tk_sample's B-A-B consistency read
+; must be able to observe the same B count before and after sampling A.  At
+; /16, B always advances during that sequence and the retry loop cannot exit.
 ;
 ; WHY NOT AN INTERRUPT
 ;
@@ -30,11 +28,11 @@
 ;
 ; WHY TWO COUNTERS
 ;
-; One 8-bit counter at 1.6 us repeats every 409.6 us, and the gap between two
+; One 8-bit counter at 25.6 us repeats every 6.5536 ms, and the gap between two
 ; samples is only recoverable while it stays under that.  The first polled
 ; version assumed a 128-byte record read was about a millisecond; it was not.
 ;
-; ON THIS MACHINE A RECORD READ IS ABOUT 19.5 MS -- nearly 48 full counter
+; ON THIS MACHINE A RECORD READ IS ABOUT 19.5 MS -- nearly 3 full counter
 ; cycles, so a single counter aliased every read and the benchmark reported a
 ; throughput far above a stopwatch reading.  A clock that silently divides by
 ; an unknown integer is worse than no clock, because the answer still looks
@@ -43,8 +41,13 @@
 ; So the counter is widened instead.  Channel 3 runs with a time constant of 256
 ; and channel 1 with 255.  The two periods are coprime, so the pair of residues
 ; identifies the elapsed count uniquely over 256 * 255 = 65280 steps, which at
-; 1.6 us is about 104 ms -- five times a normal read, and enough for a badly
-; stalled one.
+; 25.6 us is 1671.168 ms -- enough for a badly
+; stalled one.  The independently started prescalers can disagree by one count
+; across a sample.  Most such errors are only +/-256 steps and cancel over a
+; pass, but a short negative-skew interval appears in the top 256 values of the
+; CRT range.  tk_unwrap_skew maps that impossible near-ceiling result back to
+; the short interval; the unambiguous ceiling is therefore 65024 steps, or
+; 1664.6144 ms.
 ;
 ; The Chinese remainder step is unusually cheap here because 256 = 1 (mod 255):
 ;
@@ -61,32 +64,28 @@
 ; not be touched, while TO1 leaves the board.  Channels 1 and 2 have never been
 ; seen to VECTOR, which is why nothing here asks them to; the CTC note in
 ; ../CPM2.2/docs/ records that they do COUNT with the interrupt bit clear and a
-; control word of 27h.  The measured step is 10 MHz / 16 = 1.6 us (see above),
-; and 2Fh steps at 1.6 us too, so the constant keeps the verified 27h and the
-; arithmetic is scaled for the step the hardware actually makes.  tk_start
-; proves the channels run anyway rather than trusting the note.
+; control word with its interrupt bit clear.  This benchmark explicitly selects
+; /256 with 27h; tk_start proves the channels run rather than trusting setup.
 ;
 ; WHAT IS STILL NOT MEASURABLE
 ;
-; A single read longer than about 104 ms.  Nothing detects that, so if a
+; A single read of 1664.6144 ms or longer.  Nothing detects that, so if a
 ; reported total ever falls well short of a stopwatch, treat every figure as
 ; aliased -- the same cross-check that caught the single-counter ceiling.
 ;
 ; TICK UNITS
 ;
-; ctc_tc holds the arithmetic scale, not a hardware time constant: one tick is
-; ctc_tc * 1.6 us, and these counters make that exactly 1.
+; ctc_tc holds the arithmetic scale, not a hardware time constant: one counter
+; step is ctc_tc * 1.6 us, and these counters make that exactly 16.
 
 CTC_A		= 0x43		; channel 3
 CTC_B		= 0x42		; channel 1.  The board wires CS0/CS1 to A1/A0,
 				; so 40h 42h 41h 43h are channels 0 1 2 3.
-CTC_POLLED	= 0x27		; timer, TC follows, reset, control; NO interrupt.
-				; Steps at 10 MHz/16 (1.6 us) on this board: D5 has
-				; no observed effect (2Fh steps at /16 too).
+CTC_POLLED	= 0x27		; timer, /256, TC follows, reset, control; no IRQ
 CTC_STOP	= 0x03		; software reset, no interrupt
 CTC_TC_A	= 0		; 0 means 256: the mod-256 residue
 CTC_TC_B	= 255		; coprime with 256
-TICK_SCALE	= 1		; one counter step is one tick of 1.6 us
+TICK_SCALE	= 16		; one 25.6-us counter step is 16 x 1.6 us
 
 ; ---------------------------------------------------------------------------
 ; tk_start — free-run both channels and zero the accumulated time base.
@@ -128,8 +127,8 @@ tk_start_done:
 	xor a
 	ret
 
-; Both channels must move over about 330 us, which is about 200 steps -- less
-; than one full wrap, so a channel that moved cannot read back its old residue.
+; Both channels must move over about 330 us, which is about 13 steps -- well
+; below one full wrap, so a channel that moved cannot read back its old residue.
 ; Out: A = 0, 1 or 2.
 tk_verify:
 	in a,(CTC_A)
@@ -171,7 +170,7 @@ tk_stop:
 ; tk_read — advance the 32-bit time base from both counters, return it in acc32.
 ;
 ; Only differences between two tk_read results are ever used, so what has to
-; stay inside the ~104 ms range is the interval being measured -- not the run.
+; stay below 1664.6144 ms is the interval being measured -- not the run.
 ; ---------------------------------------------------------------------------
 tk_read:
 	ld a,(no_timer)
@@ -180,14 +179,10 @@ tk_read:
 
 	; SAMPLE BOTH CHANNELS IN ONE EPOCH.
 	;
-	; They are read by two separate IN instructions about a microsecond apart,
-	; and a counter step is 1.6 us -- so a step frequently lands between the
-	; two reads.  The two residues then describe different instants, and the
-	; remainder combine turns that one-step skew into a 256-step error:
-	; 0.41 ms.  A handful of those once dominated a total made of 15 ms reads,
-	; which is how the benchmark reported a slower figure for a run that
-	; finished sooner.  Reading channel 1 either side of channel 3 and
-	; retrying when it moved makes the pair consistent by construction.
+	; Reading channel 1 either side of channel 3 and retrying when it moved
+	; makes the pair consistent by construction.  The complete B-A-B sequence
+	; fits comfortably within a 25.6-us counter step.  It did not fit within
+	; the /16 setting's 1.6-us step, so that setting retried forever.
 tk_sample:
 	in a,(CTC_B)
 	ld e,a				; E = channel 1, before
@@ -225,6 +220,7 @@ tk_have_am:
 tk_have_k:
 	ld h,a				; elapsed = a + 256 * k
 	ld l,d
+	call tk_unwrap_skew
 
 	ld de,#tk_acc
 	call n_add_hl_to
@@ -233,6 +229,17 @@ tk_read_done:
 	jp n_load_acc
 tk_read_zero:
 	jp n_zero_acc
+
+; A one-count phase disagreement can encode a genuinely short interval as
+; FE00h..FEFFh (65024..65279).  Those values are outside the documented safe
+; interval, so recover the original channel-A residue in L.  Kept as a helper
+; so the assembled-code test can exercise the exact boundary correction.
+tk_unwrap_skew:
+	ld a,h
+	cp #0xfe
+	ret nz
+	ld h,#0x00
+	ret
 
 tk_acc:		.ds 4
 tk_last_a:	.ds 1
@@ -553,16 +560,14 @@ n_add_hl_to:
 ; One tick is TC * 1.6 us, so ticks * TC is time in 1.6 us units and every
 ; conversion below is written in terms of that product.  A sampled interval can
 ; never exceed the 65280-step alias-free ceiling, so the largest intermediate,
-; (ticks * TC) * 16 in ms_from_ticks, stays far inside 32 bits.  No benchmark
+; (ticks * TC) * 16 in msx100_from_ticks, stays far inside 32 bits. No benchmark
 ; run here comes close; a soak test should not use these routines.
 ; ---------------------------------------------------------------------------
 
 ; acc32 = ticks -> acc32 = elapsed milliseconds.
-; ms = ticks * TC * 16 / 10000 = ticks * TC / 625.
+; ms = ticks * TC * 1.6 / 1000 = ticks * TC / 625.
 ms_from_ticks:
 	call n_mul_tc
-	ld bc,#16
-	call n_mul16
 	ld bc,#625
 	jp n_div16
 

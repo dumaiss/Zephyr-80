@@ -1,18 +1,24 @@
 ; STORAGE_PROFILE temporary experiment. Removal: docs/storage-profiling.md.
-; Full CALL 5 / fn20 path, never a direct BIOS call. Requires B: default drive
-; and a B: file >=512 bytes. All output, OPEN, DMA setup and warm-up precede
+; Full CALL 5 / fn20 path, never a direct BIOS call. Requires C: or D: as the
+; default drive and a file on that same drive >=512 bytes. All output, OPEN,
+; DMA setup and warm-up precede
 ; the aggregate bracket. Allocation bytes 16..31 are never rewritten here.
 HH_LAPS = 1024                  ; 4096 records, 512 KiB logical delivery
 
 bench_hit:
 	ld c,#BDOS_CURDSK
 	call BDOS
-	cp #1
-	jp nz,hh_wrong_drive
+	cp #2				; C:
+	jp c,hh_wrong_drive
+	cp #4				; one past D:
+	jp nc,hh_wrong_drive
+	inc a				; FCB drive number is one based
+	ld (hh_drive),a
 	ld a,(FCB1)
 	or a
 	jr z,hh_drive_ok
-	cp #2
+	ld hl,#hh_drive
+	cp (hl)
 	jp nz,hh_wrong_drive
 hh_drive_ok:
 	; Version 2 extends SYSINFO; old BIOS must not be read past its end.
@@ -90,7 +96,7 @@ hh_fail:
 	jp finish
 
 ; Silent aggregate region. tk_read once per LAP extends the polled timer:
-; this is not individual-record timing. Each lap must stay under the ~104 ms
+; this is not individual-record timing. Each lap must stay under the 1664 ms
 ; alias-free ceiling.
 ; Includes rewind, loop bookkeeping and timer sampling in elapsed cost.
 hh_run:
@@ -316,7 +322,7 @@ hh_counts:
 	jp crlf
 
 hh_msg_start: .ascii "Warming four records; then 1024 silent laps...\r\n$"
-hh_msg_drive: .ascii "/H requires B: prompt and FILE or B:FILE.\r\n$"
+hh_msg_drive: .ascii "/H requires C: or D: prompt and a file on that drive.\r\n$"
 hh_msg_bios: .ascii "/H needs SYSINFO v2 storage counters.\r\n$"
 hh_msg_warm: .ascii "Warm-up failed: need a readable file >=512 bytes.\r\n$"
 hh_msg_valid: .ascii "HOST BDOS HIT-ONLY (counter checks passed)\r\n$"
@@ -342,6 +348,7 @@ hh_ms100: .ds 4
 hh_left: .ds 2
 hh_attempts: .ds 2
 hh_success: .ds 2
+hh_drive: .ds 1
 hh_ex: .ds 1
 hh_s2: .ds 1
 hh_cr: .ds 1

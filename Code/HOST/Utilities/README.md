@@ -66,7 +66,7 @@ in trouble and A: is the only volume you can trust.
 **destructive**: `SDWRITE`, `SDREC`, `SDSOAK` and `SDBENCH` with no arguments act
 on whatever card is inserted, with no drive letter to get wrong. The rest —
 `BULK`, `SDBLK`, `RTSPROBE`, `DIAGCHK`, `V9958TST`, `HIDSTAT` and `SNDTEST` — are
-non-destructive bring-up aids, as are `SDBENCH`'s two file modes. None of them
+non-destructive bring-up aids, as are `SDBENCH`'s read-only file modes. None of them
 goes on the ROM disk: they have no business on the disk you reach for when the
 machine is already in trouble. They always build; copy one to a work drive when
 you need it.
@@ -85,7 +85,8 @@ tools. They are not on the ROM disk either; copy one to a work drive.
 ## `SDBENCH`: what storage costs a program
 
 ```
-SDBENCH [d:]TEST.DAT        BDOS sequential read of a CP/M file    READ ONLY
+SDBENCH B:TEST.DAT          native FS2 logical reads, 128–4096 B   READ ONLY
+SDBENCH C:TEST.DAT          BDOS sequential read (also D:)          READ ONLY
 SDBENCH TEST.DAT /S         FS bulk read of /SHARED/TEST.DAT       READ ONLY
 SDBENCH                     raw 512-byte card read and write      DESTRUCTIVE
   /N                        run without the counter: correctness, no timing
@@ -97,13 +98,17 @@ SDBENCH                     raw 512-byte card read and write      DESTRUCTIVE
                             forbids /S, /C and /P
 ```
 
-The two file modes exist to answer one question: **what does a read cost the
+The file modes exist to answer one question: **what does a read cost the
 program that makes it**, measured on the Z80, where the program experiences it.
 That is the number a resource or streaming library has to be designed against,
 and it is not the same number as the card's own speed.
 
 Use a file of at least a few hundred KiB. Small files are measured through a
 warm cache and a short run is mostly quantisation — see below.
+
+An unqualified filename uses the prompt's current drive. Thus
+`B>SDBENCH TEST.DAT` selects the native FS2 sweep just like an explicit
+`SDBENCH B:TEST.DAT`; unqualified names on C: or D: use the BDOS-record path.
 
 ### `/C`, `/P` and `/H`
 
@@ -121,9 +126,9 @@ miss/retry/reinit deltas afterwards. It needs diagnostic controller firmware —
 `handler_profile` is diagnostic-only — as the next section spells out.
 
 `/H` requires a filename and plain BDOS mode, and is rejected together with
-`/S`, `/C` or `/P`. It further requires B: to be the default drive, the file
-to be on B: and at least 512 bytes, and a BIOS with SYSINFO version 2 or
-later. It measures the cost of a BDOS sequential read guaranteed to hit the
+`/S`, `/C` or `/P`. It further requires C: or D: to be the default drive, the
+file to be on that same drive and at least 512 bytes, and a BIOS with SYSINFO
+version 2 or later. It measures the cost of a BDOS sequential read guaranteed to hit the
 host deblock line: 1024 laps × 4 records = 4096 fn-20 reads through the full
 `CALL 5` path, rewinding the open FCB between laps, with zero MCU
 transactions. It reports elapsed time, ms/record, and the deblock
@@ -144,9 +149,9 @@ To run them, reflash with the diagnostic profile:
 cd ../../MCU/IOController && make IOC_PROFILE=diagnostic
 ```
 
-**The two plain file modes need none of that.** They time on the Z80 with the
-CTC and use only the SD storage commands (through BDOS) and `CMD_FS_*`, which
-every build serves. `SDBENCH` probes for the diagnostic surface before it
+**The read-only file modes need none of that.** They time on the Z80 with the
+CTC and use only production BDOS, native FS2, and filesystem commands, which
+every normal build serves. `SDBENCH` probes for the diagnostic surface before it
 offers the destructive prompt, so it will say so rather than asking you to
 sacrifice a card to a run that could not have produced a number.
 
@@ -159,14 +164,21 @@ as raw mode would.
 
 | Mode | Path | Transaction |
 |---|---|---|
-| `SDBENCH file` | BDOS 20 → BIOS `READ` → host 512-byte deblock line → on miss `CMD_SD_READ_BLOCK` → bulk lane → controller cache → card | one miss fetches 512 bytes; the next three records are served from the line, no transaction |
-| `SDBENCH file /H` | BDOS 20 → BIOS `READ` → deblock line hit | none: never reaches the lane |
+| `SDBENCH B:file` | BDOS 218 → native `ZREAD` → FS2 → FatFs → card | logical 128, 256, 512, 1024, 2048 and 4096-byte requests; each is made from one or more ≤512-byte ZREADs |
+| `SDBENCH C:file` or `D:file` | BDOS 20 → BIOS `READ` → host 512-byte deblock line → on miss `CMD_SD_READ_BLOCK` → bulk lane → controller cache → card | one miss fetches 512 bytes; the next three records are served from the line, no transaction |
+| `SDBENCH file /H` on C:/D: | BDOS 20 → BIOS `READ` → deblock line hit | none: never reaches the lane |
 | `SDBENCH file /S` | `CMD_FS_READ` → READY → bulk lane → FatFs → controller cache → card | 128, 256 and 512 bytes |
 | `SDBENCH` | `CMD_SD_READ_BULK` / `CMD_SD_WRITE_BULK`, cache bypassed, timed by the controller | one 512-byte card block |
 
-**The sizes in the FS rows are real transactions.** The controller does a single
-`f_read` of exactly that many bytes before it answers READY, and the bulk phase
-then carries them in one transfer.
+**The sizes in the `/S` rows are real transactions.** The controller does a
+single `f_read` of exactly that many bytes before it answers READY, and the
+bulk phase then carries them in one transfer.
+
+**The B: native rows are logical application requests.** Function 218 and the
+FS2 wire transaction remain capped at 512 bytes. SDBENCH times all the ZREADs
+needed for one logical request as one sample: 1024 bytes contains two native
+calls, 2048 contains four, and 4096 contains eight. This deliberately exposes
+the repeated bank-crossing, protocol, and block-boundary cost.
 
 **The 128 in the BDOS row is the only size there is.** CP/M 2.2's sequential
 read still moves one 128-byte record per call, and that is what every timed
@@ -176,13 +188,15 @@ the first of them and three host-side hits after it. Nothing in this program
 will ever print them as one 512-byte transfer, because that is the misreport
 the whole exercise exists to avoid.
 
-There is no 1024-byte row and cannot be one: `IOC_FS_CHUNK_MAX` is 512, and the
-controller answers `IOC_STATUS_FS_RANGE` to anything larger.
+There is no single 1024-byte wire transaction: `IOC_FS2_CHUNK_MAX` is 512, and
+the controller answers `IOC_STATUS_FS2_RANGE` to anything larger. The native
+logical rows group real 512-byte-or-smaller calls; they do not change that API
+or wire limit.
 
-**The two file modes do not read the same file.** BDOS mode reads inside a CP/M
-volume; `/S` reads a file in `/SHARED/` on the FAT card. Same card, same cache,
-different files. Compare them as transport measurements, not as two views of one
-file.
+**The file paths do not read the same namespace.** Native mode reads the B:
+FS2 file, BDOS mode reads a CP/M-compatible C:/D: volume, and `/S` reads
+`/SHARED/` on the FAT card. Compare them as path measurements, not as different
+views of one file.
 
 **BDOS mode names the drive it measured**, including when the command line did
 not, because that decides what the numbers mean: A: is a build-time choice and
@@ -191,10 +205,10 @@ may be the ROM volume, and measuring flash is not measuring an SD card.
 ### The clock: two counters, no interrupts
 
 CTC channels **3 and 1**, both timer mode, **interrupt disabled**, each read
-with a single `IN`. Nothing vectors. On this board the timers step at 10 MHz ÷
-16 — **1.6 µs** — and the control word's prescaler bit has no observed effect:
-`27h` and `2Fh` both step at 1.6 µs. Every number below is written for that
-measured step.
+with a single `IN`. Nothing vectors. The timers select the 10 MHz ÷256
+prescaler with control word `27h`, giving a **25.6 µs** step. The slower rate
+is required by the coherent B-A-B sample: at ÷16, the partner counter advances
+during every sample attempt and the retry loop cannot terminate.
 
 **Why not an interrupt.** The IO Controller link cannot survive one.
 `cbios_ioc_command.asm` is polled byte I/O against an externally clocked SIO —
@@ -205,17 +219,22 @@ tool timed the run from a 1 kHz CTC interrupt; it did not perturb the
 measurement, it destroyed it — `Bad Sector` on call 20, and `CMD_FS_READ` timing
 out with no reply byte.
 
-**Why two counters.** One 8-bit counter at 1.6 µs repeats every 409.6 µs, and
+**Why two counters.** One 8-bit counter at 25.6 µs repeats every 6.5536 ms, and
 elapsed time is only recoverable while it stays under that. A record read on
-this machine is about **19.5 ms** — nearly 48 full cycles — so a single counter
+this machine is about **19.5 ms** — nearly 3 full cycles — so a single counter
 aliased every read and reported a throughput far above a stopwatch reading. A
 clock that silently divides by an unknown integer is worse than no clock,
 because the answer still looks plausible.
 
 So the counter is widened. Channel 3 runs a time constant of 256 and channel 1
 runs 255. The periods are coprime, so the pair of residues identifies the
-elapsed count uniquely over 256 × 255 = 65280 steps — about 104 ms at 1.6 µs.
-The combine is cheap because 256 ≡ 1 (mod 255):
+elapsed count uniquely over 256 × 255 = 65280 steps — 1671.168 ms at 25.6 µs.
+Because their prescalers start independently, their interval counts can differ
+by one. A negative disagreement on a sub-256-tick read encodes in the top 256
+values of the CRT range; the benchmark unwraps that band to the short channel-3
+residue. At 25.6 µs per step the full CRT period is 1671.168 ms, and this makes
+the unambiguous per-read ceiling 65024 ticks, or 1664.6144 ms. The combine is
+cheap because 256 ≡ 1 (mod 255):
 
 ```
 a = (prevA - nowA) mod 256          residue from channel 3
@@ -229,28 +248,25 @@ synchronised — only their own differences are used.
 
 Channel 1 is the partner because channel 0's `TO0` is SIO0/A's clock and must
 not be touched, while `TO1` leaves the board. Channels 1 and 2 have never been
-seen to *vector*, which is why nothing here asks them to; the CTC note records
-that they do *count* with the interrupt bit clear and a control word of `27h`.
-The measured step is 1.6 µs (10 MHz ÷ 16) — the prescaler bit has no observed
-effect, as `2Fh` steps at 1.6 µs too — so the arithmetic is scaled to the step
-the hardware actually makes and `27h` stays as the verified control word.
-`tk_start` proves it on the running machine anyway, and reports `1` or `2` if a
+seen to *vector*, which is why nothing here asks them to. The benchmark uses
+`27h` with the interrupt bit clear and `tk_start` proves both channels count on
+the running machine; it reports `1` or `2` if a
 channel is programmed but not counting — a dead counter reads as a constant,
 which would otherwise show up as an infinitely fast disk rather than as a fault.
 
 | | |
 |---|---|
-| Resolution | **1.6 µs** |
-| Range | **104 ms per read** — about 5× a normal read |
+| Resolution | **25.6 µs** |
+| Range | **1664.6144 ms per read** |
 | Time base | 32-bit, accumulated in the program's own memory |
 | Wrap | Both counters wrap continuously and the residue arithmetic handles it; the 32-bit base cannot wrap in any run |
-| Run length | Unbounded in practice: the 104 ms per-read ceiling bounds every conversion intermediate |
+| Run length | Unbounded in practice: the 1664.6144 ms per-read ceiling bounds every conversion intermediate |
 | File size | 4 MiB, checked. Beyond that the throughput product leaves 32 bits |
 
 What is sampled either side of each read is **one read**, not the run — gaps
 between reads are excluded from every reported figure and may be any length.
 
-**Still not measurable:** a single read longer than ~104 ms. Nothing detects
+**Still not measurable:** a single read of 1664.6144 ms or longer. Nothing detects
 that. **Cross-check a long run against a stopwatch** — if the reported total
 falls well short of the wall clock, treat every figure as aliased. That is the
 check that caught the single-counter ceiling, and it is the only one there is.
@@ -262,8 +278,8 @@ run.
 ### Caching
 
 The controller keeps **eight 512-byte slots** in front of the card, LRU, and
-both file modes go through it — FatFs shares it rather than keeping its own. In
-BDOS mode one block in four misses the BIOS's own deblock line and reaches the
+the filesystem paths go through it — FatFs shares it rather than keeping its own. In
+C:/D: BDOS mode one block in four misses the BIOS's own deblock line and reaches the
 controller cache, which may then serve it from SRAM or go on to the card, while
 the other three records are served straight from the bank-7 line. **That is the
 application-visible path, not a distortion of it**, and it is why the histogram
@@ -277,8 +293,9 @@ host-side way to invalidate the controller's cache, and this program does not
 pretend to have one.** Use a large file, and read the first run of a boot as the
 coldest one.
 
-The `/S` mode's three passes re-read the same file, but each pass leaves the
-cache holding the *end* of the file, so the next pass starts cold.
+The B: native and `/S` size sweeps re-read the same file, but each pass leaves
+the cache holding the *end* of the file, so the next pass starts cold for a
+sufficiently large input.
 
 ### Reading the output
 
@@ -299,9 +316,9 @@ streamer that has to hold a frame rate does not care about the mean. Size the
 buffer from `max` and the frame budget, and use the tail buckets to judge how
 often the worst case actually happens.
 
-Bucket edges are milliseconds expressed in ticks — `ms × 625 / TC` at the
-1.6 µs step — and rounded to the nearest tick, so at a coarse `/T` the lowest
-buckets collapse toward zero rather than being mislabelled.
+Bucket edges are milliseconds expressed in the timer's 1.6-us arithmetic unit
+— `ms × 625 / TC`, with `TC = 16` — and rounded to the nearest physical
+25.6-us step.
 
 ### Correctness checks
 
