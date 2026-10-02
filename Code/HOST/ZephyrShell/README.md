@@ -84,6 +84,11 @@ Aliases: `dir` = `ls`, `del` = `rm`, `md` = `mkdir`, `rd` = `rmdir`, and
 `type` = `cat`.  Command names are case-insensitive.  Arguments may be
 unquoted, single quoted, or double quoted.
 
+`Ctrl-L` clears the screen and redraws the prompt plus any input already typed.
+Up-arrow (`ESC [ A`) replaces the current input with the last non-empty command.
+History has one process-local entry; it is reset when an external `.COM` command
+overwrites the shell and WBOOT reloads it.
+
 An existing directory is accepted as the destination of `cp` or `mv`; the
 source basename is appended automatically.  Cross-directory `mv` is copy,
 successful close, then delete.  A failed or `ZEP_FS_UNKNOWN_WRITE` copy never
@@ -114,7 +119,9 @@ Use a disposable FAT card and verify:
 
 ```text
 boot
+Ctrl-L
 pwd
+Up-arrow
 mkdir TEST
 cd TEST
 pwd
@@ -146,8 +153,8 @@ repetition, and the console remains usable.
 
 There is no PATH, ZEX, globbing, environment, scripting, redirection, pipes,
 background jobs, process scheduling, resource management, GameOS facility or
-resident-parent process model.  Line input is the existing CP/M edited console
-call rather than a history editor.
+resident-parent process model.  Line editing deliberately remains minimal: no
+cursor movement, completion, persistent history, or multi-entry history.
 
 ## Future
 
@@ -157,4 +164,4 @@ call rather than a history editor.
 - shell variables and scripting
 - redirection and pipes
 - hosted child execution returning to a resident native parent
-- richer line editing and history
+- cursor editing, completion and persistent multi-entry history

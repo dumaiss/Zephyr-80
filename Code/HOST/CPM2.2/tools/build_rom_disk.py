@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Build the read-only ROM disk volume for drive A: and split it into ROM pages.
 
-The volume is an ordinary CP/M filesystem, so the CCP, DIR, STAT and PIP all work
-on it unmodified -- which is the point: once B: is healthy, `PIP B:=A:*.*`
-populates the card from flash with no host proxy involved.
+The volume is an ordinary CP/M filesystem, so the CCP, DIR and STAT work on it
+unmodified.  It carries the native shell and focused recovery utilities without
+depending on a host proxy.
 
 Each ROM page contributes 48 KiB of filesystem data at 0000h-BFFFh, so the volume
 is emitted as one 48 KiB chunk per page rather than a single blob.
@@ -78,8 +78,7 @@ MANIFEST = (
     # L loads Intel HEX over the console, DB dumps a bank, I/O reach ports.
     # Built from source rather than copied, so it always matches the tree.
     ("monitor", "zephyr80_monitor.bin", "MONITOR.COM"),
-    # Required to provision and inspect the SD volume from the ROM disk.
-    ("stock0", "pip.com", "PIP.COM"),
+    # Retained to inspect CP/M drive and file attributes.
     ("stock0", "STAT.COM", "STAT.COM"),
     # User-facing console configuration, not hardware bring-up.  Built from
     # source in ../Utilities: these used to be shipped as prebuilt binaries
@@ -114,7 +113,7 @@ MANIFEST = (
     ("utils", "sddel.com", "SDDEL.COM"),
 
     # --- Z-System general-purpose tools ----------------------------------
-    # Richard Conn's ZCPR2 utility set, plus NSWEEP.  Prebuilt binaries, not
+    # Richard Conn's ZCPR2 utility set.  Prebuilt binaries, not
     # built from source here: they are third-party CP/M software, carried in
     # ../Utilities/zsys.
     #
@@ -147,23 +146,15 @@ MANIFEST = (
     #   CCPLOC, ECHO               no role on a rescue disk, or redundant with
     #                              something already carried (CCPLOC vs SYSID)
     #   XDIR, ERASE, RENAME,
-    #   PROTECT, COMPARE, DIFF     work, but NSWP does erase/rename/attributes
-    #                              and lists sizes and free space, CRC answers
-    #                              "is this the same file", and ZCPR2 has a
-    #                              resident DIR.  They are out on SPACE, not on
-    #                              function -- see the budget note below.
+    #   PROTECT, COMPARE, DIFF     work, but the native shell covers ordinary
+    #                              file operations, CRC answers "is this the
+    #                              same file", and ZCPR2 has a resident DIR.
+    #                              They are out on SPACE, not on function -- see
+    #                              the budget note below.
     #
-    # Full-screen file manager: copy, erase, rename, view, tag, set attributes,
-    # across every user area.  The one tool that makes this volume self
-    # sufficient for file work without PIP command syntax.
-    ("zsys", "NSWP.COM", "NSWP.COM"),
-    # Command-line multi-file copy with automatic verify, and an interactive
-    # mode.  This is the machine's working copy tool, not a convenience: the
-    # stock DRI PIP carried above does not run under ZCPR2/ZSDOS, so under that
-    # configuration MCOPY and NSWP are the only two things on this volume that
-    # can move a file.  PIP stays because it still works -- and is still the
-    # documented way to populate the card -- under the stock CCP and BDOS,
-    # which this same ROM manifest also builds.
+    # Command-line multi-file copy with automatic verify and an interactive
+    # mode.  Retained for CP/M-drive copying; PIP and NSWEEP are omitted from
+    # the recovery volume to reserve space for the native shell.
     #
     # Unlike most of Conn's set, MCOPY needs nothing installed: it has no
     # external-address abort path, and `dir:` accepts the plain DU: form.

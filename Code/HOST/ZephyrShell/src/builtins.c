@@ -367,6 +367,7 @@ static void builtin_help(void)
     zsh_puts("df              show native volume space in KiB\n");
     zsh_puts("echo [ARGS...]  print arguments\n");
     zsh_puts("help            show this summary\n");
+    zsh_puts("keys: Ctrl-L clear, Up recall last command\n");
 }
 
 static int builtin_cat(uint8_t argc, char **argv)

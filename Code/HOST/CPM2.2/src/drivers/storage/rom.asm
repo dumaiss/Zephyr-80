@@ -8,7 +8,7 @@
 ;   A: used to come from VDrip proxy storage over the host serial link, so it
 ;   only existed while the proxy was attached, and an SD fault on B: left
 ;   nothing to diagnose with.  A ROM-backed A: is always present, carries the
-;   diagnostic utilities, and can populate a fresh card with PIP.
+;   the native shell and focused diagnostic utilities.
 ;
 ; Each page contains filesystem bytes only at 0000h-BFFFh. The unused tail
 ; holds a seven-byte ROM-read primitive mirrored from common SRAM. Mode 00

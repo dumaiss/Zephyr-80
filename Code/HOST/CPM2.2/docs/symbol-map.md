@@ -12,7 +12,7 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | Bank 7 payload | `build/bank7.bin` | 65536 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
 | Resolved listing (firmware.rst) | `build/firmware.rst` | 528120 bytes |
-| Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 222909 bytes |
+| Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 222898 bytes |
 | Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 445327 bytes |
 | Resolved listing (drv_console_sercon.rst) | `build/drv_console_sercon.rst` | 219739 bytes |
 | Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 451490 bytes |

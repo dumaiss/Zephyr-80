@@ -12,6 +12,8 @@
 #define ZSH_NATIVE_DRIVE 1
 
 static char line[ZSH_LINE_SIZE];
+static char previous_line[ZSH_LINE_SIZE];
+static uint8_t previous_length;
 static char *argv[ZSH_MAX_ARGS];
 
 static void print_prompt(void)
@@ -30,22 +32,80 @@ static void print_prompt(void)
     zsh_putc(' ');
 }
 
+static void erase_input(uint8_t count)
+{
+    while (count--)
+        zsh_puts("\b \b");
+}
+
 static uint8_t read_line(void)
 {
-    static uint8_t console_buffer[ZSH_LINE_SIZE + 1];
-    uint8_t length;
+    uint8_t length = 0;
+    uint8_t escape_state = 0;
+    uint8_t byte;
 
-    console_buffer[0] = ZSH_LINE_SIZE - 1;
-    console_buffer[1] = 0;
-    (void)bdos(10, (int)console_buffer);
-    zsh_putc('\n');
-    length = console_buffer[1];
-    if (length >= ZSH_LINE_SIZE) {
-        zsh_puts("zsh: input too long\n");
-        return 0;
+    line[0] = 0;
+    for (;;) {
+        do {
+            byte = (uint8_t)bdos(6, 0xff);
+        } while (!byte);
+
+        if (escape_state) {
+            if (escape_state == 1 && byte == '[') {
+                escape_state = 2;
+                continue;
+            }
+            if (escape_state == 2 && byte == 'A' && previous_length) {
+                erase_input(length);
+                memcpy(line, previous_line, previous_length + 1);
+                length = previous_length;
+                zsh_puts(line);
+            }
+            escape_state = 0;
+            continue;
+        }
+        if (byte == 0x1b) {
+            escape_state = 1;
+            continue;
+        }
+        if (byte == '\r' || byte == '\n')
+            break;
+        if (byte == 0x0c) {
+            zsh_putc(0x0c);
+            print_prompt();
+            zsh_puts(line);
+            continue;
+        }
+        if (byte == 0x03) {
+            zsh_puts("^C\n");
+            (void)bdos(0, 0);
+            return 0;
+        }
+        if (byte == 0x15 || byte == 0x18) {
+            erase_input(length);
+            length = 0;
+            line[0] = 0;
+            continue;
+        }
+        if (byte == 0x08 || byte == 0x7f) {
+            if (length) {
+                --length;
+                line[length] = 0;
+                zsh_puts("\b \b");
+            }
+            continue;
+        }
+        if ((byte == '\t' || byte >= 0x20) && length < ZSH_LINE_SIZE - 1) {
+            line[length++] = (char)byte;
+            line[length] = 0;
+            zsh_putc(byte);
+        }
     }
-    memcpy(line, console_buffer + 2, length);
-    line[length] = 0;
+    zsh_putc('\n');
+    if (length) {
+        memcpy(previous_line, line, length + 1);
+        previous_length = length;
+    }
     return 1;
 }
 

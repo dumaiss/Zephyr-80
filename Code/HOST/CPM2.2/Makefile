@@ -219,7 +219,7 @@ ZSHELL_DIR ?= ../ZephyrShell
 ZSHELL_BUILD ?= $(ZSHELL_DIR)/build
 ZSHELL_COM ?= $(ZSHELL_BUILD)/ZSH.COM
 ZSHELL_CCP ?= $(ZSHELL_BUILD)/ccp-zshell.bin
-# Stock DRI tools (PIP, STAT, ZSID, DUMP) come from the software volumes, which
+# Stock DRI tools (STAT, ZSID, DUMP) come from the software volumes, which
 # is where the machine's third-party CP/M software now lives.
 SOFTWARE_DIR ?= ../Software
 ROM_DISK_INPUTS = $(wildcard $(UTILITIES_BUILD)/*.com) \

@@ -90,14 +90,14 @@ The `CPM2.2` build selects the shell with `CCP=zshell`, which is also the defaul
 
 The image patcher verifies that the CCP artifact is exactly 2 KiB, begins with the two required jump entries, and does not overwrite the six-byte BDOS serial at `EC00h-EC05h`.
 
-At the time this document was written, `ZSH.COM` is 15,895 bytes and the shim image is 2,048 bytes. Those are build observations, not ABI constants.
+At the time this document was written, `ZSH.COM` is 16,301 bytes and the shim image is 2,048 bytes. Those are build observations, not ABI constants.
 
 ## Runtime components
 
 | Source | Responsibility |
 |---|---|
 | `src/main.c` | Minimal C entry point; calls `zsh_run()`. |
-| `src/shell.c` | Startup policy, prompt, BDOS line input, parse/dispatch loop. |
+| `src/shell.c` | Startup policy, prompt, minimal line editor, one-entry history, parse/dispatch loop. |
 | `src/parser.c` | In-place tokenization and quote removal. |
 | `src/path.c` | Path splitting, CWD save/restore scopes, atomic `cd`, same-parent resolution. |
 | `src/builtins.c` | Built-in dispatch and all native file/directory operations. |
@@ -178,7 +178,7 @@ print banner
 forever:
     query drive, USER, and native CWD
     print prompt
-    read one edited line through BDOS 10
+    read and edit one line through non-echoing BDOS 6 input
     parse line in place
     if command is built in:
         execute it
@@ -196,7 +196,9 @@ The `B0:` prefix is compatibility information. It does not select a separate she
 
 ### Input and parser
 
-Input uses CP/M edited-console call BDOS 10. The shell accepts at most 127 input characters plus NUL in its 128-byte line buffer. It has no history, completion, incremental parser, or custom editor.
+Input polls CP/M direct-console call BDOS 6 with `E=FFh`, so the shell receives non-echoed bytes and owns the small editing policy. The editor accepts at most 127 input characters plus NUL in its 128-byte line buffer. Backspace and Delete erase one character; Ctrl-U and Ctrl-X erase the line; Ctrl-C terminates through BDOS 0. Ctrl-L emits form-feed, which the V9958 and Virtual Drip console parsers implement as clear-and-home, then redraws the prompt and current input. The three-byte Up-arrow sequence `1Bh 5Bh 41h` replaces the current input with the last non-empty command.
+
+History is a single process-local 128-byte buffer. It survives built-ins and empty lines, but not an external `.COM` launch: the protected loader overwrites the shell and WBOOT reloads a fresh instance. There is no cursor movement, completion, incremental parser, persistent history, or multi-entry history.
 
 The parser compacts the line in place. `argv` entries point into that buffer and remain valid only until the next line is read. Its grammar is small:
 
@@ -370,7 +372,7 @@ The size check occurs before launch. The protected loader trusts the opened file
 
 ## Console and output
 
-Input is BDOS 10 and output is byte-at-a-time BDOS 6, leaving the BIOS in control of the selected V9958, Virtual Drip, or serial backend.
+Input is non-echoing byte-at-a-time BDOS 6 polling and output is byte-at-a-time BDOS 6, leaving the BIOS in control of the selected V9958, Virtual Drip, or serial backend. Escape-sequence recognition remains in the shell; the console drivers continue to deliver raw terminal bytes.
 
 `zsh_putc()` converts a lone LF to CR/LF and avoids a duplicate CR when one was just printed. This prevents staircase newlines. It also means `cat` is a display command, not a byte-transparent device copy.
 
@@ -406,6 +408,8 @@ The design is single-threaded and synchronous.
 | State | Owner | Lifetime |
 |---|---|---|
 | Input line and `argv` | `shell.c` | Reused each prompt. |
+| Last non-empty command | `shell.c` | Shell instance; lost on WBOOT reload. |
+| Line-edit state | `shell.c` stack | One prompt. |
 | 512-byte I/O buffer | `builtins.c` | Shell instance. |
 | Saved CWD/path scope | caller stack | One operation. |
 | Native handles/iterator | bank-7 providers | Until close/reset. |
@@ -463,7 +467,7 @@ A resident-parent or native-process model would change TPA ownership, returns, r
 
 ## Deliberate v1 omissions
 
-There is no PATH search, ZEX, globbing, variables, scripting, redirection, pipes, background jobs, process scheduling, native executable format, GameOS integration, or resident shell parent.
+There is no PATH search, ZEX, globbing, variables, scripting, redirection, pipes, background jobs, process scheduling, native executable format, GameOS integration, resident shell parent, cursor editing, completion, persistent history, or multi-entry history.
 
 ## Source-of-truth references
 
