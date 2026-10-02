@@ -45,11 +45,11 @@ host-tests: $(BUILD)/zshell-host-test
 	$(BUILD)/zshell-host-test
 
 $(BUILD)/zshell-host-test: tests/test_shell.c tests/mock_fs.c \
-		src/parser.c src/path.c src/builtins.c src/status.c src/tinyio.c \
-		src/exec.c | $(BUILD)
+		src/parser.c src/path.c src/glob.c src/builtins.c src/status.c \
+		src/tinyio.c src/exec.c | $(BUILD)
 	$(HOST_CC) -std=c99 -Wall -Wextra -Werror -D__z88dk_fastcall= -DZSH_HOST_TEST \
 		-I$(ZEPHYRC)/include -Isrc -Itests \
-		tests/test_shell.c tests/mock_fs.c src/parser.c src/path.c \
+		tests/test_shell.c tests/mock_fs.c src/parser.c src/path.c src/glob.c \
 		src/builtins.c src/status.c src/tinyio.c src/exec.c -o $@
 
 clean:

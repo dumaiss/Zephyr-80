@@ -3,6 +3,7 @@
 #include <string.h>
 #include "builtins.h"
 #include "exec.h"
+#include "glob.h"
 #include "mock_fs.h"
 #include "parser.h"
 #include "path.h"
@@ -12,6 +13,27 @@ static unsigned checks;
 #define CHECK(condition) do { ++checks; if (!(condition)) { \
     fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition); \
     exit(1); } } while (0)
+
+static void console_control_tests(void)
+{
+    static const uint8_t cancel[] = { 0x03 };
+    static const uint8_t pause_continue[] = { 0x13, 'x' };
+    static const uint8_t pause_cancel[] = { 0x13, 0x03 };
+
+    zsh_test_console_input(0, 0);
+    CHECK(!zsh_output_poll());
+    zsh_test_console_input(cancel, sizeof(cancel));
+    CHECK(zsh_output_poll());
+    zsh_test_console_input(pause_continue, sizeof(pause_continue));
+    CHECK(!zsh_output_poll());
+    zsh_test_console_input(pause_cancel, sizeof(pause_cancel));
+    CHECK(zsh_output_poll());
+    zsh_test_console_input(pause_continue, sizeof(pause_continue));
+    CHECK(!zsh_output_page());
+    zsh_test_console_input(cancel, sizeof(cancel));
+    CHECK(zsh_output_page());
+    zsh_test_console_input(0, 0);
+}
 
 static void parse_tests(void)
 {
@@ -37,6 +59,45 @@ static void parse_tests(void)
     CHECK(zsh_parse_line(line, argv, &argc) == ZSH_PARSE_TOO_LONG);
     strcpy(line, "echo 'broken");
     CHECK(zsh_parse_line(line, argv, &argc) == ZSH_PARSE_UNTERMINATED_QUOTE);
+}
+
+static void glob_tests(void)
+{
+    char path[ZSH_PATH_SIZE];
+    char *cp_argv[] = { "cp", "/SRC/*.TXT", "/DST" };
+    char *multi_argv[] = { "cp", "/SRC/THREE.COM", "/SRC/ONE.TXT", "/DST" };
+    char *rm_argv[] = { "rm", "/SRC/*.TXT" };
+    uint8_t count;
+
+    CHECK(zsh_glob_match("*.COM", "ZSH.COM"));
+    CHECK(zsh_glob_match("f?o.*", "FOO.TXT"));
+    CHECK(!zsh_glob_match("*.TXT", "ZSH.COM"));
+    CHECK(zsh_glob_has_pattern("/CPM/A/*.COM"));
+    CHECK(!zsh_glob_has_pattern("/CPM/A/ZSH.COM"));
+
+    mock_fs_reset(); mock_fs_add_dir("/SRC"); mock_fs_add_dir("/DST");
+    mock_fs_add_file("/SRC/ONE.TXT", 17, 1);
+    mock_fs_add_file("/SRC/TWO.txt", 19, 2);
+    mock_fs_add_file("/SRC/THREE.COM", 23, 3);
+    CHECK(zsh_glob_collect("/SRC/*.txt", &count) == ZEP_FS_OK && count == 2);
+    CHECK(zsh_glob_path("/SRC/*.txt", zsh_glob_name(0), path) == ZEP_FS_OK);
+    CHECK(strcmp(path, "/SRC/ONE.TXT") == 0);
+    CHECK(strcmp(mock_fs_cwd(), "/") == 0);
+    CHECK(zsh_list_path("/SRC/*.COM", 0) == ZEP_FS_OK);
+    CHECK(zsh_list_path("/SRC/*.BIN", 0) == ZEP_FS_NOT_FOUND);
+    CHECK(strcmp(mock_fs_cwd(), "/") == 0);
+    CHECK(zsh_builtin_dispatch(3, cp_argv) == 1);
+    CHECK(mock_fs_size("/DST/ONE.TXT") == 17);
+    CHECK(mock_fs_size("/DST/TWO.txt") == 19);
+    CHECK(!mock_fs_exists("/DST/THREE.COM"));
+    CHECK(zsh_builtin_dispatch(4, multi_argv) == 1);
+    CHECK(mock_fs_size("/DST/THREE.COM") == 23);
+    CHECK(zsh_builtin_dispatch(2, rm_argv) == 1);
+    CHECK(!mock_fs_exists("/SRC/ONE.TXT"));
+    CHECK(!mock_fs_exists("/SRC/TWO.txt"));
+    CHECK(mock_fs_exists("/SRC/THREE.COM"));
+    CHECK(zsh_glob_collect("/SRC/*.BIN", &count) == ZEP_FS_NOT_FOUND);
+    CHECK(strcmp(mock_fs_cwd(), "/") == 0);
 }
 
 static void path_tests(void)
@@ -175,6 +236,25 @@ static void move_tests(void)
     CHECK(mock_fs_exists("/A/OLD.TXT"));
 }
 
+static void output_cleanup_tests(void)
+{
+    static const uint8_t cancel[] = { 0x03 };
+    char *cat_argv[] = { "cat", "/SRC/FILE.BIN" };
+
+    mock_fs_reset(); mock_fs_add_file("/ONE.TXT", 1, 1);
+    mock_fs_add_file("/TWO.TXT", 1, 2);
+    zsh_test_console_input(cancel, sizeof(cancel));
+    CHECK(zsh_list_path(0, 0) == ZEP_FS_OK);
+    CHECK(mock_fs_closedir_count() == 1);
+
+    mock_fs_reset(); mock_fs_add_dir("/SRC"); mock_fs_add_dir("/DST");
+    mock_fs_add_file("/SRC/FILE.BIN", 513, 'A');
+    zsh_test_console_input(cancel, sizeof(cancel));
+    CHECK(zsh_builtin_dispatch(2, cat_argv) == 1);
+    zsh_test_console_input(0, 0);
+    CHECK(zsh_copy_file("/SRC/FILE.BIN", "/DST/COPY.BIN") == ZEP_FS_OK);
+}
+
 static void iterator_tests(void)
 {
     mock_fs_reset(); mock_fs_add_file("/ONE.TXT", 1, 1);
@@ -191,8 +271,9 @@ static void iterator_tests(void)
 
 int main(void)
 {
-    parse_tests(); path_tests(); exec_path_tests(); copy_tests(); move_tests();
-    iterator_tests();
+    console_control_tests(); parse_tests(); glob_tests(); path_tests();
+    exec_path_tests();
+    copy_tests(); move_tests(); output_cleanup_tests(); iterator_tests();
     printf("ZephyrShell host tests: %u checks passed\n", checks);
     mock_fs_reset();
     return 0;

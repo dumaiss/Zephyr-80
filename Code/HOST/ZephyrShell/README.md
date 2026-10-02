@@ -74,8 +74,8 @@ shell directory model.
 
 ```text
 cd [path]       pwd             ls [-l] [path]
-cp SRC DST      mv SRC DST      rm FILE [FILE ...]
-mkdir PATH      rmdir PATH      cat FILE [FILE ...]
+cp SRC... DST   mv SRC... DST   rm FILE [FILE ...]
+mkdir PATH      rmdir PATH      cat FILE [FILE ...] (paged)
 stat PATH       df (KiB)        echo [ARGS ...]
 help
 ```
@@ -84,13 +84,27 @@ Aliases: `dir` = `ls`, `del` = `rm`, `md` = `mkdir`, `rd` = `rmdir`, and
 `type` = `cat`.  Command names are case-insensitive.  Arguments may be
 unquoted, single quoted, or double quoted.
 
+The final path component may contain case-insensitive `*` and `?` patterns for
+`ls`, `cp`, `mv`, `rm`, and `cat`; for example, `ls /CPM/A/*.COM` or
+`cp *.TXT BACKUP`.  `*` matches any run of characters and `?` matches one.
+Wildcard or multi-source `cp`/`mv` requires an existing destination directory.
+At most 128 names are collected per pattern; no match is reported as not found.
+Patterns are not expanded in directory components or arguments passed to legacy
+`.COM` programs.
+
 `Ctrl-L` clears the screen and redraws the prompt plus any input already typed.
 Up-arrow (`ESC [ A`) replaces the current input with the last non-empty command.
+During `ls` or `cat`, `Ctrl-S` pauses until the next key and `Ctrl-C` cancels the
+command.  `cat` also pauses with `--More--` after every 24 newline-terminated
+lines; any key continues and `Ctrl-C` cancels.  Files and directory iterators are
+closed normally after cancellation.
+
 History has one process-local entry; it is reset when an external `.COM` command
 overwrites the shell and WBOOT reloads it.
 
-An existing directory is accepted as the destination of `cp` or `mv`; the
-source basename is appended automatically.  Cross-directory `mv` is copy,
+An existing directory is accepted as the destination of single-source `cp`
+or `mv`; the source basename is appended automatically.  Wildcard and explicit
+multi-source forms always require a directory.  Cross-directory `mv` is copy,
 successful close, then delete.  A failed or `ZEP_FS_UNKNOWN_WRITE` copy never
 deletes the source.  Cross-parent directory moves are rejected; same-parent
 native rename is supported.  Copying a file onto itself is rejected before the
@@ -108,10 +122,11 @@ make CCP=zshell      # bootable ROM with shim plus A:ZSH.COM
 make CCP=zcpr2       # retained recovery configuration
 ```
 
-The host suite covers empty/quoted/maximum/overlong parsing; path splitting and
-CWD rollback; 0, 1, 511, 512, 513, multi-KiB and >64-KiB copies; read, write
-and unknown-write failures; same/cross-parent moves; and directory iterator
-closure after END and errors.
+The host suite covers output pause/cancel, pager continuation/cancellation,
+resource cleanup after interrupted output, empty/quoted/maximum/overlong
+parsing, path splitting and CWD rollback, 0, 1, 511, 512, 513, multi-KiB and
+>64-KiB copies, read/write/unknown-write failures, same/cross-parent moves, and
+directory iterator closure after END and errors.
 
 ## Hardware acceptance
 
@@ -128,8 +143,11 @@ pwd
 mkdir SUB
 ls
 ls -l
+ls *.COM
+ls             (press Ctrl-S, then any key; repeat and press Ctrl-C)
 cp ../SOMEFILE.TXT COPY.TXT
 cat COPY.TXT
+cat LONG.TXT    (continue at --More--; repeat and cancel with Ctrl-C)
 stat COPY.TXT
 mv COPY.TXT MOVED.TXT
 ls
@@ -151,7 +169,7 @@ repetition, and the console remains usable.
 
 ## Deliberate v1 omissions
 
-There is no PATH, ZEX, globbing, environment, scripting, redirection, pipes,
+There is no PATH, ZEX, environment, scripting, redirection, pipes,
 background jobs, process scheduling, resource management, GameOS facility or
 resident-parent process model.  Line editing deliberately remains minimal: no
 cursor movement, completion, persistent history, or multi-entry history.

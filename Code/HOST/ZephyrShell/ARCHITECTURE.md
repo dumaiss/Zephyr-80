@@ -90,7 +90,7 @@ The `CPM2.2` build selects the shell with `CCP=zshell`, which is also the defaul
 
 The image patcher verifies that the CCP artifact is exactly 2 KiB, begins with the two required jump entries, and does not overwrite the six-byte BDOS serial at `EC00h-EC05h`.
 
-At the time this document was written, `ZSH.COM` is 16,301 bytes and the shim image is 2,048 bytes. Those are build observations, not ABI constants.
+At the time this document was written, `ZSH.COM` is 19,791 bytes and the shim image is 2,048 bytes. Those are build observations, not ABI constants.
 
 ## Runtime components
 
@@ -99,16 +99,17 @@ At the time this document was written, `ZSH.COM` is 16,301 bytes and the shim im
 | `src/main.c` | Minimal C entry point; calls `zsh_run()`. |
 | `src/shell.c` | Startup policy, prompt, minimal line editor, one-entry history, parse/dispatch loop. |
 | `src/parser.c` | In-place tokenization and quote removal. |
+| `src/glob.c` | Case-insensitive `*`/`?` matching, bounded match collection, matched-path reconstruction. |
 | `src/path.c` | Path splitting, CWD save/restore scopes, atomic `cd`, same-parent resolution. |
 | `src/builtins.c` | Built-in dispatch and all native file/directory operations. |
 | `src/exec.c` | `.COM` lookup policy, CP/M page-zero preparation, BDOS 219 handoff. |
 | `src/status.c` | FS2 status-to-text mapping and error formatting. |
-| `src/tinyio.c` | Console output and small decimal/hexadecimal formatters. |
+| `src/tinyio.c` | Console output, pause/cancel polling, pager prompt, and small numeric formatters. |
 | `stubs/ccp.asm` | Fixed-address recovery-volume bootstrap. |
 | `tests/mock_fs.c` | In-memory host implementation of the FS2 calls used by the shell. |
 | `tests/test_shell.c` | Parser, path, copy, move, and iterator regression tests. |
 
-The shell modules do not allocate dynamic memory. Long-lived storage consists of fixed-size static arrays; short-lived state is automatic. The largest shared data buffer is the single 512-byte `io_buffer` in `builtins.c`.
+The shell modules do not allocate dynamic memory. Long-lived storage consists of fixed-size static arrays; short-lived state is automatic. The largest static work area is the 1,664-byte table in `glob.c`, which stores at most 128 matched 8.3 names. File data continues to use the single 512-byte `io_buffer` in `builtins.c`.
 
 ## Boot and shell reload lifecycle
 
@@ -209,7 +210,7 @@ The parser compacts the line in place. `argv` entries point into that buffer and
 - an empty line produces zero arguments;
 - unterminated quotes, more than 16 arguments, and overlong lines are errors.
 
-Command names are matched case-insensitively. FS2 components are validated and uppercased by ZephyrC when packed into the descriptor.
+Command names are matched case-insensitively. After parsing, selected native built-ins interpret `*` and `?` in the final path component; quoting cannot suppress expansion because quote information has already been removed. Directory components are literal. Legacy `.COM` arguments are never expanded, preserving CP/M command-tail and FCB behavior. FS2 components are validated and uppercased by ZephyrC when packed into the descriptor.
 
 ## Native filesystem boundary
 
@@ -304,13 +305,13 @@ A recognized built-in returns to the main loop; a false dispatch result delegate
 | `echo` | Prints parsed arguments separated by one space. |
 | `pwd` | Prints authoritative FS2 CWD. |
 | `cd [path]` | Atomically changes CWD; no argument means `/`. |
-| `ls [-l] [path]` | Lists a directory or stats one file. Long form shows type, byte size, and name. |
-| `cp SRC DST` | Copies a regular file; an existing destination directory receives the source basename. |
-| `mv SRC DST` | Native same-parent rename; otherwise copy, close, then delete. Existing destination directories receive the source basename. |
-| `rm FILE...` | Refuses directories, then deletes each regular file. |
+| `ls [-l] [path]` | Lists a directory, one file, or a final-component pattern. Long form shows type, byte size, and name. Directory output supports Ctrl-S pause and Ctrl-C cancellation. |
+| `cp SRC... DST` | Copies regular files. Wildcard or multiple sources require an existing destination directory. |
+| `mv SRC... DST` | Native same-parent rename or copy-close-delete. Wildcard or multiple sources require an existing destination directory. |
+| `rm FILE...` | Expands final-component patterns, refuses directories, then deletes each regular file. |
 | `mkdir PATH` | Enters the parent and creates one component. |
 | `rmdir PATH` | Enters the parent and removes one component. |
-| `cat FILE...` | Reads 512-byte chunks and writes bytes to the console. |
+| `cat FILE...` | Expands final-component patterns, reads 512-byte chunks, pages every 24 newline-terminated lines, and supports Ctrl-S pause and Ctrl-C cancellation. |
 | `stat PATH` | Reports type and byte size. |
 | `df` | Reports space, preferring exact KiB values. |
 
@@ -320,13 +321,13 @@ Aliases are `dir`, `del`, `md`, `rd`, and `type`.
 
 Copy uses one 512-byte buffer and never accumulates a 16-bit total, so files over 64 KiB work. Each write must report exactly the bytes read. Both handles are closed on every exit; a close error is reported if no earlier error exists.
 
-If the destination resolves as a directory, the source basename is appended before any file is opened. The explicit source and destination parents are compared canonically; copying a file onto itself is rejected before create-always can truncate it.
+If the destination resolves as a directory, the source basename is appended before any file is opened. Wildcard and explicit multi-source transfers first require an existing directory destination. The explicit source and destination parents are compared canonically; copying a file onto itself is rejected before create-always can truncate it.
 
 A non-directory destination uses create-always semantics. Failure can leave a new, truncated, or partial destination; v1 has no temporary-file transaction.
 
 A cross-parent move resolves directory destinations the same way, rejects source directories, copies, requires the data loop and both closes to succeed, and only then deletes the source. `ZEP_FS_UNKNOWN_WRITE` is never retried and never causes source deletion.
 
-Every successful `opendir` is paired with `closedir`, including END and error paths. `ZEP_FS_END` becomes successful command completion.
+Every successful `opendir` is paired with `closedir`, including END and error paths. `ZEP_FS_END` becomes successful command completion. Pattern-driven mutations collect up to 128 matching names and close the iterator before opening, copying, moving, or deleting any match, so iterator state cannot be invalidated by CWD or directory changes. `ls` streams matching entries because it does not mutate the directory.
 
 ## External `.COM` execution
 
@@ -376,6 +377,10 @@ Input is non-echoing byte-at-a-time BDOS 6 polling and output is byte-at-a-time 
 
 `zsh_putc()` converts a lone LF to CR/LF and avoids a duplicate CR when one was just printed. This prevents staircase newlines. It also means `cat` is a display command, not a byte-transparent device copy.
 
+Long-running `ls` and `cat` output polls direct-console input. Ctrl-S blocks until the next key; Ctrl-C cancels the command. Cancellation is a normal early completion, not an FS2 error, and the active file or directory iterator is closed before returning to the prompt. Other pending keys are consumed, matching ZCPR2's output-break behavior.
+
+`cat` counts LF bytes across all named files and displays `--More--` after every 24 lines. At a page stop, any key continues, repeated Ctrl-S remains paused, and Ctrl-C cancels. The prompt is erased before output resumes or the shell prompt is printed.
+
 `tinyio.c` uses small decimal and hexadecimal emitters instead of stdio formatting.
 
 ## Status and failure model
@@ -410,6 +415,7 @@ The design is single-threaded and synchronous.
 | Input line and `argv` | `shell.c` | Reused each prompt. |
 | Last non-empty command | `shell.c` | Shell instance; lost on WBOOT reload. |
 | Line-edit state | `shell.c` stack | One prompt. |
+| 128 matched 8.3 names | `glob.c` | Reused by each pattern. |
 | 512-byte I/O buffer | `builtins.c` | Shell instance. |
 | Saved CWD/path scope | caller stack | One operation. |
 | Native handles/iterator | bank-7 providers | Until close/reset. |
@@ -422,6 +428,7 @@ The design is single-threaded and synchronous.
 |---|---:|
 | Edited command line | 127 characters |
 | Parsed arguments | 16 including command |
+| Matches per wildcard pattern | 128 |
 | Shell path buffer | 208 bytes |
 | Native CWD depth | 16 components |
 | Native transfer | 512 bytes |
@@ -437,6 +444,8 @@ Copy consumes both writable file slots. Built-ins must not nest directory enumer
 
 `make host-tests` builds shell policy against `tests/mock_fs.c`. It covers:
 
+- Ctrl-S pause/resume, Ctrl-C cancellation, pager continue/cancel, and cleanup after interrupted output;
+- case-insensitive wildcard matching, path reconstruction, wildcard copy/delete, and explicit multi-source copy;
 - empty, quoted, maximum/excessive-argument, overlong, and unterminated-quote parsing;
 - path splitting and rollback after partial `chdir` failure;
 - absolute executable-path resolution, `.COM` suffixing, and CWD restoration;
@@ -451,11 +460,11 @@ The mock suite does not emulate banking, page zero, the ROM provider, or protect
 
 `make CCP=zshell` in `CPM2.2` verifies the shim, patches the fixed CCP slot, places `ZSH.COM` on A:, links the native gate/loader, checks fixed-region overlap, and regenerates authoritative memory maps.
 
-Hardware acceptance additionally covers boot/WBOOT reload, writable-CWD persistence, `/CPM/A` listing and execution, repeated launches without handle exhaustion, real-media files over 64 KiB, exact KiB `df` on cards over 4 GiB, and console recovery.
+Hardware acceptance additionally covers boot/WBOOT reload, writable-CWD persistence, `/CPM/A` listing and execution, `ls`/`cat` pause and cancellation, 24-line `cat` paging, repeated launches without handle exhaustion, real-media files over 64 KiB, exact KiB `df` on cards over 4 GiB, and console recovery.
 
 ## Extension boundaries
 
-- Add shell syntax in `parser.c` and path policy in `path.c`.
+- Add shell syntax in `parser.c`, wildcard policy in `glob.c`, and path policy in `path.c`.
 - Keep leaf FS2 operations component-oriented.
 - Add built-ins only when they fit the synchronous process model.
 - Extend filesystems through ZephyrC and BDOS 218, not fixed bank-7 labels.
@@ -467,7 +476,7 @@ A resident-parent or native-process model would change TPA ownership, returns, r
 
 ## Deliberate v1 omissions
 
-There is no PATH search, ZEX, globbing, variables, scripting, redirection, pipes, background jobs, process scheduling, native executable format, GameOS integration, resident shell parent, cursor editing, completion, persistent history, or multi-entry history.
+There is no PATH search, ZEX, variables, scripting, redirection, pipes, background jobs, process scheduling, native executable format, GameOS integration, resident shell parent, cursor editing, completion, persistent history, or multi-entry history. Wildcards are deliberately limited to selected native built-ins and the final path component; there is no general argument expansion for external programs.
 
 ## Source-of-truth references
 

@@ -1,6 +1,7 @@
 #include <string.h>
 #include <zephyr/fs.h>
 #include "builtins.h"
+#include "glob.h"
 #include "path.h"
 #include "shell.h"
 
@@ -317,9 +318,61 @@ static zep_fs_status_t list_current(uint8_t long_form)
         info.size = entry.size;
         info.flags = entry.flags;
         print_entry(entry.name, &info, long_form);
+        if (zsh_output_poll()) {
+            status = ZEP_FS_OK;
+            break;
+        }
     }
     close_status = zep_fs_closedir(dir);
     return status == ZEP_FS_OK ? close_status : status;
+}
+
+static zep_fs_status_t list_pattern(const char *pattern,
+                                         uint8_t long_form)
+{
+    zsh_path_scope_t scope;
+    zep_fs_dir_t dir;
+    zep_fs_dirent_t entry;
+    zep_fs_stat_t info;
+    zep_fs_status_t status;
+    zep_fs_status_t close_status;
+    zep_fs_status_t restore;
+    uint8_t matched = 0;
+
+    status = zsh_path_enter_parent(pattern, &scope);
+    if (status != ZEP_FS_OK)
+        return status;
+    status = zep_fs_opendir(&dir);
+    if (status != ZEP_FS_OK) {
+        (void)zsh_path_leave(&scope);
+        return status;
+    }
+    for (;;) {
+        status = zep_fs_readdir(dir, &entry);
+        if (status == ZEP_FS_END) {
+            status = matched ? ZEP_FS_OK : ZEP_FS_NOT_FOUND;
+            break;
+        }
+        if (status != ZEP_FS_OK)
+            break;
+        if (!zsh_glob_match(scope.leaf, entry.name))
+            continue;
+        matched = 1;
+        info.size = entry.size;
+        info.flags = entry.flags;
+        print_entry(entry.name, &info, long_form);
+        if (zsh_output_poll()) {
+            status = ZEP_FS_OK;
+            break;
+        }
+    }
+    close_status = zep_fs_closedir(dir);
+    restore = zsh_path_leave(&scope);
+    if (status == ZEP_FS_OK && close_status != ZEP_FS_OK)
+        status = close_status;
+    if (status == ZEP_FS_OK && restore != ZEP_FS_OK)
+        status = restore;
+    return status;
 }
 
 zep_fs_status_t zsh_list_path(const char *path, uint8_t long_form)
@@ -331,6 +384,8 @@ zep_fs_status_t zsh_list_path(const char *path, uint8_t long_form)
 
     if (!path)
         return list_current(long_form);
+    if (zsh_glob_has_pattern(path))
+        return list_pattern(path, long_form);
     status = zep_fs_getcwd(old, sizeof(old));
     if (status != ZEP_FS_OK)
         return status;
@@ -347,6 +402,89 @@ zep_fs_status_t zsh_list_path(const char *path, uint8_t long_form)
     return status;
 }
 
+typedef zep_fs_status_t (*transfer_fn_t)(const char *, const char *);
+
+static void transfer_sources(const char *command, uint8_t argc, char **argv,
+                             transfer_fn_t operation)
+{
+    zep_fs_stat_t info;
+    zep_fs_status_t status;
+    const char *destination = argv[argc - 1];
+    char matched_path[ZSH_PATH_SIZE];
+    uint8_t require_directory = (uint8_t)(argc > 3);
+    uint8_t count;
+    uint8_t arg;
+    uint8_t match;
+
+    for (arg = 1; arg + 1 < argc; ++arg)
+        if (zsh_glob_has_pattern(argv[arg]))
+            require_directory = 1;
+    if (require_directory) {
+        status = stat_path(destination, &info);
+        if (status == ZEP_FS_OK && !(info.flags & ZEP_FS_FLAG_DIRECTORY))
+            status = ZEP_FS_NOT_DIR;
+        if (status != ZEP_FS_OK) {
+            zsh_error_status(command, destination, status);
+            return;
+        }
+    }
+
+    for (arg = 1; arg + 1 < argc; ++arg) {
+        if (!zsh_glob_has_pattern(argv[arg])) {
+            status = operation(argv[arg], destination);
+            if (status != ZEP_FS_OK)
+                zsh_error_status(command, argv[arg], status);
+            continue;
+        }
+        status = zsh_glob_collect(argv[arg], &count);
+        if (status != ZEP_FS_OK) {
+            zsh_error_status(command, argv[arg], status);
+            continue;
+        }
+        for (match = 0; match < count; ++match) {
+            status = zsh_glob_path(argv[arg], zsh_glob_name(match),
+                                   matched_path);
+            if (status != ZEP_FS_OK) {
+                zsh_error_status(command, argv[arg], status);
+                continue;
+            }
+            status = operation(matched_path, destination);
+            if (status != ZEP_FS_OK)
+                zsh_error_status(command, matched_path, status);
+        }
+    }
+}
+
+static void remove_argument(const char *argument)
+{
+    char matched_path[ZSH_PATH_SIZE];
+    zep_fs_status_t status;
+    uint8_t count;
+    uint8_t match;
+
+    if (!zsh_glob_has_pattern(argument)) {
+        status = remove_path(argument);
+        if (status != ZEP_FS_OK)
+            zsh_error_status("rm", argument, status);
+        return;
+    }
+    status = zsh_glob_collect(argument, &count);
+    if (status != ZEP_FS_OK) {
+        zsh_error_status("rm", argument, status);
+        return;
+    }
+    for (match = 0; match < count; ++match) {
+        status = zsh_glob_path(argument, zsh_glob_name(match), matched_path);
+        if (status != ZEP_FS_OK) {
+            zsh_error_status("rm", argument, status);
+            continue;
+        }
+        status = remove_path(matched_path);
+        if (status != ZEP_FS_OK)
+            zsh_error_status("rm", matched_path, status);
+    }
+}
+
 static void usage(const char *text)
 {
     zsh_puts("usage: "); zsh_puts(text); zsh_putc('\n');
@@ -357,51 +495,96 @@ static void builtin_help(void)
     zsh_puts("cd [path]       change native directory (default /)\n");
     zsh_puts("pwd             print native directory\n");
     zsh_puts("ls [-l] [path]  list directory (alias: dir)\n");
-    zsh_puts("cp SRC DST      copy a regular file\n");
-    zsh_puts("mv SRC DST      rename or move a regular file\n");
+    zsh_puts("cp SRC... DST   copy files; multi-source DST must be a directory\n");
+    zsh_puts("mv SRC... DST   move files; multi-source DST must be a directory\n");
     zsh_puts("rm FILE...      remove regular files (alias: del)\n");
     zsh_puts("mkdir PATH      create directory (alias: md)\n");
     zsh_puts("rmdir PATH      remove empty directory (alias: rd)\n");
-    zsh_puts("cat FILE...     print files (alias: type)\n");
+    zsh_puts("cat FILE...     page through files (alias: type)\n");
     zsh_puts("stat PATH       show type and byte size\n");
     zsh_puts("df              show native volume space in KiB\n");
     zsh_puts("echo [ARGS...]  print arguments\n");
     zsh_puts("help            show this summary\n");
-    zsh_puts("keys: Ctrl-L clear, Up recall last command\n");
+    zsh_puts("keys: Ctrl-L clear, Up recall, Ctrl-S pause, Ctrl-C cancel\n");
 }
 
-static int builtin_cat(uint8_t argc, char **argv)
+static uint8_t cat_path(const char *path, uint8_t *lines)
 {
     zep_fs_handle_t handle;
     zep_fs_status_t status;
     zep_fs_status_t close_status;
     uint16_t got;
     uint16_t i;
+    uint8_t cancelled = 0;
+
+    status = open_path(path, ZEP_FS_OPEN_READ, &handle);
+    if (status != ZEP_FS_OK) {
+        zsh_error_status("cat", path, status);
+        return 0;
+    }
+    do {
+        got = 0;
+        status = zep_fs_read(handle, io_buffer, ZSH_IO_SIZE, &got);
+        if (status != ZEP_FS_OK)
+            break;
+        for (i = 0; i < got; ++i) {
+            zsh_putc(io_buffer[i]);
+            if (io_buffer[i] == '\n' && ++*lines == ZSH_PAGE_LINES) {
+                *lines = 0;
+                if (zsh_output_page()) {
+                    cancelled = 1;
+                    break;
+                }
+            } else if (zsh_output_poll()) {
+                cancelled = 1;
+                break;
+            }
+        }
+        if (cancelled)
+            break;
+    } while (got == ZSH_IO_SIZE);
+    close_status = zep_fs_close(handle);
+    if (status == ZEP_FS_OK)
+        status = close_status;
+    if (status != ZEP_FS_OK)
+        zsh_error_status("cat", path, status);
+    return cancelled;
+}
+
+static int builtin_cat(uint8_t argc, char **argv)
+{
+    char matched_path[ZSH_PATH_SIZE];
+    zep_fs_status_t status;
+    uint8_t lines = 0;
+    uint8_t count;
     uint8_t arg;
+    uint8_t match;
 
     if (argc < 2) {
         usage("cat FILE [FILE ...]");
         return 1;
     }
     for (arg = 1; arg < argc; ++arg) {
-        status = open_path(argv[arg], ZEP_FS_OPEN_READ, &handle);
+        if (!zsh_glob_has_pattern(argv[arg])) {
+            if (cat_path(argv[arg], &lines))
+                break;
+            continue;
+        }
+        status = zsh_glob_collect(argv[arg], &count);
         if (status != ZEP_FS_OK) {
             zsh_error_status("cat", argv[arg], status);
             continue;
         }
-        do {
-            got = 0;
-            status = zep_fs_read(handle, io_buffer, ZSH_IO_SIZE, &got);
-            if (status != ZEP_FS_OK)
+        for (match = 0; match < count; ++match) {
+            status = zsh_glob_path(argv[arg], zsh_glob_name(match),
+                                   matched_path);
+            if (status != ZEP_FS_OK) {
+                zsh_error_status("cat", argv[arg], status);
                 break;
-            for (i = 0; i < got; ++i)
-                zsh_putc(io_buffer[i]);
-        } while (got == ZSH_IO_SIZE);
-        close_status = zep_fs_close(handle);
-        if (status == ZEP_FS_OK)
-            status = close_status;
-        if (status != ZEP_FS_OK)
-            zsh_error_status("cat", argv[arg], status);
+            }
+            if (cat_path(matched_path, &lines))
+                return 1;
+        }
     }
     return 1;
 }
@@ -446,18 +629,15 @@ int zsh_builtin_dispatch(uint8_t argc, char **argv)
         status = zsh_list_path(path, long_form);
         if (status != ZEP_FS_OK) zsh_error_status("ls", path, status);
     } else if (eqi(argv[0], "cp")) {
-        if (argc != 3) usage("cp SOURCE DESTINATION");
-        else if ((status = zsh_copy_file(argv[1], argv[2])) != ZEP_FS_OK)
-            zsh_error_status("cp", argv[2], status);
+        if (argc < 3) usage("cp SOURCE... DESTINATION");
+        else transfer_sources("cp", argc, argv, zsh_copy_file);
     } else if (eqi(argv[0], "mv")) {
-        if (argc != 3) usage("mv SOURCE DESTINATION");
-        else if ((status = zsh_move_file(argv[1], argv[2])) != ZEP_FS_OK)
-            zsh_error_status("mv", argv[2], status);
+        if (argc < 3) usage("mv SOURCE... DESTINATION");
+        else transfer_sources("mv", argc, argv, zsh_move_file);
     } else if (eqi(argv[0], "rm") || eqi(argv[0], "del")) {
         if (argc < 2) usage("rm FILE [FILE ...]");
         else for (i = 1; i < argc; ++i)
-            if ((status = remove_path(argv[i])) != ZEP_FS_OK)
-                zsh_error_status("rm", argv[i], status);
+            remove_argument(argv[i]);
     } else if (eqi(argv[0], "mkdir") || eqi(argv[0], "md")) {
         if (argc != 2) usage("mkdir PATH");
         else if ((status = namespace_path(argv[1], zep_fs_mkdir)) != ZEP_FS_OK)
