@@ -33,4 +33,23 @@ PROCEDURE FindInstrument(number : CARDINAL;
                          VAR entryOffset : CARDINAL) : BOOLEAN;
 PROCEDURE NotePeriod(note : CARDINAL) : CARDINAL;
 
+(* Resolve every channel's pattern stream for one order in a SINGLE pass over
+   the pattern directory.  FindPattern scans the whole directory per channel,
+   so SetupOrder cost O(patterns * 16) on every order change -- measured at
+   184,000 instructions per order change on a song with many patterns, against
+   a 9,400 median tick.  This is O(patterns). *)
+PROCEDURE FindOrderPatterns(order : CARDINAL;
+                            VAR offsets, lengths : ARRAY OF CARDINAL);
+
+(* One past the highest channel index that appears in the pattern directory,
+   so a player can bound its per-channel loops instead of always walking all
+   sixteen.  Derived from the data, not from the header's source-channel count,
+   so a song that uses a high channel index cannot be clipped.
+
+   NOT SAFE as a bound for a player's per-channel loops: a voice with no
+   pattern of its own can still sound, driven by macros or by a note held from
+   an earlier order.  Bounding PlyCore's loops by this changed the PSG output
+   of a real song, which is how it was caught. *)
+PROCEDURE UsedChannels() : CARDINAL;
+
 END ZTR.

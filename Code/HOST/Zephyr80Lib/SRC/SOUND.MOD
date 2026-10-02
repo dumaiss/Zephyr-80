@@ -1,6 +1,6 @@
 IMPLEMENTATION MODULE Sound;
 
-FROM SYSTEM IMPORT OUT;
+FROM PortIO IMPORT Out;
 
 CONST
   PSG0Port = 224;                 (* E0h *)
@@ -13,7 +13,7 @@ VAR
 PROCEDURE Put(port, value : CARDINAL);
 VAR wait : CARDINAL;
 BEGIN
-  OUT(port, value);
+  Out(port, value);
   INC(writes);
   (* Retain the assembly player's conservative settling delay.  Afternoon
      Blend's hardware WAIT remains the actual bus contract. *)

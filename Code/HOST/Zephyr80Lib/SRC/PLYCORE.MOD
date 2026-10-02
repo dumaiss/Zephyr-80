@@ -1,6 +1,7 @@
 IMPLEMENTATION MODULE PlyCore;
 
 IMPORT ZTR, Sound;
+FROM PlyLow IMPORT MacroState, BoundMacro;
 
 CONST
   EventNote = 128;
@@ -26,10 +27,6 @@ CONST
   EffectStop = 6;
 
 TYPE
-  MacroState = RECORD
-    offset, position, timer, delay : CARDINAL;
-  END;
-
   ChannelState = RECORD
     note, instrument : INTEGER;
     baseVolume, macroVolume : CARDINAL;
@@ -45,17 +42,34 @@ TYPE
     notationArpParameter, notationArpPhase : CARDINAL;
     hairpinRate, hairpinOffset : INTEGER;
     hairpinCeiling : CARDINAL;
+    (* Pads the record from 85 bytes to 128.  NOT cosmetic: FTL emits a shift
+       to index an array whose element size is a power of two and a call to the
+       generic 16-bit multiply otherwise.  Measured on this compiler, one
+       subscript costs 142 instructions at an 85-byte stride and 19 at 128.
+       The four per-tick channel loops subscript 16 times each, so the 43 bytes
+       per channel buy back thousands of instructions a tick.  Changing the
+       fields above means re-checking the total with TEST/LAYTEST.MOD. *)
+    pad : ARRAY [0..42] OF CHAR;
   END;
 
 VAR
   channels : ARRAY [0..15] OF ChannelState;
+  (* value DIV 16, tabulated.  FTL emits a call to the generic 16-bit divide
+     for DIV by any constant, including powers of two -- 108 instructions,
+     where repeated DIV 2 is worse still at 155 each.  Every index below comes
+     from ZTR.ByteAt and is therefore 0..255. *)
+  highNibble : ARRAY [0..255] OF CHAR;
   playingValue, orderChanged : BOOLEAN;
   tickInRow, currentOrder, currentRow : CARDINAL;
   elapsedSubticks, elapsedSeconds, elapsedMinutes : CARDINAL;
 
+(* Bit test by set intersection.  The original ((value DIV bit) MOD 2) = 1 cost
+   a full 16-bit division routine per call -- the Z80 has no divide -- and this
+   runs roughly 96 times per row across 16 channels.  BITSET is the only bitwise
+   facility Modula-2 offers; the intersection compiles to an AND. *)
 PROCEDURE Has(value, bit : CARDINAL) : BOOLEAN;
 BEGIN
-  RETURN ((value DIV bit) MOD 2) = 1
+  RETURN (BITSET(value) * BITSET(bit)) <> BITSET{}
 END Has;
 
 PROCEDURE SignedByte(value : CARDINAL) : INTEGER;
@@ -308,33 +322,37 @@ BEGIN
 END DecodeChannelRow;
 
 PROCEDURE SetupOrder;
-VAR channel, pattern, offset, length : CARDINAL;
+VAR channel : CARDINAL;
+    offsets, lengths : ARRAY [0..15] OF CARDINAL;
 BEGIN
+  ZTR.FindOrderPatterns(currentOrder, offsets, lengths);
   channel := 0;
   WHILE channel < 16 DO
-    pattern := ZTR.OrderPattern(currentOrder, channel);
-    IF (pattern # ZTR.NoPattern) AND
-       ZTR.FindPattern(channel, pattern, offset, length) THEN
-      channels[channel].patternCursor := offset;
-      channels[channel].patternEnd := offset + length
-    ELSE
-      channels[channel].patternCursor := 0;
+    channels[channel].patternCursor := offsets[channel];
+    IF offsets[channel] = 0 THEN
       channels[channel].patternEnd := 0
+    ELSE
+      channels[channel].patternEnd := offsets[channel] + lengths[channel]
     END;
     INC(channel)
   END
 END SetupOrder;
+
+PROCEDURE ResetRowEffect(VAR channel : ChannelState);
+BEGIN
+  IF channel.effect = EffectArpeggio THEN
+    MarkPitch(channel)
+  END;
+  channel.effect := 0;
+  channel.effectPhase := 0
+END ResetRowEffect;
 
 PROCEDURE BeginRow;
 VAR channel : CARDINAL;
 BEGIN
   channel := 0;
   WHILE channel < 16 DO
-    IF channels[channel].effect = EffectArpeggio THEN
-      MarkPitch(channels[channel])
-    END;
-    channels[channel].effect := 0;
-    channels[channel].effectPhase := 0;
+    ResetRowEffect(channels[channel]);
     INC(channel)
   END;
   channel := 0;
@@ -363,77 +381,61 @@ BEGIN
   END
 END AdvanceNotation;
 
+PROCEDURE AdvanceChannelEffects(VAR channel : ChannelState);
+VAR amount, oldVolume : CARDINAL;
+BEGIN
+  IF (channel.effect = EffectArpeggio) AND (tickInRow # 0) THEN
+    INC(channel.effectPhase);
+    IF channel.effectPhase >= 3 THEN
+      channel.effectPhase := 0
+    END;
+    MarkPitch(channel)
+  ELSIF ((channel.effect = EffectVolumeSlide) OR
+         (channel.effect = EffectFastVolume)) AND
+        (tickInRow # 0) THEN
+    oldVolume := channel.baseVolume;
+    amount := ORD(highNibble[channel.effectParameter]);
+    IF amount # 0 THEN
+      IF channel.effect = EffectFastVolume THEN
+        amount := amount * 4
+      END;
+      IF amount + oldVolume > 15 THEN
+        channel.baseVolume := 15
+      ELSE
+        channel.baseVolume := oldVolume + amount
+      END
+    ELSE
+      amount := CARDINAL(BITSET(channel.effectParameter) * BITSET(15));
+      IF channel.effect = EffectFastVolume THEN
+        amount := amount * 4
+      END;
+      IF amount >= oldVolume THEN
+        channel.baseVolume := 0
+      ELSE
+        channel.baseVolume := oldVolume - amount
+      END
+    END;
+    IF channel.baseVolume # oldVolume THEN
+      channel.dirtyVolume := TRUE
+    END
+  END;;
+  AdvanceNotation(channel)
+END AdvanceChannelEffects;
+
+(* The loop body is a separate procedure so channels[channel] is subscripted
+   once per channel instead of once per field reference.  ChannelState is about
+   85 bytes, the Z80 has no multiply, and FTL does not hoist the index
+   computation -- the inline form cost roughly 20 multiply calls per channel
+   per tick. *)
 PROCEDURE AdvanceEffects;
-VAR channel, amount : CARDINAL; oldVolume : CARDINAL;
+VAR channel : CARDINAL;
 BEGIN
   channel := 0;
   WHILE channel < 16 DO
-    IF (channels[channel].effect = EffectArpeggio) AND (tickInRow # 0) THEN
-      INC(channels[channel].effectPhase);
-      IF channels[channel].effectPhase >= 3 THEN
-        channels[channel].effectPhase := 0
-      END;
-      MarkPitch(channels[channel])
-    ELSIF ((channels[channel].effect = EffectVolumeSlide) OR
-           (channels[channel].effect = EffectFastVolume)) AND
-          (tickInRow # 0) THEN
-      oldVolume := channels[channel].baseVolume;
-      amount := channels[channel].effectParameter DIV 16;
-      IF amount # 0 THEN
-        IF channels[channel].effect = EffectFastVolume THEN
-          amount := amount * 4
-        END;
-        IF amount + oldVolume > 15 THEN
-          channels[channel].baseVolume := 15
-        ELSE
-          channels[channel].baseVolume := oldVolume + amount
-        END
-      ELSE
-        amount := channels[channel].effectParameter MOD 16;
-        IF channels[channel].effect = EffectFastVolume THEN
-          amount := amount * 4
-        END;
-        IF amount >= oldVolume THEN
-          channels[channel].baseVolume := 0
-        ELSE
-          channels[channel].baseVolume := oldVolume - amount
-        END
-      END;
-      IF channels[channel].baseVolume # oldVolume THEN
-        channels[channel].dirtyVolume := TRUE
-      END
-    END;
-    AdvanceNotation(channels[channel]);
+    AdvanceChannelEffects(channels[channel]);
     INC(channel)
   END
 END AdvanceEffects;
-
-PROCEDURE BoundMacro(VAR macro : MacroState; released : BOOLEAN);
-VAR count, loopAt, releaseAt : CARDINAL;
-BEGIN
-  count := ZTR.WordAt(macro.offset + 10);
-  loopAt := ZTR.WordAt(macro.offset + 6);
-  releaseAt := ZTR.WordAt(macro.offset + 8);
-  IF (NOT released) AND (releaseAt # 65535) AND
-     (macro.position >= releaseAt) THEN
-    IF loopAt # 65535 THEN
-      macro.position := loopAt
-    ELSIF releaseAt = 0 THEN
-      macro.position := 0
-    ELSE
-      macro.position := releaseAt - 1
-    END
-  END;
-  IF macro.position >= count THEN
-    IF released AND (releaseAt # 65535) THEN
-      macro.position := count - 1
-    ELSIF loopAt # 65535 THEN
-      macro.position := loopAt
-    ELSE
-      macro.position := count - 1
-    END
-  END
-END BoundMacro;
 
 PROCEDURE ApplyMacro(VAR channel : ChannelState;
                      slot, flags : CARDINAL; value : INTEGER);
@@ -460,7 +462,7 @@ BEGIN
     END
   ELSIF slot = 3 THEN
     IF value < 0 THEN unsigned := 0 ELSE unsigned := CARDINAL(value) END;
-    unsigned := unsigned MOD 2;
+    unsigned := CARDINAL(BITSET(unsigned) * BITSET(1));
     IF channel.dutyValue # unsigned THEN
       channel.dutyValue := unsigned;
       channel.dirtyNoise := TRUE
@@ -473,7 +475,9 @@ BEGIN
 END ApplyMacro;
 
 PROCEDURE AdvanceMacro(VAR channel : ChannelState; slot : CARDINAL);
-VAR offset, address, flags, step : CARDINAL; value : INTEGER;
+VAR offset, address, flags, step : CARDINAL;
+    count, loopAt, releaseAt : CARDINAL;
+    value : INTEGER;
 BEGIN
   offset := channel.macros[slot].offset;
   IF offset = 0 THEN RETURN END;
@@ -485,7 +489,10 @@ BEGIN
     DEC(channel.macros[slot].timer);
     RETURN
   END;
-  BoundMacro(channel.macros[slot], channel.released);
+  count := ZTR.WordAt(offset + 10);
+  loopAt := ZTR.WordAt(offset + 6);
+  releaseAt := ZTR.WordAt(offset + 8);
+  BoundMacro(channel.macros[slot], channel.released, count, loopAt, releaseAt);
   address := offset + 12 + channel.macros[slot].position * 3;
   flags := ZTR.ByteAt(address);
   value := SignedWord(ZTR.WordAt(address + 1));
@@ -493,22 +500,28 @@ BEGIN
   IF step > 0 THEN DEC(step) END;
   channel.macros[slot].timer := step;
   INC(channel.macros[slot].position);
-  BoundMacro(channel.macros[slot], channel.released);
+  BoundMacro(channel.macros[slot], channel.released, count, loopAt, releaseAt);
   ApplyMacro(channel, slot, flags, value)
 END AdvanceMacro;
 
+PROCEDURE AdvanceChannelMacros(VAR channel : ChannelState);
+VAR slot : CARDINAL;
+BEGIN
+  IF channel.active THEN
+    slot := 0;
+    WHILE slot < 5 DO
+      AdvanceMacro(channel, slot);
+      INC(slot)
+    END
+  END
+END AdvanceChannelMacros;
+
 PROCEDURE AdvanceMacros;
-VAR channel, slot : CARDINAL;
+VAR channel : CARDINAL;
 BEGIN
   channel := 0;
   WHILE channel < 16 DO
-    IF channels[channel].active THEN
-      slot := 0;
-      WHILE slot < 5 DO
-        AdvanceMacro(channels[channel], slot);
-        INC(slot)
-      END
-    END;
+    AdvanceChannelMacros(channels[channel]);
     INC(channel)
   END
 END AdvanceMacros;
@@ -524,9 +537,9 @@ BEGIN
   IF channel.effect = EffectArpeggio THEN
     phase := channel.effectPhase;
     IF phase = 1 THEN
-      offset := INTEGER(channel.effectParameter DIV 16)
+      offset := INTEGER(ORD(highNibble[channel.effectParameter]))
     ELSIF phase = 2 THEN
-      offset := INTEGER(channel.effectParameter MOD 16)
+      offset := INTEGER(CARDINAL(BITSET(channel.effectParameter) * BITSET(15)))
     ELSE
       offset := 0
     END;
@@ -535,9 +548,9 @@ BEGIN
   IF channel.notationArp THEN
     phase := channel.notationArpPhase;
     IF phase = 1 THEN
-      offset := INTEGER(channel.notationArpParameter DIV 16)
+      offset := INTEGER(ORD(highNibble[channel.notationArpParameter]))
     ELSIF phase = 2 THEN
-      offset := INTEGER(channel.notationArpParameter MOD 16)
+      offset := INTEGER(CARDINAL(BITSET(channel.notationArpParameter) * BITSET(15)))
     ELSE
       offset := 0
     END;
@@ -581,41 +594,54 @@ BEGIN
   RETURN CARDINAL(volume)
 END Loudness;
 
-PROCEDURE Render;
+PROCEDURE RenderChannel(VAR channel : ChannelState; number : CARDINAL;
+                        isNoise : BOOLEAN);
 VAR
-  number, rate : CARDINAL;
+  rate : CARDINAL;
   result : Sound.Result;
   mode : Sound.NoiseMode;
 BEGIN
+  IF isNoise THEN
+    IF channel.dirtyPitch OR channel.dirtyNoise OR
+       channel.dirtyPhase THEN
+      rate := CARDINAL(BITSET(EffectiveNote(channel)) * BITSET(3));
+      IF channel.dutyValue = 0 THEN
+        mode := Sound.periodicNoise
+      ELSE
+        mode := Sound.whiteNoise
+      END;
+      result := Sound.SetNoise(Sound.Channel(number), mode,
+                               Sound.NoiseRate(rate));
+      channel.dirtyPitch := FALSE;
+      channel.dirtyNoise := FALSE;
+      channel.dirtyPhase := FALSE
+    END
+  ELSIF channel.dirtyPitch THEN
+    result := Sound.SetTone(Sound.Channel(number),
+                            Sound.TonePeriod(ToneValue(channel)));
+    channel.dirtyPitch := FALSE
+  END;
+  IF NOT isNoise THEN channel.dirtyPhase := FALSE END;
+  IF channel.dirtyVolume THEN
+    Sound.SetVolume(Sound.Channel(number),
+                    Sound.Volume(Loudness(channel)));
+    channel.dirtyVolume := FALSE
+  END
+END RenderChannel;
+
+(* sub counts 0..3 across the four voices of each chip.  It replaces two
+   (number MOD 4) tests per channel: MOD by a variable is a division routine on
+   a CPU with no divide, and this loop ran it 32 times per tick. *)
+PROCEDURE Render;
+VAR number, sub : CARDINAL;
+BEGIN
   number := 0;
+  sub := 0;
   WHILE number < 16 DO
-    IF (number MOD 4) = 3 THEN
-      IF channels[number].dirtyPitch OR channels[number].dirtyNoise OR
-         channels[number].dirtyPhase THEN
-        rate := EffectiveNote(channels[number]) MOD 4;
-        IF channels[number].dutyValue = 0 THEN
-          mode := Sound.periodicNoise
-        ELSE
-          mode := Sound.whiteNoise
-        END;
-        result := Sound.SetNoise(Sound.Channel(number), mode,
-                                 Sound.NoiseRate(rate));
-        channels[number].dirtyPitch := FALSE;
-        channels[number].dirtyNoise := FALSE;
-        channels[number].dirtyPhase := FALSE
-      END
-    ELSIF channels[number].dirtyPitch THEN
-      result := Sound.SetTone(Sound.Channel(number),
-                              Sound.TonePeriod(ToneValue(channels[number])));
-      channels[number].dirtyPitch := FALSE
-    END;
-    IF (number MOD 4) # 3 THEN channels[number].dirtyPhase := FALSE END;
-    IF channels[number].dirtyVolume THEN
-      Sound.SetVolume(Sound.Channel(number),
-                      Sound.Volume(Loudness(channels[number])));
-      channels[number].dirtyVolume := FALSE
-    END;
-    INC(number)
+    RenderChannel(channels[number], number, sub = 3);
+    INC(number);
+    INC(sub);
+    IF sub = 4 THEN sub := 0 END
   END
 END Render;
 
@@ -649,8 +675,16 @@ BEGIN
 END AdvancePosition;
 
 PROCEDURE Init;
-VAR number, slot : CARDINAL;
+VAR number, slot, fill : CARDINAL;
 BEGIN
+  (* Tabulate DIV 16 here rather than in the module body: whether FTL runs an
+     implementation module's body is not something to rely on, and a zeroed
+     table silently turns every DIV 16 into 0. *)
+  fill := 0;
+  WHILE fill < 256 DO
+    highNibble[fill] := CHR(fill DIV 16);
+    INC(fill)
+  END;
   number := 0;
   WHILE number < 16 DO
     WITH channels[number] DO

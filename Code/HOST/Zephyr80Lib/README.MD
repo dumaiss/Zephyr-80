@@ -1,14 +1,10 @@
 # Zephyr80Lib
 
-`Zephyr80Lib` is the reusable Turbo Modula-2 library for Zephyr-80 programs.
-It provides the public `Sound`, `Timer`, and `Player` modules in one
-`ZEPHYR80.LIB` archive. The current implementation targets the four
+`Zephyr80Lib` is the reusable FTL Modula-2 library for Zephyr-80 programs.
+It provides the public `Sound`, `Timer`, and `Player` modules. The current
+implementation targets the four
 SN76489-compatible PSGs on Afternoon Blend and the Zephyr BIOS-managed CTC0
 interrupt service.
-
-The project is independent of the TM2 SNTracker application. SNTracker has not
-yet been changed to consume this archive, so its existing source copies remain
-in place until that separate migration is requested.
 
 All CP/M-visible source and output filenames are 8.3-compatible.
 
@@ -26,102 +22,62 @@ embedding example.
 
 ## PC build
 
-The repository contains the verified RunCPM executable, ZCPR3 CCP image, Turbo
-Modula-2 distribution, ZMAC, and the hosted build driver needed by this
-project. On the x86-64 Linux development host, only Python 3 and `make` are
-required:
+The library is built with FTL Modula-2 under RunCPM. The repository carries the
+RunCPM executable and the ZCPR3 CCP image; the FTL distribution is read from
+`../Software/disk1/5`. On the x86-64 Linux development host, only Python 3 and
+`make` are required:
 
 ```text
 make clean
 make
 ```
 
-The build uses the original CP/M compiler, assembler, REL converter,
-librarian, and linker. It creates an isolated directory-backed CP/M drive,
-builds `ZEPHYR80.LIB`, proves that consumers can compile with the loose library
-modules removed, links the test programs, and runs the hardware-independent
-regressions.
+Objects are written to `BUILD/FTL`, and `BUILD.LOG` holds the full compiler,
+assembler and linker output. Tool paths can be overridden through Make
+variables; run `make help`.
 
-Generated files are written to `BUILD`:
+## Why not Turbo Modula-2
 
-```text
-ZEPHYR80.LIB   distributable TM2 library
-LIBTEST.COM    public-interface and archive smoke test
-TIMTEST.COM    physical CTC/timer test
-SNDTEST.COM    physical four-PSG test
-ZTRTEST.COM    hosted ZTR loader regression
-PLYTEST.COM    hosted complete-song player regression
-```
+This library was originally built with Turbo Modula-2, and that toolchain has
+been removed. TM2's runtime is too large for the machine: once it is linked in,
+a hosted application has no room left to run. Since the point of this library is
+hosted development on the Zephyr-80 itself, that is disqualifying.
 
-The default song inputs are the Night Market and Runaway Circuit ZTR files in
-the sibling `SNTracker/songs` directory. Their paths and every tool path can be
-overridden through Make variables; run `make help` for the common commands.
+Consequences worth knowing:
 
-## Installing in Turbo Modula-2
+- FTL's compilers are line-oriented. LF-only source reads as one enormous line
+  and `MD` reports `ERROR 81 end of file reached before program complete`.
+  `SRC` and `TEST` are stored CRLF and pinned by `.gitattributes`.
+- FTL has no port I/O in the language and no `SYSTEM.OUT`. `SRC/PORTIO.*`
+  supplies `In` and `Out`; see `TOOLS/README.MD` for why it is built from
+  source rather than imported.
+- FTL's `Files` is block-oriented, with no `Open`, `ReadBytes`, `NoTrailer` or
+  `EOF`. Use `Lookup`, `SeqReadBlock`, the `eof` field of `FILE`, and `Close`.
+  Block transfers move whole 128-byte units even when fewer bytes are asked
+  for, so read buffers must be sized in whole blocks.
 
-Copy `ZEPHYR80.LIB` to the TM2 work disk. In the TM2 Options menu, choose
-`Path to search` and append `ZEPHYR80` to the default, leaving this path:
+## Native FTL CTCLow bridge
 
-```text
-SYSLIB ZEPHYR80
-```
-
-TM2 can then resolve the public `.SYM` interfaces and implementation `.MCD`
-members directly from the archive.
-
-The integrated linker can run out of memory for an application that embeds the
-complete `Player`. In that case, use the TM2 Librarian to copy the required
-`.MCD` members from `ZEPHYR80.LIB` to the work disk:
+`SRC/CTCLOW.Z80` targets the FTL `ASM.COM` supplied in `../Software/disk1/5`.
+On CP/M, build it with these commands after copying `CTCLOW.DEF` and
+`CTCLOW.Z80` to the FTL work disk:
 
 ```text
-PLAYER.MCD  ZTR.MCD  PLYCORE.MCD
-SOUND.MCD
+MD CTCLOW.DEF
+ASM CTCLOW.Z80 CTCLOW.REL
+ML yourprog
 ```
 
-Add `TIMER.MCD` and `CTCLOW.MCD` only when the application chooses `Timer` as
-its clock. Then link with a standalone `TLINK.COM`. This is also the procedure
-automated by the PC build after it proves archive-based compilation.
+Keep `OPSASM.DAT` on the logged drive. Both ASM filenames require extensions.
+Compile the definition first; ASM replaces the definition's stub `.REL`.
+Its bare `LABEL` directives export procedures in `CTCLOW.DEF` order.
+The syntax follows the supplied FTL assembly examples and the
+[FTL manual, chapter 7](https://www.cpcwiki.eu/imgs/9/92/Hisoft_FTL_Modula-2_Z80_User_Guide_%28Hisoft%29_Manual.pdf).
 
-## Runtime ownership
+`FTLTEST.COM` is a hosted regression, not a hardware timer test; running it
+needs a C++ compiler and `libqkz80` via `tests/ftl_bridge.cpp`.
 
-`Timer` exclusively owns CTC0 while active. It follows the current Zephyr
-interrupt contract: the callback and its state occupy the application-owned
-top of the `E000h-E3FFh` reservation, registration uses Zephyr BDOS function 200, and
-unregistration uses function 201. It does not install an IM2 table or change
-`I`.
-
-Turbo Modula-2 initializes `SP` from CP/M page-zero address `0006h`, which is
-`EC06h` on the current Zephyr OS. `CTCLow` places its 55-byte callback at
-`E3C0h-E3F6h` and seven state bytes at `E3F8h-E3FEh`. This keeps the callback
-above the linked tracker's data/heap tail and leaves about 2 KiB above it for
-TM2's descending runtime stack. Applications using `Timer` must likewise keep
-their static data and heap below `E3C0h` and ensure their maximum stack depth
-does not descend into the callback.
-
-`Player` never configures or owns a timer. A successful `Player.Load` exposes
-the song's authored rate through `Player.TickRate`; the application advances
-music by calling `Player.Tick` exactly once per supplied music tick. The source
-can be `Timer.TakeTick`, a foreground VBlank event, or a game clock.
-
-Looping is an explicit player policy. `SetLooping(TRUE)` restarts the retained
-ZTR at each natural end without disk I/O, while `Finished`/`TakeFinished`
-publish completion at every pass. With looping disabled, ticks after completion
-are harmless; looping can be enabled later to restart on the next tick.
-
-`Player` exclusively owns all four PSGs from a successful `Load` until `Stop`
-or natural completion. Applications must not call `Sound` directly during that
-interval. `Timer` remains independent and under application control.
-
-## Hardware acceptance
-
-The hosted build checks parsing, archive resolution, linking, and full traversal
-of both regression songs. Run these checks on a Zephyr before treating a build
-as hardware-qualified:
-
-1. `TIMTEST.COM` reaches 600 ticks in about ten seconds, reports zero queue
-   overflows, and returns with console interrupts working.
-2. Repeated timer start/stop cycles do not disturb BIOS interrupt handling.
-3. `SNDTEST.COM` addresses tone and noise voices on all four PSGs and mutes on
-   exit.
-4. A small game loop calling `Player.Tick` from its foreground VBlank or timer
-   event plays a ZTR at the expected pitch and tempo and stops cleanly.
+Callback placement remains `E3C0h-E3F6h`, with state at `E3F8h-E3FEh`.
+FTL consumers must reserve that region against code, data, heap and stack;
+the bridge does not change the FTL runtime's memory allocator. It still
+requires the Zephyr BIOS registration API.

@@ -1,9 +1,10 @@
 DEFINITION MODULE CTCLow;
 
 (* Private interface used by TIMER.MOD.  These procedures are implemented
-   by CTCLOW.Z80 and converted from Microsoft REL form with TM2's REL tool. *)
+   by native FTL CTCLOW.Z80, or by CTCTM2.Z80 for the TM2 build. *)
 
-(* Microsoft REL public names are limited to six characters. *)
+(* Keep this order: FTL LABEL exports are positional.
+   Names also fit the TM2 Microsoft REL six-character limit. *)
 PROCEDURE LStart(rate : CARDINAL);
 PROCEDURE LStop;
 PROCEDURE IsAct(VAR value : CARDINAL);
@@ -13,3 +14,4 @@ PROCEDURE Over(VAR value : CARDINAL);
 PROCEDURE Ints(VAR value : CARDINAL);
 
 END CTCLow.
+

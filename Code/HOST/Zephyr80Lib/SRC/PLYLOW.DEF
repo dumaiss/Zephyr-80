@@ -1,0 +1,23 @@
+DEFINITION MODULE PlyLow;
+
+(* Hot leaf routines of PlyCore, implemented in Z80 by PLYLOW.ASM.
+
+   Only routines that take everything they need as parameters and call nothing
+   can live here: an assembly module cannot reach PlyCore's private procedures,
+   so anything that needs them has to stay in Modula-2 until its whole call
+   tree moves too.
+
+   MacroState lives here rather than in PlyCore because the VAR parameter below
+   has to be the same named type on both sides.
+
+   KEEP THIS ORDER: the LABEL exports in PLYLOW.ASM are positional. *)
+
+TYPE
+  MacroState = RECORD
+    offset, position, timer, delay : CARDINAL;
+  END;
+
+PROCEDURE BoundMacro(VAR macro : MacroState; released : BOOLEAN;
+                     count, loopAt, releaseAt : CARDINAL);
+
+END PlyLow.

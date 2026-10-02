@@ -1,33 +1,25 @@
 .DEFAULT_GOAL := all
 
-PYTHON   ?= python3
-RUNCPM   ?= TOOLS/RUNCPM
-TM2DIR   ?= TOOLS/TM2
-CCPFILE  ?= TOOLS/CCP-ZCP3.60K
-NIGHTZTR ?= ../SNTracker/songs/night-market.ztr
-RUNAWAY  ?= ../SNTracker/songs/RunawayCircuit.ztr
+PYTHON  ?= python3
+FTLDIR  ?= ../Software/disk1/5
+RUNCPM  ?= TOOLS/RUNCPM
+CCPFILE ?= TOOLS/CCP-ZCP3.60K
 
-.PHONY: all build test clean help
+.PHONY: all build clean help
 
 all: build
 
 build:
-	$(PYTHON) TOOLS/LIBBUILD.PY \
+	$(PYTHON) TOOLS/FTLBUILD.PY \
+		--ftl-dir "$(FTLDIR)" \
 		--runcpm "$(RUNCPM)" \
-		--tm2-dir "$(TM2DIR)" \
 		--ccp "$(CCPFILE)" \
-		--night "$(NIGHTZTR)" \
-		--runaway "$(RUNAWAY)" \
-		--output BUILD
-
-test: build
+		--output BUILD/FTL
 
 clean:
-	$(RM) BUILD/ZEPHYR80.LIB BUILD/TIMTEST.COM BUILD/SNDTEST.COM \
-		BUILD/ZTRTEST.COM BUILD/PLYTEST.COM BUILD/LIBTEST.COM
+	$(RM) -r BUILD/FTL
 
 help:
-	@echo "make          Build ZEPHYR80.LIB and run hosted regressions"
-	@echo "make clean    Remove generated library and test executables"
-	@echo "The default build uses the RunCPM and TM2 tools under TOOLS."
-	@echo "Overrides: PYTHON, RUNCPM, TM2DIR, CCPFILE, NIGHTZTR, RUNAWAY"
+	@echo "make          Build the FTL Modula-2 objects under BUILD/FTL"
+	@echo "make clean    Remove them"
+	@echo "Overrides: PYTHON, FTLDIR, RUNCPM, CCPFILE"

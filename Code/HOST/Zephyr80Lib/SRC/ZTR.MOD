@@ -1,7 +1,18 @@
 IMPLEMENTATION MODULE ZTR;
 
-FROM SYSTEM IMPORT ADR;
-FROM Files IMPORT FILE, Open, Close, NoTrailer, ReadBytes, EOF;
+FROM SYSTEM IMPORT ADR, WORD;
+FROM CPM IMPORT BDOS;
+
+(* Loading goes straight to the BDOS rather than through the Files module.
+   Files is three calls' worth of work here, but linking it drags Streams and
+   Storage in behind it -- 6,734 bytes of runtime measured in the tracker's
+   link map.  This library has to leave the TPA to the application. *)
+CONST
+  FOpen = 15;
+  FClose = 16;
+  FReadSeq = 20;
+  FSetDMA = 26;
+  RecordSize = 128;
 
 CONST
   HeaderSize = 64;
@@ -34,9 +45,12 @@ CONST
   ZReservedStart = 55;
 
 VAR
+  fcb : ARRAY [0..35] OF CHAR;
+  spill : ARRAY [0..127] OF CHAR;
   data : ARRAY [0..MaxFileSize-1] OF CHAR;
   dataSize : CARDINAL;
   isLoaded : BOOLEAN;
+  usedChannelsValue : CARDINAL;
   tickRateValue, speedValue, patternLengthValue : CARDINAL;
   orderCountValue, patternCountValue, instrumentCountValue : CARDINAL;
   orderBase, instrumentBase, macroBase : CARDINAL;
@@ -339,21 +353,78 @@ BEGIN
   RETURN loadOK
 END HeaderOK;
 
+(* Pack "NAME.EXT", optionally "D:NAME.EXT", into an FCB.  FALSE if the name
+   cannot be one. *)
+PROCEDURE BuildFcb(name : ARRAY OF CHAR) : BOOLEAN;
+VAR i, out, limit : CARDINAL; ch : CHAR;
+BEGIN
+  i := 0;
+  WHILE i < 36 DO fcb[i] := CHR(0); INC(i) END;
+  i := 1;
+  WHILE i <= 11 DO fcb[i] := ' '; INC(i) END;
+  limit := HIGH(name);
+  i := 0;
+  IF (limit >= 1) AND (name[1] = ':') THEN
+    ch := CAP(name[0]);
+    IF (ch < 'A') OR (ch > 'P') THEN RETURN FALSE END;
+    fcb[0] := CHR(ORD(ch) - ORD('A') + 1);
+    i := 2
+  END;
+  out := 1;
+  WHILE (i <= limit) AND (name[i] # CHR(0)) AND (name[i] # '.') DO
+    IF out <= 8 THEN fcb[out] := CAP(name[i]); INC(out) END;
+    INC(i)
+  END;
+  IF out = 1 THEN RETURN FALSE END;
+  IF (i <= limit) AND (name[i] = '.') THEN
+    INC(i);
+    out := 9;
+    WHILE (i <= limit) AND (name[i] # CHR(0)) DO
+      IF out <= 11 THEN fcb[out] := CAP(name[i]); INC(out) END;
+      INC(i)
+    END
+  END;
+  RETURN TRUE
+END BuildFcb;
+
 PROCEDURE Load(name : ARRAY OF CHAR) : LoadResult;
-VAR file : FILE; fetched : CARDINAL; result : LoadResult;
+VAR records, maxRecords, target : CARDINAL;
+    status : WORD;
+    result : LoadResult;
 BEGIN
   isLoaded := FALSE;
+  usedChannelsValue := 0;
   dataSize := MaxFileSize;
   IF (HIGH(name) = 0) OR (name[0] = CHR(0)) THEN RETURN noFileName END;
-  IF NOT Open(file, name) THEN RETURN fileNotFound END;
-  NoTrailer(file);
-  fetched := ReadBytes(file, ADR(data), MaxFileSize);
-  IF NOT EOF(file) THEN
-    Close(file);
-    RETURN fileTooLarge
+  IF NOT BuildFcb(name) THEN RETURN fileNotFound END;
+  IF CARDINAL(BDOS(FOpen, WORD(ADR(fcb)))) = 255 THEN RETURN fileNotFound END;
+
+  (* Straight record reads, so no end-of-text convention applies and the 1Ah
+     bytes in a .ZTR are ordinary data.  One read past the buffer is what
+     detects a file too large for it: the read lands in `spill` and, if it
+     succeeds, the file had more to give. *)
+  maxRecords := MaxFileSize DIV RecordSize;
+  records := 0;
+  result := loadOK;
+  LOOP
+    IF records >= maxRecords THEN
+      target := CARDINAL(ADR(spill))
+    ELSE
+      target := CARDINAL(ADR(data)) + records * RecordSize
+    END;
+    status := BDOS(FSetDMA, WORD(target));
+    status := BDOS(FReadSeq, WORD(ADR(fcb)));
+    IF CARDINAL(status) # 0 THEN EXIT END;
+    IF records >= maxRecords THEN
+      result := fileTooLarge;
+      EXIT
+    END;
+    INC(records)
   END;
-  Close(file);
-  dataSize := fetched;
+  status := BDOS(FClose, WORD(ADR(fcb)));
+  IF result # loadOK THEN RETURN result END;
+  IF records = 0 THEN RETURN fileNotFound END;
+  dataSize := records * RecordSize;
   result := HeaderOK();
   isLoaded := result = loadOK;
   RETURN result
@@ -416,6 +487,60 @@ BEGIN
   streamLength := 0;
   RETURN FALSE
 END FindPattern;
+
+PROCEDURE UsedChannels() : CARDINAL;
+VAR i, entry, ch, highest : CARDINAL;
+BEGIN
+  IF usedChannelsValue # 0 THEN RETURN usedChannelsValue END;
+  highest := 1;
+  IF patternDirBase + patternCountValue * 8 <= dataSize THEN
+    i := 0;
+    WHILE i < patternCountValue DO
+      entry := patternDirBase + i * 8;
+      ch := ORD(data[entry]);
+      IF (ch < 16) AND (ch >= highest) THEN highest := ch + 1 END;
+      INC(i)
+    END
+  ELSE
+    highest := 16
+  END;
+  usedChannelsValue := highest;
+  RETURN highest
+END UsedChannels;
+
+PROCEDURE FindOrderPatterns(order : CARDINAL;
+                            VAR offsets, lengths : ARRAY OF CARDINAL);
+VAR i, entry, ch, pat : CARDINAL;
+    wanted : ARRAY [0..15] OF CARDINAL;
+BEGIN
+  ch := 0;
+  WHILE ch < 16 DO
+    wanted[ch] := OrderPattern(order, ch);
+    offsets[ch] := 0;
+    lengths[ch] := 0;
+    INC(ch)
+  END;
+  (* One bounds check for the whole directory, then read `data` directly.
+     ByteAt and WordAt each re-check bounds and cost a call; at one pass over
+     every pattern per order change that dominates the loop. *)
+  IF patternDirBase + patternCountValue * 8 > dataSize THEN RETURN END;
+  i := 0;
+  WHILE i < patternCountValue DO
+    entry := patternDirBase + i * 8;
+    ch := ORD(data[entry]);
+    IF ch < 16 THEN
+      pat := ORD(data[entry + 1]);
+      (* offsets[ch] = 0 keeps FindPattern's first-match-wins behaviour;
+         offset zero already means "no stream" to DecodeChannelRow. *)
+      IF (wanted[ch] # NoPattern) AND (pat = wanted[ch]) AND
+         (offsets[ch] = 0) THEN
+        offsets[ch] := ORD(data[entry + 2]) + ORD(data[entry + 3]) * 256;
+        lengths[ch] := ORD(data[entry + 4]) + ORD(data[entry + 5]) * 256
+      END
+    END;
+    INC(i)
+  END
+END FindOrderPatterns;
 
 PROCEDURE FindInstrument(number : CARDINAL;
                          VAR entryOffset : CARDINAL) : BOOLEAN;

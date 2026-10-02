@@ -1,0 +1,35 @@
+DEFINITION MODULE PortIO;
+
+(* Z80 port input and output for FTL Modula-2.
+
+   FTL has no port I/O in the language: SYSTEM exports no IN or OUT, and the
+   SYSTEM.OUT this library used under Turbo Modula-2 does not exist here.  Port
+   access is a library module over two assembly entries.
+
+   SIGNATURE-COMPATIBLE WITH THE STOCK FTL PortIO, deliberately.  Dave Moore
+   ships PORTIO.DEF and PORTIO.ASM in DEFFILES.LQR and ASMFILES.LQR, but alone
+   among his assembly modules it has no prebuilt PORTIO.REL or PORTIO.SYM in
+   SYMFILES.LQR or MODULA2.LQR -- CHAIN, CPM, CPMBIOS, EXCHANGE, FASTMOVE and
+   INTLOGIC all do.  An FTL installation that has had PortIO compiled into its
+   libraries can therefore drop this module and Sound will link unchanged; the
+   copy of the distribution carried in Software/disk1/5 has not, which is why
+   this is built from source here and the project build stays self-contained.
+
+   Deliberately narrower than the stock module, which also exports
+   DisableInterrupts, EnableInterrupts and SetMode2Base.  None of those belong
+   on this machine: SetMode2Base sets the I register and the BIOS owns IM2 --
+   see the CTCLow bridge -- and bare DI/EI would cut across the BIOS interrupt
+   contracts.  Importing only In and Out keeps that true either way.
+
+   Val is WORD to match the stock interface.  Sound passes CARDINAL and FTL
+   accepts it; this was checked by building Sound against both signatures.
+
+   The procedure order below is load-bearing: the LABEL exports in PORTIO.ASM
+   must follow it. *)
+
+FROM SYSTEM IMPORT WORD;
+
+PROCEDURE In(PortAddress : CARDINAL) : WORD;
+PROCEDURE Out(PortAddress : CARDINAL; Val : WORD);
+
+END PortIO.
