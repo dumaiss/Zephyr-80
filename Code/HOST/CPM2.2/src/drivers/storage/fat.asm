@@ -26,7 +26,7 @@
 	.globl cpm_mount_reset,cpm_vfs_desc,cpm_vfs_cwd,cpm_vfs_root_pending
 	.globl cpm_mount_file_dispatch,cpm_mount_dir_dispatch
 	.globl cpm_mount_open,cpm_mount_stat,cpm_mount_opendir
-	.globl cpm_mount_cwd,cpm_mount_space,cpm_component_a
+	.globl cpm_mount_cwd,cpm_mount_space,cpm_component_system,cpm_component_a
 	.globl cbios_dma_addr,fac_eff_dma
 
 	.area FATP_CODE (ABS)

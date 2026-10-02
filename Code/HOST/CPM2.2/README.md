@@ -90,7 +90,7 @@ memory.
 | 219 | Protected `.COM` loader | `DE` = function-218 READ descriptor | Shell-private; closes and enters `0100h` or warm-boots on failure |
 
 Function 218 is provider-routed.  Its root remains the existing controller FS2
-tree for CP/M drive B, and it contributes a synthetic `/CPM/A` mount for USER 0
+tree for CP/M drive B, and it contributes a synthetic `/SYSTEM/A` mount for USER 0
 of the immutable recovery ROM.  The A provider supports directory iteration,
 stat, open, seek, tell and read; all mutations return read-only.  File sizes are
 necessarily rounded to CP/M's 128-byte record boundary.  It parses CP/M

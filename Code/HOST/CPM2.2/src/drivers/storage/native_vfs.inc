@@ -1,5 +1,5 @@
 ; Function-218 provider router.  The native FAT/FS2 backend remains the root
-; provider; this layer contributes the synthetic /CPM directory and its
+; provider; this layer contributes the synthetic /SYSTEM directory and its
 ; read-only A child.  Existing FAT handles remain owned by fat_native_entry.
 
 native_vfs_entry:
@@ -69,7 +69,7 @@ native_vfs_dir_handle:
 	jr nz,native_vfs_dir_close
 	xor a
 	ld (cpm_vfs_root_pending),a
-	ld hl,#fat_component_cpm
+	ld hl,#cpm_component_system
 	jp native_vfs_emit_dir
 native_vfs_dir_close:
 	xor a
@@ -82,7 +82,7 @@ native_vfs_namespace:
 	or a
 	jp nz,native_vfs_mounted
 
-	; Only the native provider's root receives the synthetic CPM entry.
+	; Only the native provider's root receives the synthetic SYSTEM entry.
 	call fat_effective_cwd_count
 	or a
 	jp nz,native_vfs_fat
@@ -120,7 +120,7 @@ native_vfs_root_opendir:
 	ret
 
 native_vfs_root_chdir:
-	ld hl,#fat_component_cpm
+	ld hl,#cpm_component_system
 	call native_vfs_name_eq
 	jp nz,native_vfs_fat
 	ld a,#1
@@ -129,36 +129,36 @@ native_vfs_root_chdir:
 	jp native_vfs_return
 
 native_vfs_root_stat:
-	ld hl,#fat_component_cpm
+	ld hl,#cpm_component_system
 	call native_vfs_name_eq
 	jp nz,native_vfs_fat
 	jp native_vfs_emit_stat_dir
 
 native_vfs_root_open:
-	ld hl,#fat_component_cpm
+	ld hl,#cpm_component_system
 	call native_vfs_name_eq
 	jp nz,native_vfs_fat
 	ld a,#FS2_STATUS_IS_DIR
 	jp native_vfs_return
 
 native_vfs_root_mkdir:
-	ld hl,#fat_component_cpm
+	ld hl,#cpm_component_system
 	call native_vfs_name_eq
 	jp nz,native_vfs_fat
 	ld a,#FS2_STATUS_EXISTS
 	jp native_vfs_return
 
 native_vfs_root_rename:
-	ld hl,#fat_component_cpm
+	ld hl,#cpm_component_system
 	call native_vfs_name_eq
 	jr z,native_vfs_root_read_only_status
-	ld hl,#fat_component_cpm
+	ld hl,#cpm_component_system
 	call native_vfs_name2_eq
 	jp nz,native_vfs_fat
 	jr native_vfs_root_read_only_status
 
 native_vfs_root_read_only:
-	ld hl,#fat_component_cpm
+	ld hl,#cpm_component_system
 	call native_vfs_name_eq
 	jp nz,native_vfs_fat
 native_vfs_root_read_only_status:

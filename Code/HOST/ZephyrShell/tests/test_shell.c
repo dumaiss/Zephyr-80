@@ -72,8 +72,8 @@ static void glob_tests(void)
     CHECK(zsh_glob_match("*.COM", "ZSH.COM"));
     CHECK(zsh_glob_match("f?o.*", "FOO.TXT"));
     CHECK(!zsh_glob_match("*.TXT", "ZSH.COM"));
-    CHECK(zsh_glob_has_pattern("/CPM/A/*.COM"));
-    CHECK(!zsh_glob_has_pattern("/CPM/A/ZSH.COM"));
+    CHECK(zsh_glob_has_pattern("/SYSTEM/A/*.COM"));
+    CHECK(!zsh_glob_has_pattern("/SYSTEM/A/ZSH.COM"));
 
     mock_fs_reset(); mock_fs_add_dir("/SRC"); mock_fs_add_dir("/DST");
     mock_fs_add_file("/SRC/ONE.TXT", 17, 1);
@@ -139,11 +139,11 @@ static void exec_path_tests(void)
     zep_fs_handle_t handle;
 
     mock_fs_reset();
-    mock_fs_add_dir("/CPM"); mock_fs_add_dir("/CPM/A");
+    mock_fs_add_dir("/SYSTEM"); mock_fs_add_dir("/SYSTEM/A");
     mock_fs_add_dir("/WORK");
-    mock_fs_add_file("/CPM/A/SDPUT.COM", 321, 7);
+    mock_fs_add_file("/SYSTEM/A/SDPUT.COM", 321, 7);
     CHECK(zep_fs_chdir("/WORK") == ZEP_FS_OK);
-    CHECK(zsh_exec_open_path("/CPM/A/sdput", name, &info, &handle) ==
+    CHECK(zsh_exec_open_path("/SYSTEM/A/sdput", name, &info, &handle) ==
           ZEP_FS_OK);
     CHECK(strcmp(name, "SDPUT.COM") == 0 && info.size == 321);
     CHECK(strcmp(mock_fs_cwd(), "/WORK") == 0);

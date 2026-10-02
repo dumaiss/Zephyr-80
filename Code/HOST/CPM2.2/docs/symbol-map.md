@@ -15,8 +15,8 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 222898 bytes |
 | Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 445327 bytes |
 | Resolved listing (drv_console_sercon.rst) | `build/drv_console_sercon.rst` | 219739 bytes |
-| Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 451490 bytes |
-| Resolved listing (drv_storage_cpm_mount.rst) | `build/drv_storage_cpm_mount.rst` | 248439 bytes |
+| Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 451541 bytes |
+| Resolved listing (drv_storage_cpm_mount.rst) | `build/drv_storage_cpm_mount.rst` | 248467 bytes |
 | Resolved listing (drv_storage_sd.rst) | `build/drv_storage_sd.rst` | 296594 bytes |
 | Resolved listing (drv_transport_ioccmd.rst) | `build/drv_transport_ioccmd.rst` | 358708 bytes |
 | Resolved listing (drv_console_hid_input.rst) | `build/drv_console_hid_input.rst` | 223848 bytes |

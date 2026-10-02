@@ -1,6 +1,6 @@
 ; Read-only CP/M filesystem provider for function 218.
 ;
-; The provider exposes the immutable recovery volume as /CPM/A.  It parses the
+; The provider exposes the immutable recovery volume as /SYSTEM/A.  It parses the
 ; ordinary CP/M 2.2 directory and extent allocation map in bank 7 and reads
 ; records through the existing ROM-disk backend; it never calls BDOS recursively.
 ; One A-file handle and one directory iterator may coexist with FAT handles.
@@ -19,7 +19,7 @@
 	.globl cpm_mount_open,cpm_mount_stat,cpm_mount_opendir
 	.globl cpm_mount_cwd,cpm_mount_space
 	.globl cpm_vfs_desc,cpm_vfs_cwd,cpm_vfs_root_pending
-	.globl cpm_component_a
+	.globl cpm_component_system,cpm_component_a
 	.globl native_vfs_return
 	.globl stg_a_read,stg_a_selected_drive
 	.globl stg_a_track,stg_a_sector,cbios_dma_addr
@@ -153,7 +153,7 @@ cpm_mount_opendir:
 	xor a
 	jp native_vfs_return
 
-; Return /CPM or /CPM/A one packed component at a time.
+; Return /SYSTEM or /SYSTEM/A one packed component at a time.
 cpm_mount_cwd:
 	ld a,(cpm_vfs_cwd)
 	ld c,a
@@ -170,7 +170,7 @@ cpm_mount_cwd:
 	cp c
 	jr nc,cpm_cwd_done
 	or a
-	ld hl,#fat_component_cpm_ref
+	ld hl,#cpm_component_system
 	jr z,cpm_cwd_emit
 	ld hl,#cpm_component_a
 cpm_cwd_emit:
@@ -728,8 +728,8 @@ cpm_emit_metadata:
 	ret
 
 ; Packed path components.
-fat_component_cpm_ref:
-	.ascii "CPM     "
+cpm_component_system:
+	.ascii "SYSTEM  "
 	.ascii "   "
 cpm_component_a:
 	.ascii "A       "

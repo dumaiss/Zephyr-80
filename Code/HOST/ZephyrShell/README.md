@@ -62,7 +62,7 @@ on every path.  `cd` also rolls back a partially completed native CHDIR.
 
 The native root remains the controller FS2 tree associated with CP/M drive B:.
 Function 218 also exposes USER 0 of the immutable recovery drive as the
-read-only mount `/CPM/A`; for example, `cd /CPM/A`, `ls`, and a bare recovery
+read-only mount `/SYSTEM/A`; for example, `cd /SYSTEM/A`, `ls`, and a bare recovery
 utility name all use the provider-backed path.  CP/M record storage has no exact
 byte length, so displayed A-file sizes are rounded up to 128 bytes.
 
@@ -85,7 +85,7 @@ Aliases: `dir` = `ls`, `del` = `rm`, `md` = `mkdir`, `rd` = `rmdir`, and
 unquoted, single quoted, or double quoted.
 
 The final path component may contain case-insensitive `*` and `?` patterns for
-`ls`, `cp`, `mv`, `rm`, and `cat`; for example, `ls /CPM/A/*.COM` or
+`ls`, `cp`, `mv`, `rm`, and `cat`; for example, `ls /SYSTEM/A/*.COM` or
 `cp *.TXT BACKUP`.  `*` matches any run of characters and `?` matches one.
 Wildcard or multi-source `cp`/`mv` requires an existing destination directory.
 At most 128 names are collected per pattern; no match is reported as not found.

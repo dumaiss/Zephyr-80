@@ -221,7 +221,7 @@ BANK7_REGIONS = [
     Region("Drive dispatcher", "CBIOS_SD_PROBE2_CODE_BASE", "SD_PROBE2_CODE_END", "CBIOS_SD_PROBE2_CODE_LIMIT",
            "Routes A: to its backend, gated B: to the synthetic FAT BIOS, and C:/D: to SD units.", zone="core", source="core/storage.asm"),
     Region("CP/M A: mount provider", "CPM_MOUNT_CODE_START", "CPM_MOUNT_CODE_END", "CBIOS_CPM_MOUNT_CODE_LIMIT",
-           "Read-only CP/M directory/extent adapter behind function 218 at `/CPM/A`.", zone="driver", source="drivers/storage/cpm_mount.asm"),
+           "Read-only CP/M directory/extent adapter behind function 218 at `/SYSTEM/A`.", zone="driver", source="drivers/storage/cpm_mount.asm"),
     Region("SIO services (bank 7)", "SIO_BANK7_CODE_START", "SIO_BANK7_CODE_END", "CBIOS_SIO_BANK7_CODE_LIMIT",
            "`sio1_ioc_init`, `sio_core_enable_interrupts`, `sio_register_rx_sink`: reached only from bank 7 or from boot after `bank7_check`.", zone="core", source="core/sio.asm"),
     # The third region that had no entry: the transport's bank-7 half, present
