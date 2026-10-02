@@ -1588,6 +1588,62 @@ static bool keyboard_reset_combo(uint8_t const *report, uint8_t copy)
     return false;
 }
 
+/* ColecoVision keypad matrix nibbles, active low, as the latch must present
+ * them.  Taken from the BIOS decode table at 10F5h, which is indexed by the
+ * complement of the port read: latch = ~index.  Order is 0-9 then * and #. */
+static const uint8_t coleco_keypad_nibble[12] = {
+    0x0au, 0x0du, 0x07u, 0x0cu, 0x02u, 0x03u,
+    0x0eu, 0x05u, 0x01u, 0x0bu, 0x09u, 0x06u
+};
+
+/* Map a boot-keyboard report to the keypad code it is currently holding.
+ *
+ * The number row and the numeric keypad both give 0-9.  Shift+8 and Shift+3
+ * give * and #, which is simply typing the character; keypad * is an alias.
+ * Returns CONTROLLER_KEYPAD_NONE when no such key is down, so an empty report
+ * releases the code.
+ *
+ * This runs on every keyboard report and does not consume the key: digits
+ * still reach the console queue, which matters because the same keyboard is
+ * the CP/M console until ColecoGo takes the machine over. */
+static uint8_t coleco_keypad_for_report(uint8_t const *report, uint8_t len)
+{
+    uint8_t index;
+    uint8_t usage;
+    bool    shifted;
+
+    if (len < 3u)
+        return CONTROLLER_KEYPAD_NONE;
+
+    shifted = (report[0] & (KEYBOARD_MODIFIER_LEFTSHIFT |
+                            KEYBOARD_MODIFIER_RIGHTSHIFT)) != 0u;
+
+    for (index = 2u; index < len; index++) {
+        usage = report[index];
+
+        if (usage == HID_KEY_KEYPAD_MULTIPLY)
+            return coleco_keypad_nibble[10];
+        if (shifted && usage == HID_KEY_8)
+            return coleco_keypad_nibble[10];
+        if (shifted && usage == HID_KEY_3)
+            return coleco_keypad_nibble[11];
+        if (shifted)
+            continue;
+
+        /* 1-9 are contiguous in both blocks; 0 sits above 9 in each. */
+        if (usage >= HID_KEY_1 && usage <= (uint8_t)(HID_KEY_1 + 8u))
+            return coleco_keypad_nibble[usage - HID_KEY_1 + 1u];
+        if (usage == HID_KEY_0)
+            return coleco_keypad_nibble[0];
+        if (usage >= HID_KEY_KEYPAD_1 && usage <= (uint8_t)(HID_KEY_KEYPAD_1 + 8u))
+            return coleco_keypad_nibble[usage - HID_KEY_KEYPAD_1 + 1u];
+        if (usage == HID_KEY_KEYPAD_0)
+            return coleco_keypad_nibble[0];
+    }
+
+    return CONTROLLER_KEYPAD_NONE;
+}
+
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
                                 uint8_t const *report, uint16_t len)
 {
@@ -1634,6 +1690,13 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
             reset_combo_seen = true;
             return;                     /* no Escape into the input queue */
         }
+
+        /* Mirror the number keys onto controller port 0's keypad lines.  The
+         * gamepad substitutes can only reach 1, 2, * and #; titles such as
+         * Montezuma's Revenge and the music cartridge need the other eight.
+         * Run on every report, including an all-released one, so that holding
+         * and releasing a key both register. */
+        controller_latch_keypad(0u, coleco_keypad_for_report(report, copy));
 
         /* Only newly pressed usages produce terminal input.  USB boot reports
          * repeat unchanged held keys; host-side repeat policy can be added

@@ -139,9 +139,17 @@ full root-cause trail, what has been ruled out, and the bisection guide.
 
 The cascaded 74AHC595 pair on the port C bus (SPI1) is driven by
 `controller_latch.c`. Both controller bytes start at the standard Coleco idle
-value `FFh`.  Each changed F310 report is decoded to the active-low Coleco data
+value `7Fh`.  Each changed F310 report is decoded to the active-low Coleco data
 bus and committed at SPI1's 32 MHz maximum.  Mount order assigns controller 1
-and then controller 2; unplugging a pad restores that byte to `FFh`.
+and then controller 2; unplugging a pad restores that byte to `7Fh`.
+
+**D7 is low.**  It was high until Montezuma's Revenge exposed it.  The BIOS
+complements every controller read, so a game sees `~latch`; Monte merges the
+two mode bytes and tests the result with `AND 0C0h` / `CP 0C0h` at `90FFh`.
+With D7 high that compare can never match and the jump button is dead.  The
+BIOS itself only reads D3:D0 and D6, and no other title in the test set looks
+at D7 of a controller byte, so `CONTROLLER_LATCH_IDLE` is the single point to
+revert should one turn up.
 
 The F310 mapping is d-pad (or left stick while the Mode LED is on) to Coleco
 directions, A/B to fire, X/Y to the existing keypad 1/2 selections, and
@@ -149,8 +157,44 @@ Back/Start to the Coleco `*`/`#` codes used by game-over/restart paths. The boar
 does not capture the Coleco keypad/joystick mode-select writes, so these keypad
 substitutes temporarily override the direction nibble while held. The raw latch
 codes are `0Dh` for key 1, `07h` for key 2, `09h` for `*`, and `06h` for `#`;
-with the idle upper nibble these appear at the controller port as `FDh`, `F7h`,
-`F9h`, and `F6h` respectively.
+with the idle upper nibble these appear at the controller port as `7Dh`, `77h`,
+`79h`, and `76h` respectively.
+
+### USB keyboard keypad
+
+The four gamepad substitutes cover only `1`, `2`, `*` and `#`. Titles that need
+the rest of the keypad -- the music cartridge, and games whose title screen
+waits on a digit the pad cannot produce -- are served from an attached USB
+keyboard instead, which is otherwise idle once ColecoGo has taken the machine
+over.
+
+The number row and the numeric keypad both give `0`-`9`. `Shift+8` and
+`Shift+3` give `*` and `#`, which is just typing the character; keypad `*` is an
+alias for `*`. The mapping drives controller port 0 and does **not** consume the
+keystroke, so digits still reach the CP/M console while CP/M is running.
+
+A keypad code held from the keyboard overrides the direction nibble of every
+gamepad report until it is released, matching the existing substitute
+behaviour: a real controller cannot report a keypad key and a direction at the
+same time. Releasing parks the nibble idle, and an attached pad restores real
+directions on its next report.
+
+The nibbles come from the BIOS decode table at `10F5h`, which is indexed by the
+complement of the port read, so the latch value is `~index`:
+
+| Key | Latch | Key | Latch | Key | Latch |
+| --- | --- | --- | --- | --- | --- |
+| 0 | `0Ah` | 4 | `02h` | 8 | `01h` |
+| 1 | `0Dh` | 5 | `03h` | 9 | `0Bh` |
+| 2 | `07h` | 6 | `0Eh` | `*` | `09h` |
+| 3 | `0Ch` | 7 | `05h` | `#` | `06h` |
+
+`make test` runs `tools/test_coleco_keypad.py`, which extracts the mapping
+function from `src/ioc_hid.c`, compiles it for the host, and checks all twelve
+keys plus the negative cases against that BIOS table rather than against a
+transcribed copy of it.  It also replays the whole latch byte through the
+BIOS complement, so a regression in D7 or the fire line fails the test rather
+than reaching hardware.
 
 `CONTROLLER_LATCH_COUNTER_TEST` still defaults to **0**, which compiles
 `controller_latch_tick()` down to an empty call.

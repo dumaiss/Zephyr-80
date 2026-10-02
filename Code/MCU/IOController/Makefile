@@ -152,6 +152,7 @@ $(FIRMWARE_HEX): $(FIRMWARE_SRCS) $(FLAGS_STAMP) | $(BUILD_DIR)
 
 test:
 	@python3 tools/test_fs2_contract.py
+	@python3 tools/test_coleco_keypad.py
 
 size: $(FIRMWARE_HEX)
 	@ls -lh "$(BUILD_DIR)"

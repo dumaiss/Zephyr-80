@@ -241,6 +241,37 @@ def read_rom(path: Path) -> bytes:
     return data
 
 
+def survey(scanner: Scanner) -> dict[str, int]:
+    """Counts a maintainer needs to triage a title before patching it.
+
+    `untraced` is the headline number: byte pairs that look like direct I/O but
+    that the trace could not prove are instructions. Most are data -- Donkey
+    Kong has eight and no direct I/O at all -- so this is a hint to
+    disassemble, never a list of sites to patch.
+    """
+    image = scanner.rom
+    counts = {"bios_calls": 0, "untraced": 0, "mode_select": 0, "controller": 0}
+    for off in range(scanner.size - 2):
+        op = image[off]
+        if op in (0xD3, 0xDB):
+            port = image[off + 1]
+            looks_like_io = VDP_BLOCK_LO <= port <= VDP_BLOCK_HI or (
+                op == 0xD3 and port >= SOUND_BLOCK_LO
+            )
+            if looks_like_io and not scanner.starts[off]:
+                counts["untraced"] += 1
+        if not scanner.starts[off]:
+            continue
+        if op == 0xD3 and (0x80 <= image[off + 1] <= 0x9F or 0xC0 <= image[off + 1] <= 0xDF):
+            counts["mode_select"] += 1
+        if op == 0xDB and image[off + 1] >= SOUND_BLOCK_LO:
+            counts["controller"] += 1
+        if op == 0xCD or op & 0xC7 == 0xC4:
+            if (image[off + 1] | image[off + 2] << 8) < 0x2000:
+                counts["bios_calls"] += 1
+    return counts
+
+
 def command_scan(args: argparse.Namespace) -> None:
     data = read_rom(args.rom)
     scanner = Scanner(data)
@@ -250,13 +281,37 @@ def command_scan(args: argparse.Namespace) -> None:
         print("Header:   no AA55h/55AAh cartridge header; the loader will not scan")
         return
     reached = sum(scanner.starts)
-    print(f"Traced:   {reached} of {scanner.size} bytes are reachable instruction starts")
+    print(f"Traced:   {reached} reachable instructions")
     print(f"Patched:  {scanner.vdp} VDP, {scanner.sound} sound")
     for off, old, new in scanner.patched:
         print(f"    {CART_BASE + off - 1:04X}  {old:02X} -> {new:02X}")
     print(f"Indirect: {len(scanner.indirect)} unpatchable OUT (C)/IN (C) site(s)")
     for off in scanner.indirect:
         print(f"    {CART_BASE + off:04X}")
+
+    counts = survey(scanner)
+    print(f"BIOS:     {counts['bios_calls']} calls into 0000h-1FFFh")
+    print(f"Untraced: {counts['untraced']} byte pair(s) that resemble direct I/O")
+    if counts["mode_select"]:
+        print(
+            f"Warning:  {counts['mode_select']} controller mode-select write(s); "
+            "Zephyr decodes neither 80h-9Fh nor C0h-DFh"
+        )
+    print()
+    if scanner.vdp or scanner.sound:
+        print("Verdict:  the loader adapts this title's own hardware access.")
+    elif counts["bios_calls"] > 20:
+        print(
+            "Verdict:  this title works through the BIOS, which ColecoGo already\n"
+            "          adapts. Nothing here needs a cartridge patch; any remaining\n"
+            "          fault is CPU speed or controller semantics, not port mapping."
+        )
+    else:
+        print(
+            "Verdict:  no reachable direct I/O and little BIOS use. Its hardware\n"
+            "          access is most likely behind a computed jump or in a\n"
+            "          register; disassemble before writing a manifest."
+        )
 
 
 def command_pat(args: argparse.Namespace) -> None:

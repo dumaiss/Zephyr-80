@@ -36,7 +36,7 @@
 #define CTRL_SPI_BAUD         SPI1_BAUD_1MHZ
 
 /* Bytes presented to a standard Coleco controller read.  Inputs are active
- * low.  D7 is high; D6 is fire and D3..D0 are
+ * low.  D7 is low -- see CONTROLLER_LATCH_IDLE -- D6 is fire and D3..D0 are
  * left/down/right/up respectively when read as individual bit positions. */
 #define CTRL_UP               0x01u
 #define CTRL_RIGHT            0x02u
@@ -50,6 +50,14 @@
 
 static uint8_t controller_value[CONTROLLER_LATCH_PORTS];
 static uint8_t controller_tx[3];
+
+/* Keypad code currently held from the keyboard, per port, or
+ * CONTROLLER_KEYPAD_NONE.  Two bytes rather than a saved copy of each
+ * gamepad byte: releasing restores the idle direction nibble, and the next
+ * F310 report refreshes real directions within one poll interval. */
+static uint8_t keypad_code[CONTROLLER_LATCH_PORTS] = {
+    CONTROLLER_KEYPAD_NONE, CONTROLLER_KEYPAD_NONE
+};
 
 #define CTRL_UPDATE_MS        500u
 #define CTRL_TICKS_PER_UPDATE (CTRL_UPDATE_MS / TIMEBASE_TICK_MS)
@@ -121,6 +129,27 @@ void controller_latch_set(uint8_t controller, uint8_t value)
     controller_latch_write(controller_value[0], controller_value[1]);
 }
 
+void controller_latch_keypad(uint8_t controller, uint8_t code)
+{
+    uint8_t value;
+
+    if (controller >= CONTROLLER_LATCH_PORTS)
+        return;
+    if (keypad_code[controller] == code)
+        return;
+
+    keypad_code[controller] = code;
+
+    /* Apply it to whatever the port is presenting now, so a keyboard works
+     * with no gamepad attached at all.  Releasing parks the direction nibble
+     * idle; a gamepad, if present, overwrites it on its next report. */
+    value = controller_value[controller] | 0x0fu;
+    if (code != CONTROLLER_KEYPAD_NONE)
+        value = (uint8_t)((value & 0xf0u) | (code & 0x0fu));
+
+    controller_latch_set(controller, value);
+}
+
 void controller_latch_release(uint8_t controller)
 {
     controller_latch_set(controller, CONTROLLER_LATCH_IDLE);
@@ -185,6 +214,12 @@ bool controller_latch_f310_report(uint8_t controller,
      * during a keypad override, where D6 is the controller's second fire key. */
     if ((report[4] & 0x60u) != 0u)
         value &= (uint8_t)~CTRL_FIRE;
+
+    /* A keypad key held on the keyboard outranks the stick.  Without this the
+     * next gamepad report, which arrives every few milliseconds, would wipe
+     * the code before the Z80 ever read it. */
+    if (keypad_code[controller] != CONTROLLER_KEYPAD_NONE)
+        value = (uint8_t)((value & 0xf0u) | (keypad_code[controller] & 0x0fu));
 
     controller_latch_set(controller, value);
     return true;
