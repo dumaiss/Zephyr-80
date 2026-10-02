@@ -40,13 +40,15 @@ ZEXT_SYSINFO		= 203
 ZEXT_MOVE		= 210
 ZEXT_XMOVE		= 211
 ZEXT_SETBNK		= 213
-ZSYSINFO_VERSION	= 2
+; Version 1 already publishes the stable banking facade used below.  Later
+; versions only append fields, so they remain compatible with this launcher.
+ZSYSINFO_MIN_VERSION	= 1
 
 ; ---------------------------------------------------------------------------
 ; Zephyr hardware and takeover layout.
 ; ---------------------------------------------------------------------------
 BANK_PORT		= 0x00
-.include "memory_modes.inc"
+.include "layout/modes.inc"
 ; Bank 7 belongs to the operating system. Bank 6 is sacrificed only after all
 ; fallible CP/M work has completed; takeover never returns to the OS.
 TARGET_BANK		= 0x06
@@ -132,8 +134,8 @@ start:
 	ld c,#ZEXT_SYSINFO
 	call BDOS
 	ld a,(hl)
-	cp #ZSYSINFO_VERSION
-	jp nz,error_bios_abi
+	cp #ZSYSINFO_MIN_VERSION
+	jp c,error_bios_abi
 
 	; The loader and both file buffers live in the currently selected low bank.
 	; Selecting that same bank as the target would overwrite the running loader.

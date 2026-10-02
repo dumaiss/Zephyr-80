@@ -219,6 +219,8 @@ The transfer to `0000h` is a `JP`, not a `CALL`. There is no caller to return to
 While CP/M is active, the implementation uses the stable Zephyr BDOS facade:
 function 211 selects the source and destination banks and function 210 performs
 the cross-bank move. It does not call the movable private BIOS jump table.
+SYSINFO version 1 introduced the required facade; ColecoGo accepts that version
+and later append-only SYSINFO revisions.
 
 Direct low-level bank manipulation belongs only in the final no-return trampoline where CP/M bookkeeping is no longer relevant.
 
