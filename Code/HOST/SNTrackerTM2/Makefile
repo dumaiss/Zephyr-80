@@ -1,13 +1,10 @@
 .DEFAULT_GOAL := all
 
-PYTHON   ?= python3
-LIBPROJ  ?= ../Zephyr80Lib
-LIBFILE  ?= $(LIBPROJ)/BUILD/ZEPHYR80.LIB
-RUNCPM   ?= $(LIBPROJ)/TOOLS/RUNCPM
-TM2DIR   ?= $(LIBPROJ)/TOOLS/TM2
-CCPFILE  ?= $(LIBPROJ)/TOOLS/CCP-ZCP3.60K
+PYTHON  ?= python3
+LIBPROJ ?= ../Zephyr80Lib
+FTLDIR  ?= ../Software/disk1/5
 
-.PHONY: all library build test clean help
+.PHONY: all library build clean help
 
 all: build
 
@@ -15,19 +12,15 @@ library:
 	$(MAKE) -C "$(LIBPROJ)" build
 
 build: library
-	$(PYTHON) TOOLS/TM2BUILD.PY \
-		--runcpm "$(RUNCPM)" \
-		--tm2-dir "$(TM2DIR)" \
-		--ccp "$(CCPFILE)" \
-		--library "$(LIBFILE)" \
+	$(PYTHON) TOOLS/FTLBUILD.PY \
+		--ftl-dir "$(FTLDIR)" \
+		--library "$(LIBPROJ)/BUILD/FTL" \
 		--output BUILD
 
-test: build
-
 clean:
-	$(RM) BUILD/SNTRACK.COM
+	$(RM) BUILD/SNTRACK.COM BUILD/BUILD.LOG
 
 help:
-	@echo "make          Rebuild Zephyr80Lib, then build SNTRACK.COM"
-	@echo "make clean    Remove the generated standalone tracker"
-	@echo "Overrides: PYTHON, LIBPROJ, LIBFILE, RUNCPM, TM2DIR, CCPFILE"
+	@echo "make          Rebuild Zephyr80Lib for FTL, then build SNTRACK.COM"
+	@echo "make clean    Remove the generated tracker"
+	@echo "Overrides: PYTHON, LIBPROJ, FTLDIR"
