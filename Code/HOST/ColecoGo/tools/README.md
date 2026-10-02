@@ -4,13 +4,47 @@
   CP/M `.COM` file and validates Intel HEX checksums.
 - `check_build.py` checks the code/TPA boundary and the size and placement of
   both takeover stages from the assembler listing.
+- `scan_cartridge.py` is the reference model for the loader's in-memory
+  cartridge I/O scan, and builds the `.PAT` manifests the loader reads. The Z80
+  implementation in `src/cartscan.inc` must agree with it exactly.
+- `make_io_test_rom.py` generates a synthetic cartridge, and its manifest, that
+  exercises every decision the scanner makes. Real ROMs do not: Donkey Kong has
+  no direct I/O and Zaxxon reaches the hardware only through `OUT (C)`.
+- `test_cartscan.py` runs `build/SCANTEST.COM` under a CP/M emulator and
+  compares its trace bitmap and adapted image, byte for byte, with the model.
+  It skips itself when no emulator is installed.
 - `patch_cartridge.py` verifies and applies title-specific, size-preserving ROM
   patches on the development PC. It always writes a separate output file and
   requires both a whole-ROM SHA-256 match and expected bytes at every patch
   site.
 
-The build tools run as part of `make`. The cartridge patcher is invoked
-manually. Print a cartridge's identity with:
+The build tools run as part of `make`; `make test` runs the scanner
+comparison. The cartridge patcher is invoked manually.
+
+## Cartridge scan and PAT manifests
+
+Report what the loader's trace will do to an image, without changing it:
+
+```sh
+python3 tools/scan_cartridge.py scan GAME.ROM
+```
+
+A non-zero indirect count means the title drives the hardware through
+`OUT (C)` or `IN r,(C)`, which no operand rewrite can reach. Correct a copy of
+the ROM by hand and turn the differences into a manifest:
+
+```sh
+python3 tools/scan_cartridge.py pat GAME.ROM GAME.FIX GAME.PAT
+```
+
+`pat` records only what the automatic scan does not already do, and binds the
+manifest to the image by record-rounded length and CRC-16. Copy `GAME.PAT`
+beside `GAME.ROM` on the CP/M drive; the loader finds it by name.
+
+## Development-PC ROM patching
+
+`patch_cartridge.py` is unrelated to the loader's `PAT` manifests: it writes a
+separately patched ROM file on the PC. Print a cartridge's identity with:
 
 ```sh
 python3 tools/patch_cartridge.py info GAME.ROM

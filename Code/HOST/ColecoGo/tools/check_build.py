@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 COM_ORIGIN = 0x0100
@@ -25,6 +28,54 @@ def listing_label(text: str, label: str) -> int:
     if not match:
         raise ValueError(f"label {label!r} not found in assembler listing")
     return int(match.group(1), 16)
+
+
+def ihex_bytes(path: Path) -> dict[int, int]:
+    """Every byte the linked image places, keyed by address."""
+    image: dict[int, int] = {}
+    upper = 0
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        record = bytes.fromhex(line[1:])
+        count = record[0]
+        address = (record[1] << 8) | record[2]
+        kind = record[3]
+        data = record[4 : 4 + count]
+        if kind == 0:
+            for index, value in enumerate(data):
+                image[upper + address + index] = value
+        elif kind == 2:
+            upper = int.from_bytes(data, "big") << 4
+        elif kind == 4:
+            upper = int.from_bytes(data, "big") << 16
+    return image
+
+
+def check_opcode_table(listing: str, image: dict[int, int]) -> None:
+    """The assembled instruction-length table must match the reference model.
+
+    cartscan.inc and tools/scan_cartridge.py have to decode Z80 instructions
+    identically, or the loader patches bytes the model never predicted. The
+    table is the one part that is easy to mistype, so it is compared here.
+    """
+    from scan_cartridge import MAIN_LENGTH
+
+    base = listing_label(listing, "scan_len_main")
+    assembled = [image.get(base + opcode) for opcode in range(256)]
+    if None in assembled:
+        raise ValueError("scan_len_main is not fully present in the linked image")
+    mismatched = [
+        f"{opcode:02X}h is {assembled[opcode]}, expected {MAIN_LENGTH[opcode]}"
+        for opcode in range(256)
+        if assembled[opcode] != MAIN_LENGTH[opcode]
+    ]
+    if mismatched:
+        raise ValueError(
+            "scan_len_main disagrees with tools/scan_cartridge.py: "
+            + "; ".join(mismatched[:8])
+        )
 
 
 def ihex_addresses(path: Path) -> set[int]:
@@ -80,6 +131,8 @@ def main() -> None:
         if TARGET_STAGE_B + stage_b_size > TARGET_STAGE_LIMIT:
             raise ValueError(f"Stage B is too large: {stage_b_size} bytes")
 
+        check_opcode_table(listing, ihex_bytes(args.ihx))
+
         addresses = ihex_addresses(args.ihx)
         if not addresses:
             raise ValueError("linked image contains no data")
@@ -97,7 +150,8 @@ def main() -> None:
 
     print(
         f"layout ok: COM {actual_com_size} bytes; "
-        f"Stage A {stage_a_size}/1024; Stage B {stage_b_size}/128"
+        f"Stage A {stage_a_size}/1024; Stage B {stage_b_size}/128; "
+        "opcode table matches the reference model"
     )
 
 

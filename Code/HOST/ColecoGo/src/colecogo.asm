@@ -16,6 +16,7 @@
 ; CP/M 2.2 BDOS interface.
 ; ---------------------------------------------------------------------------
 BDOS			= 0x0005
+BDOS_CONOUT		= 0x02
 BDOS_PRINT		= 0x09
 BDOS_OPEN		= 0x0f
 BDOS_CLOSE		= 0x10
@@ -61,6 +62,12 @@ CART_HALF_BYTES		= 0x4000
 CART_BYTES		= 0x8000
 CART_BUFFER_END		= CART_BUFFER + CART_BYTES	; B800h
 PRIVATE_STACK_TOP	= 0xbc00
+
+; Scan scratch, above the private stack and below the Stage A window at
+; E000h. None of it is part of the loaded program image.
+SCAN_BITMAP		= 0xbc00	; 4096 bytes, one bit per cartridge byte
+SCAN_WORKLIST		= 0xcc00	; 2048 bytes, 1024 pending trace addresses
+PATCH_BUFFER		= 0xd400	; 2176 bytes, one PAT manifest
 
 TARGET_BIOS		= 0x0000
 TARGET_UPPER_STAGE	= 0x2000
@@ -168,6 +175,17 @@ start:
 	call adapt_bios_vdp_ports
 	call fill_cart_buffer
 	call load_cart_file
+
+	; Adapt the cartridge itself. Unlike the BIOS this is not a known image,
+	; so reachable direct I/O operands are located by a trace and an optional
+	; per-title manifest supplies whatever the trace cannot reach. Both run
+	; while CP/M is still intact and may still report an error.
+	ld de,#msg_adapting
+	call puts
+	call compute_cart_crc
+	call scan_cart_io
+	call report_cart_scan
+	call apply_cart_patch_file
 
 	; No fallible operation follows this message.
 	ld de,#msg_takeover
@@ -280,6 +298,17 @@ validate_cart_file:
 	jp nz,error_cart_size
 validate_cart_size_ok:
 	ld (cart_records),hl
+	; CP/M only reports whole 128-byte records, so the scan and any manifest
+	; work on the record-rounded image. The count is at most 100h records,
+	; giving at most 8000h bytes.
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	ld (cart_byte_count),hl
 	call close_work_fcb
 	jp z,error_cart_close
 	ret
@@ -745,6 +774,9 @@ stage_b_template:
 	jp 0x0000
 stage_b_template_end:
 
+.include "cartscan.inc"
+.include "cartpatch.inc"
+
 ; ===========================================================================
 ; Resident loader data. No storage below FILE_BUFFER_BASE may follow this.
 ; ===========================================================================
@@ -763,6 +795,24 @@ source_bank:
 	.db 0
 cart_records:
 	.dw 0
+cart_byte_count:
+	.dw 0
+cart_crc16:
+	.dw 0
+scan_wl_ptr:
+	.dw 0
+scan_vdp_count:
+	.dw 0
+scan_snd_count:
+	.dw 0
+scan_ind_count:
+	.dw 0
+scan_overflow:
+	.db 0
+scan_scanned:
+	.db 0
+print_u16_started:
+	.db 0
 load_ptr:
 	.dw 0
 records_left:
@@ -835,11 +885,13 @@ bios_vdp_patch_table:
 	.db 0,0
 
 msg_banner:
-	.ascii "ColecoGo 0.4 - Zephyr-80 ColecoVision loader\r\n$"
+	.ascii "ColecoGo 0.5 - Zephyr-80 ColecoVision loader\r\n$"
 msg_validating:
 	.ascii "Validating COLECO.ROM and cartridge...\r\n$"
 msg_loading:
 	.ascii "Reading images into the CP/M TPA...\r\n$"
+msg_adapting:
+	.ascii "Adapting cartridge I/O for Zephyr hardware...\r\n$"
 msg_takeover:
 	.ascii "Images loaded; starting ColecoVision (no return).\r\n$"
 msg_usage:

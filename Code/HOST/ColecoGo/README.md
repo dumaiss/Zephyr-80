@@ -159,8 +159,8 @@ The current loader recognizes the standard Coleco BIOS layout (CRC32
 `3AA93EF3`) by checking every affected operand and patches its in-memory copy
 from `BEh/BFh` to LunchCrema's `A0h/A1h`. The disk file is not modified. A BIOS
 with a different layout is rejected before bank 6 is changed. Cartridge code
-that performs its own direct `BEh/BFh` VDP I/O is not yet adapted; the initial
-target is software such as Donkey Kong that uses the standard BIOS VDP calls.
+that performs its own direct VDP I/O is adapted by the cartridge scan
+described below.
 
 ### Controller input
 
@@ -176,7 +176,70 @@ individual sound device: `FFh` selects an unused slot and `E0h` selects PSG0.
 ColecoGo therefore patches the standard BIOS's guarded `FFh` output operands
 to `E0h` in memory. The BIOS's normal sound initialization and runtime engine
 then drive PSG0 directly; ColecoGo is not involved after takeover. Cartridge
-code that writes directly to `FFh` is not yet adapted.
+code that writes directly to `FFh` is adapted by the cartridge scan described
+below.
+
+### Cartridge I/O adaptation
+
+Titles that reach the hardware through the BIOS are handled entirely by the
+BIOS patch above. Titles that drive the VDP or the PSG themselves are not, so
+the loader adapts the cartridge image as well, in memory, before takeover.
+
+The BIOS can be patched from a fixed table because it is a known image. A
+cartridge is not, so its operands have to be found. The loader cannot simply
+scan for `D3h`/`DBh` byte pairs: Donkey Kong contains nine such pairs in its
+data tables and no direct I/O at all, so a blind scan would corrupt a title
+that currently works.
+
+Instead the loader runs a recursive-descent trace from the cartridge header's
+documented entry points -- the start address at offset `0Ah` and the eight
+`RST`/NMI vector slots at `0Ch`-`23h` -- following direct jumps, calls and
+relative branches. Only a byte the trace proves is the operand of a reachable
+I/O instruction is rewritten:
+
+| Instruction | Operand | Rewritten to | Why |
+| --- | --- | --- | --- |
+| `OUT (n),A` / `IN A,(n)` | `A0h`-`BFh` | `A0h` or `A1h`, keeping A0 | LunchCrema decodes A1:A0 |
+| `OUT (n),A` | `E0h`-`FFh` | `E0h` | Afternoon Blend decodes A2:A0; `E0h` is PSG0 |
+| `IN A,(n)` | `E0h`-`FFh` | unchanged | these are the controller latches, already correct |
+
+An image with no `AA55h`/`55AAh` header is not traced at all, because its
+entry vectors would be arbitrary data.
+
+This is deliberately conservative, and it has two known limits. Code reached
+only through a computed jump or a jump table is never traced, so its operands
+are never rewritten. A port held in a register -- `OUT (C),r`, `IN r,(C)` or
+the block I/O forms -- is not an operand and cannot be rewritten at all;
+Zaxxon drives its hardware this way. The loader counts both cases and reports
+them before takeover:
+
+```text
+Cartridge scan: 4 VDP and 1 sound operand(s) adapted, 0 indirect OUT (C)/IN (C) site(s) left unpatched.
+```
+
+A non-zero indirect count means the title will probably still misbehave, and
+that a patch manifest is needed.
+
+### Per-title patch manifests
+
+For the sites the trace cannot reach, a manifest named after the cartridge
+with CP/M type `PAT` supplies them explicitly, under the same guarded
+expect/replace discipline the BIOS table uses. `GAME.ROM` is accompanied by
+`GAME.PAT` on the same drive; a missing manifest is not an error.
+
+A manifest is bound to one image by its record-rounded length and a CRC-16,
+and every site is verified before any byte is written, so a manifest that does
+not match changes nothing and the loader returns to CP/M with bank 6 intact.
+
+Build one by hand-correcting a copy of the ROM and diffing it:
+
+```sh
+python3 tools/scan_cartridge.py scan GAME.ROM          # what the trace will do
+python3 tools/scan_cartridge.py pat GAME.ROM GAME.FIX GAME.PAT
+```
+
+`pat` records only the differences the automatic scan does not already make,
+so a manifest never duplicates the trace.
 
 ## Final takeover sequence
 
@@ -234,11 +297,18 @@ Code/HOST/ColecoGo/
 |-- Makefile
 |-- src/
 |   |-- README.md
-|   `-- colecogo.asm
+|   |-- colecogo.asm
+|   |-- cartscan.inc      cartridge I/O trace, shared with the harness
+|   |-- cartpatch.inc     PAT manifest reader, shared with the harness
+|   `-- scantest.asm      standalone scanner harness, test-only
 `-- tools/
     |-- README.md
     |-- check_build.py
-    `-- ihx_to_com.py
+    |-- ihx_to_com.py
+    |-- scan_cartridge.py     reference model and PAT builder
+    |-- make_io_test_rom.py   synthetic test cartridge
+    |-- test_cartscan.py      compares the Z80 scanner with the model
+    `-- patch_cartridge.py
 ```
 
 ## Current first-pass implementation
@@ -274,8 +344,10 @@ prove that the BIOS occupies exactly 64 records and the cartridge no more than
 record. ROM images should be copied to CP/M without text-mode translation.
 
 This first pass intentionally does not support bank-switched cartridges, a
-return to CP/M, title-specific timing adaptation, cartridge-side direct VDP
-port rewriting, or runtime emulation/proxying of Coleco hardware. Hardware
+return to CP/M, title-specific timing adaptation, or runtime
+emulation/proxying of Coleco hardware. Version 0.5 adds the cartridge I/O
+scan and `PAT` manifests described above; it does not rewrite indirect
+`OUT (C)` hardware access, which no static operand patch can reach. Hardware
 testing of version 0.2 reached both the BIOS title and Donkey Kong's option
 screen, exposing inherited CP/M V9958 state: the BIOS VRAM clear ran with G6
 mode and CPU VRAM page 7 still selected. Version 0.3 reset that state. Version
