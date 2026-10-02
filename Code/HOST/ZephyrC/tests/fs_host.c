@@ -13,7 +13,7 @@ enum {
     OP_OPEN=1, OP_CLOSE, OP_READ, OP_SEEK, OP_TELL, OP_STAT,
     OP_OPENDIR, OP_READDIR, OP_CHDIR, OP_WRITE, OP_SYNC, OP_TRUNCATE,
     OP_DELETE, OP_RENAME, OP_MKDIR, OP_RMDIR, OP_CWD, OP_SPACE, OP_CDUP,
-    OP_CLOSEDIR
+    OP_CLOSEDIR, OP_SPACE_KIB
 };
 enum {
     D_STATUS=2, D_FLAGS=3, D_HANDLE=4, D_POSITION=6, D_LENGTH=10,
@@ -135,6 +135,8 @@ uint8_t zep__fs_native(uint8_t d[32])
         dir_open=0;break;
     case OP_SPACE:
         putdword(d+D_POSITION,0x12345678);putdword(d+D_NAME,0x23456789);break;
+    case OP_SPACE_KIB:
+        putdword(d+D_POSITION,0x00123456);putdword(d+D_NAME,0x00234567);break;
     default:
         die("unexpected operation");
     }
@@ -219,7 +221,7 @@ static void api_tests(void)
     zep_fs_dir_t dir;
     zep_fs_dirent_t ent;
     zep_fs_stat_t st;
-    uint32_t value,free_bytes,total_bytes;
+    uint32_t value,free_bytes,total_bytes,free_kib,total_kib;
     char path[40],tiny[2];
     unsigned i;
 
@@ -278,6 +280,8 @@ static void api_tests(void)
          "directory context reuse");
     NEED(zep_fs_space(&free_bytes,&total_bytes)==ZEP_FS_OK&&
          free_bytes==0x12345678&&total_bytes==0x23456789,"space");
+    NEED(zep_fs_space_kib(&free_kib,&total_kib)==ZEP_FS_OK&&
+         free_kib==0x00123456&&total_kib==0x00234567,"space KiB");
 }
 
 int main(void)

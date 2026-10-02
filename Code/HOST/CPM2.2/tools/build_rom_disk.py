@@ -234,6 +234,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--utils-dir", type=Path, default=Path("../Utilities/build"))
     parser.add_argument("--zsys-dir", type=Path, default=Path("../Utilities/zsys"))
     parser.add_argument("--monitor-dir", type=Path, default=Path("../Monitor/build"))
+    parser.add_argument("--zshell-dir", type=Path,
+                        help="optional ZephyrShell build directory")
     parser.add_argument("--stock-dir0", type=Path, default=Path("../Software/disk1/0"))
     parser.add_argument("--stock-dir1", type=Path, default=Path("../Software/disk1/1"))
     parser.add_argument("--staging-dir", type=Path, default=Path("build/romdisk-stage"))
@@ -288,12 +290,16 @@ def collect_sources(args: argparse.Namespace) -> list[tuple[Path, str]]:
         "utils": args.utils_dir,
         "zsys": args.zsys_dir,
         "monitor": args.monitor_dir,
+        "zshell": args.zshell_dir,
         "stock0": args.stock_dir0,
         "stock1": args.stock_dir1,
     }
     resolved: list[tuple[Path, str]] = []
     missing: list[str] = []
-    for root_key, name, cpm_name in MANIFEST:
+    manifest = MANIFEST
+    if args.zshell_dir is not None:
+        manifest += (("zshell", "ZSH.COM", "ZSH.COM"),)
+    for root_key, name, cpm_name in manifest:
         source = _find(roots[root_key], name)
         if source is not None:
             resolved.append((source, cpm_name))

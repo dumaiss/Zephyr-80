@@ -350,9 +350,11 @@
 #define IOC_OFF_FS2_STAT_SIZE            (IOC_OFF_PAYLOAD + 0u) /* uint32 */
 #define IOC_OFF_FS2_STAT_ATTR            (IOC_OFF_PAYLOAD + 4u) /* AM_DIR only */
 #define IOC_FS2_STAT_REPLY_LEN            5u
-#define IOC_OFF_FS2_SPACE_FREE           (IOC_OFF_PAYLOAD + 0u) /* uint32 */
-#define IOC_OFF_FS2_SPACE_TOTAL          (IOC_OFF_PAYLOAD + 4u) /* uint32 */
-#define IOC_FS2_SPACE_REPLY_LEN           8u
+#define IOC_OFF_FS2_SPACE_FREE           (IOC_OFF_PAYLOAD + 0u) /* legacy saturated bytes */
+#define IOC_OFF_FS2_SPACE_TOTAL          (IOC_OFF_PAYLOAD + 4u) /* legacy saturated bytes */
+#define IOC_OFF_FS2_SPACE_FREE_KIB       (IOC_OFF_PAYLOAD + 8u) /* exact uint32 KiB */
+#define IOC_OFF_FS2_SPACE_TOTAL_KIB      (IOC_OFF_PAYLOAD + 12u) /* exact uint32 KiB */
+#define IOC_FS2_SPACE_REPLY_LEN           16u
 
 /* ---------------------------------------------------------------------------
  * Volume commands

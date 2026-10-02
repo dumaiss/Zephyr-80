@@ -30,7 +30,10 @@
 ;   210-217  ZBIOS_EXT_BASE entry 0-7 (MOVE, XMOVE, SELMEM, SETBNK, IOCALL,
 ;            VIDEO_SEND, IOCBULK, IOCBULKW) through a register block:
 ;            DE -> A, C, B, E, D, L, H in, the same seven bytes out
-;   Each returns A, with L = A and H = B = 0.  An unassigned number returns FFh.
+;   218  native FS2 descriptor gate
+;   219  private destructive COM loader used by ZephyrShell; does not return
+;   Functions 200-218 return A, with L = A and H = B = 0.  An unassigned
+;   number returns FFh.
 ;   SELMEM through 212 changes the caller's bank, so the caller must be in
 ;   common memory, as it always had to be for SELMEM.
 
@@ -38,7 +41,7 @@
 	.globl FACADE_CODE_START,FACADE_CODE_END
 	.globl irq_register,irq_unregister,irq_program_exit
 	.globl zephyr_sysinfo,IOC_DIAG_STATUS,BIOS_CODE_START
-	.globl fat_bdos_or_zsdos,native_gate_entry
+	.globl fat_bdos_or_zsdos,native_gate_entry,zexec_loader_entry
 	.globl fac_eff_dma
 	.globl fac_zext_return,fac_de
 
@@ -476,6 +479,8 @@ fac_return_de:
 fac_zext:
 	cp #218
 	jp z,native_gate_entry
+	cp #219
+	jp z,zexec_loader_entry
 	cp #ZEXT_REGISTER_ISR
 	jr nz,fac_zext_unregister
 	call irq_register
@@ -484,12 +489,12 @@ fac_zext_unregister:
 	cp #ZEXT_UNREGISTER_ISR
 	jr nz,fac_zext_exit
 	call irq_unregister
-	jp fac_zext_return
+	jr fac_zext_return
 fac_zext_exit:
 	cp #ZEXT_PROGRAM_EXIT
 	jr nz,fac_zext_sysinfo
 	call irq_program_exit
-	jp fac_zext_return
+	jr fac_zext_return
 fac_zext_sysinfo:
 	cp #ZEXT_SYSINFO
 	jr nz,fac_zext_bios

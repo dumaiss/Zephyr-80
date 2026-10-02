@@ -11,15 +11,16 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | ROM page 0: reset vector and common memory | `build/firmware.bin` | 65536 bytes |
 | Bank 7 payload | `build/bank7.bin` | 65536 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Resolved listing (firmware.rst) | `build/firmware.rst` | 520262 bytes |
-| Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 220448 bytes |
-| Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 435694 bytes |
-| Resolved listing (drv_console_sercon.rst) | `build/drv_console_sercon.rst` | 217278 bytes |
-| Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 426828 bytes |
-| Resolved listing (drv_storage_sd.rst) | `build/drv_storage_sd.rst` | 294133 bytes |
-| Resolved listing (drv_transport_ioccmd.rst) | `build/drv_transport_ioccmd.rst` | 356247 bytes |
-| Resolved listing (drv_console_hid_input.rst) | `build/drv_console_hid_input.rst` | 221387 bytes |
-| Linker symbol map | `build/firmware.map` | 35145 bytes |
+| Resolved listing (firmware.rst) | `build/firmware.rst` | 528120 bytes |
+| Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 222909 bytes |
+| Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 445327 bytes |
+| Resolved listing (drv_console_sercon.rst) | `build/drv_console_sercon.rst` | 219739 bytes |
+| Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 451490 bytes |
+| Resolved listing (drv_storage_cpm_mount.rst) | `build/drv_storage_cpm_mount.rst` | 248439 bytes |
+| Resolved listing (drv_storage_sd.rst) | `build/drv_storage_sd.rst` | 296594 bytes |
+| Resolved listing (drv_transport_ioccmd.rst) | `build/drv_transport_ioccmd.rst` | 358708 bytes |
+| Resolved listing (drv_console_hid_input.rst) | `build/drv_console_hid_input.rst` | 223848 bytes |
+| Linker symbol map | `build/firmware.map` | 35751 bytes |
 | Layout manifest | `build/layout.manifest` | 1445 bytes |
 
 ## System Addresses
@@ -170,8 +171,8 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | `irq_unexpected` | `F6D7h` | `EI`/`RETI` stub for unprogrammed vectors. |
 | `irq_ctc_slots` | `F6ECh` | Callback entry per CTC channel; zero is unregistered. |
 | `facade_entry` | `EC09h` | BDOS facade entry, reached from `FBASE`. |
-| `facade_reset` | `EF2Ah` | Resets the facade's DMA tracking. |
-| `zephyr_sysinfo` | `EF6Eh` | System information block returned by function 203. |
+| `facade_reset` | `EF2Dh` | Resets the facade's DMA tracking. |
+| `zephyr_sysinfo` | `EF71h` | System information block returned by function 203. |
 | `sercon_init` | `BA14h` | Arms the serial console fallback at cold boot. |
 | `sercon_install` | `BA24h` | Rebinds the serial console after warm boot. |
 

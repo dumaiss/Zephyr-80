@@ -29,6 +29,10 @@ assert "reply->bytes[IOC_OFF_FS2_STAT_ATTR] = info.fattrib & AM_DIR;" in fs2
 assert "uint8_t fs_bulk_chunk[IOC_FS_CHUNK_MAX]" in share
 assert "IOC_FS2_FILE_SLOTS               2u" in header
 assert "IOC_FS2_DIR_SLOTS                1u" in header
+assert "IOC_OFF_FS2_SPACE_FREE_KIB" in header
+assert "IOC_OFF_FS2_SPACE_TOTAL_KIB" in header
+assert "IOC_FS2_SPACE_REPLY_LEN           16u" in header
+assert "kibibyte_count(free_clusters, cluster_bytes)" in fs2
 assert "IOC_FS2_STATUS_STALE" not in header  # status spelling is FS2_STALE
 assert "IOC_STATUS_FS2_STALE" in header
 # A namespace mutation on a path some handle still holds open corrupts the

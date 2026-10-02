@@ -607,6 +607,12 @@ static uint32_t byte_count(DWORD clusters, DWORD cluster_bytes)
     return (uint32_t)(clusters * cluster_bytes);
 }
 
+static uint32_t kibibyte_count(DWORD clusters, DWORD cluster_bytes)
+{
+    uint64_t kibibytes = ((uint64_t)clusters * cluster_bytes) / 1024uL;
+    return kibibytes > 0xffffffffuL ? 0xffffffffuL : (uint32_t)kibibytes;
+}
+
 void handler_fs2_space(const IocFrame *request, IocFrame *reply)
 {
     FATFS *fs;
@@ -629,6 +635,10 @@ void handler_fs2_space(const IocFrame *request, IocFrame *reply)
           byte_count(free_clusters, cluster_bytes));
     put32(&reply->bytes[IOC_OFF_FS2_SPACE_TOTAL],
           byte_count(fs->n_fatent - 2uL, cluster_bytes));
+    put32(&reply->bytes[IOC_OFF_FS2_SPACE_FREE_KIB],
+          kibibyte_count(free_clusters, cluster_bytes));
+    put32(&reply->bytes[IOC_OFF_FS2_SPACE_TOTAL_KIB],
+          kibibyte_count(fs->n_fatent - 2uL, cluster_bytes));
 }
 
 void handler_fs2_open_rw(const IocFrame *request, IocFrame *reply)

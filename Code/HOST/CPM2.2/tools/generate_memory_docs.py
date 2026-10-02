@@ -161,6 +161,8 @@ COMMON_REGIONS = [
            "`ctc_disable_interrupts`: CTC reset and vector base.", zone="interrupt", source="common/irq.asm"),
     Region("IOC link failure record", "CBIOS_IOC_DIAG_BASE", "IOC_DIAG_RECORD_END", "CBIOS_IOC_DIAG_CODE_LIMIT",
            "Read by the CP/M tools through BDOS function 203.", zone="abi", source="layout/memory.inc"),
+    Region("Destructive COM loader", "ZEXEC_LOADER_START", "ZEXEC_LOADER_END", "CBIOS_EXEC_LOADER_LIMIT",
+           "Private BDOS 219: 512-byte native load, close and jump to 0100h.", zone="abi", source="common/exec_loader.asm"),
     Region("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END", "CBIOS_SIO_CORE_CODE_LIMIT",
            "SIO0/B and SIO1 initialization, receive sinks, SIO interrupt body.", zone="interrupt", source="common/sio.asm"),
     Region("Crossing layer", "XING_CODE_START", "XING_CODE_END", "CBIOS_XING_CODE_LIMIT",
@@ -218,6 +220,8 @@ BANK7_REGIONS = [
            "The build-selected A: backend.", zone="driver", source="drivers/storage/rom.asm"),
     Region("Drive dispatcher", "CBIOS_SD_PROBE2_CODE_BASE", "SD_PROBE2_CODE_END", "CBIOS_SD_PROBE2_CODE_LIMIT",
            "Routes A: to its backend, gated B: to the synthetic FAT BIOS, and C:/D: to SD units.", zone="core", source="core/storage.asm"),
+    Region("CP/M A: mount provider", "CPM_MOUNT_CODE_START", "CPM_MOUNT_CODE_END", "CBIOS_CPM_MOUNT_CODE_LIMIT",
+           "Read-only CP/M directory/extent adapter behind function 218 at `/CPM/A`.", zone="driver", source="drivers/storage/cpm_mount.asm"),
     Region("SIO services (bank 7)", "SIO_BANK7_CODE_START", "SIO_BANK7_CODE_END", "CBIOS_SIO_BANK7_CODE_LIMIT",
            "`sio1_ioc_init`, `sio_core_enable_interrupts`, `sio_register_rx_sink`: reached only from bank 7 or from boot after `bank7_check`.", zone="core", source="core/sio.asm"),
     # The third region that had no entry: the transport's bank-7 half, present
@@ -674,6 +678,10 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
         layout.error("native file gate does not immediately follow SIO ownership return")
     if s("NATIVE_GATE_END") > s("CBIOS_NATIVE_GATE_LIMIT"):
         layout.error("native file gate exceeds the pre-BIOS common-memory tail")
+    if s("ZEXEC_LOADER_START") != s("CBIOS_EXEC_LOADER_BASE"):
+        layout.error("destructive COM loader does not start at its declared base")
+    if s("ZEXEC_LOADER_END") > s("CBIOS_EXEC_LOADER_LIMIT"):
+        layout.error("destructive COM loader exceeds its protected common-memory gap")
     if s("BIOS7_BASE") != s("ZSDOS_ORG") + s("ZSDOS_SIZE"):
         layout.error("BIOS7_BASE is not ZSDOS_ORG + ZSDOS_SIZE; ZSDOS computes its BIOS as ZSDOS+1000h")
 
@@ -723,6 +731,24 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
         layout.error("FAT persistent-state reservation is not the declared 2 KiB ceiling")
     if s("FAT_BDOS_STATE_END") > fat_state_limit:
         layout.error("FAT persistent state exceeds CBIOS_FAT_BDOS_STATE_LIMIT")
+
+    cpm_mount_code_base = s("CBIOS_CPM_MOUNT_CODE_BASE")
+    cpm_mount_code_limit = s("CBIOS_CPM_MOUNT_CODE_LIMIT")
+    if s("CPM_MOUNT_CODE_START") != cpm_mount_code_base:
+        layout.error("CP/M mount provider does not start at CBIOS_CPM_MOUNT_CODE_BASE")
+    if s("CPM_MOUNT_CODE_END") > cpm_mount_code_limit:
+        layout.error("CP/M mount provider exceeds CBIOS_CPM_MOUNT_CODE_LIMIT")
+    if cpm_mount_code_base < s("CBIOS_SD_PROBE2_CODE_LIMIT") or cpm_mount_code_limit > s("VDRIP_STORAGE_DPHDPB_BASE"):
+        layout.error("CP/M mount provider is outside the 5A00h-5FFFh bank-7 image gap")
+
+    cpm_mount_state_base = s("CBIOS_CPM_MOUNT_STATE_BASE")
+    cpm_mount_state_limit = s("CBIOS_CPM_MOUNT_STATE_LIMIT")
+    if s("CPM_MOUNT_STATE_START") != cpm_mount_state_base:
+        layout.error("CP/M mount state does not start at CBIOS_CPM_MOUNT_STATE_BASE")
+    if s("CPM_MOUNT_STATE_END") > cpm_mount_state_limit:
+        layout.error("CP/M mount state exceeds CBIOS_CPM_MOUNT_STATE_LIMIT")
+    if cpm_mount_state_base < fat_state_limit or cpm_mount_state_limit > OS_BODY_LIMIT:
+        layout.error("CP/M mount state overlaps an existing bank-7 reservation")
 
     fat_dph = s("FAT_BIOS_DPH")
     fat_dpb = s("FAT_BIOS_DPB")
@@ -1101,7 +1127,8 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         f"| `{xspan(s('SD_DEBLOCK_TAG'), s('SD_DEBLOCK_TAG') + s('SD_DEBLOCK_TAG_SIZE'))}` | SD deblock tag (valid, unit, block) |",
         f"| `{xspan(s('SD_DEBLOCK_TAG') + s('SD_DEBLOCK_TAG_SIZE'), s('CBIOS_FAT_BDOS_STATE_BASE'))}` | Unallocated |",
         f"| `{xspan(s('CBIOS_FAT_BDOS_STATE_BASE'), s('CBIOS_FAT_BDOS_STATE_LIMIT'))}` | FAT BDOS persistent-state reservation | Fixed bank-7 state; track/sector and synthetic ALV currently use `{s('FAT_BDOS_STATE_END') - s('FAT_BDOS_STATE_START')}` bytes. |",
-        f"| `{xspan(s('CBIOS_FAT_BDOS_STATE_LIMIT'), OS_BODY_LIMIT)}` | Unallocated |",
+        f"| `{xspan(s('CBIOS_CPM_MOUNT_STATE_BASE'), s('CBIOS_CPM_MOUNT_STATE_LIMIT'))}` | CP/M A: mount state | Function-218 provider CWD, handle, iterator and extent-reader state; currently uses `{s('CPM_MOUNT_STATE_END') - s('CPM_MOUNT_STATE_START')}` bytes. |",
+        f"| `{xspan(s('CBIOS_CPM_MOUNT_STATE_LIMIT'), OS_BODY_LIMIT)}` | Unallocated |",
         "",
         "All eight physical SRAM banks include E000h-FFFFh, visible in flat mode 01. Modes 10/11 overlay that range with bank 0.",
         "",

@@ -63,6 +63,7 @@
 	.include "common/boot.asm"
 	.include "core/banner.asm"
 	.include "common/native_stage.asm"
+	.include "common/exec_loader.asm"
 	.include "core/console.asm"
 	.include "common/sio.asm"
 	.include "core/sio.asm"

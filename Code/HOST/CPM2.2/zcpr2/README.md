@@ -5,10 +5,11 @@ The command processor of the Zephyr-80 system, assembled into the ROM at
 
 ```sh
 make zcpr2    # assemble ZCPR2 -> build/ccp-zcpr2.bin
-make          # build a ROM carrying it
+make CCP=zcpr2  # build a ROM carrying it
 ```
 
-`CCP=zcpr2` is the only supported value. The banked operating system needs the
+`CCP=zcpr2` selects this retained development/recovery command processor.
+`CCP=zshell` selects the native ZephyrShell instead.  ZCPR2 still uses the
 program-exit call below, which the stock DRI CCP does not make.
 
 ## Why it fits, and why ZCPR3 does not

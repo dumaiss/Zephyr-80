@@ -41,6 +41,7 @@
 #define OP_SPACE            18
 #define OP_CDUP             19
 #define OP_CLOSEDIR         20
+#define OP_SPACE_KIB        21
 
 static void put16(uint8_t *p, uint16_t value)
 {
@@ -518,6 +519,21 @@ zep_fs_status_t zep_fs_space(uint32_t *free_bytes, uint32_t *total_bytes)
     if (status == ZEP_FS_OK) {
         *free_bytes = get32(d + D_POSITION);
         *total_bytes = get32(d + D_SPACE_TOTAL);
+    }
+    return status;
+}
+
+zep_fs_status_t zep_fs_space_kib(uint32_t *free_kib, uint32_t *total_kib)
+{
+    uint8_t d[FS_DESC_BYTES];
+    zep_fs_status_t status;
+    if (!free_kib || !total_kib)
+        return ZEP_FS_RANGE;
+    begin(d, OP_SPACE_KIB);
+    status = call(d);
+    if (status == ZEP_FS_OK) {
+        *free_kib = get32(d + D_POSITION);
+        *total_kib = get32(d + D_SPACE_TOTAL);
     }
     return status;
 }

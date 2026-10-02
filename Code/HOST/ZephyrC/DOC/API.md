@@ -191,12 +191,18 @@ zep_fs_status_t zep_fs_opendir(zep_fs_dir_t *);
 zep_fs_status_t zep_fs_readdir(zep_fs_dir_t, zep_fs_dirent_t *);
 zep_fs_status_t zep_fs_closedir(zep_fs_dir_t);
 zep_fs_status_t zep_fs_space(uint32_t *, uint32_t *);
+zep_fs_status_t zep_fs_space_kib(uint32_t *, uint32_t *);
 ```
 
 The open modes are read, update, create-new and create-always. Stat and
 directory entries contain an exact 32-bit byte size and native flags;
 `ZEP_FS_FLAG_DIRECTORY` is the structural directory bit. Directory names are
 returned as conventional NUL-terminated `NAME.EXT` strings.
+
+The byte-count zep_fs_space call saturates either result at UINT32_MAX when a
+volume exceeds the 32-bit byte range. The zep_fs_space_kib call reports exact
+KiB counts through the additive BDOS SPACE_KIB operation and append-only FS2
+SPACE extension; it is preferred for large FAT volumes.
 
 Names passed to file and namespace calls are one 1-8 plus optional 1-3
 component. Lowercase ASCII is folded to uppercase. Wildcards, slashes, drive

@@ -24,10 +24,11 @@ Code regions, each bounded by the limit `cbios_defs.inc` declares for it. Used a
 
 | Region | Owner | Zone | Used | Free | Contents |
 |---|---|---|---:|---:|---|
-| `EC00h-EF9Fh` | BDOS facade | abi | 925 | 3 | `CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-218, system information block. |
-| `EFA0h-EFF7h` | IOC link failure record | abi | 16 | 72 | Read by the CP/M tools through BDOS function 203. |
+| `EC00h-EF9Fh` | BDOS facade | abi | 928 | 0 | `CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-218, system information block. |
+| `EFA0h-EFB0h` | IOC link failure record | abi | 16 | 1 | Read by the CP/M tools through BDOS function 203. |
+| `EFB1h-EFF7h` | Destructive COM loader | abi | 66 | 5 | Private BDOS 219: 512-byte native load, close and jump to 0100h. |
 | `EFF8h-EFFFh` | Transport level | abi | 1 | 7 | The BIOS IO Controller transport level byte. |
-| `F000h-F1AFh` | BIOS tables, ROM copy, boot | abi | 410 | 22 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero. |
+| `F000h-F1AFh` | BIOS tables, ROM copy, boot | abi | 425 | 7 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero. |
 | `F1B0h-F1D1h` | SIO ownership return | crossing | 34 | 0 | Quiesces application-owned SIO0/A at boot and application exit. |
 | `F1D2h-F20Fh` | Native file gate | crossing | 46 | 16 | Function 218 descriptor and read-data staging through the existing crossing mechanism. |
 | `F210h-F2E7h` | Banking services | crossing | 210 | 6 | `SELMEM`, `SETBNK`, `XMOVE`, `MOVE`. |
@@ -76,11 +77,12 @@ System common code ends at `F8A3h`.
 | `5400h-55FFh` | B: select probe | driver | 23 | 489 | Card availability, then the B: DPH. |
 | `5600h-57FFh` | Drive A: backend | driver | 164 | 348 | The build-selected A: backend. |
 | `5800h-59FFh` | Drive dispatcher | core | 179 | 333 | Routes A: to its backend, gated B: to the synthetic FAT BIOS, and C:/D: to SD units. |
+| `5A00h-5FFFh` | CP/M A: mount provider | driver | 1192 | 344 | Read-only CP/M directory/extent adapter behind function 218 at `/CPM/A`. |
 | `8000h-87FFh` | Console font | asset | 2048 | 0 | Build-selected CP850 glyph source, read once at boot. |
 | `8800h-8BFFh` | Boot banner text | asset | 64 | 960 | Banner string, CP850 to match the console atlas. |
 | `8C00h-8FFFh` | Boot banner printer | asset | 56 | 968 | Prints the banner text beside it; runs once from cold boot, in mode 11. |
-| `9000h-9FFFh` | V9958 console | driver | 3315 | 781 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
-| `A000h-B7FFh` | FAT BDOS backend | driver | 5190 | 954 | FS2 client, native file manager, writable FAT BDOS personality, read cache, DPH and DPB. |
+| `9000h-9FFFh` | V9958 console | driver | 3208 | 888 | Direct LunchCrema V9958 console: parser, renderer, cursor and state. |
+| `A000h-B7FFh` | FAT BDOS backend | driver | 5768 | 376 | FS2 client, native file manager, writable FAT BDOS personality, read cache, DPH and DPB. |
 | `B800h-B9FFh` | SIO services (bank 7) | core | 121 | 391 | `sio1_ioc_init`, `sio_core_enable_interrupts`, `sio_register_rx_sink`: reached only from bank 7 or from boot after `bank7_check`. |
 | `BA00h-BBFFh` | Serial console tee (bank 7) | driver | 211 | 301 | Driver table, init/install, the CONST/CONIN/CONOUT tee and TX; polled through the console facade. |
 
@@ -97,11 +99,11 @@ Data:
 | `6500h` | C: DPH and DPB | SD unit 1. |
 | `6510h-65FFh` | Unallocated | Deliberate gap after the C: DPH. |
 | `6600h-7FFFh` | Reclaimable resource/cache pool | 13 lines of 512 bytes; no permanent owner. |
-| `8000h-85FFh` | Console font | CP850 4x6. |
+| `8000h-87FFh` | Console font | CP850 6x8. |
 | `8800h-883Fh` | Boot banner text | |
 | `A04Ah` | B: synthetic DPH and DPB | Read-only FAT compatibility geometry; selection gate is `1`. |
 
-The last resident asset ends at `D100h`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.
+The last resident asset ends at `D649h`. Cold boot installs all 64 KiB; OS-owned initialized contents may occupy `C000h-DFFFh` outside the reservations below.
 
 | Range | Use |
 |---|---|
@@ -116,7 +118,8 @@ The last resident asset ends at `D100h`. Cold boot installs all 64 KiB; OS-owned
 | `CE00h-CE08h` | SD deblock tag (valid, unit, block) |
 | `CE09h-CE0Fh` | Unallocated |
 | `CE10h-D60Fh` | FAT BDOS persistent-state reservation | Fixed bank-7 state; track/sector and synthetic ALV currently use `1131` bytes. |
-| `D610h-DFFFh` | Unallocated |
+| `D610h-D70Fh` | CP/M A: mount state | Function-218 provider CWD, handle, iterator and extent-reader state; currently uses `58` bytes. |
+| `D710h-DFFFh` | Unallocated |
 
 All eight physical SRAM banks include E000h-FFFFh, visible in flat mode 01. Modes 10/11 overlay that range with bank 0.
 

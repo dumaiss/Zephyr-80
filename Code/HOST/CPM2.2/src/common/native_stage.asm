@@ -1,4 +1,4 @@
-; Function 218 caller-buffer crossing helpers.
+; Function 218 caller-buffer crossing helpers and private loader call.
 ;
 ; COMMON REQUIRED: when an application is mapped, its buffer can be hidden by
 ; bank 7 at 2000h-BFFFh.  WRITE data must therefore be copied into the existing
@@ -6,7 +6,8 @@
 ; returning.  Protocol handling, file state and all mutation policy remain in
 ; the bank-7 FAT backend.
 
-	.globl native_stage_write,native_deliver_read
+	.globl native_stage_write,native_deliver_read,zexec_native_call
+	.globl native_vfs_entry,xing_os_call_ix
 	.globl NATIVE_STAGE_START,NATIVE_STAGE_END
 
 	.area CODE (ABS)
@@ -55,6 +56,15 @@ native_deliver_read:
 	ldir
 native_deliver_read_done:
 	pop af
+	ret
+
+; Common helper for the protected destructive loader.
+zexec_native_call:
+	ld de,#FAC_SFCB_BUF
+	push ix
+	ld ix,#native_vfs_entry
+	call xing_os_call_ix
+	pop ix
 	ret
 
 NATIVE_STAGE_END:

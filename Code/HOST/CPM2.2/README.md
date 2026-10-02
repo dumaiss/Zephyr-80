@@ -86,6 +86,16 @@ memory.
 | 202 | Program exit | — | Clears all registrations; ZCPR2 calls it |
 | 203 | System information | — | `HL` = system information block |
 | 210-217 | `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `IOCALL`, `VIDEO_SEND`, `IOCBULK`, `IOCBULKW` | `DE` = register block | Register block updated; `A` = status |
+| 218 | Native byte-oriented filesystem | `DE` = 32-byte version-1 descriptor | Descriptor updated; `A` = filesystem status |
+| 219 | Protected `.COM` loader | `DE` = function-218 READ descriptor | Shell-private; closes and enters `0100h` or warm-boots on failure |
+
+Function 218 is provider-routed.  Its root remains the existing controller FS2
+tree for CP/M drive B, and it contributes a synthetic `/CPM/A` mount for USER 0
+of the immutable recovery ROM.  The A provider supports directory iteration,
+stat, open, seek, tell and read; all mutations return read-only.  File sizes are
+necessarily rounded to CP/M's 128-byte record boundary.  It parses CP/M
+directory extents through the ROM-disk backend rather than recursively calling
+BDOS, so another drive provider can be added behind the same router later.
 
 The register block for 210-217 is seven bytes: `A`, `C`, `B`, `E`, `D`, `L`,
 `H`. The services keep their BIOS register contracts, and their buffers can be
@@ -241,10 +251,14 @@ The default build uses the physical V9958 console, ROM drive A, and SD drive B:
 make
 ```
 
-It builds ZCPR2 and ZSDOS under a vendored copy of RunCPM (`tools/runcpm`),
-which it compiles on first use. `CCP=zcpr2 BDOS=zsdos` is the only supported
-combination: the stock CCP and BDOS cannot run behind the banked operating
-system. The build also needs Python 3, GNU Make, and the SDCC Z80 tools
+It builds the selected command environment and ZSDOS under a vendored copy of
+RunCPM (`tools/runcpm`), which it compiles on first use.  ZephyrShell is the
+default command environment; its build installs the small CCP shim and adds
+`A:ZSH.COM` to the recovery volume.  The explicit `make CCP=zshell` form is
+useful in scripts; select the retained recovery shell with `make CCP=zcpr2`.
+`BDOS=zsdos` remains required because the stock BDOS cannot run behind the
+banked operating system.  The build also needs Python 3, GNU Make, and the
+SDCC Z80 tools
 `sdasz80`, `sdldz80` and `makebin`.
 
 Select the retained Virtual Drip console at build time with:
@@ -271,7 +285,8 @@ Primary generated artifacts:
 | Artifact | Meaning |
 |---|---|
 | `build/zephyr80.bin` | 512 KiB burnable ROM image |
-| `build/zephyr80-zcpr2-zsdos-v9958-rom-85x26.bin` | default image, stamped with all selectable backends and V9958 geometry |
+| `build/zephyr80-zcpr2-zsdos-v9958-rom-85x26.bin` | retained recovery ZCPR2 image |
+| `build/zephyr80-zshell-zsdos-v9958-rom-85x26.bin` | default ZephyrShell image |
 | `build/firmware.bin` | ROM page 0: reset vector and common memory |
 | `build/bank7.bin` | bank 7 payload: ZSDOS, the BIOS and drivers |
 | `docs/memory-map.md` | generated memory map, free space and validation report |

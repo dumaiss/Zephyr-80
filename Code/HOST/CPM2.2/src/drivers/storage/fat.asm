@@ -21,7 +21,12 @@
 	.globl fat_bios_settrk,fat_bios_setsec
 	.globl fat_bios_read,fat_bios_write,fat_bios_sectran
 	.globl fat_bdos_dispatch,fat_bdos_post,fat_bdos_or_zsdos,fat_native_entry
+	.globl native_vfs_entry,native_vfs_return,fat_effective_cwd_count
 	.globl fat_current_drive,fat_current_user,fat_context_reset
+	.globl cpm_mount_reset,cpm_vfs_desc,cpm_vfs_cwd,cpm_vfs_root_pending
+	.globl cpm_mount_file_dispatch,cpm_mount_dir_dispatch
+	.globl cpm_mount_open,cpm_mount_stat,cpm_mount_opendir
+	.globl cpm_mount_cwd,cpm_mount_space,cpm_component_a
 	.globl cbios_dma_addr,fac_eff_dma
 
 	.area FATP_CODE (ABS)
@@ -715,7 +720,7 @@ fat_context_clear:
 	ld (fat_native_modes),a
 	ld (fat_native_modes + 1),a
 	ld (fat_native_dir_active),a
-	ret
+	jp cpm_mount_reset
 
 ; C=function, DE=staged FCB, HL=effective staged DMA.
 ; Carry set means handled and A contains the BDOS result.
@@ -2277,6 +2282,8 @@ fat_native_entry:
 	jp z,fat_native_cwd
 	cp #ZNATIVE_SPACE
 	jp z,fat_native_space
+	cp #ZNATIVE_SPACE_KIB
+	jp z,fat_native_space_kib
 	cp #ZNATIVE_CDUP
 	jp z,fat_native_cdup
 	cp #ZNATIVE_CLOSEDIR
@@ -2859,13 +2866,26 @@ fat_native_cdup_done:
 ; clamped to the 8 MiB synthetic CP/M geometry and says nothing true about a
 ; larger card, so a tool that wants the real figure has to ask for it.
 fat_native_space:
+fat_native_space_kib:
 	call fat_zero_frames
 	ld a,#FS2_CMD_SPACE
 	ld (FAT_TX),a
 	ld a,#FS2_RSP_SPACE
 	call fat_exchange
 	jp nz,fat_native_return
+	ld hl,(fat_native_desc)
+	inc hl
+	ld a,(hl)
+	cp #ZNATIVE_SPACE_KIB
+	jr nz,fat_native_space_bytes
+	ld a,(FAT_RX + IOC_OFF_LEN)
+	cp #FS2_SPACE_REPLY_BYTES
+	jr c,fat_native_space_unsupported
+	ld hl,#(FAT_RX + IOC_OFF_PAYLOAD + FS2_SPACE_FREE_KIB_OFFSET)
+	jr fat_native_space_copy
+fat_native_space_bytes:
 	ld hl,#(FAT_RX + IOC_OFF_PAYLOAD)
+fat_native_space_copy:
 	ld de,(fat_native_desc)
 	ex de,hl
 	ld bc,#ZNATIVE_OFF_POSITION
@@ -2873,15 +2893,18 @@ fat_native_space:
 	ex de,hl
 	ld bc,#4
 	ldir
-	ld hl,#(FAT_RX + IOC_OFF_PAYLOAD + 4)
-	ld de,(fat_native_desc)
+	push hl
+	ld hl,(fat_native_desc)
+	ld de,#ZNATIVE_OFF_SPACE_TOTAL
+	add hl,de
 	ex de,hl
-	ld bc,#ZNATIVE_OFF_SPACE_TOTAL
-	add hl,bc
-	ex de,hl
+	pop hl
 	ld bc,#4
 	ldir
 	xor a
+	jp fat_native_return
+fat_native_space_unsupported:
+	ld a,#0xff
 	jp fat_native_return
 
 fat_native_forget_slots:
@@ -3221,6 +3244,8 @@ fat_component_cpm:
 fat_component_b:
 	.ascii "B       "
 	.ascii "   "
+
+	.include "drivers/storage/native_vfs.inc"
 
 FAT_BDOS_CODE_END:
 

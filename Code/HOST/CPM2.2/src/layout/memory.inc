@@ -55,11 +55,12 @@
 ;         ├──────────────────────────────────────────────┤
 ;   F000h │    CP/M BIOS jump table, boot, warm boot     │
 ;   EFF8h │    transport level byte                      │
-;   EFA0h │ Z1 IOC link failure record            1456   │
+;   EFB1h │    protected destructive COM loader          │
+;   EFA0h │ Z1 IOC failure record and state        1456   │
 ;   EC06h │    FBASE -- the BDOS entry                   │
 ;   EC00h │    BDOS facade, CALL 5    EC00h-EF9Fh        │
 ;         ├──────────────────────────────────────────────┤
-;   E400h │ CCP (ZCPR2) -- a user program, inside the TPA │
+;   E400h │ selected CCP image, inside the TPA              │
 ;   E000h │ program reservation: interrupt callbacks      │
 ;         ╞══════════════════════════════════════════════╡
 ;         │ TPA 0100h-EC05h, in the program's own bank    │
@@ -75,7 +76,8 @@
 ; default CONSOLE=v9958 build.
 ;
 ;   DFFFh ┌──────────────────────────────────────────────┐
-;   D610h │ unallocated                     10736        │
+;   D710h │ unallocated                                  │
+;   D610h │ CP/M A: mount state               58/256     │
 ;   CE10h │ FAT BDOS persistent state                    │
 ;   CC00h │ SD deblock line and tag                      │
 ;   C400h │ pristine CCP restore asset                   │
@@ -95,7 +97,7 @@
 ;   6600h │ reclaimable resource/cache pool   6656       │
 ;   6000h │ DPH/DPB, directory buffer, allocation vectors│
 ;         ├──────────────────────────────────────────────┤
-;   5A00h │ unallocated                      1536        │
+;   5A00h │ CP/M A: native mount provider                  │
 ;   5800h │ drive dispatcher              179/512        │
 ;   5600h │ drive A: backend              164/512        │
 ;   5400h │ B: select probe                23/512        │
@@ -787,7 +789,7 @@ CBIOS_BANKING_CODE_BASE         = 0xf210                   ; F210h
 CBIOS_BIOS_CODE_LIMIT           = CBIOS_BASE + 0x01b0      ; F1B0h
 CBIOS_BANKING_CODE_LIMIT        = 0xf2e8                   ; F2E8h
 CBIOS_CTC_RESET_CODE_LIMIT      = 0xf500                   ; F500h
-CBIOS_IOC_DIAG_CODE_LIMIT       = 0xeff8                   ; EFF8h
+CBIOS_IOC_DIAG_CODE_LIMIT       = 0xefb1                   ; EFB1h
 CBIOS_SIO_CORE_CODE_LIMIT       = 0xf660                   ; F660h (349 used with CONSOLE=vdrip)
 CBIOS_XPORT_LEVEL_CODE_LIMIT    = 0xf000                   ; F000h
 CBIOS_SIO_QUIESCE_CODE_LIMIT    = CBIOS_NATIVE_GATE_BASE   ; F1D2h
@@ -950,6 +952,13 @@ CBIOS_SPARE_CODE_BASE           = 0xf4f0                                ; F4F0h
 ; is why this is now a last-failure record with an explicit "nothing recorded"
 ; state rather than a set of always-printed slots.
 CBIOS_IOC_DIAG_BASE             = 0xefa0                                ; EFA0h
+; Private BDOS 219 destructive loader.  It starts after the fixed diagnostic
+; record and its adjacent one-byte Bulk state, and remains above FBASE so a
+; child may overwrite the whole CCP slot.
+CBIOS_EXEC_LOADER_BASE          = CBIOS_IOC_DIAG_BASE + 0x0011          ; EFB1h
+CBIOS_EXEC_LOADER_LIMIT         = ZBIOS_XPORT_LEVEL_ADDR                ; EFF8h
+ZSH_EXEC_CHUNK                  = 0x0200
+ZEXEC_CHILD_STACK_TOP           = CBIOS_EXEC_LOADER_LIMIT
 
 ; ---------------------------------------------------------------------------
 ; FROZEN: IOC link failure record
@@ -1543,9 +1552,18 @@ CBIOS_SERCON_BANK7_CODE_LIMIT         = CBIOS_SERCON_BANK7_CODE_BASE + 0x200
 CBIOS_VDRIP_TRANSPORT_BANK7_CODE_BASE  = CBIOS_SERCON_BANK7_CODE_LIMIT  ; AA00h
 CBIOS_VDRIP_TRANSPORT_BANK7_CODE_LIMIT = CBIOS_VDRIP_TRANSPORT_BANK7_CODE_BASE + 0x200
 CBIOS_FAT_BDOS_CODE_SIZE              = CBIOS_FAT_BDOS_CODE_LIMIT - CBIOS_FAT_BDOS_CODE_BASE
+
+; Function-218 virtual provider for the immutable CP/M recovery volume.  The
+; router itself is appended to the FAT backend below its existing B800h
+; ceiling.  The CP/M directory/extent reader owns the previously unallocated
+; bank-7 image gap between the drive dispatcher and drive data tables.
+CBIOS_CPM_MOUNT_CODE_BASE             = CBIOS_SD_PROBE2_CODE_LIMIT      ; 5A00h
+CBIOS_CPM_MOUNT_CODE_LIMIT            = VDRIP_STORAGE_DPHDPB_BASE       ; 6000h
 CBIOS_FAT_BDOS_STATE_BASE             = BIOS7_BASE + 0x9e10            ; CE10h
 CBIOS_FAT_BDOS_STATE_LIMIT            = BIOS7_BASE + 0xa610            ; D610h
 CBIOS_FAT_BDOS_STATE_SIZE             = CBIOS_FAT_BDOS_STATE_LIMIT - CBIOS_FAT_BDOS_STATE_BASE
+CBIOS_CPM_MOUNT_STATE_BASE            = CBIOS_FAT_BDOS_STATE_LIMIT      ; D610h
+CBIOS_CPM_MOUNT_STATE_LIMIT           = CBIOS_CPM_MOUNT_STATE_BASE + 0x0100 ; D710h
 
 ; C:'s selection probe, the card probe both SD drives share, and the drive
 ; dispatcher.
@@ -1758,6 +1776,9 @@ FS2_ATTR_HIDDEN                       = 0x02
 FS2_ATTR_SYSTEM                       = 0x04
 FS2_ATTR_DIR                          = 0x10
 FS2_ATTR_ARCHIVE                      = 0x20
+FS2_SPACE_REPLY_BYTES                 = 0x10
+FS2_SPACE_FREE_KIB_OFFSET             = 0x08
+FS2_SPACE_TOTAL_KIB_OFFSET            = 0x0c
 
 ; Zephyr function 218, native byte-oriented descriptor (32 bytes).
 ZNATIVE_VERSION                       = 0x01
@@ -1781,6 +1802,7 @@ ZNATIVE_CWD                           = 0x11
 ZNATIVE_SPACE                         = 0x12
 ZNATIVE_CDUP                          = 0x13
 ZNATIVE_CLOSEDIR                      = 0x14
+ZNATIVE_SPACE_KIB                     = 0x15
 ZNATIVE_OPEN_READ                     = 0x00
 ZNATIVE_OPEN_UPDATE                   = 0x01
 ZNATIVE_OPEN_CREATE_NEW               = 0x02
@@ -1800,8 +1822,8 @@ ZNATIVE_OFF_NAME                      = 0x12
 ; uses none of POSITION, LENGTH, BUFFER or RESULT, so the destination goes in
 ; that span instead and the descriptor keeps its size and its version.
 ZNATIVE_OFF_NAME2                     = 0x06
-; SPACE's total-bytes result.  SPACE carries no name, so the name field holds
-; the second 32-bit figure and the descriptor keeps its size.
+; SPACE and SPACE_KIB carry no name, so the name field holds the second
+; 32-bit result in the operation's selected unit.
 ZNATIVE_OFF_SPACE_TOTAL               = 0x12
 ZNATIVE_DESC_BYTES                    = 0x20
 

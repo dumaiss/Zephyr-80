@@ -2,7 +2,7 @@
 ; This gate reuses xing_os_call_ix and the existing common staging buffers.
 
 	.globl native_gate_entry,NATIVE_GATE_START,NATIVE_GATE_END
-	.globl fac_de,fac_zext_return,xing_os_call_ix,fat_native_entry
+	.globl fac_de,fac_zext_return,xing_os_call_ix,native_vfs_entry
 	.globl native_stage_write,native_deliver_read
 
 	.area CODE (ABS)
@@ -16,7 +16,7 @@ native_gate_entry:
 	call native_stage_write
 	ld de,#FAC_SFCB_BUF
 	push ix
-	ld ix,#fat_native_entry
+	ld ix,#native_vfs_entry
 	call xing_os_call_ix
 	pop ix
 native_gate_status_dispatch:

@@ -65,7 +65,7 @@ int main(void)
     zep_fs_status_t s;
     uint16_t actual;
     uint16_t i;
-    uint32_t pos,free_bytes,total_bytes;
+    uint32_t pos,free_bytes,total_bytes,free_kib,total_kib;
     char cwd[48];
     uint8_t saw_file=0,saw_dir=0;
 
@@ -182,6 +182,8 @@ write_failed:
         status("closedir again",zep_fs_closedir(dir),ZEP_FS_OK);
     if(status("space",zep_fs_space(&free_bytes,&total_bytes),ZEP_FS_OK))
         value("space ordering",free_bytes<=total_bytes);
+    if(status("space KiB",zep_fs_space_kib(&free_kib,&total_kib),ZEP_FS_OK))
+        value("space KiB ordering",free_kib<=total_kib);
 
 cleanup:
     if(uncertain)return 1;

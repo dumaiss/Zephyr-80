@@ -74,7 +74,9 @@ zep_fs_status_t zep_fs_mkdir(const char *name);
 zep_fs_status_t zep_fs_rmdir(const char *name);
 
 /* CHDIR walks slash-separated 8.3 components.  A leading slash first selects
- * the current USER's native root; "." and ".." are handled as conveniences. */
+ * the provider root; "." and ".." are handled as conveniences.  Zephyr-80
+ * keeps its writable FS2 tree at that root and mounts the read-only CP/M USER-0
+ * recovery volume at /CPM/A. */
 zep_fs_status_t zep_fs_chdir(const char *path);
 zep_fs_status_t zep_fs_cdup(void);
 zep_fs_status_t zep_fs_root(void);
@@ -86,6 +88,9 @@ zep_fs_status_t zep_fs_opendir(zep_fs_dir_t *out);
 zep_fs_status_t zep_fs_readdir(zep_fs_dir_t dir, zep_fs_dirent_t *out);
 zep_fs_status_t zep_fs_closedir(zep_fs_dir_t dir);
 
+/* Byte counts saturate at UINT32_MAX.  The KiB form remains exact for
+ * volumes far larger than FAT32 can represent. */
 zep_fs_status_t zep_fs_space(uint32_t *free_bytes, uint32_t *total_bytes);
+zep_fs_status_t zep_fs_space_kib(uint32_t *free_kib, uint32_t *total_kib);
 
 #endif
