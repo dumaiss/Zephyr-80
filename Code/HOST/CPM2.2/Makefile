@@ -129,7 +129,9 @@ RUNTIME_SRCS ?= \
 	$(SRC_DIR)/layout/modes.inc \
 	$(SRC_DIR)/layout/memory.inc \
 	$(SRC_DIR)/common/rom_copy.asm \
+	$(SRC_DIR)/common/supervisor.asm \
 	$(SRC_DIR)/common/boot.asm \
+	$(SRC_DIR)/core/supervisor.asm \
 	$(SRC_DIR)/core/banner.asm \
 	$(SRC_DIR)/common/native_stage.asm \
 	$(SRC_DIR)/common/exec_loader.asm \
@@ -299,11 +301,14 @@ docs: $(FINAL_IMAGE) $(ALL_RSTS) $(SYMBOLS_FILE) $(LAYOUT_MANIFEST) $(MEMORY_DOC
 # on hardware; what it does catch is the class of fault that is expensive to
 # find there -- a lost IFF, an unbalanced token, a CTC channel stopped at the
 # wrong port, an ISR that outgrows its stack.  Needs a C++17 compiler and
-# libqkz80.
-test: $(FIRMWARE_BIN) $(ALL_RSTS) $(FIRMWARE_FLAT) $(SYMBOLS_FILE)
+# libqkz80.  test_supervisor.py runs the shipped page-0 and bank-7 images through
+# cold boot, BDOS 219, every CP/M exit and WBOOT, and checks that teardown
+# always completes before the transient supervisor chooses the next program.
+test: $(FIRMWARE_BIN) $(BANK7_BIN) $(ALL_RSTS) $(FIRMWARE_FLAT) $(SYMBOLS_FILE)
 	$(PYTHON) $(TOOLS_DIR)/test_irq_core.py --build-dir $(BUILD_DIR)
 	$(PYTHON) $(TOOLS_DIR)/test_fat_bios_m1.py --build-dir $(BUILD_DIR)
 	$(PYTHON) $(TOOLS_DIR)/test_fat_bdos_ro.py --build-dir $(BUILD_DIR)
+	$(PYTHON) $(TOOLS_DIR)/test_supervisor.py --build-dir $(BUILD_DIR)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)

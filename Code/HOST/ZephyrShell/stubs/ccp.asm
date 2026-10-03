@@ -1,8 +1,13 @@
-; ZephyrShell CCP compatibility shim.
+; ZephyrShell CCP compatibility shim: the default shell's loader.
 ;
-; Both traditional CCP entries reload ZSH.COM from the read-only recovery
-; volume.  The shell proper is an ordinary C transient and is never constrained
-; by this 2 KiB slot.  Warm boot restores this shim before entering it.
+; Both traditional CCP entries load ZSH.COM from the read-only recovery volume.
+; The shell proper is an ordinary C transient and is never constrained by this
+; 2 KiB slot.  This is not the supervisor and holds no lifecycle policy: the
+; transient supervisor (CPM2.2 core/supervisor.asm) decides that the default
+; shell runs next, installs this image from its pristine bank-7 copy, and enters
+; it.  Its fatal paths therefore report as the supervisor's and halt; they never
+; warm boot, because that would only ask the supervisor to load the same broken
+; shell again.
 
 	.module zephyr_shell_ccp
 
@@ -54,6 +59,10 @@ zshell_load_loop:
 	pop hl
 	or a
 	jr z,zshell_load_loop
+	; 1 is end of file.  Anything else is a read error: refuse to jump into a
+	; partial image.
+	dec a
+	jr nz,zshell_read_error
 
 	ld de,#zshell_fcb
 	ld c,#BDOS_CLOSE
@@ -74,6 +83,9 @@ zshell_missing:
 	jr zshell_fatal
 zshell_too_large:
 	ld de,#large_message
+	jr zshell_fatal
+zshell_read_error:
+	ld de,#read_message
 zshell_fatal:
 	ld c,#BDOS_PRINT
 	call BDOS
@@ -82,10 +94,13 @@ zshell_halt:
 	halt
 	jr zshell_halt
 
+; Prefix, subject, then the reason; the machine halts after printing.
 missing_message:
-	.ascii "\r\nZephyrShell: A:ZSH.COM is missing$"
+	.ascii "\r\nsupervisor: default shell A:ZSH.COM is missing; halted$"
 large_message:
-	.ascii "\r\nZephyrShell: ZSH.COM overlaps its bootstrap$"
+	.ascii "\r\nsupervisor: default shell A:ZSH.COM overlaps its loader; halted$"
+read_message:
+	.ascii "\r\nsupervisor: default shell A:ZSH.COM read error; halted$"
 
 zshell_fcb:
 	.db 1

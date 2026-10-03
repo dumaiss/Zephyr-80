@@ -76,7 +76,8 @@
 ; default CONSOLE=v9958 build.
 ;
 ;   DFFFh ┌──────────────────────────────────────────────┐
-;   D710h │ unallocated                                  │
+;   D720h │ unallocated                                  │
+;   D710h │ transient supervisor state         4/16      │
 ;   D610h │ CP/M A: mount state               58/256     │
 ;   CE10h │ FAT BDOS persistent state                    │
 ;   CC00h │ SD deblock line and tag                      │
@@ -84,7 +85,7 @@
 ;   C300h │ SD transaction scratch (MOVE_BUFFER)         │
 ;   C000h │ BIOS private stacks                          │
 ;         ├──────────────────────────────────────────────┤
-;   BE00h │ unallocated                       512        │
+;   BE00h │ transient supervisor          (measured)/512 │
 ;   BC00h │ VDrip transport, bank 7 half  297/512  (vdrip)│
 ;   BA00h │ serial console tee            211/512  (v9958)│
 ;   B800h │ SIO services                  121/512        │
@@ -1564,6 +1565,42 @@ CBIOS_FAT_BDOS_STATE_LIMIT            = BIOS7_BASE + 0xa610            ; D610h
 CBIOS_FAT_BDOS_STATE_SIZE             = CBIOS_FAT_BDOS_STATE_LIMIT - CBIOS_FAT_BDOS_STATE_BASE
 CBIOS_CPM_MOUNT_STATE_BASE            = CBIOS_FAT_BDOS_STATE_LIMIT      ; D610h
 CBIOS_CPM_MOUNT_STATE_LIMIT           = CBIOS_CPM_MOUNT_STATE_BASE + 0x0100 ; D710h
+
+; Transient supervisor (core/supervisor.asm).  The resident owner of the single
+; foreground transient: it decides what runs after cold boot and after WBOOT
+; teardown.  It is not a scheduler and holds no process table.
+;
+; Code takes the 512-byte granule that was unallocated after the VDrip
+; transport's bank-7 half, in every configuration.  State is a 16-byte
+; reservation directly after the CP/M A: mount state; it is OS-owned bank-7
+; RAM that no program can see in mode 10, and it is not initialized from the
+; image -- cold boot writes every byte before use.  No common bytes are
+; reserved for supervisor state.
+CBIOS_SUPERVISOR_CODE_BASE            = CBIOS_VDRIP_TRANSPORT_BANK7_CODE_LIMIT ; BE00h
+CBIOS_SUPERVISOR_CODE_LIMIT           = CBIOS_SUPERVISOR_CODE_BASE + 0x0200    ; C000h
+CBIOS_SUPERVISOR_STATE_BASE           = CBIOS_CPM_MOUNT_STATE_LIMIT     ; D710h
+CBIOS_SUPERVISOR_STATE_LIMIT          = CBIOS_SUPERVISOR_STATE_BASE + 0x0010 ; D720h
+
+; Supervisor state layout and values.  SUP_STATE_VERSION changes whenever the
+; layout or the meaning of a value changes.
+SUP_STATE_VERSION                     = 0x01
+SUP_OFF_VERSION                       = 0x00
+SUP_OFF_ROLE                          = 0x01
+SUP_OFF_POLICY                        = 0x02
+SUP_OFF_FLAGS                         = 0x03
+SUP_STATE_BYTES                       = 0x04
+; Foreground role: what currently owns the TPA.
+FG_NONE                               = 0x00   ; nothing; between teardown and launch
+FG_SHELL                              = 0x01   ; the default shell
+FG_CHILD                              = 0x02   ; a transient that replaced the shell
+FG_ROLE_LIMIT                         = 0x03
+; Execution policy of the current foreground transient.  EXEC_RETURN (01h) is
+; reserved for a future parent-restoring policy and is not implemented.
+EXEC_REPLACE                          = 0x00
+EXEC_POLICY_LIMIT                     = 0x01
+; Flags.  STATE_REPAIRED: WBOOT found the state block invalid and reinitialized
+; it before launching the default shell.  Sticky until cold boot.
+SUP_FLAG_STATE_REPAIRED               = 0x01
 
 ; C:'s selection probe, the card probe both SD drives share, and the drive
 ; dispatcher.

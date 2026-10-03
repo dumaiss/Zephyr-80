@@ -60,7 +60,9 @@
 
 	.include "common/rom_copy.asm"
 	.include "common/bank_select.asm"
+	.include "common/supervisor.asm"
 	.include "common/boot.asm"
+	.include "core/supervisor.asm"
 	.include "core/banner.asm"
 	.include "common/native_stage.asm"
 	.include "common/exec_loader.asm"

@@ -51,12 +51,60 @@ image without its expected entry jumps.
 
 At reset the ROM copy loads each page into the matching SRAM bank, so page 7
 becomes bank 7 with no loader of its own. Cold boot checks bank 7's image marker,
-initializes everything in operating-system mode, and enters the CCP in
-application mode.
+initializes everything in operating-system mode, and asks the transient
+supervisor what runs first; it selects the default shell, entered in application
+mode.
 
-Warm boot restores the CCP range from ROM page 0, reinitializes the console,
-resets the CTC and clears interrupt registrations. ZSDOS and the BIOS in bank 7
-are left intact.
+Warm boot is the CP/M transient termination path. It resets the CTC, clears
+interrupt registrations, reinitializes the console, rebuilds page zero and
+default DMA, and discards transient native handles. ZSDOS and the BIOS in bank 7
+are left intact. Only after that teardown does it ask the transient supervisor
+what runs next; WBOOT itself no longer restores the CCP or assumes the shell.
+
+### Transient supervisor
+
+```text
+BOOT initializes.  WBOOT tears down.  SUPERVISOR decides.
+LOADER launches.   APPLICATION runs.
+```
+
+Before this, WBOOT owned shell reconstruction implicitly: it restored the CCP
+slot and jumped into it, so "warm boot" meant "reload the shell". Now WBOOT is
+only the compatibility/teardown path, and a small resident supervisor in bank 7
+(`src/core/supervisor.asm`) owns the foreground lifecycle and knows that the
+image in the CCP slot is the default shell: the ZephyrShell shim, which loads
+`A:ZSH.COM` (`CCP=zshell`), or ZCPR2 (`CCP=zcpr2`).
+
+It is a single-foreground-transient supervisor, not a scheduler: exactly one
+program owns the TPA, there are no process IDs, and nothing is resident besides
+the OS. The only execution policy is `EXEC_REPLACE`; `EXEC_RETURN` (restore a
+saved parent after a child exits) is reserved and not implemented.
+
+```text
+cold boot -> supervisor_cold_start ------------+
+                                               v
+WBOOT teardown -> supervisor_after_teardown -> launch default shell (FG_SHELL)
+                                               ^
+FG_SHELL --BDOS 219--> FG_CHILD                |
+FG_CHILD or FG_SHELL --RET / BDOS 0 / JP 0000h--> WBOOT
+```
+
+| Entry | Where | Contract |
+|---|---|---|
+| `supervisor_cold_start` | bank 7 | Called once by BOOT after initialization. Writes the whole state block, selects the default shell. Returns `HL` = entry, `C` = drive. |
+| `supervisor_after_teardown` | bank 7 | WBOOT's last call, after all teardown. Validates the state block (an invalid one is reinitialized and flagged), then selects the default shell for a terminated child or shell. Same outputs. |
+| `supervisor_exec_replace_commit` | bank 7 | BDOS 219's final close: records `FG_CHILD` under `EXEC_REPLACE`, then closes the loader handle through `native_vfs_entry`. |
+| `supervisor_enter_foreground` | common | Policy-free transfer used by BOOT and WBOOT: facade stack, mode 10, `JP (HL)`. |
+| `zexec_commit_close` | common | The loader's crossing into `supervisor_exec_replace_commit`. |
+
+State is four bytes at the start of a 16-byte bank-7 reservation (see
+`docs/memory-map.md`): layout version, foreground role (`FG_NONE`, `FG_SHELL`,
+`FG_CHILD`), execution policy and flags (`SUP_FLAG_STATE_REPAIRED`). Launching
+the default shell means reinstalling its loader image in the CCP slot from the
+pristine bank-7 copy and entering `CCP_CLEARBUF_ENTRY` with `C` = `TDRIVE`. If
+the shim cannot load `A:ZSH.COM` -- missing, a read error, or too large -- it
+prints a `supervisor:` diagnostic through BDOS 9 and halts with interrupts
+masked; it never warm-boots into another attempt.
 
 Reinitializing the console clears the screen, so warm boot first prints
 `[any key]` and waits, leaving the ending program's output — or its graphics
@@ -87,7 +135,7 @@ memory.
 | 203 | System information | — | `HL` = system information block |
 | 210-217 | `MOVE`, `XMOVE`, `SELMEM`, `SETBNK`, `IOCALL`, `VIDEO_SEND`, `IOCBULK`, `IOCBULKW` | `DE` = register block | Register block updated; `A` = status |
 | 218 | Native byte-oriented filesystem | `DE` = 32-byte version-1 descriptor | Descriptor updated; `A` = filesystem status |
-| 219 | Protected `.COM` loader | `DE` = function-218 READ descriptor | Shell-private; closes and enters `0100h` or warm-boots on failure |
+| 219 | Protected `.COM` loader | `DE` = function-218 READ descriptor | Shell-private; records the child with the supervisor, closes and enters `0100h`, or closes and warm-boots on failure |
 
 Function 218 is provider-routed.  Its root remains the existing controller FS2
 tree for CP/M drive B, and it contributes a synthetic `/SYSTEM/A` mount for USER 0
@@ -136,7 +184,7 @@ What a program sees:
 | `0000h-00FFh` | Page zero, in the program's bank |
 | `0100h-DFFFh` | Banked transient program area |
 | `E000h-E3FFh` | Program reservation: interrupt callbacks and their data |
-| `E400h-EBFFh` | CCP (ZCPR2), restored on warm boot |
+| `E400h-EBFFh` | CCP slot: the default shell's loader, reinstalled by the supervisor at every shell launch |
 | `EC00h-EFFFh` | BDOS facade; serial number at `EC00h`, `FBASE` at `EC06h` |
 | `F000h-F957h` | BIOS jump tables, boot, banking, SIO core, crossing gates, interrupt dispatch, serial console |
 | `F958h-FC97h` | Staging buffer and the copies returned by BDOS functions 27 and 31 |
@@ -309,6 +357,15 @@ accepted, an ISR that outgrows its 62-byte stack -- and reports the stack
 high-water mark. It is not a machine model and does not replace running
 `TIMTEST` on the real machine. Needs a C++17 compiler and libqkz80, so it is
 deliberately not part of `make`.
+
+The same target runs `tools/test_supervisor.py`, which executes the shipped
+page-0 and bank-7 images together with device and teardown routines stubbed. It
+checks cold boot, the BDOS 219 child commit, child exits by `RET`, `JP 0000h`
+and BDOS 0 (through ZSDOS and `wbtrap`), shell termination and respawn, loader
+failure on the first and a later chunk, 600 repeated cycles without handle,
+stack or state drift, state-block repair, and the shim's load and fatal paths.
+It asserts the WBOOT call order exactly, so a supervisor call moved ahead of
+any teardown step fails the build's tests.
 
 The ROM must be paired with memory decoder revision 11 from
 `../../HDL/WinCUPL`.

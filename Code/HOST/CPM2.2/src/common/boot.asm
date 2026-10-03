@@ -7,7 +7,8 @@
 	.globl boot,wboot,wboot_resident
 	.globl init_page_zero
 	.globl prepare_runnable_bank
-	.globl restore_ccp_from_os
+	.globl supervisor_cold_start,supervisor_after_teardown
+	.globl supervisor_enter_foreground
 	.globl facade_reset,irq_reset,bank7_check
 	.globl xing_os_call_ix,fat_context_reset
 	.globl runtime_set_default_dma
@@ -29,11 +30,13 @@
 ; Purpose:
 ;   Cold boot entry after the ROM image has been copied into RAM. This
 ;   path establishes the firmware stack, initializes core hardware, prepares
-;   bank 0 as a runnable CP/M environment, and enters the CCP.
+;   bank 0 as a runnable CP/M environment, and hands the first foreground
+;   decision to the transient supervisor.
 ; Inputs:
 ;   None. Execution arrives from cbios_boot_after_rom_copy with ROM disabled.
 ; Outputs:
-;   Does not return; jumps to CCP_CLEARBUF_ENTRY with C = selected drive.
+;   Does not return; enters the program supervisor_cold_start selects (the
+;   default shell, at CCP_CLEARBUF_ENTRY with C = 0).
 ; Clobbers:
 ;   All primary registers are available for boot-time setup.
 ; Important invariants:
@@ -94,19 +97,10 @@ boot_masked:
 	call sio_core_enable_interrupts
 	call irq_enable
 
-	; Back to application execution for the CCP.  The BIOS stack is in bank 7,
-	; so move to a common stack first: an interrupt between the switch and the
-	; CCP setting its own would otherwise push onto bank 0's C000h-DFFFh.
-	ld sp,#FAC_STACK_TOP
-	ld a,#MEM_MODE_APPLICATION
-	out (BANK_PORT),a
-	ld sp,#APP_STACK_TOP
-	ld hl,#WBOOT
-	push hl
-
-	xor a
-	ld c,a
-	jp CCP_CLEARBUF_ENTRY
+	; Initialization is complete.  What runs first is the supervisor's
+	; decision, not boot's; boot only performs the transfer.
+	call supervisor_cold_start
+	jp supervisor_enter_foreground
 
 ; WBOOT
 ; Purpose:
@@ -114,21 +108,25 @@ boot_masked:
 ;   This stays a small trampoline so validation can reason about the protected
 ;   resident warm-boot body separately.
 ; Outputs:
-;   Does not return; wboot_resident re-enters the CCP.
+;   Does not return; wboot_resident ends in the supervisor's choice.
 wboot:
 	jp wboot_resident
 
 WBOOT_RESIDENT_START:
 ; WBOOT resident path
 ; Purpose:
-;   Rebuild the CP/M runtime environment after a transient program exits or
-;   jumps through page zero. It restores the CCP, reinstalls safe hardware
-;   state, preserves the selected drive, and returns through the CCP warm
-;   entry at CBASE+3.
+;   The CP/M-compatible transient termination path.  Every exit -- RET to the
+;   pushed return word, BDOS 0, JP 0000h -- arrives here.  It tears down what
+;   the transient left behind: interrupt registrations and devices, the
+;   console, page zero and default DMA, the facade, and transient native
+;   handles (the writable CWD is preserved).  Only then does it ask the
+;   transient supervisor what runs next.  WBOOT holds no next-program policy:
+;   restoring the CCP slot and choosing the shell are the supervisor's.
 ; Inputs:
 ;   TDRIVE contains the current CP/M drive number.
 ; Outputs:
-;   Does not return; C = TDRIVE at CCP_CLEARBUF_ENTRY.
+;   Does not return; enters the program supervisor_after_teardown selects
+;   (today always the default shell, with C = TDRIVE).
 ; Clobbers:
 ;   All primary registers may be used during warm boot.
 ; Important invariants:
@@ -167,7 +165,6 @@ wboot_masked:
 	; Rebuild the console only.  SIO1/A deliberately retains its receiver state
 	; and persistent External-Sync character boundary across CP/M warm boots.
 	call sio_core_init
-	call restore_ccp_from_os
 	call prepare_runnable_bank
 	call facade_reset
 	call boot_fat_context_reset
@@ -186,26 +183,13 @@ wboot_masked:
 	call sio_core_enable_interrupts
 	call irq_enable
 
-	; Back to application execution for the CCP.  The BIOS stack is in bank 7,
-	; so move to a common stack first: an interrupt between the switch and the
-	; CCP setting its own would otherwise push onto bank 0's C000h-DFFFh.
-	ld sp,#FAC_STACK_TOP
-	ld a,#MEM_MODE_APPLICATION
-	out (BANK_PORT),a
-	ld a,(TDRIVE)
-	ld c,a
-	jp CCP_CLEARBUF_ENTRY
+	; Teardown is complete: the machine is back in its OS-owned state.  Only
+	; now may the supervisor decide what runs next.  WBOOT does not know that
+	; the answer is usually the shell, and must never call the supervisor
+	; before the teardown above has finished.
+	call supervisor_after_teardown
+	jp supervisor_enter_foreground
 WBOOT_RESIDENT_END:
-
- ; Restore the pristine CCP from protected OS SRAM. Called in mode 11 with
-; bank 7 and the common destination both visible. Clobbers BC/DE/HL; no mode
-; transition, no VDP traffic, not ISR-safe. The 2 KiB source is never TPA.
-restore_ccp_from_os:
-	ld hl,#CCP_RESTORE_BASE
-	ld de,#CBASE
-	ld bc,#CCP_RESTORE_SIZE
-	ldir
-	ret
 
 ; Reset all Z80 CTC channels with interrupt enable clear. The firmware and
 ; CP/M app launch path are polling-only at this stage.

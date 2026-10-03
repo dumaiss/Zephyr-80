@@ -26,9 +26,9 @@ Code regions, each bounded by the limit `cbios_defs.inc` declares for it. Used a
 |---|---|---|---:|---:|---|
 | `EC00h-EF9Fh` | BDOS facade | abi | 928 | 0 | `CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-218, system information block. |
 | `EFA0h-EFB0h` | IOC link failure record | abi | 16 | 1 | Read by the CP/M tools through BDOS function 203. |
-| `EFB1h-EFF7h` | Destructive COM loader | abi | 66 | 5 | Private BDOS 219: 512-byte native load, close and jump to 0100h. |
+| `EFB1h-EFF7h` | Destructive COM loader | abi | 66 | 5 | Private BDOS 219: 512-byte native load, supervisor commit and close, jump to 0100h. |
 | `EFF8h-EFFFh` | Transport level | abi | 1 | 7 | The BIOS IO Controller transport level byte. |
-| `F000h-F1AFh` | BIOS tables, ROM copy, boot | abi | 425 | 7 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero. |
+| `F000h-F1AFh` | BIOS tables, ROM copy, boot | abi | 425 | 7 | CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm-boot teardown, supervisor entry glue, page zero. |
 | `F1B0h-F1D1h` | SIO ownership return | crossing | 34 | 0 | Quiesces application-owned SIO0/A at boot and application exit. |
 | `F1D2h-F20Fh` | Native file gate | crossing | 46 | 16 | Function 218 descriptor and read-data staging through the existing crossing mechanism. |
 | `F210h-F2E7h` | Banking services | crossing | 210 | 6 | `SELMEM`, `SETBNK`, `XMOVE`, `MOVE`. |
@@ -85,6 +85,7 @@ System common code ends at `F8A3h`.
 | `A000h-B7FFh` | FAT BDOS backend | driver | 5768 | 376 | FS2 client, native file manager, writable FAT BDOS personality, read cache, DPH and DPB. |
 | `B800h-B9FFh` | SIO services (bank 7) | core | 121 | 391 | `sio1_ioc_init`, `sio_core_enable_interrupts`, `sio_register_rx_sink`: reached only from bank 7 or from boot after `bank7_check`. |
 | `BA00h-BBFFh` | Serial console tee (bank 7) | driver | 211 | 301 | Driver table, init/install, the CONST/CONIN/CONOUT tee and TX; polled through the console facade. |
+| `BE00h-BFFFh` | Transient supervisor | core | 104 | 408 | Single-foreground lifecycle policy: next program after cold boot and WBOOT teardown, default shell launch, BDOS 219 child commit. |
 
 Data:
 
@@ -119,7 +120,8 @@ The last resident asset ends at `D649h`. Cold boot installs all 64 KiB; OS-owned
 | `CE09h-CE0Fh` | Unallocated |
 | `CE10h-D60Fh` | FAT BDOS persistent-state reservation | Fixed bank-7 state; track/sector and synthetic ALV currently use `1131` bytes. |
 | `D610h-D70Fh` | CP/M A: mount state | Function-218 provider CWD, handle, iterator and extent-reader state; currently uses `58` bytes. |
-| `D710h-DFFFh` | Unallocated |
+| `D710h-D71Fh` | Transient supervisor state | Foreground role, execution policy, flags and layout version; currently uses `4` bytes. Written in full at cold boot. |
+| `D720h-DFFFh` | Unallocated |
 
 All eight physical SRAM banks include E000h-FFFFh, visible in flat mode 01. Modes 10/11 overlay that range with bank 0.
 

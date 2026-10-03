@@ -90,31 +90,35 @@ Where the software actually sits. Addresses are from the current default build;
         |  COMMON MEMORY — bank 0, identical in both modes, 8 KiB total       |
         |                                                                     |
         |  Four zones, each ONE contiguous run, growing up from EC00h:        |
-        |    EC00h  Z1 ABI      facade (CALL 5, FBASE, 200-218), BIOS tables |
+        |    EC00h  Z1 ABI      facade (CALL 5, FBASE, 200-219), BIOS tables |
         |    F1B0h  Z2 crossing SIO return, 218 gate, banking, gates         |
         |    F4F0h  Z3 interrupt CTC, SIO core, dispatch, policy, registration|
         |    F850h  Z4 driver   the console driver's ISR half, either-or      |
         |    FA00h  staging buffers ·  FD00h IM2 vector page                  |
         |    FE01h  BIOS state      ·  FE80h ISR / gate / facade stacks       |
         +=====================================================================+
- EC00h  |  E400h-EBFFh  CCP (ZCPR2) — a user program, inside the TPA:         |
-        |               a transient may overwrite it, and warm boot           |
-        |               restores it from the bank-7 asset                     |
+ EC00h  |  E400h-EBFFh  CCP slot — the default shell's loader (ZephyrShell    |
+        |               shim, or ZCPR2), inside the TPA: a transient may      |
+        |               overwrite it; the supervisor reinstalls it from       |
+        |               the bank-7 asset at every shell launch                |
  E400h  +---------------------------------------------------------------------+
         |  E000h-E3FFh  the running program's interrupt callbacks             |
  E000h  +-------------------------------+-------------------------------------+
         |                               |  BANK 7 — the OS body               |
         |                               |                                     |
         |                               |    C000h  BIOS stacks, SD scratch,  |
-        |                               |           pristine CCP, FAT state   |
-        |   TRANSIENT PROGRAM AREA      |    B800h  SIO, console tee,         |
-        |   0100h-EC05h, 58.8 KiB       |           VDrip transport (bank 7)  |
-        |   continues up through E000h  |    A000h  FAT BDOS personality,     |
-        |   in the program's own bank   |           FS2 client, read cache    |
-        |   (N = 0..6)                  |    9000h  console driver slot       |
+        |                               |           pristine CCP, FAT state,  |
+        |   TRANSIENT PROGRAM AREA      |           supervisor state          |
+        |   0100h-EC05h, 58.8 KiB       |    BE00h  transient supervisor      |
+        |   continues up through E000h  |    B800h  SIO, console tee,         |
+        |   in the program's own bank   |           VDrip transport (bank 7)  |
+        |   (N = 0..6)                  |    A000h  FAT BDOS personality,     |
+        |                               |           FS2 client, read cache    |
+        |                               |    9000h  console driver slot       |
         |                               |    8000h  font, boot banner         |
         |                               |    6000h  DPH/DPB, dir buffer,      |
         |                               |           reclaimable cache pool    |
+        |                               |    5A00h  /SYSTEM/A provider        |
         |                               |    3000h  BIOS facades, drivers,    |
         |                               |           IOC command + bulk lanes  |
         |                               |    2000h  ZSDOS                     |
@@ -142,10 +146,10 @@ Three things in that picture explain most of the design:
 
 And one thing the picture can mislead about: common memory is 8 KiB, but the OS
 does not own all of it. `E000h-EBFFh` — the interrupt-callback reservation and
-the CCP — belongs to the running program. Page zero's `0006h` holds `EC06h`, so
-the transient program area really does run to `EC05h`, and the CCP is a user
-program sitting inside it, not a layer above it. The OS's share of common memory
-starts at the BDOS facade.
+the CCP slot — belongs to the running program. Page zero's `0006h` holds
+`EC06h`, so the transient program area really does run to `EC05h`, and whatever
+sits in the CCP slot is a user program inside it, not a layer above it. The OS's
+share of common memory starts at the BDOS facade.
 
 ---
 
@@ -153,14 +157,18 @@ starts at the BDOS facade.
 
 | Piece | Where it runs | What it is |
 |---|---|---|
-| **ZCPR2** | `E400h-EBFFh`, inside the TPA | the command processor. Not an OS component: a user program at a fixed high address, which a transient may overwrite and which warm boot restores from a pristine copy held in bank 7 |
+| **ZephyrShell** (`ZSH.COM`) | TPA, `0100h` | the default shell (`CCP=zshell`, the default build). An ordinary C transient with a native, path-oriented command line; it reaches files through BDOS 218 and launches programs through BDOS 219. Not an OS component and not resident |
+| **CCP slot** | `E400h-EBFFh`, inside the TPA | holds the default shell's loader: the ZephyrShell shim, which loads `A:ZSH.COM`, or ZCPR2 itself (`CCP=zcpr2`). A user program at a fixed high address, which a transient may overwrite; the supervisor reinstalls it from a pristine copy in bank 7 at every shell launch |
+| **transient supervisor** | bank 7, `BE00h` | the resident owner of the single foreground program. Decides what runs after cold boot and after warm-boot teardown — today always the default shell. Not a scheduler |
+| **BDOS 219 loader** | common, `EFB1h` | the shell-private destructive loader: reads an already-open native file to `0100h` over the shell, tells the supervisor a child now owns the TPA, and jumps |
 | **ZSDOS** | bank 7, `2000h` | the BDOS. A ZSDOS build, not stock CP/M. Authoritative for current drive, USER, and write protection |
 | **BDOS facade** | common, `EC00h` | the only application-to-OS crossing. Publishes `FBASE`, stages caller objects, enters mode 11, restores the caller's mapping on the way out |
 | **bank-7 dispatcher** | bank 7 | decides, per call, whether Zephyr semantics apply or the call goes to ZSDOS unchanged |
 | **BIOS** | split | CP/M jump table and crossing gates in common memory; console, storage and transport bodies in bank 7 |
 | **drivers** | bank 7 slots | console and storage backends behind facades, selected at build time |
 | **CP/M FAT personality** | bank 7, `9000h` | translates FCBs, 128-byte records, extents, USER areas and SEARCH into byte-oriented file operations |
-| **native API** | bank 7 | `ZOPEN`/`ZREAD`/`ZWRITE`/`ZCHDIR`/`ZMKDIR`, reached through BDOS function 218. Paths and bytes, no FCBs |
+| **native API** | bank 7 | `ZOPEN`/`ZREAD`/`ZWRITE`/`ZCHDIR`/`ZMKDIR`, reached through BDOS function 218. Paths and bytes, no FCBs. C programs use it through ZephyrC's `<zephyr/fs.h>` |
+| **native namespace router** | bank 7 | `native_vfs_entry`: routes each function-218 call to the writable FS2 root or to the synthetic read-only `/SYSTEM/A` view of drive A: |
 | **FS2 client** | bank 7 | the byte-oriented engine both personalities converge on: resolver, handles, 512-byte read cache |
 | **IOC transport** | bank 7 + common | `IOCALL` (32-byte mailbox), `IOCBULK`/`IOCBULKW` (block transfer) over the command and bulk lanes |
 | **FatFs** | IO Controller | the actual filesystem, on the MCU, over the SD card |
@@ -171,16 +179,22 @@ How they connect:
 ```mermaid
 flowchart TB
     APPS["CP/M applications and transients<br/>(bank 0 TPA)"]
+    ZSH["ZephyrShell — ZSH.COM<br/>default shell, ordinary transient"]
 
     FAC["BDOS facade — CALL 5<br/>stages FCB and DMA, crosses into bank 7"]
 
     APPS -- "FCB calls" --> FAC
     APPS -- "function 218" --> FAC
+    ZSH -- "function 218" --> FAC
+    ZSH -- "function 219: exec" --> LOAD["BDOS 219 loader<br/>common"]
+    LOAD -- "child replaces shell" --> APPS
 
     subgraph BANK7["Bank 7 — OS implementation"]
         direction TB
         ZS["ZSDOS core<br/>current drive · USER · write protect"]
         NATIVE["Native byte API<br/>ZOPEN ZREAD ZWRITE ZCHDIR ZMKDIR"]
+        VFS["Namespace router<br/>/ → FS2 · /SYSTEM/A → A: (read-only)"]
+        SUP["Transient supervisor<br/>next foreground program"]
         ROMD["ROM rescue disk<br/>A:"]
         SYN["Synthetic BIOS DPH<br/>B:"]
         CONV["Conventional BIOS DPH<br/>C: · D:"]
@@ -191,12 +205,16 @@ flowchart TB
 
     FAC --> ZS
     FAC --> NATIVE
+    NATIVE --> VFS
+    VFS --> ROMD
+    LOAD -- "512-byte reads" --> VFS
+    LOAD -. "records FG_CHILD" .-> SUP
     ZS --> ROMD
     ZS --> SYN
     ZS --> CONV
     SYN --> PERS
     PERS --> FS2
-    NATIVE --> FS2
+    VFS --> FS2
     CONV --> SDB
 
     subgraph MCU["IO Controller — PIC18F57Q84"]
@@ -222,6 +240,10 @@ Reading it:
   buffers are staged there, which is why its aliasing and status-preservation
   behavior is part of the ABI.
 - **The controller owns FAT.** No FAT implementation runs on the Z80.
+- **Nothing owns the TPA permanently.** The shell, and any program it launches,
+  are ordinary transients that replace one another at `0100h`. Every exit goes
+  through warm boot, and the supervisor then picks the next program. §0.4 has the
+  sequence, and §21 has the rules for changing it.
 
 Authority for each piece of CP/M state — who is allowed to be the one true copy
 of the current drive, USER, write protection and the rest — is a rule rather
@@ -276,10 +298,12 @@ read under another.
 
 | File | What it is |
 |---|---|
-| `boot.asm` | cold boot, warm boot, page zero, the runnable-bank setup |
+| `boot.asm` | cold boot, warm-boot teardown, page zero, the runnable-bank setup |
+| `supervisor.asm` | the supervisor's common half: the policy-free final switch into the selected program, and the 219 loader's crossing into bank 7 |
+| `exec_loader.asm` | BDOS 219, the destructive `.COM` loader |
 | `rom_copy.asm` | the reset-vector bootstrap that copies ROM into SRAM |
 | `bios_table.asm` | the CP/M BIOS jump table and the Zephyr extension table |
-| `facade.asm` | `CALL 5` — the BDOS ABI surface, functions 200–218 |
+| `facade.asm` | `CALL 5` — the BDOS ABI surface, functions 200–219 |
 | `gates.asm` | the crossing gates into bank 7, and the warm-boot trap |
 | `crossing.asm` | mode-preserving bank select; the ROM-access primitive |
 | `banking.asm`, `bank_select.asm` | `SELMEM`, `SETBNK`, `XMOVE`, `MOVE` |
@@ -297,14 +321,16 @@ else to implement. `console.asm` is the console facade every backend plugs into;
 `storage.asm` is the disk facade and drive dispatcher; `video_send.asm` is the
 raw video request path; `iocall.asm` and `sio.asm` are the IO Controller and SIO
 services reached from bank 7; `bios7_table.asm` is the table ZSDOS calls;
-`banner.asm` prints the boot banner.
+`banner.asm` prints the boot banner; `supervisor.asm` is the transient
+supervisor's policy and its state.
 
 **`drivers/`** — bank 7, and the layer that *implements* one of those contracts
 for a particular device. A driver is a backend. `console/v9958.asm` and
 `console/vdrip.asm` are alternative console backends selected by `CONSOLE=`;
 `storage/rom.asm`, `storage/sd.asm`, `storage/fat.asm` and `storage/vdrip.asm`
-are drive backends; `transport/ioc_command.asm` and `transport/vdrip.asm` are
-link transports.
+are drive backends; `storage/native_vfs.inc` is the function-218 namespace router
+and `storage/cpm_mount.asm` the read-only `/SYSTEM/A` provider behind it;
+`transport/ioc_command.asm` and `transport/vdrip.asm` are link transports.
 
 **`layout/`** — no code, only addresses. `memory.inc` is the single authority for
 where everything lives: every region's base, every region's ceiling, the state
@@ -312,6 +338,16 @@ and stack addresses, and two ASCII maps kept in step with the generated
 documentation. When an address in this guide and an address in `memory.inc`
 disagree, `memory.inc` is right; when `memory.inc` and `docs/memory-map.md`
 disagree, the generated map is right, because it is measured from the build.
+
+**Sibling projects.** The default image also contains two things built outside
+this tree, in `Code/HOST/`:
+
+| Project | What it contributes |
+|---|---|
+| `ZephyrShell/` | `ZSH.COM`, placed on drive A:, and `build/ccp-zshell.bin`, the 2 KiB shim installed in the CCP slot. Its `ARCHITECTURE.md` is the shell's own design reference |
+| `ZephyrC/` | the C runtime library and `<zephyr/fs.h>`, the typed wrapper over BDOS function 218 that ZephyrShell and other C programs use |
+
+With `CCP=zcpr2` neither is linked, and ZCPR2 from `zcpr2/` fills the CCP slot.
 
 ### How a build assembles it
 
@@ -380,15 +416,16 @@ line has one:
 | `prepare_runnable_bank` | installs page zero: `JP WBOOT` at `0000h`, `JP FBASE` at `0005h`, DMA at `0080h` |
 | `facade_reset`, `boot_fat_context_reset`, zero `IOBYTE`/`TDRIVE`/`DMA_BANK` | OS state to a known point |
 | `sio_core_enable_interrupts`, `irq_enable` | interrupts come on **last**, only once console state, banking state and page zero are coherent |
-| `SP` → `FAC_STACK_TOP`, latch to mode 10, `SP` → `APP_STACK_TOP` | the BIOS stack is in bank 7; an interrupt between the latch switch and the CCP setting its own stack would otherwise push into bank 0's `C000h–DFFFh` |
-| `jp CCP_CLEARBUF_ENTRY` with `C` = 0 | drive A: |
+| `supervisor_cold_start` | initialization is finished, so the first *foreground decision* is now the supervisor's: it writes its state block and selects the default shell (Stage 4) |
+| `supervisor_enter_foreground`: `SP` → `FAC_STACK_TOP`, latch to mode 10, `JP (HL)` | the BIOS stack is in bank 7; an interrupt between the latch switch and the program setting its own stack would otherwise push into bank 0's `C000h–DFFFh`. Arrives at `CCP_CLEARBUF_ENTRY` with `C` = 0, drive A: |
 
 ### Stage 3 — warm boot: `WBOOT`
 
-Warm boot is entered from the BIOS jump table and from page zero's `JP` at
-`0000h` — which means **it can be entered from any bank, with any latch state,
-with a stack pointing anywhere.** That single fact shapes the first six
-instructions:
+Warm boot is the CP/M transient termination path. It is entered from the BIOS
+jump table and from page zero's `JP` at `0000h`. A program reaches it by `RET` to
+its return word, by BDOS 0, which ZSDOS routes through `wbtrap`, or by `JP 0000h`.
+That means **it can be entered from any bank, with any latch state, with a stack
+pointing anywhere.** That single fact shapes the first six instructions:
 
 ```asm
 wboot_masked:
@@ -404,7 +441,8 @@ No stack use and no helper `CALL` happens before the latch is set. `wboot` itsel
 is a two-instruction trampoline into `wboot_resident` precisely so that this
 protected body can be validated as its own region.
 
-After that it rebuilds the CP/M environment:
+After that it tears down whatever the program left behind and rebuilds the
+CP/M environment:
 
 - `irq_boot_prepare` and `sound_silence_psgs` return application-owned devices
   and callbacks to CP/M ownership;
@@ -413,17 +451,68 @@ After that it rebuilds the CP/M environment:
   a serial console can answer it, and the wait gives up on its own — a program
   that broke console input cannot strand the machine;
 - `sio_core_init` rebuilds **the console only**;
-- `restore_ccp_from_os` copies a pristine CCP from protected bank-7 SRAM, not
-  from ROM, so warm boot never maps ROM;
-- page zero, facade and FAT context are rebuilt as in cold boot;
+- page zero, facade and FAT context are rebuilt as in cold boot. The FAT
+  context reset closes transient native handles and the directory iterator,
+  preserves the writable current directory, and resets the `/SYSTEM/A` provider
+  to its root;
 - `console_init` reinitializes the display. The font is in bank 7 where no
   program can overwrite it, so no restore from ROM is needed;
 - `sercon_install` rebinds the serial console tee — `console_init` just reset
   `CONSOLE_DRIVER` and `sio_core_init` cleared the RX sink, so without this the
   tee dies on the first warm boot. `install`, not `init`, because it must
   preserve the armed flags;
-- interrupts on, stack handoff, mode 10, `jp CCP_CLEARBUF_ENTRY` with
-  `C` = `TDRIVE` — the selected drive survives a warm boot.
+- interrupts on;
+- **only now** `supervisor_after_teardown`, then `supervisor_enter_foreground`
+  (Stage 4). `C` = `TDRIVE`, so the selected drive survives a warm boot.
+
+Warm boot holds no next-program policy. It does not restore the CCP slot and
+does not know that a shell comes next; both are the supervisor's.
+
+### Stage 4 — the supervisor chooses; the shell runs
+
+The supervisor (`core/supervisor.asm`, bank 7) is the one resident component
+that owns the foreground program. It is a **single-foreground-transient
+supervisor, not a scheduler**: one program owns the TPA at a time, with no
+process IDs, no task switching and no resident parent.
+
+```text
+BOOT initializes.  WBOOT tears down.  SUPERVISOR decides.
+LOADER launches.   APPLICATION runs.
+```
+
+Its state is four bytes in bank 7: a layout version, the **foreground role**
+(`FG_NONE`, `FG_SHELL`, `FG_CHILD`), the **execution policy** (`EXEC_REPLACE`,
+the only one), and flags. Launching the default shell means four steps. The
+supervisor reinstalls the CCP slot from the pristine bank-7 copy and records
+`FG_SHELL`. It returns the entry point, `CCP_CLEARBUF_ENTRY`, and `TDRIVE` to
+common code, which switches to mode 10 and jumps.
+
+In the default build the CCP slot holds the ZephyrShell shim. It loads
+`A:ZSH.COM` to `0100h` with ordinary FCB I/O, selects `B:` as the compatibility
+drive, and jumps to the shell. From there:
+
+```text
+ZSH.COM (FG_SHELL)
+   |  external command: open the file through function 218,
+   |  build page zero (FCBs, command tail), call BDOS 219
+   v
+BDOS 219 loader -- reads 512-byte chunks over the shell, records FG_CHILD,
+   |               closes the handle, pushes WBOOT, JP 0100h
+   v
+child .COM (FG_CHILD)
+   |  RET / BDOS 0 / JP 0000h
+   v
+WBOOT teardown -> supervisor -> default shell again
+```
+
+The shell exiting (Ctrl-C at its prompt calls BDOS 0) takes the same path and
+is respawned. If the shim cannot load `ZSH.COM` — missing, a read error, or too
+large — it prints a `supervisor:` diagnostic and **halts**. It never warm-boots,
+because that would only ask the supervisor to load the same broken shell again.
+
+With `CCP=zcpr2` the slot holds ZCPR2, which is its own shell and loads programs
+itself. The supervisor treats it the same way, as the default shell's loader in
+the CCP slot.
 
 ### Cold versus warm, at a glance
 
@@ -433,7 +522,8 @@ After that it rebuilds the CP/M environment:
 | `bank7_check` | yes | no — already validated |
 | SIO1/A (`sio1_ioc_init`) | yes | **no** |
 | `ioc_link_bringup` | yes | no |
-| CCP source | the ROM image already in bank 7 | pristine copy in bank 7 |
+| Next program chosen by | `supervisor_cold_start` | `supervisor_after_teardown` |
+| CCP slot | reinstalled from the pristine copy in bank 7 by the supervisor | same |
 | Console | `console_backend_cold_init` | `console_init` |
 | Serial tee | `sercon_init` | `sercon_install` (preserves armed flags) |
 | Screen hold | no | `console_wait_key` |
@@ -506,6 +596,9 @@ accident.
 |---|---|---|
 | `CALL 5` / `FBASE` | **ABI** | the published program interface, including the Zephyr function range |
 | BDOS function 218 descriptor | **ABI** | versioned; the native syscall gateway |
+| `<zephyr/fs.h>` (ZephyrC) | **API** | the C programs' view of function 218; source-compatible, not an address contract |
+| BDOS function 219 | **private ABI** | shell-only destructive loader; takes a function-218 READ descriptor holding an open handle. ZephyrShell is its only caller, but the calling convention is shared across two separately built projects |
+| CCP slot entry (`E400h`/`E403h`) | **ABI** | the CP/M CCP entries; whatever the default shell's loader is, it must keep both jumps |
 | page zero conventions | **ABI** | `0000h`, `0005h`, default FCBs, `0080h` DMA |
 | CP/M BIOS jump table | **ABI** | order and entry semantics are fixed; new calls append |
 | BDOS functions 27 / 31 returns | **ABI** | caller-visible copies, which is why they are copies |
@@ -517,6 +610,10 @@ accident.
 | FS2 → IOC transport | internal | |
 | console facade → driver table | internal | seven-entry table; stable by convention, not published to programs |
 | storage facade → backend | internal | neutral `stg_a_*` entry points |
+| BOOT/WBOOT → supervisor | internal | the supervisor returns `HL` = entry and `C` = drive. Teardown must finish first (§6) |
+| BDOS 219 → supervisor | internal | `zexec_commit_close` records the child before the jump |
+| supervisor state block | internal | bank 7, versioned; no program can see it |
+| native router → providers | internal | handle `80h` is the `/SYSTEM/A` provider's; everything else is FS2's |
 | SIO0/B, SIO1 lanes | **hardware** | flow control, clocking and interrupt behavior are electrical facts |
 | banking latch | **hardware** | the decoder revision is part of the contract |
 
@@ -536,6 +633,18 @@ Four drive letters, three kinds of backend:
 | `A:` | ROM rescue disk | read-only volume in flash; the recovery path, built from a manifest |
 | `B:` | FAT personality | synthetic DPH over FS2 and FatFs on the controller |
 | `C:`, `D:` | conventional CP/M volumes | real record-oriented CP/M filesystems on SD units |
+
+The native namespace, seen through function 218 and therefore by ZephyrShell,
+is laid out differently from the drive letters:
+
+| Path | Provider | Notes |
+|---|---|---|
+| `/` and below | FS2 root on the card | writable; the current directory survives warm boot |
+| `/SYSTEM/A` | synthetic, read-only view of drive A: | one file handle and one iterator; its current directory resets to `/` on every warm boot |
+
+Both namespaces reach drive A:'s contents: as `A:` through ZSDOS and as
+`/SYSTEM/A` through the native router. The `/SYSTEM/A` provider parses A:'s CP/M
+directory itself and never calls the BDOS recursively.
 
 `C:` and `D:` matter beyond their own contents: they are the **oracle**. When a
 FAT behavior is in question, the same operation on a conventional drive shows
@@ -573,20 +682,22 @@ The reader's index. Find the shape of your change, then read the procedure.
 |---|---|---|
 | find my way around the source | the tree, organized by memory class | §0.3 |
 | understand what happens at power-on or warm boot | the four boot stages | §0.4 |
+| change the shell, how programs are launched, or what runs after a program exits | ZephyrShell, BDOS 219, the transient supervisor | §21 |
 | build an image, or change a build option | the Makefile and its validators | §9 |
 | change or intercept a BDOS function | facade + bank-7 dispatcher | §11 |
 | add a new native (non-CP/M) operation | native API + function 218 gate | §12 |
+| add a native namespace provider like `/SYSTEM/A` | function-218 router | §12, §21 |
 | add or change an IOC command | FS2 / IOC protocol, both processors | §13 |
 | add a new kind of drive | storage personality + synthetic DPH | §14 |
 | write a driver for new hardware | driver slots, facades, driver tables | §15 |
 | make something writable that was not | personality + FS2 + mutation invalidation | §16 |
 | add a cache, handle or lease | resource pool + invalidation matrix | §17, Appendix C |
 | change USER, CWD or the drive map | personality namespace + every coupled consumer | §18 |
-| write or fix a `.COM` utility | CP/M/ZCPR transient conventions | §19 |
+| write or fix a `.COM` utility | CP/M transient conventions under either launcher | §19 |
 | make something faster | measure first, then transaction count | §20 |
-| write a test for any of the above | the qkz80 harness | §21 |
-| find out what CP/M really does | characterization tools, conventional-drive oracle | §22, §27 |
-| know what to run before committing | the regression checklist | §31 |
+| write a test for any of the above | the qkz80 harness | §22 |
+| find out what CP/M really does | characterization tools, conventional-drive oracle | §23, §28 |
+| know what to run before committing | the regression checklist | §32 |
 
 If your change does not fit a row, that is worth noticing before you start: it
 usually means either the change spans layers that were deliberately separated,
@@ -602,8 +713,8 @@ or it belongs somewhere other than where you first looked.
 - **Part II** is the procedures, organized as "I want to change X." Read the one
   section you need, plus §9 if you have not built the system before.
 - **Part III** is verification: how to prove both that your change works and
-  that you did not quietly redefine CP/M. Read §21 before writing a test and
-  §31 before committing.
+  that you did not quietly redefine CP/M. Read §22 before writing a test and
+  §32 before committing.
 - **Appendix A** gives the current file names, symbols and addresses for
   everything described above. This part is stable across refactors; Appendix A
   is not, and the generated `docs/memory-map.md` supersedes both for any
@@ -956,6 +1067,35 @@ of another USER.
 
 Native path access is not required to apply the CP/M USER projection.
 
+### Teardown precedes policy
+
+> **Every transient exits through WBOOT, and WBOOT finishes tearing it down
+> before anything decides what runs next.**
+
+The order is fixed:
+
+```text
+transient --RET / BDOS 0 / JP 0000h--> WBOOT --full teardown--> supervisor --> next program
+```
+
+It is never `transient → supervisor → cleanup`, and never
+`transient → supervisor → next program`. A program may have registered interrupt
+callbacks, reprogrammed the CTC, drawn on the V9958, held native handles, or
+rewritten page zero. The next program, whichever it is, must start from the
+OS-owned state that WBOOT rebuilds, not from what the last one left.
+
+The two halves stay separate:
+
+- **WBOOT owns teardown and holds no policy.** It does not know the next program
+  is usually the shell, and it does not restore the CCP slot.
+- **The supervisor owns policy and holds no device knowledge.** It never resets
+  the CTC, SIO, console or a storage provider. If a new kind of program state
+  needs cleaning up, that is a WBOOT step, added before the supervisor call.
+
+The same rule binds future policies. A parent restored after its child exits
+comes back *after* the child's interrupt and device state is gone, never instead
+of tearing it down.
+
 ---
 
 ## 7. SEARCH is an observable ABI
@@ -1104,7 +1244,7 @@ and ABI mistakes are caught by the build itself, not by running the machine.
 ### Where the build lives
 
 ```text
-Code/HOST/CPM2.2/          the operating system: BIOS, ZCPR2, ZSDOS, tools
+Code/HOST/CPM2.2/          the operating system: BIOS, supervisor, ZCPR2, ZSDOS, tools
   src/
     zephyr.asm             the assembly root: include order and nothing else
     layout/                the address authority: memory.inc, platform.inc, modes.inc
@@ -1133,6 +1273,7 @@ All commands below run from `Code/HOST/CPM2.2`.
 | the image | GNU Make, Python 3, SDCC's `sdasz80`, `sdldz80`, `makebin` |
 | ZCPR2 and ZSDOS | a host C compiler; the CP/M emulator is vendored in `tools/runcpm` and compiled on first use |
 | drive A: contents | the sibling `Utilities` and `Monitor` projects, built automatically |
+| ZephyrShell (`CCP=zshell`, the default) | z88dk's `zcc` for `ZSH.COM` and ZephyrC; `sdasz80`/`sdldz80` for the shim. Built automatically from `../ZephyrShell` |
 | `make test` | a C++17 compiler and libqkz80 headers/library |
 
 Nothing is resolved from a checkout elsewhere on your disk. The period
@@ -1146,15 +1287,17 @@ for this build, so do not point `RUNCPM=` at one.
 make
 ```
 
-That produces the default machine: physical V9958 console, ROM drive A:, SD
-drive B: with the FAT personality enabled. It ends by printing the
-configuration it just built, and the name of the image to flash:
+That produces the default machine: ZephyrShell as the default shell, physical
+V9958 console in 85x26 text, ROM drive A:, SD drive B: with the FAT personality
+enabled. It ends by printing the configuration it just built, and the name of the
+image to flash:
 
 ```text
-  ROM built:  CCP=zcpr2  BDOS=zsdos  CONSOLE=v9958  STORAGE_A=rom
+  ROM built:  CCP=zshell  BDOS=zsdos  CONSOLE=v9958  STORAGE_A=rom
+    V9958 text: 85x26
     FAT drive: enabled
     build/zephyr80.bin
-    build/zephyr80-zcpr2-zsdos-v9958-rom.bin   <- flash this one to be sure
+    build/zephyr80-zshell-zsdos-v9958-rom-85x26.bin   <- flash this one to be sure
 ```
 
 The stamped copy exists because `build/zephyr80.bin` is the same filename for
@@ -1171,23 +1314,20 @@ burned and came up on the V9958 console.
 
 | Variable | Values | Meaning |
 |---|---|---|
+| `CCP` | `zshell` (default), `zcpr2` | what fills the CCP slot as the default shell's loader: the ZephyrShell shim, which loads `A:ZSH.COM`, or ZCPR2 |
+| `BDOS` | `zsdos` | fixed. The stock CP/M BDOS cannot run behind the banked OS, and the Makefile refuses anything else |
 | `CONSOLE` | `v9958` (default), `vdrip` | which console backend is linked into the console slot |
+| `V9958_TEXT_MODE` | `85x26` (default), `128x35` | V9958 text geometry and font; ignored with `CONSOLE=vdrip` |
 | `STORAGE_A` | `rom` (default), `vdrip` | which drive A: backend is linked |
-| `FAT_BIOS_M1` | `1` (default), `0` | `0` parks the synthetic FAT drive without moving anything; a recovery build |
-| `CCP` / `BDOS` | `zcpr2` / `zsdos` | fixed. The stock CP/M CCP and BDOS cannot run behind the banked OS, and the Makefile refuses any other pair. |
+| `FAT_DRIVE` | `1` (default), `0` | `0` parks the synthetic FAT drive without moving anything; a recovery build |
 
-Two combinations are constrained rather than free:
+`STORAGE_A=vdrip` requires `CONSOLE=vdrip`, because both ride the shared VDrip
+transport. `CONSOLE=vdrip` builds and boots; the two consoles draw the same
+screen, so the stamped filename is how you tell them apart.
 
-- `STORAGE_A=vdrip` requires `CONSOLE=vdrip`, because both ride the shared
-  VDrip transport.
-- `CONSOLE=vdrip` currently does not build at all. The transport is 654 bytes
-  and the common-memory hole it used to occupy now holds the crossing gates,
-  the interrupt dispatcher and the serial console tee. This is arithmetic, not
-  a regression to hunt; `docs/vdrip-backend-restoration.md` has the
-  measurements.
-
-A `FAT_BIOS_M1=0` build is marked in the filename (`-nofat`). The other
-configurations are not, which is another reason to read the printed summary.
+The stamped filename carries every variable: CCP, BDOS, console, A: backend,
+`-nofat` for a `FAT_DRIVE=0` build, and the text mode for a V9958 build. Read the
+printed summary anyway.
 
 ### What the build actually does
 
@@ -1210,7 +1350,9 @@ src/drivers/**  -> drv_*.rel     each driver is its own translation unit; the
   -> makebin -> firmware_flat.bin
   -> split_banked_image.py       cuts the flat space into ROM page 0 (common
                                  memory, reset vector) and the bank 7 payload,
-                                 installing ZCPR2 at CBASE and ZSDOS at its org
+                                 installing the selected CCP image at CBASE and
+                                 its pristine copy at CCP_RESTORE_BASE, and
+                                 ZSDOS at its org
   -> build_zephyr_image.py       assembles the 512 KiB burnable ROM from page 0,
                                  bank 7 and the ROM-disk chunks; writes
                                  build/layout.manifest and layout-report.md
@@ -1227,17 +1369,26 @@ Two dependencies are worth knowing because they look like nothing:
   one would assemble cleanly and jump into the middle of something at run time.
 - ZCPR2 is assembled against `CBASE` and `CBIOS_BASE` read directly out of the
   firmware sources, so the command processor cannot drift from the layout.
+- The ZephyrShell shim is assembled against its own copy of `CBASE` and the CCP
+  slot limit, in `ZephyrShell/stubs/ccp.asm`. It calls nothing in the BIOS by
+  address, only BDOS through `0005h`, so it does not depend on the symbol map.
+  It must still keep both CCP entry jumps, which `split_banked_image.py` checks.
+  Unlike ZCPR2's, its `CBASE`, and the `--base 0xe400` in
+  `ZephyrShell/Makefile`, are hand copies. Moving `CBASE` means changing them
+  too. Nothing fails the build if you forget.
 
 ### The ROM disk
 
-`make` rebuilds the sibling `Utilities` and `Monitor` projects every time and
-takes their binaries for drive A:. That is deliberate: their outputs used to be
+`make` rebuilds the sibling `Utilities` and `Monitor` projects every time, and
+`ZephyrShell` too when `CCP=zshell`, and takes their binaries for drive A:. That is deliberate: their outputs used to be
 picked up as found, so a clean build here could still ship tools compiled
 against a different BIOS, and after one branch switch every IOC tool on A:
 failed with a transport error.
 
 Shipping a new transient on A: means adding a `MANIFEST` row in
-`tools/build_rom_disk.py`, not copying a file anywhere. Staging happens under
+`tools/build_rom_disk.py`, not copying a file anywhere. `ZSH.COM` is the one
+conditional entry: the build adds it only for `CCP=zshell`, through
+`--zshell-dir`. Staging happens under
 `build/`; nothing in the tracked tree is rewritten.
 
 `images/*.cpm` are user-owned volumes. The build never writes them, and neither
@@ -1249,7 +1400,7 @@ Primary artifacts:
 
 | Artifact | Meaning |
 |---|---|
-| `build/zephyr80-<ccp>-<bdos>-<console>-<storage_a>[-nofat].bin` | the 512 KiB image to flash |
+| `build/zephyr80-<ccp>-<bdos>-<console>-<storage_a>[-nofat][-<text mode>].bin` | the 512 KiB image to flash |
 | `build/firmware.bin` | ROM page 0: reset vector and common memory |
 | `build/bank7.bin` | bank 7 payload: ZSDOS, the BIOS and drivers |
 | `build/firmware.rst`, `build/drv_*.rst` | linker-resolved listings; the symbol authority for the doc generator and the harnesses |
@@ -1306,8 +1457,8 @@ The build stops rather than producing a subtly wrong image when:
   nearest symbol on each side);
 - a declared region runs past its limit;
 - the IOC failure record definition and the CP/M tools' mirror of it disagree;
-- an unsupported `CONSOLE`, `STORAGE_A`, `FAT_BIOS_M1`, or `CCP`/`BDOS`
-  combination is requested;
+- an unsupported `CONSOLE`, `V9958_TEXT_MODE`, `STORAGE_A`, `FAT_DRIVE`, or
+  `CCP`/`BDOS` combination is requested;
 - a sibling binary the ROM disk manifest names has not been built.
 
 Do not work around these by moving something else out of the way until you have
@@ -1535,6 +1686,34 @@ When an operation is answerable entirely from bank-7 state, state that fact in
 its contract and test that it generates **zero controller traffic**. This keeps
 future refactors from quietly turning a memory lookup into an IOC round trip.
 
+### Namespace providers
+
+Function 218 is a namespace, not one filesystem. `native_vfs_entry`
+(`drivers/storage/native_vfs.inc`) routes each call:
+
+- **namespace operations** (open, stat, chdir, opendir and the rest) go by the
+  path the call names, relative to the current directory;
+- **handle operations** (read, write, seek, close, readdir and the rest) go by
+  handle value. Handle `80h` belongs to the `/SYSTEM/A` provider; every other
+  handle belongs to FS2.
+
+`/SYSTEM/A` (`drivers/storage/cpm_mount.asm`) is the precedent for adding a
+provider:
+
+- **Own a distinct handle range.** A handle must say which provider issued it,
+  without a lookup the other provider could disturb.
+- **Never call the BDOS.** The provider runs inside a function-218 call, so a
+  recursive `CALL 5` would re-enter the facade. `/SYSTEM/A` reads A:'s CP/M
+  directory and extents itself, through the drive-A: backend.
+- **Declare the warm-boot reset policy.** WBOOT's FAT context reset ends by
+  tail-calling `cpm_mount_reset`. A new provider chains its reset onto that path
+  and states what survives. The writable FS2 current directory is preserved;
+  `/SYSTEM/A`'s handle, iterator and current directory are discarded.
+- **Read-only means refusing mutation with `FS2_STATUS_READ_ONLY`**, not
+  falling through to the root provider.
+- **Executables need nothing special.** The BDOS 219 loader consumes an
+  already-open handle through the router, so a program on any provider launches
+  through the same loader (§21).
 
 ### Native operations need native tests
 
@@ -2184,9 +2363,30 @@ state and make later path replay fail far from the formatter.
 Utilities that sit above the new native services still run under CP/M/ZCPR and
 must obey its transient conventions.
 
+### Two launchers, one contract
+
+A `.COM` can be started by either launcher, and a utility must work under both:
+
+| | ZephyrShell (`CCP=zshell`) | ZCPR2 (`CCP=zcpr2`) |
+|---|---|---|
+| how it is loaded | BDOS 219 reads it through function 218, from any native path including `/SYSTEM/A` | ZCPR2 reads it with FCB I/O from a CP/M drive |
+| entry | `JP 0100h`, `SP` = `EFF6h`, the word at `SP` = `WBOOT` | `CALL 0100h` on the CCP's stack |
+| plain `RET` | warm boot | back into ZCPR2, no warm boot |
+| default FCBs at `005Ch`/`006Ch` | built by the shell from the first two arguments, uppercased and cut to 8.3. A path-like argument gives a blank name | ZCPR2's parser, including DU prefixes |
+| command tail at `0080h` | rebuilt from parsed arguments: one space before each, quotes removed, at most 126 characters, `CR`-terminated | ZCPR2's original text |
+| size limit | 60,160 bytes (`EB00h`), checked before loading | the TPA |
+| current directory inherited | the shell's native CWD; launching by path does not change it | the CP/M drive and USER |
+
+Two consequences matter. Under ZephyrShell **every exit is a warm boot**, so a
+program always passes WBOOT's `[any key]` screen hold, and nothing it set up
+survives. And the shell is gone by the time the program runs, so the program
+cannot return a value or a state to it.
+
 ### Preserve the entry stack
 
-ZCPR2 invokes a transient with `CALL 0100h`.
+ZCPR2 invokes a transient with `CALL 0100h`. ZephyrShell's loader jumps there
+with a `WBOOT` return word on a protected stack. Code that returns with `RET`
+works under both.
 
 If a utility switches to a private stack:
 
@@ -2198,7 +2398,7 @@ RET
 ```
 
 Jumping to page zero merely to escape a broken return forces an unnecessary
-warm boot and hides the actual problem.
+warm boot under ZCPR2, and hides the actual problem under both launchers.
 
 ### Do not trust the default FCB for every command-line distinction
 
@@ -2207,7 +2407,9 @@ The CCP's filename parser consumes dots.
 For example, `CD ..` and a bare `CD` can become indistinguishable in FCB1.
 
 Use the untouched command tail when syntax such as `..`, path components, or
-DU-style prefixes matters.
+DU-style prefixes matters. Under ZephyrShell the tail is not untouched: it is
+rebuilt from the shell's parsed arguments, so quotes are already removed and the
+shell's own quoting rules decide what one argument is.
 
 ### DU parsing
 
@@ -2308,6 +2510,137 @@ The floor for FCB software is still CP/M's 128-byte API: four CALL-5/facade
 crossings per 512 bytes. Native byte-oriented readers avoid that ceiling by
 design.
 
+---
+
+## 21. How to change the shell, program launch, or the supervisor
+
+Four pieces cooperate to run programs, and each owns one thing:
+
+| Piece | Owns | Where |
+|---|---|---|
+| WBOOT | teardown after any transient | `common/boot.asm` |
+| transient supervisor | which program runs next | `core/supervisor.asm` (bank 7), `common/supervisor.asm` (glue) |
+| BDOS 219 loader | destroying the shell and starting a child | `common/exec_loader.asm` |
+| ZephyrShell | everything the user types; nothing about lifecycle | `../ZephyrShell` |
+
+Most mistakes here put a responsibility in the wrong piece. Before you change
+anything, decide which of the four the change belongs to; §6's "Teardown
+precedes policy" is the rule they all serve.
+
+### Rules
+
+- **The shell is an ordinary transient.** No resident code, no lifecycle state,
+  no cleanup duty for its children. It is overwritten by every program it runs
+  and reloaded afresh afterwards, so its globals, history and buffers never
+  survive a launch.
+- **There is one loader, and it does not care where the file came from.** The
+  shell opens the executable through function 218 and hands BDOS 219 an open
+  handle; the loader reads through the namespace router. A program on the card
+  and a program in `/SYSTEM/A` take the same path. Do not add a loader per
+  provider.
+- **The loader cannot grow.** Its region ends at `ZEXEC_CHILD_STACK_TOP`, and the
+  `WBOOT` return word it pushes for the child lands on the region's last two
+  bytes. Extra work goes into bank 7 and is reached through an existing call
+  site. `zexec_commit_close` is the precedent: the loader's final
+  `call zexec_native_call` became a same-length `call zexec_commit_close`, which
+  crosses into the supervisor, records the child, and then closes the handle.
+- **A child never returns to the loader or to the supervisor directly.** It exits
+  through WBOOT like any CP/M program.
+- **A failed load does not commit a child.** The loader closes the handle and
+  warm-boots; the role is still `FG_SHELL`, so the shell is relaunched. A
+  partially loaded image is never entered.
+- **A shell that cannot be loaded halts.** The shim's fatal paths print a
+  `supervisor:` message through BDOS 9 and halt with interrupts masked. A warm
+  boot there would loop forever loading the same broken shell.
+- **Respawning a terminated shell is not rate-limited, on purpose.** Ctrl-C at
+  the prompt is an ordinary BDOS 0 exit, and a respawn limit would halt the
+  machine for a user who pressed it a few times. Note what this leaves open: a
+  shell that loads correctly but then crashes straight back to WBOOT is
+  respawned indefinitely, with an `[any key]` hold each time.
+- **Supervisor state is bank 7, versioned and validated.** It is written in full
+  at cold boot, never initialized from the image. If WBOOT finds an unknown
+  version, role or policy, the supervisor reinitializes the block, sets
+  `SUP_FLAG_STATE_REPAIRED` and launches the shell. That is the only safe choice
+  it has.
+- **The final transfer carries no policy.** `supervisor_enter_foreground` takes
+  `HL` = entry and `C` = argument from the supervisor, moves to the facade stack,
+  switches to mode 10 and jumps. Boot and WBOOT both end there.
+
+### Changing what WBOOT tears down
+
+Add the step to `wboot_masked` **before** `call supervisor_after_teardown`. Then
+add it to the `WARM` list in `tests/supervisor_lifecycle.cpp`. The harness
+asserts the warm-boot call order exactly, so an unlisted step fails the test.
+That failure is the reminder to decide whether the step is teardown, which
+belongs in WBOOT, or policy, which belongs in the supervisor.
+
+Cold-only devices stay cold-only (§0.4: never repeat `sio1_ioc_init`).
+
+### Changing the default shell
+
+The supervisor treats the default shell as "the loader image in the CCP slot,
+entered at `CCP_CLEARBUF_ENTRY`". To move the shell, for example to
+`/SYSTEM/ZSH.COM`, change `supervisor_launch_shell` and that loader image. Do not
+change BOOT or WBOOT. Keep in mind:
+
+- the shim is 2 KiB (`E400h-EBFFh`), restored from `CCP_RESTORE_BASE` at every
+  launch, and must keep both CCP entry jumps;
+- the shell image must end below the live shim while the shim is loading it;
+- the shim uses FCB I/O on A: today. Moving the shell to a native path means
+  either a native read loop in the shim, or a launch path that reuses the BDOS
+  219 loader. Prefer reusing the loader; its fixed common bytes are already
+  paid for;
+- a shell file on A: is a `MANIFEST` row, added conditionally for `CCP=zshell`
+  (§9).
+
+### Adding an execution policy
+
+`EXEC_REPLACE` is the only policy: after any exit, the default shell runs. The
+state machine leaves room for another one, such as `EXEC_RETURN`, in which an IDE
+runs a compiler and resumes afterwards. Adding one means:
+
+1. a new policy value below a raised `EXEC_POLICY_LIMIT`, and a bump of
+   `SUP_STATE_VERSION` if the state block changes;
+2. a way for a program to request it, which is a new ABI decision. Either a new
+   field in the 219 descriptor or a new private call; decide deliberately and
+   append, never renumber;
+3. a branch at the policy dispatch in `supervisor_after_teardown`, which runs
+   after teardown;
+4. somewhere to keep the parent's TPA. This is the hard part, and it is
+   unsolved. The reclaimable cache pool is allocator-owned and may not silently
+   become an image buffer (§3, §17).
+
+The parent's own resources are a separate problem that a TPA image does not
+solve: its interrupt registrations, open handles and console state are all
+gone after WBOOT tears down the child.
+
+### Changing the shell's launch contract
+
+`ZephyrShell/src/exec.c` resolves the path, applies the `.COM` name policy,
+checks the size, builds page zero, and fills a version-1 function-218 READ
+descriptor holding the handle with a 512-byte request. Changing any of that
+changes what every program sees on entry (§19). The size limit (`EB00h` bytes)
+exists so that a program loaded at `0100h` ends below the ZSDOS serial number at
+`EC00h`.
+
+### Verifying
+
+- `make test` runs `tests/supervisor_lifecycle.cpp` (§22). It covers:
+  - cold boot to the shell entry;
+  - the exact warm-boot order;
+  - the 219 commit;
+  - child and shell exits by `RET`, `JP 0000h` and BDOS 0;
+  - load failure on the first and a later chunk;
+  - 600 repeated cycles without handle, stack or state drift;
+  - state repair;
+  - the shim's load and fatal paths.
+- `make test` in `../ZephyrShell` runs the shell's host tests against a mock
+  filesystem.
+- Hardware acceptance for the lifecycle is in `ZephyrShell/ARCHITECTURE.md`:
+  boot, CWD persistence, `/SYSTEM/A` programs, the three exits, Ctrl-C respawn,
+  a 300-run repeat, and a ROM without `ZSH.COM`. The harness does not model the
+  console, FS2 or the real provider, so these remain hardware checks.
+
 
 ---
 
@@ -2316,7 +2649,7 @@ design.
 A contributor should be able to prove both "my feature works" and "I did not
 quietly redefine CP/M."
 
-## 21. The qkz80 harness: how to prepare a test
+## 22. The qkz80 harness: how to prepare a test
 
 The rest of Part III says what to prove. This section says how to build the
 thing that proves it.
@@ -2332,13 +2665,14 @@ make            # the harness runs against build/ artifacts, so build first
 make test
 ```
 
-Three harnesses exist today, and each proves a different kind of thing:
+Four harnesses exist today, and each proves a different kind of thing:
 
 | Runner | Harness | Proves |
 |---|---|---|
 | `tools/test_irq_core.py` | `tests/irq_core.cpp` | interrupt tokens, IOC error paths, registration, every CTC/SIO vector, context preservation, ISR stack high-water mark |
 | `tools/test_fat_bios_m1.py` | `tests/fat_bios_m1.cpp` | the synthetic FAT BIOS DPH, empty READ, WRITE failure, bounds, the disabled gate |
 | `tools/test_fat_bdos_ro.py` | `tests/fat_bdos_ro.cpp` | FAT BDOS routing, all-USER raw SEARCH, USER-relative CHDIR, the FS2 handle lifecycle, error mapping, the writable FCB personality |
+| `tools/test_supervisor.py` | `tests/supervisor_lifecycle.cpp` | cold boot, exact warm-boot teardown order, BDOS 219 child commit, `RET`/`JP 0000h`/BDOS 0 exits, load failure, 600-cycle stress, state repair, the shim's fatal halts |
 
 `test_irq_core.py` also does something no emulator can: before running anything
 it greps every source but `common/irq.asm` for `di`, `ei`, `reti`, `retn`, `im`
@@ -2379,7 +2713,11 @@ and there is one per translation unit, so the layout is the union of them. The
 eight characters, and 285 of them are ambiguous at that length.
 
 Any label a listing shows is available — no `.globl` needed — and any
-`NAME = value` in `layout/memory.inc` is available as a constant. Refer to
+`NAME = value` in `layout/memory.inc` is available as a constant. A harness
+that needs ports or latch values also adds `platform.inc` and `modes.inc`, as
+`test_supervisor.py` does. Only literal values are picked up: a constant defined
+as an expression, such as `FBASE = CBASE + 0x0806`, is available only if a
+listing resolves it. Refer to
 addresses by symbol. A harness that hardcodes an address will keep passing after
 the layout moves.
 
@@ -2395,6 +2733,13 @@ supplies that port-only opcode through the `block_io` hook.
 
 **3. The rig.** Loads `build/firmware_flat.bin` into all 64 KiB, loads the
 symbol table, sets an initial `SP`, and holds the mock state.
+
+The flat image is the link before the split, so it lacks what
+`split_banked_image.py` installs: ZSDOS at `2000h` and the CCP image at `CBASE`
+and `CCP_RESTORE_BASE`. A harness that runs through those loads the shipped
+halves instead. `supervisor_lifecycle.cpp` copies `build/firmware.bin` (page 0)
+and overlays `2000h-DFFFh` from `build/bank7.bin`. That is the machine as mode 11
+sees it, with the real ZSDOS and the real shell loader in place.
 
 **4. The call driver.** This is the part worth copying exactly:
 
@@ -2428,6 +2773,27 @@ The mock reads the request out of `FAT_TX` and writes the reply into `FAT_RX` at
 the real offsets, so reply lengths and status codes are exercised as the
 protocol defines them, not as the caller wishes they were.
 
+**A variant for control paths: stubs and observers.** To test a whole path, such
+as cold boot, a warm boot or a program launch, without modelling every device,
+`supervisor_lifecycle.cpp` keeps two address maps:
+
+- a **stub** records its name in an ordered trace and fakes a `RET`. It is used
+  for device and teardown routines: `console_init`, `irq_enable`,
+  `fat_context_reset` and the rest;
+- an **observer** records its name and lets execution continue. It is used for
+  the code under test: `wboot_masked`, `supervisor_after_teardown`,
+  `supervisor_enter_foreground`.
+
+The test then compares the trace with the expected sequence, so "teardown before
+policy" is a checked fact, not a reading of the source. Two details matter:
+
+- **Anchor at the routine's own entry.** BDOS 0 reaches WBOOT through `wbtrap`,
+  which calls `irq_enable` first. Compare from the `wboot_masked` observer, not
+  from the first stub.
+- **Mark state the code under test must change.** The rig fills the CCP slot with
+  `FFh` before each exit and asserts it is still `FFh` when the supervisor is
+  entered. That is how it proves WBOOT itself no longer restores the slot.
+
 ### Writing a new harness
 
 1. **Pick the boundary you are testing** — bank-7 worker, the crossing gate, or
@@ -2435,7 +2801,8 @@ protocol defines them, not as the caller wishes they were.
    for another.
 2. **Copy the nearest existing harness.** `fat_bdos_ro.cpp` if you need a
    modelled controller; `irq_core.cpp` if you need mocked ports and interrupt
-   state.
+   state; `supervisor_lifecycle.cpp` if you need to run a whole control path
+   through the shipped images and assert its call order.
 3. **Model the file or device, not the expected answer.** `fat_bdos_ro.cpp`
    keeps a real `map<string, vector<unsigned char>>` behind the mock so that
    open, read, write, extend, rename and unlink have to agree with each other.
@@ -2470,7 +2837,7 @@ and hand over its path.
 
 ---
 
-## 22. Characterize before emulating
+## 23. Characterize before emulating
 
 Documentation is not the complete BDOS compatibility contract.
 
@@ -2498,7 +2865,7 @@ rule.
 
 ---
 
-## 23. Test both personalities
+## 24. Test both personalities
 
 CP/M FCB access and the native byte API are two views of the same files.
 
@@ -2541,7 +2908,7 @@ Adding a native operation therefore requires a direct native harness case.
 
 ---
 
-## 24. Model the real memory path
+## 25. Model the real memory path
 
 A harness must model the machine, not only the function signature.
 
@@ -2558,7 +2925,7 @@ Do not treat it as an exotic edge case.
 
 ---
 
-## 25. Mutation-test the tests
+## 26. Mutation-test the tests
 
 A passing assertion is not evidence that the test can detect the defect.
 
@@ -2577,7 +2944,7 @@ implementation itself must establish the guarantee.
 
 ---
 
-## 26. Boundary-value checklist
+## 27. Boundary-value checklist
 
 For byte/record/file operations, include boundaries around the actual
 abstractions:
@@ -2614,7 +2981,7 @@ runtime.
 
 ---
 
-## 27. Use the conventional drive as an oracle
+## 28. Use the conventional drive as an oracle
 
 A standard-BDOS compatibility test should run on both:
 
@@ -2640,7 +3007,7 @@ accidental.
 
 ---
 
-## 28. Cross-drive and USER regression matrix
+## 29. Cross-drive and USER regression matrix
 
 Always test both directions of explicit drive crossing.
 
@@ -2680,7 +3047,7 @@ Keep an equivalent asymmetric matrix as the system evolves.
 
 ---
 
-## 29. Application probes complement unit tests
+## 30. Application probes complement unit tests
 
 Different programs expose different assumptions.
 
@@ -2702,7 +3069,7 @@ actual BDOS calls.
 
 ---
 
-## 30. Failure triage
+## 31. Failure triage
 
 When a command fails, separate the layers before changing code.
 
@@ -2742,7 +3109,7 @@ Before debugging a new IOC feature:
 
 ---
 
-## 31. Minimum pre-commit regression checklist
+## 32. Minimum pre-commit regression checklist
 
 For a change touching BDOS/native storage integration, the minimum useful
 pre-commit suite is:
@@ -2780,6 +3147,18 @@ pre-commit suite is:
 - USER/CWD behavior passes where affected;
 - one application-level probe appropriate to the change passes.
 
+### Lifecycle
+
+For a change touching boot, WBOOT, BDOS 219, the CCP slot, the supervisor or the
+shell:
+
+- the supervisor lifecycle harness passes, and its `WARM`/`COLD` expectations
+  were updated deliberately, not to make it pass;
+- `CCP=zshell` and `CCP=zcpr2` both build and pass `make test`;
+- the 219 loader region did not grow;
+- on hardware: boot to the prompt; one child run by each exit mechanism; Ctrl-C
+  respawn; a `/SYSTEM/A` program; CWD preserved across a launch.
+
 ### Documentation
 
 - durable new invariant goes into this guide;
@@ -2806,6 +3185,34 @@ Code/HOST/CPM2.2/src/common/native_gate.asm
     application/native read-data staging
     preservation of native status across the crossing
 
+Code/HOST/CPM2.2/src/common/boot.asm
+    cold boot, wboot_masked (teardown), page zero
+
+Code/HOST/CPM2.2/src/core/supervisor.asm
+    transient supervisor (bank 7)
+    supervisor_cold_start / supervisor_after_teardown
+    supervisor_exec_replace_commit
+    sup_version / sup_role / sup_policy / sup_flags
+
+Code/HOST/CPM2.2/src/common/supervisor.asm
+    supervisor_enter_foreground, zexec_commit_close
+
+Code/HOST/CPM2.2/src/common/exec_loader.asm
+    BDOS 219 destructive loader, zexec_loader_entry
+
+Code/HOST/CPM2.2/src/drivers/storage/native_vfs.inc
+    native_vfs_entry: function-218 namespace router
+
+Code/HOST/CPM2.2/src/drivers/storage/cpm_mount.asm
+    read-only /SYSTEM/A provider, cpm_mount_reset
+
+Code/HOST/ZephyrShell/
+    ZSH.COM (src/exec.c: launch contract), stubs/ccp.asm (shim),
+    ARCHITECTURE.md (shell design and hardware acceptance)
+
+Code/HOST/ZephyrC/include/zephyr/fs.h
+    C API over function 218
+
 Code/HOST/CPM2.2/src/drivers/storage/fat.asm
     bank-7 FAT personality
     fat_bdos_dispatch
@@ -2819,6 +3226,9 @@ BIOS7_BASE  = 3000h
 
 BDOS function 218
     versioned native filesystem descriptor
+
+BDOS function 219
+    shell-private destructive loader; function-218 READ descriptor
 
 Code/MCU/IOController/src/fs2.c
     IOC native filesystem service
@@ -2871,6 +3281,12 @@ guide to where something runs.
 | Filesystem implementation | FS2/FatFs on IOC |
 | Resource abstraction | above native filesystem API |
 | Interrupt vector architecture | BIOS/core |
+| Transient teardown after any exit | WBOOT |
+| Which program runs next | transient supervisor |
+| Default shell identity | supervisor + the loader image in the CCP slot |
+| Destructive program load | BDOS 219 loader |
+| Command line, paths, `.COM` lookup | ZephyrShell |
+| Native namespace routing | `native_vfs_entry` |
 
 ---
 
@@ -2912,6 +3328,7 @@ media-generation changes.
 - transport/bulk diagnostics
 - DIR / TYPE / CRC / VGMPlayer / ZCD application probes
 - conventional CP/M volume as a compatibility control
+- the supervisor hardware-acceptance table in `ZephyrShell/ARCHITECTURE.md`
 
 Keep these tools after bring-up. They are executable specifications.
 
@@ -2932,6 +3349,14 @@ retest semantic status explicitly.
 
 State read before explicit initialization must be emitted/initialized
 accordingly.
+
+### Labels are relocatable in assembly-time checks
+
+In `sdasz80`, an `.if` that compares a label with a constant, such as
+`.ifne sup_role - (BASE + 1)`, fails with a relocation error, even inside an
+absolute area. The difference of two labels in the same area is absolute and
+works; size checks of the form `.ifgt (END - START) - LIMIT` are fine. Check
+label-against-constant offsets in the layout generator or a harness instead.
 
 ### Reader/writer asymmetry is suspicious
 

@@ -20,7 +20,8 @@ The resulting invariants are:
 - CP/M FCB I/O is used only by the CCP bootstrap to load `A:ZSH.COM`.
 - Native current-directory state is authoritative. CP/M drive and USER values remain compatibility state and are displayed in the prompt.
 - Each low-level FS2 file or namespace operation acts on one packed 8.3 component. Multi-component paths are handled by ZephyrC and `path.c`.
-- A child `.COM` replaces the shell in the TPA. There is no resident shell parent; WBOOT restores the bootstrap and starts a fresh shell instance.
+- A child `.COM` replaces the shell in the TPA. There is no resident shell parent. WBOOT tears down what the child left behind; the resident transient supervisor then decides what runs next, and today always starts a fresh shell instance.
+- ZephyrShell is an ordinary foreground transient that the supervisor designates as the default shell. It holds no lifecycle or process-management code.
 - The existing BIOS jump table and CP/M ABI remain unchanged. BDOS 218 is the public native-filesystem gate; BDOS 219 is a private shell loader.
 
 ## System context
@@ -30,9 +31,16 @@ The resulting invariants are:
                                 |
                                 v
                  protected BIOS boot/WBOOT path
-                 - prepares bank 0 and page zero
-                 - restores pristine CCP shim on WBOOT
-                 - resets transient FS2 handles
+                 - boot: initializes the machine
+                 - WBOOT: tears down the transient
+                   (interrupts, devices, page zero,
+                   FS2 handles, console)
+                                |
+                                v
+                 transient supervisor (bank 7)
+                 - no foreground program -> default shell
+                 - restores pristine CCP shim
+                 - role = SHELL
                                 |
                                 v
                     CCP shim at E400h-EBFFh
@@ -60,7 +68,9 @@ The resulting invariants are:
    writable FS2 root    /CPM/A provider - jumps to 0100h
    on storage card      recovery ROM             |
                                                 v
+                                       role = CHILD (supervisor)
                                        child exits through WBOOT
+                                       -> teardown -> supervisor
 ```
 
 The shell depends on three neighboring projects:
@@ -105,7 +115,7 @@ At the time this document was written, `ZSH.COM` is 19,791 bytes and the shim im
 | `src/exec.c` | `.COM` lookup policy, CP/M page-zero preparation, BDOS 219 handoff. |
 | `src/status.c` | FS2 status-to-text mapping and error formatting. |
 | `src/tinyio.c` | Console output, pause/cancel polling, pager prompt, and small numeric formatters. |
-| `stubs/ccp.asm` | Fixed-address recovery-volume bootstrap. |
+| `stubs/ccp.asm` | Fixed-address recovery-volume bootstrap; the default shell's loader, entered by the supervisor. |
 | `tests/mock_fs.c` | In-memory host implementation of the FS2 calls used by the shell. |
 | `tests/test_shell.c` | Parser, path, copy, move, and iterator regression tests. |
 
@@ -113,9 +123,26 @@ The shell modules do not allocate dynamic memory. Long-lived storage consists of
 
 ## Boot and shell reload lifecycle
 
+### Ownership model
+
+Before the transient supervisor, WBOOT owned shell reconstruction implicitly: it restored the CCP shim and jumped into it, so a warm boot *was* a shell reload. Now the responsibilities are separate:
+
+```text
+BOOT initializes.  WBOOT tears down.  SUPERVISOR decides.
+LOADER launches.   APPLICATION runs.
+```
+
+- **WBOOT** is the CP/M-compatible transient termination and teardown path. Every exit (`RET` to the return word, BDOS 0, `JP 0000h`) arrives there, and it returns the machine to an OS-owned state before anything else happens.
+- **The transient supervisor** (`../CPM2.2/src/core/supervisor.asm`, bank 7) is the persistent policy component that decides which foreground transient runs after initialization or teardown. It never resets a device.
+- **ZephyrShell** is an ordinary foreground transient designated as the default shell.
+
+The supervisor is deliberately a single-foreground-transient supervisor, not a scheduler: one program owns the TPA at a time, with no process IDs, task switching, or resident parent. It tracks the foreground role (`NONE`, `SHELL`, `CHILD`) and the execution policy. The only policy is `EXEC_REPLACE`. A future `EXEC_RETURN`, which would restore a saved parent after its child exits, would be selected in the same place, still after WBOOT teardown, and is not implemented.
+
+The default shell's identity is "the loader image in the CCP slot, entered at `E403h`". Moving the shell somewhere else, such as `/SYSTEM/ZSH.COM`, means changing the supervisor's launch step and that loader, not BOOT or WBOOT.
+
 ### Cold boot
 
-The BIOS cold-boot path initializes hardware, prepares runnable bank 0, installs page-zero vectors, resets the BDOS facade and transient FS2 context, and enters `CCP_CLEARBUF_ENTRY` at `E403h`.
+The BIOS cold-boot path initializes hardware, prepares runnable bank 0, installs page-zero vectors, resets the BDOS facade and transient FS2 context, and then calls the supervisor. The supervisor initializes its state, selects the default shell, reinstalls the shim from its pristine bank-7 copy, records the foreground role as `SHELL`, and has boot enter `CCP_CLEARBUF_ENTRY` at `E403h` in application mode.
 
 Both shim entries at `E400h` and `E403h` jump to the same bootstrap. It:
 
@@ -128,21 +155,21 @@ Both shim entries at `E400h` and `E403h` jump to the same bootstrap. It:
 7. sets the initial application stack to `B000h` and pushes a zero return word;
 8. jumps to `0100h`.
 
-The bootstrap removes the old 2 KiB CCP-size constraint, although the shell image must still end below the live shim while it is being loaded. If `A:ZSH.COM` is missing or too large, the shim prints a fatal diagnostic and halts; there is no second command processor to fall back to.
+The bootstrap removes the old 2 KiB CCP-size constraint, although the shell image must still end below the live shim while it is being loaded. If `A:ZSH.COM` is missing, fails to read, or is too large, the shim prints a `supervisor: default shell A:ZSH.COM ...; halted` diagnostic through BDOS 9 and halts with interrupts masked. It never warm-boots, because that would only ask the supervisor to load the same broken shell again, and there is no second command processor to fall back to.
 
 ### Warm boot
 
-An external program normally exits by returning to the installed WBOOT word, calling the CP/M termination service, or jumping to `0000h`. WBOOT executes from protected common memory and:
+An external program normally exits by returning to the installed WBOOT word, calling the CP/M termination service, or jumping to `0000h`. The shell can exit the same ways; Ctrl-C at the prompt calls BDOS 0. WBOOT executes from protected common memory and performs the full teardown:
 
 1. forces bank 0 before using a stack or helper;
 2. returns application interrupts and devices to OS ownership;
-3. restores the pristine 2 KiB shell shim from bank-7 SRAM;
-4. recreates page zero and default DMA state;
-5. resets the BDOS facade and closes/discards transient native handles and the active directory iterator;
-6. preserves the writable provider's bank-7 current-directory components;
-7. resets the synthetic `/CPM/A` provider state to native root;
-8. reinitializes the console; and
-9. enters the shim again, which reloads `A:ZSH.COM`.
+3. recreates page zero and default DMA state;
+4. resets the BDOS facade and closes/discards transient native handles and the active directory iterator;
+5. preserves the writable provider's bank-7 current-directory components;
+6. resets the synthetic `/CPM/A` provider state to native root;
+7. reinitializes the console and re-enables the OS interrupt environment.
+
+Only then does WBOOT call the supervisor. The supervisor reads the role of the transient that just ended. A `CHILD` under `EXEC_REPLACE` is followed by the default shell, and a terminated `SHELL` is respawned the same way. The supervisor then restores the pristine 2 KiB shim from bank-7 SRAM, records the role as `SHELL`, and WBOOT's final step enters the shim, which reloads `A:ZSH.COM`. Each cycle starts from fixed stacks, so repeated shell/child/shell cycles accumulate no stack or supervisor state.
 
 Consequently shell globals, parser storage, and built-in state never survive a child command. The writable native CWD does survive. A shell that launched a program while positioned in `/CPM/A` returns at `/` because the recovery provider's CWD is reset with its handles.
 
@@ -163,11 +190,12 @@ These are the architectural boundaries used by the shell path, not a complete sy
 | `EC06h` | `FBASE`, the BDOS facade entry. |
 | `EFB1h-EFF7h` | Protected common-memory BDOS 219 loader. |
 | `FA00h-FBFFh` | Common 512-byte bulk staging buffer used by native transfers. |
-| bank 7 `C400h-CBFFh` | Pristine shell-shim restore asset used by WBOOT. |
+| bank 7 `C400h-CBFFh` | Pristine shell-shim restore asset installed by the supervisor at each shell launch. |
+| bank 7 `D710h-D71Fh` | Transient supervisor state: version, foreground role, execution policy, flags (4 bytes used). |
 
 The general CP/M TPA is `0100h-EC05h`. ZephyrShell limits an external `.COM` file to 60,160 bytes (`EB00h` bytes), so loading at `0100h` ends at `EBFFh` and leaves the serial and `FBASE` intact. Once started, a child may use memory below `FBASE` according to the normal CP/M ABI.
 
-The protected loader sets the child's stack to `EFF8h`, pushes WBOOT, and jumps to `0100h`. This stack remains valid even though the shell and CCP area may have been overwritten.
+The protected loader sets the child's stack to `EFF8h`, pushes WBOOT, and jumps to `0100h`. This stack remains valid even though the shell and CCP area may have been overwritten. The pushed word occupies the last two bytes of the loader's own region, so the loader cannot grow.
 
 ## Main command loop
 
@@ -362,12 +390,14 @@ repeat:
     on zero bytes: finish
     copy FA00h staging bytes to destination
     advance destination
-close handle
+supervisor: role = CHILD, policy = EXEC_REPLACE; close handle
 set protected stack, push WBOOT
 jump 0100h
 ```
 
-The shell is overwritten, so success or load failure cannot return to it. If BDOS 219 unexpectedly returns on an incompatible OS, the still-live shell closes the handle and prints `protected loader unavailable`.
+The final close goes through `zexec_commit_close`, which crosses into the supervisor's `supervisor_exec_replace_commit`. That records the child as the foreground transient and then performs the same close. The 219 ABI and the loader's size are unchanged. The child never returns to the loader or to the supervisor directly. It exits through WBOOT, and the supervisor decides only after teardown.
+
+The shell is overwritten, so success or load failure cannot return to it. A load failure closes the handle and warm-boots without committing a child, so the supervisor sees the role still `SHELL` and relaunches the shell. If BDOS 219 unexpectedly returns on an incompatible OS, the still-live shell closes the handle and prints `protected loader unavailable`.
 
 The size check occurs before launch. The protected loader trusts the opened file and has no second load bound. The single-process model has no concurrent writer, so size is expected to remain stable.
 
@@ -420,6 +450,7 @@ The design is single-threaded and synchronous.
 | Saved CWD/path scope | caller stack | One operation. |
 | Native handles/iterator | bank-7 providers | Until close/reset. |
 | Writable native CWD | FAT provider | Preserved over WBOOT. |
+| Foreground role and policy | transient supervisor (bank 7) | Persistent from cold boot; updated at shell launch and by BDOS 219. |
 | `/CPM/A` state | mount provider | Reset over WBOOT. |
 | Descriptor/staging | common facade | One BDOS call. |
 | Shell image | TPA | Until BDOS 219 overwrites it. |
@@ -460,7 +491,31 @@ The mock suite does not emulate banking, page zero, the ROM provider, or protect
 
 `make CCP=zshell` in `CPM2.2` verifies the shim, patches the fixed CCP slot, places `ZSH.COM` on A:, links the native gate/loader, checks fixed-region overlap, and regenerates authoritative memory maps.
 
+`make test` in `CPM2.2` runs the supervisor lifecycle suite (`tests/supervisor_lifecycle.cpp`). It executes the shipped images in libqkz80 with device and teardown routines stubbed, and covers:
+
+- cold boot to the shell entry;
+- the exact WBOOT order, with teardown always before the supervisor;
+- the BDOS 219 child commit;
+- child and shell exits by `RET`, `JP 0000h` and BDOS 0;
+- loader failure;
+- 600 repeated cycles;
+- state-block repair;
+- the shim's load and fatal-halt paths.
+
 Hardware acceptance additionally covers boot/WBOOT reload, writable-CWD persistence, `/CPM/A` listing and execution, `ls`/`cat` pause and cancellation, 24-line `cat` paging, repeated launches without handle exhaustion, real-media files over 64 KiB, exact KiB `df` on cards over 4 GiB, and console recovery.
+
+#### Supervisor hardware acceptance
+
+| Check | Procedure | Pass |
+|---|---|---|
+| Boot | Cold boot. | Banner, then the ZephyrShell prompt; no `supervisor:` message. |
+| Ordinary child | `cd` into a writable directory, run a writable-FS `.COM` that exits by BDOS 0. | `[any key]` hold, fresh prompt, same CWD. |
+| Recovery executable | Run `/SYSTEM/A/<known-recovery-program>`. | Program runs, exits, fresh prompt at the CWD it was launched from (or `/` if launched from inside the recovery tree). |
+| Exit mechanisms | Run three one-instruction programs: `C9` (`RET`), `C3 00 00` (`JP 0000h`), `0E 00 CD 05 00` (BDOS 0). | Each returns to a fresh prompt. |
+| Shell termination | Press Ctrl-C at an empty prompt. | `^C`, warm boot, fresh prompt (respawn). |
+| Loader failure (optional; covered by `make test`) | Run a `.COM` stored in an unreadable cluster, if such media is available. | Warm boot, fresh prompt, no partial program run. |
+| Stress | Run a trivial `.COM` at least 300 times, typed or pasted over the serial console. History does not help: it is lost with each reloaded shell. | Prompt still usable, CWD unchanged, a file copy (two handles) still works afterwards, no handle-exhaustion error. |
+| Missing shell | Build a test ROM without `ZSH.COM` on A:. | `supervisor: default shell A:ZSH.COM is missing; halted`; machine halts once, no reboot loop. |
 
 ## Extension boundaries
 
@@ -472,7 +527,7 @@ Hardware acceptance additionally covers boot/WBOOT reload, writable-CWD persiste
 - Change child execution through the protected loader contract; never load destructively from code inside the shell image.
 - Keep CP/M compatibility setup localized to `exec.c` and `stubs/ccp.asm`.
 
-A resident-parent or native-process model would change TPA ownership, returns, resource lifetime, and the execution API; it is not an incremental v1 extension.
+A resident-parent or native-process model would change TPA ownership, returns, resource lifetime, and the execution API; it is not an incremental v1 extension. The transient supervisor is the place where such a policy would be selected. For example, an `EXEC_RETURN` in which an IDE runs a compiler and resumes would be chosen after WBOOT teardown, so the child's interrupt and device state is gone before the parent's TPA is restored. Saving and restoring that TPA, and the parent's own resources, are deliberately unsolved.
 
 ## Deliberate v1 omissions
 
@@ -486,5 +541,5 @@ When this document and generated addresses disagree, use:
 2. `../ZephyrC/include/zephyr/fs.h` and `../ZephyrC/src/zep_fs.c` for the C API and descriptor;
 3. `../CPM2.2/src/common/native_gate.asm`, `native_stage.asm`, and `exec_loader.asm` for crossing/loading;
 4. `../CPM2.2/src/drivers/storage/native_vfs.inc` and `cpm_mount.asm` for provider routing;
-5. `../CPM2.2/src/common/boot.asm` for boot/WBOOT; and
+5. `../CPM2.2/src/common/boot.asm` for boot/WBOOT teardown, and `../CPM2.2/src/core/supervisor.asm` for foreground lifecycle policy; and
 6. generated `../CPM2.2/docs/memory-map.md` and `symbol-map.md` for current addresses.

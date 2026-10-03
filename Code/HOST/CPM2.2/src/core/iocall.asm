@@ -243,7 +243,7 @@ sio_command_init:
 ; stamp, send, CRC, receive, CRC again -- and it holds interrupts enabled across
 ; the reply wait, so an ISR frame can land on top of that.  What gets overwritten
 ; is the CCP's own code, and because a transient returns through RET rather than
-; a warm boot, restore_ccp_from_os never repairs it: every CCP command after
+; a warm boot, the supervisor's CCP restore never repairs it: every CCP command after
 ; that runs on wreckage until the machine is cold booted.
 ;
 ; BIOS callers come through here too.  They are already on a BIOS stack and do

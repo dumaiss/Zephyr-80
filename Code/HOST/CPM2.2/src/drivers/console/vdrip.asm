@@ -2668,8 +2668,7 @@ v9958_cursor_store_y:
 ; Inputs:  None.
 ; Outputs: SRAM bank 0 [VDRIP_FONT_ROM_BASE .. +FONT_BYTES-1] refreshed.
 ; Clobbers: AF, BC, DE, HL.
-; Interrupts: Safe to call with interrupts disabled (wboot context); matches
-;   the convention of restore_ccp_from_os which is called without di/ei.
+; Interrupts: Safe to call with interrupts disabled (wboot context).
 ; VDrip traffic: None.
 ; ---------------------------------------------------------------------------
 

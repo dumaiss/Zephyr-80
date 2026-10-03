@@ -154,7 +154,7 @@ COMMON_REGIONS = [
     Region("BDOS facade", "FACADE_CODE_START", "FACADE_CODE_END", "FACADE_CODE_LIMIT",
            "`CALL 5`: serial number, `FBASE`, argument staging, Zephyr functions 200-218, system information block.", zone="abi", source="common/facade.asm"),
     Region("BIOS tables, ROM copy, boot", "BIOS_CODE_START", None, "CBIOS_BIOS_CODE_LIMIT",
-           "CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm boot, CCP restore, page zero.", zone="abi", source="common/bios_table.asm"),
+           "CP/M BIOS table, Zephyr extension table, reset copy, cold boot, warm-boot teardown, supervisor entry glue, page zero.", zone="abi", source="common/bios_table.asm"),
     Region("Banking services", "BANKING_CODE_START", "BANKING_CODE_END", "CBIOS_BANKING_CODE_LIMIT",
            "`SELMEM`, `SETBNK`, `XMOVE`, `MOVE`.", zone="crossing", source="common/banking.asm"),
     Region("CTC reset", "CBIOS_SPARE_CODE_BASE", None, "CBIOS_CTC_RESET_CODE_LIMIT",
@@ -162,7 +162,7 @@ COMMON_REGIONS = [
     Region("IOC link failure record", "CBIOS_IOC_DIAG_BASE", "IOC_DIAG_RECORD_END", "CBIOS_IOC_DIAG_CODE_LIMIT",
            "Read by the CP/M tools through BDOS function 203.", zone="abi", source="layout/memory.inc"),
     Region("Destructive COM loader", "ZEXEC_LOADER_START", "ZEXEC_LOADER_END", "CBIOS_EXEC_LOADER_LIMIT",
-           "Private BDOS 219: 512-byte native load, close and jump to 0100h.", zone="abi", source="common/exec_loader.asm"),
+           "Private BDOS 219: 512-byte native load, supervisor commit and close, jump to 0100h.", zone="abi", source="common/exec_loader.asm"),
     Region("SIO core", "SIO_CORE_CODE_START", "SIO_CORE_CODE_END", "CBIOS_SIO_CORE_CODE_LIMIT",
            "SIO0/B and SIO1 initialization, receive sinks, SIO interrupt body.", zone="interrupt", source="common/sio.asm"),
     Region("Crossing layer", "XING_CODE_START", "XING_CODE_END", "CBIOS_XING_CODE_LIMIT",
@@ -232,6 +232,8 @@ BANK7_REGIONS = [
            optional=True, zone="driver", source="drivers/transport/vdrip.asm"),
     Region("Serial console tee (bank 7)", "SERCON_BANK7_CODE_START", "SERCON_BANK7_CODE_END", "CBIOS_SERCON_BANK7_CODE_LIMIT",
            "Driver table, init/install, the CONST/CONIN/CONOUT tee and TX; polled through the console facade.", optional=True, zone="driver", source="drivers/console/sercon.asm"),
+    Region("Transient supervisor", "SUPERVISOR_CODE_START", "SUPERVISOR_CODE_END", "CBIOS_SUPERVISOR_CODE_LIMIT",
+           "Single-foreground lifecycle policy: next program after cold boot and WBOOT teardown, default shell launch, BDOS 219 child commit.", zone="core", source="core/supervisor.asm"),
     Region("Console font", "CONSOLE_FONT_ROM_BASE", "CONSOLE_FONT_ROM_END", "CONSOLE_FONT_ROM_LIMIT",
            "Build-selected CP850 glyph source, read once at boot.", zone="asset", source="drivers/console/v9958.asm"),
     Region("Boot banner text", "BOOT_BANNER_TEXT", "BOOT_BANNER_TEXT_END", "BOOT_BANNER_TEXT_LIMIT",
@@ -256,10 +258,11 @@ COMMON_IMPLEMENTATION = [
     (("cpm_rom_entry_high",), "Reset lands here in common memory and masks interrupts."),
     (("rom_copy_masked",), "Stackless bootstrap: ROM pages 0 and 7 seed SRAM banks 0 and 7."),
     (("cbios_boot_after_rom_copy",), "Cold boot handoff after the copy."),
-    (("boot",), "Cold boot: enters mode 11, checks bank 7, initializes, enters the CCP in mode 10."),
+    (("boot",), "Cold boot: enters mode 11, checks bank 7, initializes, then asks the transient supervisor what runs first."),
     (("wboot",), "Warm boot trampoline."),
-    (("wboot_resident",), "Warm boot: resets the CTC, clears registrations, restores the CCP."),
-    (("restore_ccp_from_os",), "Copies `CBASE` through `FBASE-1` from the pristine CCP in bank 7."),
+    (("wboot_resident",), "Warm boot: transient teardown (interrupts, devices, page zero, handles, console), then the transient supervisor."),
+    (("supervisor_enter_foreground",), "Policy-free final transfer: facade stack, mode 10, `JP (HL)` to the program the supervisor selected."),
+    (("zexec_commit_close",), "BDOS 219's final close, routed through the supervisor to record the child as foreground."),
     (("prepare_runnable_bank",), "Page zero and default DMA."),
     (("init_page_zero",), "Installs `JP WBOOT` and `JP FBASE`."),
     (("ctc_disable_interrupts",), "Resets the CTC and programs its vector base."),
@@ -310,6 +313,10 @@ BANK7_IMPLEMENTATION = [
     (("BIOS7_TABLE",), "ZSDOS's BIOS jump table."),
     (("BIOS7_MAGIC",), "`BANK7OS1` image marker."),
     (("console_init",), "Installs the console driver table."),
+    (("supervisor_cold_start",), "Transient supervisor: initializes its state and selects the default shell after cold boot."),
+    (("supervisor_after_teardown",), "Transient supervisor: selects the next foreground program after WBOOT teardown."),
+    (("supervisor_exec_replace_commit",), "Transient supervisor: records a BDOS 219 child (`FG_CHILD`, `EXEC_REPLACE`), then closes the loader handle."),
+    (("SUPERVISOR_STATE_START",), "Transient supervisor state: version, foreground role, execution policy, flags."),
     (("const",), "Console status."),
     (("conin",), "Console input."),
     (("conout",), "Console output."),
@@ -750,6 +757,27 @@ def check_invariants(layout: Layout, console: Region) -> dict[str, int]:
     if cpm_mount_state_base < fat_state_limit or cpm_mount_state_limit > OS_BODY_LIMIT:
         layout.error("CP/M mount state overlaps an existing bank-7 reservation")
 
+    # The transient supervisor's persistent state: a fixed bank-7 reservation
+    # after the mount state, never common memory and never the TPA.
+    sup_state_base = s("CBIOS_SUPERVISOR_STATE_BASE")
+    sup_state_limit = s("CBIOS_SUPERVISOR_STATE_LIMIT")
+    if s("SUPERVISOR_STATE_START") != sup_state_base:
+        layout.error("supervisor state does not start at CBIOS_SUPERVISOR_STATE_BASE")
+    if s("SUPERVISOR_STATE_END") > sup_state_limit:
+        layout.error("supervisor state exceeds CBIOS_SUPERVISOR_STATE_LIMIT")
+    if s("SUPERVISOR_STATE_END") - s("SUPERVISOR_STATE_START") != s("SUP_STATE_BYTES"):
+        layout.error("supervisor state size does not match SUP_STATE_BYTES")
+    for label, offset in (("sup_version", "SUP_OFF_VERSION"), ("sup_role", "SUP_OFF_ROLE"),
+                          ("sup_policy", "SUP_OFF_POLICY"), ("sup_flags", "SUP_OFF_FLAGS")):
+        if s(label) != sup_state_base + s(offset):
+            layout.error(f"supervisor state field {label} is not at {offset}")
+    if sup_state_base < cpm_mount_state_limit or sup_state_limit > OS_BODY_LIMIT:
+        layout.error("supervisor state overlaps an existing bank-7 reservation")
+    if s("SUPERVISOR_CODE_START") != s("CBIOS_SUPERVISOR_CODE_BASE"):
+        layout.error("supervisor code does not start at CBIOS_SUPERVISOR_CODE_BASE")
+    if s("CBIOS_SUPERVISOR_CODE_LIMIT") > BANK7_PRIVATE_BASE:
+        layout.error("supervisor code reservation reaches the bank-7 private stacks")
+
     fat_dph = s("FAT_BIOS_DPH")
     fat_dpb = s("FAT_BIOS_DPB")
     fat_alv = s("FAT_BIOS_ALV")
@@ -1128,7 +1156,8 @@ def write_memory_map(args: argparse.Namespace, layout: Layout, console: Region,
         f"| `{xspan(s('SD_DEBLOCK_TAG') + s('SD_DEBLOCK_TAG_SIZE'), s('CBIOS_FAT_BDOS_STATE_BASE'))}` | Unallocated |",
         f"| `{xspan(s('CBIOS_FAT_BDOS_STATE_BASE'), s('CBIOS_FAT_BDOS_STATE_LIMIT'))}` | FAT BDOS persistent-state reservation | Fixed bank-7 state; track/sector and synthetic ALV currently use `{s('FAT_BDOS_STATE_END') - s('FAT_BDOS_STATE_START')}` bytes. |",
         f"| `{xspan(s('CBIOS_CPM_MOUNT_STATE_BASE'), s('CBIOS_CPM_MOUNT_STATE_LIMIT'))}` | CP/M A: mount state | Function-218 provider CWD, handle, iterator and extent-reader state; currently uses `{s('CPM_MOUNT_STATE_END') - s('CPM_MOUNT_STATE_START')}` bytes. |",
-        f"| `{xspan(s('CBIOS_CPM_MOUNT_STATE_LIMIT'), OS_BODY_LIMIT)}` | Unallocated |",
+        f"| `{xspan(s('CBIOS_SUPERVISOR_STATE_BASE'), s('CBIOS_SUPERVISOR_STATE_LIMIT'))}` | Transient supervisor state | Foreground role, execution policy, flags and layout version; currently uses `{s('SUPERVISOR_STATE_END') - s('SUPERVISOR_STATE_START')}` bytes. Written in full at cold boot. |",
+        f"| `{xspan(s('CBIOS_SUPERVISOR_STATE_LIMIT'), OS_BODY_LIMIT)}` | Unallocated |",
         "",
         "All eight physical SRAM banks include E000h-FFFFh, visible in flat mode 01. Modes 10/11 overlay that range with bank 0.",
         "",

@@ -11,16 +11,16 @@ Programs must not use these addresses. The program interface is `CALL 5` and the
 | ROM page 0: reset vector and common memory | `build/firmware.bin` | 65536 bytes |
 | Bank 7 payload | `build/bank7.bin` | 65536 bytes |
 | Burnable image | `build/zephyr80.bin` | 524288 bytes |
-| Resolved listing (firmware.rst) | `build/firmware.rst` | 528120 bytes |
-| Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 222898 bytes |
-| Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 445327 bytes |
-| Resolved listing (drv_console_sercon.rst) | `build/drv_console_sercon.rst` | 219739 bytes |
-| Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 451541 bytes |
-| Resolved listing (drv_storage_cpm_mount.rst) | `build/drv_storage_cpm_mount.rst` | 248467 bytes |
-| Resolved listing (drv_storage_sd.rst) | `build/drv_storage_sd.rst` | 296594 bytes |
-| Resolved listing (drv_transport_ioccmd.rst) | `build/drv_transport_ioccmd.rst` | 358708 bytes |
-| Resolved listing (drv_console_hid_input.rst) | `build/drv_console_hid_input.rst` | 223848 bytes |
-| Linker symbol map | `build/firmware.map` | 35751 bytes |
+| Resolved listing (firmware.rst) | `build/firmware.rst` | 551454 bytes |
+| Resolved listing (drv_storage_rom.rst) | `build/drv_storage_rom.rst` | 226558 bytes |
+| Resolved listing (drv_console_v9958.rst) | `build/drv_console_v9958.rst` | 448987 bytes |
+| Resolved listing (drv_console_sercon.rst) | `build/drv_console_sercon.rst` | 223399 bytes |
+| Resolved listing (drv_storage_fat.rst) | `build/drv_storage_fat.rst` | 455201 bytes |
+| Resolved listing (drv_storage_cpm_mount.rst) | `build/drv_storage_cpm_mount.rst` | 252127 bytes |
+| Resolved listing (drv_storage_sd.rst) | `build/drv_storage_sd.rst` | 300254 bytes |
+| Resolved listing (drv_transport_ioccmd.rst) | `build/drv_transport_ioccmd.rst` | 362368 bytes |
+| Resolved listing (drv_console_hid_input.rst) | `build/drv_console_hid_input.rst` | 227508 bytes |
+| Linker symbol map | `build/firmware.map` | 36832 bytes |
 | Layout manifest | `build/layout.manifest` | 1445 bytes |
 
 ## System Addresses
@@ -55,8 +55,8 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 
 | Entry | Address | Target |
 |---|---:|---|
-| `BOOT` | `F000h` | `F05Ch` `boot` |
-| `WBOOT` | `F003h` | `F0B1h` `wboot` |
+| `BOOT` | `F000h` | `F070h` `boot` |
+| `WBOOT` | `F003h` | `F0B8h` `wboot` |
 | `CONST` | `F006h` | `F320h` `gate_const` |
 | `CONIN` | `F009h` | `F32Fh` `gate_conin` |
 | `CONOUT` | `F00Ch` | `F33Eh` `gate_conout` |
@@ -130,12 +130,13 @@ Only `BOOT`, `WBOOT`, `CONST`, `CONIN` and `CONOUT` are live; the rest are inert
 | `cpm_rom_entry_high` | `F04Bh` | Reset lands here in common memory and masks interrupts. |
 | `rom_copy_masked` | `0003h` | Stackless bootstrap: ROM pages 0 and 7 seed SRAM banks 0 and 7. |
 | `cbios_boot_after_rom_copy` | `0025h` | Cold boot handoff after the copy. |
-| `boot` | `F05Ch` | Cold boot: enters mode 11, checks bank 7, initializes, enters the CCP in mode 10. |
-| `wboot` | `F0B1h` | Warm boot trampoline. |
-| `wboot_resident` | `F0B4h` | Warm boot: resets the CTC, clears registrations, restores the CCP. |
-| `restore_ccp_from_os` | `F0FDh` | Copies `CBASE` through `FBASE-1` from the pristine CCP in bank 7. |
-| `prepare_runnable_bank` | `F109h` | Page zero and default DMA. |
-| `init_page_zero` | `F113h` | Installs `JP WBOOT` and `JP FBASE`. |
+| `boot` | `F070h` | Cold boot: enters mode 11, checks bank 7, initializes, then asks the transient supervisor what runs first. |
+| `wboot` | `F0B8h` | Warm boot trampoline. |
+| `wboot_resident` | `F0BBh` | Warm boot: transient teardown (interrupts, devices, page zero, handles, console), then the transient supervisor. |
+| `supervisor_enter_foreground` | `F05Ch` | Policy-free final transfer: facade stack, mode 10, `JP (HL)` to the program the supervisor selected. |
+| `zexec_commit_close` | `F064h` | BDOS 219's final close, routed through the supervisor to record the child as foreground. |
+| `prepare_runnable_bank` | `F0F9h` | Page zero and default DMA. |
+| `init_page_zero` | `F103h` | Installs `JP WBOOT` and `JP FBASE`. |
 | `ctc_disable_interrupts` | `F4F0h` | Resets the CTC and programs its vector base. |
 | `boot_print_banner` | `8C00h` | Prints the boot banner. |
 | `SELMEM` | `F210h` | Selects a program bank, keeping the RAM mode. |
@@ -185,6 +186,10 @@ Visible at these addresses only in operating-system mode.
 | `BIOS7_TABLE` | `3000h` | ZSDOS's BIOS jump table. |
 | `BIOS7_MAGIC` | `3033h` | `BANK7OS1` image marker. |
 | `console_init` | `3200h` | Installs the console driver table. |
+| `supervisor_cold_start` | `BE00h` | Transient supervisor: initializes its state and selects the default shell after cold boot. |
+| `supervisor_after_teardown` | `BE15h` | Transient supervisor: selects the next foreground program after WBOOT teardown. |
+| `supervisor_exec_replace_commit` | `BE58h` | Transient supervisor: records a BDOS 219 child (`FG_CHILD`, `EXEC_REPLACE`), then closes the loader handle. |
+| `SUPERVISOR_STATE_START` | `D710h` | Transient supervisor state: version, foreground role, execution policy, flags. |
 | `const` | `320Dh` | Console status. |
 | `conin` | `3211h` | Console input. |
 | `conout` | `3215h` | Console output. |
