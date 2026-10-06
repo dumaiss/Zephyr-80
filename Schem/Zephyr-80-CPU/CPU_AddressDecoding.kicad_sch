@@ -5339,14 +5339,6 @@
 		(uuid "22d020c4-543d-434f-a89c-6dcd270f21de")
 	)
 	(no_connect
-		(at 231.14 162.56)
-		(uuid "650d572d-4a24-475b-b25c-3bb285ad51d4")
-	)
-	(no_connect
-		(at 231.14 165.1)
-		(uuid "70a46219-b21a-4630-9ca0-26d6558be975")
-	)
-	(no_connect
 		(at 199.39 81.28)
 		(uuid "7fe920ac-6180-4fdd-9f8e-6f5dc8d927e2")
 	)
@@ -5361,10 +5353,6 @@
 	(no_connect
 		(at 229.87 60.96)
 		(uuid "9fd0e947-3e79-4981-a877-ab32fda76dc7")
-	)
-	(no_connect
-		(at 231.14 160.02)
-		(uuid "a42e8f8b-943f-4f71-a44b-0ac0d719f97b")
 	)
 	(no_connect
 		(at 229.87 76.2)
@@ -5979,6 +5967,16 @@
 			(type default)
 		)
 		(uuid "1240601b-c0d6-4031-9138-630822ca4e29")
+	)
+	(wire
+		(pts
+			(xy 231.14 165.1) (xy 241.3 165.1)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "124e497d-48c9-40bc-9092-142de76faec8")
 	)
 	(wire
 		(pts
@@ -7182,6 +7180,16 @@
 	)
 	(wire
 		(pts
+			(xy 231.14 162.56) (xy 241.3 162.56)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "96d19423-d17d-464b-bf64-a88e79f326c8")
+	)
+	(wire
+		(pts
 			(xy 69.85 102.87) (xy 83.82 102.87)
 		)
 		(stroke
@@ -7519,6 +7527,16 @@
 			(type default)
 		)
 		(uuid "b0115609-c6fb-47e6-9996-c8896ddf904e")
+	)
+	(wire
+		(pts
+			(xy 231.14 160.02) (xy 241.3 160.02)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b1e5c2da-fca3-42a5-9849-36c29499b5b2")
 	)
 	(wire
 		(pts
@@ -9020,6 +9038,16 @@
 		)
 		(uuid "657815f2-db24-4337-ab9a-9c31b2eb8d3e")
 	)
+	(label "ROM_A16"
+		(at 241.3 165.1 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "6724e095-e3b4-475c-9de4-b26516a68920")
+	)
 	(label "D2"
 		(at 31.75 168.91 0)
 		(effects
@@ -9129,6 +9157,16 @@
 			(justify left bottom)
 		)
 		(uuid "7a57d574-f026-4252-a6a0-b8edc7883453")
+	)
+	(label "ROM_A18"
+		(at 241.3 160.02 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "7f1b0d2e-9acb-4817-8ca7-e4b198a4da11")
 	)
 	(label "ROM_A18"
 		(at 295.91 153.67 0)
@@ -9739,6 +9777,16 @@
 			(justify left bottom)
 		)
 		(uuid "e1134941-77d5-49c8-b201-c575e7c384fb")
+	)
+	(label "ROM_A17"
+		(at 241.3 162.56 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "e2406103-fa27-49b6-b486-6d5ff3e1727b")
 	)
 	(label "D6"
 		(at 83.82 107.95 180)
