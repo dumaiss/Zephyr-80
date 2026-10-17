@@ -44,6 +44,17 @@ DRESULT disk_read(BYTE pdrv, BYTE *buff, LBA_t sector, UINT count)
     if (pdrv != SDFS_PDRV)
         return RES_PARERR;
 
+    /* Several sectors, none of them cached: one multi-block card read (a
+     * FS2_READ_RUN fills its buffer this way), bypassing the cache, which
+     * holds nothing for them. */
+#if !IOC_DIAGNOSTIC_BUILD
+    if (count > 1u && count <= 255u &&
+        !sd_cache_holds_any((uint32_t)sector, (uint8_t)count) &&
+        sd_card_read_blocks((uint32_t)sector, (uint8_t)count,
+                            (uint8_t *)buff) == SD_OK)
+        return RES_OK;
+#endif
+
     while (count-- != 0u) {
         if (sd_cache_read_block((uint32_t)sector, (uint8_t *)buff) != SD_OK)
             return RES_ERROR;

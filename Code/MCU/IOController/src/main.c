@@ -346,7 +346,20 @@ static void service_command_request(void)
          * The old PING diagnostic that wrote payload bytes to the controller
          * latch lived here.  It is gone; PING does not touch SPI1. */
         t = timebase_us_now();
+#if IOC_FS_COMMANDS
+        /* A CMD_FS2_READ_RUN run: its remaining packets.  Each waits for
+         * the host to release RTS after the last one (RTS is a level), is
+         * then armed, and is admitted by the host's next RTS like any bulk
+         * phase.  A failed phase ends the run (the host re-syncs the link). */
+        if (bulk_channel_run_if_armed()) {
+            while (fs2_run_more() && bulk_channel_wait_host_release() &&
+                   fs2_run_next() && bulk_channel_run_if_armed()) {
+            }
+        }
+        fs2_run_end();
+#else
         (void)bulk_channel_run_if_armed();
+#endif
         uprof_add(UPROF_BULK, t);
     }
 

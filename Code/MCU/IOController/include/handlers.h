@@ -17,12 +17,6 @@ void handler_reset(void);
  * Fills *reply.  Always returns. */
 void handler_sd_read(const IocFrame *request, IocFrame *reply);
 
-/* BULK_TEST: channel-A bring-up.  Replies READY with a transfer id, direction
- * and length, then streams a 00 01 02 ... ramp of that length on SIO1/A.
- * Request payload bytes 0-1 give the length (little-endian); 0 means 256.
- * Fills *reply and stages the bulk phase.  Always returns. */
-void handler_bulk_test(const IocFrame *request, IocFrame *reply);
-
 /* SD_READ_BULK: read one 512-byte sector and hand it to the bulk lane.
  * Request payload bytes 0-3 are a 32-bit little-endian LBA.
  *

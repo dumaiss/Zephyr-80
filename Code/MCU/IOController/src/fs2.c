@@ -308,7 +308,7 @@ void handler_fs2_caps(const IocFrame *request, IocFrame *reply)
     uint16_t flags = IOC_FS2_CAP_EXPLICIT_OFFSET
                    | IOC_FS2_CAP_COMPONENT_RESOLVER
                    | IOC_FS2_CAP_MEDIA_GENERATION | IOC_FS2_CAP_STAT
-                   | IOC_FS2_CAP_SPACE;
+                   | IOC_FS2_CAP_SPACE | IOC_FS2_CAP_READ_RUN;
 #if FF_FS_READONLY
     flags |= IOC_FS2_CAP_READ_ONLY;
 #else
@@ -434,7 +434,24 @@ void handler_fs2_open_ro(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_FS2_OPEN_ATTR] = 0u;
 }
 
-void handler_fs2_read(const IocFrame *request, IocFrame *reply)
+/* CMD_FS2_READ and CMD_FS2_READ_RUN share one body.  A read is one chunk
+ * (1..IOC_FS2_CHUNK_MAX bytes) sent as one bulk packet.  A run is
+ * consecutive blocks from a 512-byte-aligned offset, up to IOC_FS2_RUN_MAX
+ * bytes, read whole into the shared bulk buffer BEFORE the reply, exactly as
+ * a read reads its chunk: the card time is spent while the host waits for
+ * the reply, which it does interruptibly, and never while it waits, masked,
+ * for a packet's admission.  READY then names the whole length, and the
+ * packets follow one per 512 bytes, each admitted by the host's RTS like any
+ * bulk phase (fs2_run_next).  A read error is the reply's status, with no
+ * bulk phase. */
+static uint16_t run_sent;       /* bytes of the run already armed */
+static uint16_t run_length;     /* the run's length; 0 = no run */
+static uint8_t  run_xfer_id;
+static uint8_t  run_sequence;
+static uint8_t  run_type;
+
+static void fs2_read_common(const IocFrame *request, IocFrame *reply,
+                            uint8_t rsp, uint16_t max, uint16_t align)
 {
     uint16_t token = get16(&request->bytes[IOC_OFF_FS2_TOKEN]);
     uint32_t offset = get32(&request->bytes[IOC_OFF_FS2_OFFSET]);
@@ -444,8 +461,10 @@ void handler_fs2_read(const IocFrame *request, IocFrame *reply)
     FRESULT fr;
     UINT got = 0u;
 
+    run_length = 0u;
     if ((status == IOC_STATUS_OK) &&
-        ((length == 0u) || (length > IOC_FS2_CHUNK_MAX)))
+        ((length == 0u) || (length > max) ||
+         (((uint16_t)offset & align) != 0u)))
         status = IOC_STATUS_FS2_RANGE;
     if ((status == IOC_STATUS_OK) && (file->position != offset)) {
         fr = f_lseek(&file->fil, (FSIZE_t)offset);
@@ -462,20 +481,60 @@ void handler_fs2_read(const IocFrame *request, IocFrame *reply)
             file->position = 0xffffffffuL;
     }
     if (status != IOC_STATUS_OK) {
-        reply_init(request, reply, RSP_FS2_READ, status, 0u);
+        reply_init(request, reply, rsp, status, 0u);
         return;
     }
-    reply_init(request, reply, RSP_FS2_READ, IOC_STATUS_OK,
-               IOC_READY_PAYLOAD_LEN);
+    reply_init(request, reply, rsp, IOC_STATUS_OK, IOC_READY_PAYLOAD_LEN);
     if (got != 0u) {
-        reply->bytes[IOC_OFF_READY_XFER_ID] = bulk_channel_next_xfer_id();
+        run_xfer_id = bulk_channel_next_xfer_id();
+        run_sequence = request->bytes[IOC_OFF_SEQ];
+        run_type = rsp;
+        run_length = (uint16_t)got;
+        run_sent = 0u;
+        reply->bytes[IOC_OFF_READY_XFER_ID] = run_xfer_id;
         reply->bytes[IOC_OFF_READY_DIRECTION] = BULK_DIR_MCU_TO_Z80;
         put16(&reply->bytes[IOC_OFF_READY_LEN_LO], (uint16_t)got);
         put32(&reply->bytes[IOC_OFF_READY_LBA], offset);
-        bulk_channel_arm(chunk, (uint16_t)got,
-                         reply->bytes[IOC_OFF_READY_XFER_ID], RSP_FS2_READ,
-                         request->bytes[IOC_OFF_SEQ], IOC_STATUS_OK);
+        (void)fs2_run_next();   /* the first (a read's only) packet */
     }
+}
+
+void handler_fs2_read(const IocFrame *request, IocFrame *reply)
+{
+    fs2_read_common(request, reply, RSP_FS2_READ, IOC_FS2_CHUNK_MAX, 0u);
+}
+
+void handler_fs2_read_run(const IocFrame *request, IocFrame *reply)
+{
+    fs2_read_common(request, reply, RSP_FS2_READ_RUN, IOC_FS2_RUN_MAX,
+                    IOC_FS2_CHUNK_MAX - 1u);
+}
+
+bool fs2_run_more(void)
+{
+    return (bool)(run_length != 0u && run_sent < run_length);
+}
+
+bool fs2_run_next(void)
+{
+    uint16_t n;
+
+    if (run_sent >= run_length) {
+        run_length = 0u;
+        return false;
+    }
+    n = (uint16_t)(run_length - run_sent);
+    if (n > IOC_FS2_CHUNK_MAX)
+        n = IOC_FS2_CHUNK_MAX;
+    bulk_channel_arm(&chunk[run_sent], n, run_xfer_id, run_type,
+                     run_sequence, IOC_STATUS_OK);
+    run_sent = (uint16_t)(run_sent + n);
+    return true;
+}
+
+void fs2_run_end(void)
+{
+    run_length = 0u;
 }
 
 void handler_fs2_close(const IocFrame *request, IocFrame *reply)

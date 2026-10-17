@@ -16,7 +16,9 @@
 
 /* One chunk in flight.  Static because the bulk lane streams straight out of
  * (or into) it and the PIC's data stack is 512 bytes in total. */
-uint8_t fs_bulk_chunk[IOC_FS_CHUNK_MAX];
+/* One bulk staging buffer for every transfer: a chunk uses its first
+ * IOC_FS_CHUNK_MAX bytes, a CMD_FS2_READ_RUN run all of it. */
+uint8_t fs_bulk_chunk[IOC_FS2_RUN_MAX];
 #define chunk fs_bulk_chunk
 
 /* One directory session and one file handle; see HOUSEKEEPING in fs_share.h. */

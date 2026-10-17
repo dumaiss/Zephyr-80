@@ -62,6 +62,10 @@ typedef uint8_t (*BulkCommitFn)(void);
 void bulk_channel_arm(const uint8_t *buf, uint16_t length, uint8_t xfer_id,
                       uint8_t type, uint8_t sequence, uint8_t status);
 
+/* Wait (bounded, 500 ms) for the host to release its bulk RTS: the boundary
+ * between two packets of one run.  False when it never did. */
+bool bulk_channel_wait_host_release(void);
+
 /* Stage a Z80 -> MCU transfer.  `buf` receives `length` de-shifted bytes, then
  * `commit` runs and its return becomes the DONE status.  commit may be NULL,
  * in which case a clean receive reports IOC_STATUS_OK.

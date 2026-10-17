@@ -147,43 +147,9 @@ void handler_sd_read(const IocFrame *request, IocFrame *reply)
 }
 
 #if IOC_DIAGNOSTIC_BUILD
-/* Synthetic ramp and raw 512-byte block paths.  No normal storage or HID
- * path depends on them; the CP/M filesystem uses record reads and writes. */
-/* Channel-A bring-up: stream a known ramp so the bulk lane can be verified
- * independently of the SD card.  Reuses the transfer buffer; nothing else is
- * live at the same time because the foreground loop is single-threaded. */
-void handler_bulk_test(const IocFrame *request, IocFrame *reply)
-{
-    uint16_t length;
-    uint16_t i;
-
-    length = (uint16_t)request->bytes[IOC_OFF_PAYLOAD] |
-             ((uint16_t)request->bytes[IOC_OFF_PAYLOAD + 1u] << 8);
-    if ((length == 0u) || (length > SD_BLOCK_SIZE))
-        length = 256u;
-
-    for (i = 0u; i < length; i++)
-        xfer_block[i] = (uint8_t)i;
-
-    memset(reply->bytes, 0, IOC_FRAME_SIZE);
-    reply->bytes[IOC_OFF_CLASS]  = RSP_BULK_TEST;
-    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
-    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
-    reply->bytes[IOC_OFF_LEN]    = IOC_READY_PAYLOAD_LEN;
-
-    reply->bytes[IOC_OFF_READY_XFER_ID]   = bulk_channel_next_xfer_id();
-    reply->bytes[IOC_OFF_READY_DIRECTION] = BULK_DIR_MCU_TO_Z80;
-    reply->bytes[IOC_OFF_READY_LEN_LO]    = (uint8_t)length;
-    reply->bytes[IOC_OFF_READY_LEN_HI]    = (uint8_t)(length >> 8);
-
-    /* Staged, not sent: the bytes must not be clocked until this READY reply
-     * has actually reached the host. */
-    bulk_channel_arm(xfer_block, length,
-                     reply->bytes[IOC_OFF_READY_XFER_ID],
-                     RSP_BULK_TEST, request->bytes[IOC_OFF_SEQ],
-                     IOC_STATUS_OK);
-}
-
+/* Raw 512-byte block paths.  No normal storage or HID path depends on
+ * them; the CP/M filesystem uses record and block reads through the
+ * volume mapping. */
 /* Read one sector and hand it to the bulk lane.
  *
  * Ordering matters: the card is read here, before the reply goes out, so the

@@ -126,6 +126,10 @@ SdStatus sd_cache_write_record(uint32_t record, const uint8_t *src,
  * Always write-back: FAT and directory updates are flushed explicitly by the
  * filesystem commands when they matter, and on shutdown. */
 SdStatus sd_cache_read_block(uint32_t lba, uint8_t *dst);
+
+/* True when any of `count` consecutive blocks from `lba` is in the cache
+ * (a multi-block card read must not bypass a cached, possibly dirty, copy). */
+bool sd_cache_holds_any(uint32_t lba, uint8_t count);
 SdStatus sd_cache_write_block(uint32_t lba, const uint8_t *src);
 
 /* Copy `len` bytes from within one cached block.

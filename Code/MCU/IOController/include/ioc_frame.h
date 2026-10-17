@@ -208,6 +208,7 @@
 #define CMD_FS2_RENAME        0x42
 #define CMD_FS2_MKDIR         0x43
 #define CMD_FS2_RMDIR         0x44
+#define CMD_FS2_READ_RUN      0x45  /* consecutive blocks, one packet each */
 
 /* Response class bytes (MCU → Z80) */
 #define RSP_PING             0x81
@@ -256,6 +257,7 @@
 #define RSP_FS2_RENAME       0xC2
 #define RSP_FS2_MKDIR        0xC3
 #define RSP_FS2_RMDIR        0xC4
+#define RSP_FS2_READ_RUN     0xC5
 
 /* ---------------------------------------------------------------------------
  * FS2 capability contract (version 1)
@@ -271,6 +273,9 @@
 #define IOC_FS2_STATUS_VERSION           1u
 #define IOC_FS2_TOKEN_BYTES              2u
 #define IOC_FS2_CHUNK_MAX                512u
+/* CMD_FS2_READ_RUN: the longest run, read whole into the shared bulk buffer
+ * before READY and sent as IOC_FS2_CHUNK_MAX packets. */
+#define IOC_FS2_RUN_MAX                  2048u
 #define IOC_FS2_FILE_SLOTS               2u
 #define IOC_FS2_DIR_SLOTS                1u
 #define IOC_FS2_RESOLVER_COMPONENTS      16u
@@ -287,6 +292,7 @@
 #define IOC_FS2_CAP_RENAME               0x0200u
 #define IOC_FS2_CAP_MKDIR                0x0400u
 #define IOC_FS2_CAP_RMDIR                0x0800u
+#define IOC_FS2_CAP_READ_RUN             0x1000u
 
 /* RSP_FS2_CAPS payload.  Multibyte fields are little-endian. */
 #define IOC_OFF_FS2_CAP_VERSION          (IOC_OFF_PAYLOAD + 0u)

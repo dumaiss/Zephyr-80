@@ -195,6 +195,18 @@ SdStatus sd_cache_write_record(uint32_t record, const uint8_t *src,
     return SD_OK;
 }
 
+#if !IOC_DIAGNOSTIC_BUILD
+bool sd_cache_holds_any(uint32_t lba, uint8_t count)
+{
+    while (count-- != 0u) {
+        if (lookup(lba) != NULL)
+            return true;
+        lba++;
+    }
+    return false;
+}
+#endif
+
 /* Whole-block access for FatFs.  Deliberately the same acquire() the record
  * path uses, so a block is cached once no matter which side asked for it. */
 SdStatus sd_cache_read_block(uint32_t lba, uint8_t *dst)

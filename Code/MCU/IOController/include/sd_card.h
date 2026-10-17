@@ -198,6 +198,14 @@ bool sd_card_is_initialized(void);
  * address internally for standard-capacity cards. */
 SdStatus sd_card_read_block(uint32_t lba, uint8_t *buf);
 
+/* Read `count` (1..255) consecutive 512-byte blocks: one CMD18 ... CMD12,
+ * which pays the card's access time once instead of once per block.  On a
+ * failure other than an absent or unusable card the card is re-initialised
+ * and the blocks are read one at a time through sd_card_read_block(). */
+#if !IOC_DIAGNOSTIC_BUILD
+SdStatus sd_card_read_blocks(uint32_t lba, uint8_t count, uint8_t *buf);
+#endif
+
 /* Write one 512-byte block.  No retry wrapper, deliberately: a write that
  * failed partway has already changed the card, so whether to retry is the
  * caller's decision.  Drives SD_BUSY for the duration, like the read path. */

@@ -329,6 +329,24 @@ static bool wait_for_host_ready(void)
     }
 }
 
+/* A run's next packet (CMD_FS2_READ_RUN) waits for the host to release RTS
+ * after the last one.  RTS is a level the host holds until it has seen /CTSA
+ * close the phase, so a next phase started while it is still asserted would
+ * re-assert /CTSA before the host ever saw it drop, and the host would fail
+ * the packet it already has.  Bounded like wait_for_host_ready(). */
+bool bulk_channel_wait_host_release(void)
+{
+    uint16_t start = timebase_us_now();
+
+    for (;;) {
+        if (SIO1A_INT_PORT != SIO1A_INT_ACTIVE)
+            return true;
+        if ((uint16_t)(timebase_us_now() - start) >=
+            (uint16_t)BULK_HOST_READY_TIMEOUT_TICKS)
+            return false;
+    }
+}
+
 static void sync_a_release(void)
 {
     SYNCA_LAT = SYNCA_IDLE;

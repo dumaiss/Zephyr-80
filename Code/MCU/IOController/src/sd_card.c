@@ -50,6 +50,8 @@ void sd_profile_reset(void)
 #define SD_CMD8_SEND_IF_COND     8u
 #define SD_CMD16_SET_BLOCKLEN    16u
 #define SD_CMD17_READ_SINGLE     17u
+#define SD_CMD18_READ_MULTIPLE   18u
+#define SD_CMD12_STOP            12u
 #define SD_CMD24_WRITE_SINGLE    24u
 #define SD_CMD55_APP_CMD         55u
 #define SD_CMD58_READ_OCR        58u
@@ -586,6 +588,153 @@ static SdStatus sd_read_block_inner(uint32_t lba, uint8_t *buf)
     sd_deselect();
     return SD_OK;
 }
+
+/* The multi-block read (CMD18) is the normal build's: the diagnostic build
+ * reads one block at a time, which its storage profile counts per read, and
+ * has no program space for it. */
+#if !IOC_DIAGNOSTIC_BUILD
+/* One data block of a multi-block read: the start token, 512 bytes, the
+ * CRC-16 (consumed, not compared, as sd_read_block_inner does). */
+static SdStatus sd_read_data_block(uint8_t *buf)
+{
+    uint8_t  token = 0xFFu;
+    uint16_t token_count;
+    uint16_t i;
+
+    for (token_count = 0u; token_count < SD_TOKEN_POLL_BYTES; token_count++) {
+        token = sd_xfer(0xFFu);
+        if (token != 0xFFu || bus_failed)
+            break;
+    }
+    if (bus_failed)
+        return SD_ERR_BUS;
+    if (token != SD_DATA_TOKEN)
+        return SD_ERR_NO_TOKEN;
+    for (i = 0u; i < SD_BLOCK_SIZE; i++) {
+        uint16_t guard = 20000u; /* Same bound as SPI1_TIMEOUT_LOOPS. */
+
+        SPI1TXB = 0xFFu;
+        while (!PIR3bits.SPI1RXIF) {
+            if (--guard == 0u) {
+                bus_failed = true;
+                return SD_ERR_BUS;
+            }
+        }
+        buf[i] = SPI1RXB;
+    }
+    (void)sd_xfer(0xFFu);
+    (void)sd_xfer(0xFFu);
+    return bus_failed ? SD_ERR_BUS : SD_OK;
+}
+
+/* CMD12 after a multi-block read.  Not sd_command(): the byte right after
+ * CMD12 is a stuff byte that may have bit 7 clear (it can be data), so it is
+ * discarded before R1 is polled, and R1b's busy (DO held low) is waited out
+ * before the card is deselected. */
+static SdStatus sd_stop_transmission(void)
+{
+    uint8_t  i;
+    uint8_t  r1 = 0xFFu;
+    uint32_t busy;
+
+    (void)sd_xfer((uint8_t)(0x40u | SD_CMD12_STOP));
+    (void)sd_xfer(0u);
+    (void)sd_xfer(0u);
+    (void)sd_xfer(0u);
+    (void)sd_xfer(0u);
+    (void)sd_xfer(SD_CRC_DUMMY);
+    (void)sd_xfer(0xFFu);           /* the stuff byte */
+    for (i = 0u; i < SD_R1_POLL_BYTES; i++) {
+        r1 = sd_xfer(0xFFu);
+        if ((r1 & 0x80u) == 0u || bus_failed)
+            break;
+    }
+    if (bus_failed)
+        return SD_ERR_BUS;
+    if ((r1 & 0x80u) != 0u)
+        return SD_ERR_READ;
+    for (busy = 0uL; busy < SD_WRITE_BUSY_BYTES; busy++) {
+        if (sd_xfer(0xFFu) == 0xFFu)
+            return bus_failed ? SD_ERR_BUS : SD_OK;
+        if (bus_failed)
+            return SD_ERR_BUS;
+    }
+    return SD_ERR_READ;
+}
+
+/* Body of the multi-block read: CMD18 at `lba`, `count` data blocks, CMD12.
+ * Its R1 is not judged (a stop at the end of the card may flag an
+ * out-of-range bit after the last block was delivered whole). */
+static SdStatus sd_read_blocks_inner(uint32_t lba, uint8_t count,
+                                     uint8_t *buf)
+{
+    SdStatus st;
+    SdStatus stop;
+    uint8_t  r1;
+
+    st = sd_card_init();
+    if (st != SD_OK)
+        return st;
+
+    bus_failed = false;
+    spi1_bus_configure(SD_DATA_BAUD, SPI1_MSB_FIRST);
+    sd_select();
+    r1 = sd_command(SD_CMD18_READ_MULTIPLE,
+                    block_addressed ? lba : (lba * SD_BLOCK_SIZE),
+                    SD_CRC_DUMMY);
+    if (r1 != SD_R1_READY) {
+        sd_deselect();
+        return SD_ERR_READ;
+    }
+    while (count-- != 0u) {
+        st = sd_read_data_block(buf);
+        if (st != SD_OK)
+            break;
+        buf += SD_BLOCK_SIZE;
+    }
+    stop = sd_stop_transmission();
+    sd_deselect();
+    if (st == SD_OK && stop == SD_ERR_BUS)
+        st = SD_ERR_BUS;
+    return st;
+}
+
+SdStatus sd_card_read_blocks(uint32_t lba, uint8_t count, uint8_t *buf)
+{
+    SdStatus st;
+    uint8_t  i;
+
+    if (count == 1u)
+        return sd_card_read_block(lba, buf);
+
+#if SD_BUSY_LED
+    SD_BUSY_LAT = SD_BUSY_ASSERTED;
+#endif
+    st = sd_read_blocks_inner(lba, count, buf);
+#if SD_BUSY_LED
+    SD_BUSY_LAT = SD_BUSY_IDLE;
+#endif
+    if (st == SD_OK)
+        return SD_OK;
+    if ((st == SD_ERR_NO_CARD) || (st == SD_ERR_NO_RESPONSE) ||
+        (st == SD_ERR_UNUSABLE) || (st == SD_ERR_NOT_READY))
+        return st;
+
+    /* Any other failure: the card is re-initialised (it may have been left
+     * mid-stream) and the blocks are read one at a time, with the single
+     * read's own retries - never worse than without CMD18. */
+    bump(&read_retries);
+    card_ready = false;
+    for (i = 0u; i < count; i++) {
+        st = sd_card_read_block(lba + i, buf);
+        if (st != SD_OK)
+            return st;
+        buf += SD_BLOCK_SIZE;
+    }
+    return SD_OK;
+}
+
+#endif /* !IOC_DIAGNOSTIC_BUILD */
 
 /* Write one 512-byte block with CMD24.
  *

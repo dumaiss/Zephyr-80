@@ -20,6 +20,7 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
     case CMD_FS2_PUSH:       handler_fs2_push(request, reply);       return true;
     case CMD_FS2_OPEN_RO:    handler_fs2_open_ro(request, reply);    return true;
     case CMD_FS2_READ:       handler_fs2_read(request, reply);       return true;
+    case CMD_FS2_READ_RUN:   handler_fs2_read_run(request, reply);   return true;
     case CMD_FS2_CLOSE:      handler_fs2_close(request, reply);      return true;
     case CMD_FS2_OPENDIR:    handler_fs2_opendir(request, reply);    return true;
     case CMD_FS2_READDIR:    handler_fs2_readdir(request, reply);    return true;
@@ -72,12 +73,10 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
      * the designed answer for a class this firmware does not implement, and is
      * distinguishable from a transport fault.
      *
-     * Their CP/M callers (BULK, SDBLK, SDWRITE, SDBENCH) already ship only on
-     * the diagnostic ROM profile, so a normal rescue disk cannot reach them. */
-    case CMD_BULK_TEST:
-        handler_bulk_test(request, reply);
-        return true;
-
+     * Their CP/M callers (SDBLK, SDWRITE, SDBENCH) already ship only on the
+     * diagnostic ROM profile, so a normal rescue disk cannot reach them.
+     * CMD_BULK_TEST (the synthetic ramp) is gone from both profiles: the
+     * program space went to CMD_FS2_READ_RUN; it is answered as unknown. */
     case CMD_SD_READ_BULK:
         handler_sd_read_bulk(request, reply);
         return true;
