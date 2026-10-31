@@ -132,6 +132,12 @@ typedef struct {
     uint16_t other_reports;
     uint8_t  other_last_len;
     uint8_t  other_last[8];
+    /* That interface decoded as the dongle's mouse: running totals that wrap
+     * (two's complement), and the buttons held now. */
+    uint16_t mouse_x;
+    uint16_t mouse_y;
+    uint16_t mouse_wheel;
+    uint8_t  mouse_buttons;
 } HidHostGamepadState;
 
 void hid_host_gamepad_state(HidHostGamepadState *state);

@@ -581,7 +581,13 @@
 #define IOC_OFF_HIDO_RPT_HI         (IOC_OFF_PAYLOAD + 4u)
 #define IOC_OFF_HIDO_LEN            (IOC_OFF_PAYLOAD + 5u)
 #define IOC_OFF_HIDO_LAST           (IOC_OFF_PAYLOAD + 6u)
-#define IOC_HID_OTHER_PAYLOAD_LEN   14u
+/* The same interface decoded as a mouse: buttons held now, then running X, Y
+ * and wheel totals (LE, wrapping). */
+#define IOC_OFF_HIDO_BUTTONS        (IOC_OFF_PAYLOAD + 14u)
+#define IOC_OFF_HIDO_X              (IOC_OFF_PAYLOAD + 15u)
+#define IOC_OFF_HIDO_Y              (IOC_OFF_PAYLOAD + 17u)
+#define IOC_OFF_HIDO_WHEEL          (IOC_OFF_PAYLOAD + 19u)
+#define IOC_HID_OTHER_PAYLOAD_LEN   21u
 
 #define IOC_OFF_HIDDBG_PAGE        (IOC_OFF_PAYLOAD + 0u)
 #define IOC_OFF_HIDDBG_TASK_LO     (IOC_OFF_PAYLOAD + 1u)

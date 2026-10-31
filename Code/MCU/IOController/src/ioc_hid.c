@@ -58,6 +58,18 @@ static uint8_t  other_instance;
 static uint16_t other_reports;
 static uint8_t  other_last_len;
 static uint8_t  other_last[8];
+/* Decoded mouse, from reports of the dongle layout below: running totals that
+ * wrap, and the buttons held in the latest report. */
+#define MOUSE_REPORT_ID     0x02u
+#define MOUSE_REPORT_LEN    7u
+static uint16_t mouse_x;
+static uint16_t mouse_y;
+static uint16_t mouse_wheel;
+static uint8_t  mouse_buttons;
+/* tuh_hid_report_received_cb() scratch; static for the XC8 overlay, see
+ * task_now_ms. */
+static uint16_t mouse_dx;
+static uint16_t mouse_dy;
 static uint16_t usb_task_calls;      /* proves the main loop reaches us */
 static uint16_t usb_int_dispatches;  /* times /USB_INT was found asserted */
 
@@ -1184,6 +1196,10 @@ void hid_host_gamepad_state(HidHostGamepadState *state)
     state->other_last_len = other_last_len;
     for (slot = 0u; slot < 8u; slot++)
         state->other_last[slot] = other_last[slot];
+    state->mouse_x       = mouse_x;
+    state->mouse_y       = mouse_y;
+    state->mouse_wheel   = mouse_wheel;
+    state->mouse_buttons = mouse_buttons;
 }
 
 HidHostStatus hid_host_status(void)
@@ -1771,6 +1787,29 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
             other_last[i] = report[i];
         for (; i < 8u; i++)
             other_last[i] = 0u;
+
+        /* The dongle's mouse in report protocol: ID 02, buttons, X and Y as
+         * two 12-bit signed fields packed into three bytes (X low byte, X high
+         * nibble | Y low nibble, Y high byte), wheel, horizontal scroll.
+         * Anything else is left raw.  Normal profile only, like page 7:
+         * the diagnostic profile has no flash left. */
+#if !IOC_DIAGNOSTIC_BUILD
+        if (len == MOUSE_REPORT_LEN && report[0] == MOUSE_REPORT_ID) {
+            mouse_buttons = report[1];
+            mouse_dx = (uint16_t)report[2] |
+                       ((uint16_t)(report[3] & 0x0fu) << 8);
+            if (mouse_dx & 0x0800u)
+                mouse_dx |= 0xf000u;
+            mouse_dy = (uint16_t)(report[3] >> 4) |
+                       ((uint16_t)report[4] << 4);
+            if (mouse_dy & 0x0800u)
+                mouse_dy |= 0xf000u;
+            mouse_x += mouse_dx;
+            mouse_y += mouse_dy;
+            mouse_wheel += (report[5] & 0x80u) ? (uint16_t)(0xff00u | report[5])
+                                                : (uint16_t)report[5];
+        }
+#endif
     }
 
     /* F310 reports are re-armed by hid_host_task() at the 10 ms deadline.

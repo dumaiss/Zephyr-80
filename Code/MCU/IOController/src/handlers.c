@@ -576,6 +576,13 @@ static void handler_hid_other_page(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_HIDO_LEN]    = pad.other_last_len;
     for (i = 0u; i < 8u; i++)
         reply->bytes[IOC_OFF_HIDO_LAST + i] = pad.other_last[i];
+    reply->bytes[IOC_OFF_HIDO_BUTTONS]  = pad.mouse_buttons;
+    reply->bytes[IOC_OFF_HIDO_X]        = (uint8_t)pad.mouse_x;
+    reply->bytes[IOC_OFF_HIDO_X + 1u]   = (uint8_t)(pad.mouse_x >> 8);
+    reply->bytes[IOC_OFF_HIDO_Y]        = (uint8_t)pad.mouse_y;
+    reply->bytes[IOC_OFF_HIDO_Y + 1u]   = (uint8_t)(pad.mouse_y >> 8);
+    reply->bytes[IOC_OFF_HIDO_WHEEL]    = (uint8_t)pad.mouse_wheel;
+    reply->bytes[IOC_OFF_HIDO_WHEEL + 1u] = (uint8_t)(pad.mouse_wheel >> 8);
 }
 #endif
 
