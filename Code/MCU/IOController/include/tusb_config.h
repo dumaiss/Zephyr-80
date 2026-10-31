@@ -20,7 +20,9 @@
  * the FE1.1S -- a keyboard and nothing else, ever. */
 #define CFG_TUH_DEVICE_MAX                 2
 #define CFG_TUH_HUB                        1
-#define CFG_TUH_HID                        2
+/* HID interfaces, not devices: a keyboard/mouse dongle has two, so the dongle
+ * and an F310 need three. */
+#define CFG_TUH_HID                        3
 
 #define CFG_TUH_ENUMERATION_BUFSIZE        128
 #define CFG_TUH_HUB_BUFSIZE                12

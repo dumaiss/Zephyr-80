@@ -124,6 +124,14 @@ typedef struct {
     uint16_t gamepad_reports[2];
     uint8_t  gamepad_last_len[2];
     uint8_t  gamepad_latch[2];
+    /* The HID interface that is neither the keyboard nor an F310 (a dongle's
+     * mouse, say): armed and counted, its reports kept raw, not decoded.
+     * other_addr 0 means none is mounted. */
+    uint8_t  other_addr;
+    uint8_t  other_instance;
+    uint16_t other_reports;
+    uint8_t  other_last_len;
+    uint8_t  other_last[8];
 } HidHostGamepadState;
 
 void hid_host_gamepad_state(HidHostGamepadState *state);

@@ -553,6 +553,32 @@ static void handler_hid_gamepad_page(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_HIDPAD_LAST_HID_PROTO] = pad.last_hid_protocol;
 }
 
+#if !IOC_DIAGNOSTIC_BUILD
+/* The raw second HID interface.  Same passive source as page 6.  Normal
+ * profile only: the diagnostic profile has no flash left for it. */
+static void handler_hid_other_page(const IocFrame *request, IocFrame *reply)
+{
+    static HidHostGamepadState pad;
+    static uint8_t i;
+
+    hid_host_gamepad_state(&pad);
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_HID_STATUS;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+    reply->bytes[IOC_OFF_LEN]    = IOC_HID_OTHER_PAYLOAD_LEN;
+
+    reply->bytes[IOC_OFF_HIDO_PAGE]   = IOC_HID_PAGE_OTHER;
+    reply->bytes[IOC_OFF_HIDO_ADDR]   = pad.other_addr;
+    reply->bytes[IOC_OFF_HIDO_INST]   = pad.other_instance;
+    reply->bytes[IOC_OFF_HIDO_RPT_LO] = (uint8_t)pad.other_reports;
+    reply->bytes[IOC_OFF_HIDO_RPT_HI] = (uint8_t)(pad.other_reports >> 8);
+    reply->bytes[IOC_OFF_HIDO_LEN]    = pad.other_last_len;
+    for (i = 0u; i < 8u; i++)
+        reply->bytes[IOC_OFF_HIDO_LAST + i] = pad.other_last[i];
+}
+#endif
+
 void handler_hid_status(const IocFrame *request, IocFrame *reply)
 {
     /* File-static, not a local.  Every one of these is passed by pointer into a
@@ -572,6 +598,13 @@ void handler_hid_status(const IocFrame *request, IocFrame *reply)
         handler_hid_gamepad_page(request, reply);
         return;
     }
+
+#if !IOC_DIAGNOSTIC_BUILD
+    if (request->bytes[IOC_OFF_HID_REQ_PAGE] == IOC_HID_PAGE_OTHER) {
+        handler_hid_other_page(request, reply);
+        return;
+    }
+#endif
 
 #if IOC_DIAGNOSTIC_BUILD
     /* Detail pages 1-5: TinyUSB and MAX3421E internals, for bring-up.  A normal

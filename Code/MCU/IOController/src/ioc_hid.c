@@ -53,6 +53,11 @@ static uint16_t hid_mount_vid = 0xffffu;
 static uint16_t hid_mount_pid = 0xffffu;
 static uint16_t keyboard_reports;
 static uint8_t  keyboard_last[8];
+static uint8_t  other_addr;         /* 0 = none; see HidHostGamepadState */
+static uint8_t  other_instance;
+static uint16_t other_reports;
+static uint8_t  other_last_len;
+static uint8_t  other_last[8];
 static uint16_t usb_task_calls;      /* proves the main loop reaches us */
 static uint16_t usb_int_dispatches;  /* times /USB_INT was found asserted */
 
@@ -1172,6 +1177,13 @@ void hid_host_gamepad_state(HidHostGamepadState *state)
         state->gamepad_last_len[slot]  = gamepad_last_len[slot];
         state->gamepad_latch[slot]     = controller_latch_value(slot);
     }
+
+    state->other_addr     = other_addr;
+    state->other_instance = other_instance;
+    state->other_reports  = other_reports;
+    state->other_last_len = other_last_len;
+    for (slot = 0u; slot < 8u; slot++)
+        state->other_last[slot] = other_last[slot];
 }
 
 HidHostStatus hid_host_status(void)
@@ -1504,6 +1516,18 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
     if (hid_mount_proto == HID_ITF_PROTOCOL_MOUSE)
         return;   /* a mouse's 8 bytes are not a keyboard report */
 
+    /* One keyboard slot, first come first served: a dongle's second interface
+     * (its mouse) must not take it from the keyboard beside it.  It is armed
+     * and its reports kept raw for HID_STATUS page 7. */
+    if (keyboard_addr != 0u) {
+        other_addr      = dev_addr;
+        other_instance  = instance;
+        other_reports   = 0u;
+        other_last_len  = 0u;
+        hid_arm_ok = tuh_hid_receive_report(dev_addr, instance) ? 1u : 0u;
+        return;
+    }
+
     keyboard_addr     = dev_addr;
     keyboard_instance = instance;
     keyboard_reports  = 0u;
@@ -1538,6 +1562,9 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
 void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 {
     gamepad_unmount(dev_addr, instance, true);
+
+    if (dev_addr == other_addr && instance == other_instance)
+        other_addr = 0u;
 
     if (dev_addr == keyboard_addr && instance == keyboard_instance) {
         keyboard_addr    = 0u;
@@ -1736,6 +1763,14 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
         }
 
         keyboard_reports++;
+    } else if (dev_addr == other_addr && instance == other_instance) {
+        if (other_reports != 0xffffu)
+            other_reports++;
+        other_last_len = (len > 0xffu) ? 0xffu : (uint8_t)len;
+        for (i = 0u; i < copy; i++)
+            other_last[i] = report[i];
+        for (; i < 8u; i++)
+            other_last[i] = 0u;
     }
 
     /* F310 reports are re-armed by hid_host_task() at the 10 ms deadline.

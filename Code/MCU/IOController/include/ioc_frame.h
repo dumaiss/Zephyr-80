@@ -532,6 +532,7 @@
 #define IOC_HID_PAGE_ENUM          0x04u
 #define IOC_HID_PAGE_HIDCFG        0x05u
 #define IOC_HID_PAGE_GAMEPAD       0x06u
+#define IOC_HID_PAGE_OTHER         0x07u
 
 /* Page 6: stable passive gamepad enumeration state, available in normal and
  * diagnostic firmware.  Unlike pages 1-5, reading it performs no active probe
@@ -567,6 +568,20 @@
 #define IOC_OFF_HIDPAD_PAD1_LATCH   (IOC_OFF_PAYLOAD + 24u)
 #define IOC_OFF_HIDPAD_LAST_HID_PROTO (IOC_OFF_PAYLOAD + 25u)
 #define IOC_HID_GAMEPAD_PAYLOAD_LEN 26u
+
+/* Page 7: the HID interface that is neither the keyboard nor an F310 (a
+ * dongle's mouse), raw.  Passive, normal profile only (the diagnostic
+ * profile has no flash left and answers page 0).  ADDR 0
+ * means none is mounted; REPORTS saturates; LAST is the first 8 bytes of the
+ * last report, LEN its full length. */
+#define IOC_OFF_HIDO_PAGE           (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_HIDO_ADDR           (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_HIDO_INST           (IOC_OFF_PAYLOAD + 2u)
+#define IOC_OFF_HIDO_RPT_LO         (IOC_OFF_PAYLOAD + 3u)
+#define IOC_OFF_HIDO_RPT_HI         (IOC_OFF_PAYLOAD + 4u)
+#define IOC_OFF_HIDO_LEN            (IOC_OFF_PAYLOAD + 5u)
+#define IOC_OFF_HIDO_LAST           (IOC_OFF_PAYLOAD + 6u)
+#define IOC_HID_OTHER_PAYLOAD_LEN   14u
 
 #define IOC_OFF_HIDDBG_PAGE        (IOC_OFF_PAYLOAD + 0u)
 #define IOC_OFF_HIDDBG_TASK_LO     (IOC_OFF_PAYLOAD + 1u)
