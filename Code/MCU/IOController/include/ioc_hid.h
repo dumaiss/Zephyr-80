@@ -337,4 +337,26 @@ uint8_t hid_input_get(void);
 uint8_t hid_input_queued(void);
 uint8_t hid_input_dropped(void);
 
+#if !IOC_DIAGNOSTIC_BUILD
+/* Mouse motion since the last take, for CMD_HID_MOUSE.  Taking clears dx, dy,
+ * wheel and pressed.  dx/dy/wheel are two's-complement 16-bit, capped at
+ * +/-32767.  Foreground only, like the input queue. */
+/* Same values as IOC_HID_MOUSE_MOUNTED / _DECODED in ioc_frame.h, which carry
+ * them on the wire; the headers stay independent, as for
+ * HID_GPOUT_XFER_ERROR. */
+#define HID_MOUSE_MOUNTED 0x01u
+#define HID_MOUSE_DECODED 0x02u
+
+typedef struct {
+    uint8_t  flags;     /* HID_MOUSE_MOUNTED | HID_MOUSE_DECODED */
+    uint8_t  buttons;   /* held now */
+    uint8_t  pressed;   /* pressed at any point since the last take */
+    uint16_t dx;
+    uint16_t dy;
+    uint16_t wheel;
+} HidMouseRead;
+
+void hid_mouse_take(HidMouseRead *out);
+#endif
+
 #endif /* IOC_HID_H */

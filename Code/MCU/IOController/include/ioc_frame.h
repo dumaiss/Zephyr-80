@@ -167,6 +167,8 @@
  * costs the BIOS nothing. */
 #define CMD_VOL_MOUNT        0x10
 #define CMD_VOL_INFO         0x11
+/* Mouse motion since the last read; see IOC_OFF_HID_MOUSE_* below. */
+#define CMD_HID_MOUSE        0x12
 
 /* Shared folder, for CP/M user space only.  Not a BIOS feature: these are
  * driven from a transient through the published IOCALL / IOCBULK / IOCBULKW
@@ -225,6 +227,7 @@
 #define RSP_LINK_SYNC        0x8C
 #define RSP_HID_STATUS       0x8D
 #define RSP_HID_INPUT        0x8E
+#define RSP_HID_MOUSE        0x92
 #define RSP_VOL_MOUNT        0x90
 #define RSP_VOL_INFO         0x91
 #define RSP_FS_OPENDIR       0xA0
@@ -472,6 +475,23 @@
 #define IOC_OFF_HID_INPUT_DATA      (IOC_OFF_PAYLOAD + 2u)
 #define IOC_HID_INPUT_MAX_DATA      (IOC_COMMAND_MAX_DATA - 2u)
 #define IOC_HID_INPUT_META_LEN      2u
+
+/* HID_MOUSE reads and clears the mouse: no request payload.  The reply says
+ * whether a second HID interface is mounted (FLAGS bit 0) and whether its
+ * reports decode as the mouse (bit 1), the buttons held now, the buttons
+ * pressed since the last read (so a click shorter than the poll still
+ * counts), and the X, Y and wheel motion since the last read, each signed
+ * 16-bit little-endian and capped at +/-32767 rather than wrapping.  Normal
+ * profile only: the diagnostic profile answers RSP_UNKNOWN_COMMAND. */
+#define IOC_OFF_HID_MOUSE_FLAGS     (IOC_OFF_PAYLOAD + 0u)
+#define IOC_OFF_HID_MOUSE_BUTTONS   (IOC_OFF_PAYLOAD + 1u)
+#define IOC_OFF_HID_MOUSE_PRESSED   (IOC_OFF_PAYLOAD + 2u)
+#define IOC_OFF_HID_MOUSE_DX        (IOC_OFF_PAYLOAD + 3u)
+#define IOC_OFF_HID_MOUSE_DY        (IOC_OFF_PAYLOAD + 5u)
+#define IOC_OFF_HID_MOUSE_WHEEL     (IOC_OFF_PAYLOAD + 7u)
+#define IOC_HID_MOUSE_PAYLOAD_LEN   9u
+#define IOC_HID_MOUSE_MOUNTED       0x01u
+#define IOC_HID_MOUSE_DECODED       0x02u
 
 /* HID_STATUS reply payload.  /USB_INT is reported as the raw pin level so a
  * low asserted interrupt remains visible even though this bring-up phase does
@@ -885,8 +905,11 @@
  *     but the level MUST move with them: the writable commands 3Dh-40h were
  *     added without bumping it, so old and new firmware were indistinguishable
  *     and a controller that silently drops an unadmitted frame looked exactly
- *     like a host-side hang. */
-#define IOC_FW_LEVEL  74
+ *     like a host-side hang.
+ * 75: CMD_HID_MOUSE (12h) and HID_STATUS page 7, both normal profile only.
+ *     A keyboard/mouse dongle's second HID interface is mounted and its
+ *     reports decoded as the mouse.  Additive. */
+#define IOC_FW_LEVEL  75
 
 /* PING reply: a snapshot of the power handshake pins.
  *

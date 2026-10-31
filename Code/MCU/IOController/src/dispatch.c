@@ -116,6 +116,12 @@ bool dispatch_command(const IocFrame *request, IocFrame *reply)
         handler_hid_input(request, reply);
         return true;
 
+#if !IOC_DIAGNOSTIC_BUILD
+    case CMD_HID_MOUSE:
+        handler_hid_mouse(request, reply);
+        return true;
+#endif
+
     case CMD_SD_FLUSH:
         handler_sd_flush(request, reply);
         return true;

@@ -713,6 +713,32 @@ void handler_hid_input(const IocFrame *request, IocFrame *reply)
     reply->bytes[IOC_OFF_LEN] = (uint8_t)(IOC_HID_INPUT_META_LEN + count);
 }
 
+#if !IOC_DIAGNOSTIC_BUILD
+void handler_hid_mouse(const IocFrame *request, IocFrame *reply)
+{
+    /* Static: passed by pointer into a nested accessor, see
+     * handler_hid_status(). */
+    static HidMouseRead m;
+
+    hid_mouse_take(&m);
+    memset(reply->bytes, 0, IOC_FRAME_SIZE);
+    reply->bytes[IOC_OFF_CLASS]  = RSP_HID_MOUSE;
+    reply->bytes[IOC_OFF_SEQ]    = request->bytes[IOC_OFF_SEQ];
+    reply->bytes[IOC_OFF_STATUS] = IOC_STATUS_OK;
+    reply->bytes[IOC_OFF_LEN]    = IOC_HID_MOUSE_PAYLOAD_LEN;
+
+    reply->bytes[IOC_OFF_HID_MOUSE_FLAGS]       = m.flags;
+    reply->bytes[IOC_OFF_HID_MOUSE_BUTTONS]     = m.buttons;
+    reply->bytes[IOC_OFF_HID_MOUSE_PRESSED]     = m.pressed;
+    reply->bytes[IOC_OFF_HID_MOUSE_DX]          = (uint8_t)m.dx;
+    reply->bytes[IOC_OFF_HID_MOUSE_DX + 1u]     = (uint8_t)(m.dx >> 8);
+    reply->bytes[IOC_OFF_HID_MOUSE_DY]          = (uint8_t)m.dy;
+    reply->bytes[IOC_OFF_HID_MOUSE_DY + 1u]     = (uint8_t)(m.dy >> 8);
+    reply->bytes[IOC_OFF_HID_MOUSE_WHEEL]       = (uint8_t)m.wheel;
+    reply->bytes[IOC_OFF_HID_MOUSE_WHEEL + 1u]  = (uint8_t)(m.wheel >> 8);
+}
+#endif
+
 void handler_unknown(const IocFrame *request, IocFrame *reply)
 {
     memset(reply->bytes, 0, IOC_FRAME_SIZE);

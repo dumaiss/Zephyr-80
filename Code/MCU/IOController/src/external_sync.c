@@ -445,6 +445,7 @@ static bool is_command_class(uint8_t value)
            (value == CMD_LINK_SYNC) ||
            (value == CMD_HID_STATUS) ||
            (value == CMD_HID_INPUT) ||
+           (value == CMD_HID_MOUSE) ||
            (value == CMD_XFER_STATUS) ||
            (value == CMD_VOL_MOUNT) ||
            (value == CMD_VOL_INFO)

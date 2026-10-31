@@ -70,6 +70,14 @@ static uint8_t  mouse_buttons;
  * task_now_ms. */
 static uint16_t mouse_dx;
 static uint16_t mouse_dy;
+/* CMD_HID_MOUSE: motion and presses since the last take.  int32 scratch for
+ * the capped add, static for the same reason. */
+static int16_t  mouse_pend_x;
+static int16_t  mouse_pend_y;
+static int16_t  mouse_pend_wheel;
+static uint8_t  mouse_pressed;
+static bool     mouse_decoded;
+static int32_t  mouse_sum;
 static uint16_t usb_task_calls;      /* proves the main loop reaches us */
 static uint16_t usb_int_dispatches;  /* times /USB_INT was found asserted */
 
@@ -1579,8 +1587,15 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 {
     gamepad_unmount(dev_addr, instance, true);
 
-    if (dev_addr == other_addr && instance == other_instance)
+    if (dev_addr == other_addr && instance == other_instance) {
         other_addr = 0u;
+        mouse_buttons    = 0u;
+        mouse_decoded    = false;
+        mouse_pend_x     = 0;
+        mouse_pend_y     = 0;
+        mouse_pend_wheel = 0;
+        mouse_pressed    = 0u;
+    }
 
     if (dev_addr == keyboard_addr && instance == keyboard_instance) {
         keyboard_addr    = 0u;
@@ -1607,6 +1622,23 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
  * runs, so the Escape never reaches the input queue.
  */
 static volatile bool reset_combo_seen;
+
+#if !IOC_DIAGNOSTIC_BUILD
+void hid_mouse_take(HidMouseRead *out)
+{
+    out->flags   = (uint8_t)((other_addr != 0u ? HID_MOUSE_MOUNTED : 0u) |
+                             (mouse_decoded ? HID_MOUSE_DECODED : 0u));
+    out->buttons = mouse_buttons;
+    out->pressed = mouse_pressed;
+    out->dx      = (uint16_t)mouse_pend_x;
+    out->dy      = (uint16_t)mouse_pend_y;
+    out->wheel   = (uint16_t)mouse_pend_wheel;
+    mouse_pressed    = 0u;
+    mouse_pend_x     = 0;
+    mouse_pend_y     = 0;
+    mouse_pend_wheel = 0;
+}
+#endif
 
 bool hid_reset_requested(void)
 {
@@ -1795,7 +1827,6 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
          * the diagnostic profile has no flash left. */
 #if !IOC_DIAGNOSTIC_BUILD
         if (len == MOUSE_REPORT_LEN && report[0] == MOUSE_REPORT_ID) {
-            mouse_buttons = report[1];
             mouse_dx = (uint16_t)report[2] |
                        ((uint16_t)(report[3] & 0x0fu) << 8);
             if (mouse_dx & 0x0800u)
@@ -1804,10 +1835,29 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
                        ((uint16_t)report[4] << 4);
             if (mouse_dy & 0x0800u)
                 mouse_dy |= 0xf000u;
+            mouse_pressed |= (uint8_t)(report[1] & (uint8_t)~mouse_buttons);
+            mouse_buttons = report[1];
+            mouse_decoded = true;
             mouse_x += mouse_dx;
             mouse_y += mouse_dy;
             mouse_wheel += (report[5] & 0x80u) ? (uint16_t)(0xff00u | report[5])
                                                 : (uint16_t)report[5];
+
+            /* Capped, not wrapped: a slow reader sees a long throw clipped,
+             * never reversed.  Written out three times rather than as a
+             * helper, so this callback gains no callee. */
+            mouse_sum = (int32_t)mouse_pend_x + (int32_t)(int16_t)mouse_dx;
+            if (mouse_sum > 32767L)  mouse_sum = 32767L;
+            if (mouse_sum < -32767L) mouse_sum = -32767L;
+            mouse_pend_x = (int16_t)mouse_sum;
+            mouse_sum = (int32_t)mouse_pend_y + (int32_t)(int16_t)mouse_dy;
+            if (mouse_sum > 32767L)  mouse_sum = 32767L;
+            if (mouse_sum < -32767L) mouse_sum = -32767L;
+            mouse_pend_y = (int16_t)mouse_sum;
+            mouse_sum = (int32_t)mouse_pend_wheel + (int32_t)(int8_t)report[5];
+            if (mouse_sum > 32767L)  mouse_sum = 32767L;
+            if (mouse_sum < -32767L) mouse_sum = -32767L;
+            mouse_pend_wheel = (int16_t)mouse_sum;
         }
 #endif
     }
