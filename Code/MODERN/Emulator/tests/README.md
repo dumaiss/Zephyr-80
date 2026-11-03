@@ -82,6 +82,9 @@ limit. A case passes only on exit 0 with its explicit PASS line.
 | `baud` | SIO0/A on a `loopback` slot, clocked by TO0: character times at constants 12 and 1 match 9600 and 115200 baud, bytes intact |
 | `overlap` | V9958 and CTC requesting together: releasing the V9958 leaves the CTC pending; ten times the CTC (04h) is acknowledged first and the V9958 (FFh) immediately after the CTC's RETI; free-running counts |
 | `daisy` | CTC, SIO0 and SIO1 requesting together: order 04h, 10h, 20h; the CTC nests inside SIO0's service; SIO1 waits for SIO0's RETI |
+| `latch` | The V9958 card's configuration latch: writes with A2 = 1 (A4h–A7h and mirrors) never change VRAM, the VRAM address pointer or R#1, while A3/A4 mirrors of the ports still reach the V9958; reads at A4h and mirrors equal reads at A0h; D0 selects NMI or `/INT` through every mirror, D1 and D2–D7 have no route effect; reset clears the latch |
+| `nmi` | NMI route: an asserted request moves to the NMI vector (0066h) at once on the latch write, frame requests arrive as NMIs at 59.94 Hz with no IM2 acknowledge, a request left asserted does not hold IRQ0 with EI, and switching back acknowledges at once with vector FFh and no NMI |
+| `nested` | A CTC handler runs with EI, SIO1 is pending and the V9958 asserts: the acknowledge reads FFh, SIO1 is not acknowledged, and SIO1 is served right after the CTC's RETI |
 | `pty` | SIO0/B on a `pty` slot, throttled: the host reads the program's 115200 8N1 banner lines |
 | `konaos`, `zsdos` | The current guests boot without an IOC; decoding every SIO1 control write shows WR1 interrupt enables stay clear, so SIO1 raises no guest interrupt |
 

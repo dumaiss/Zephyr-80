@@ -12,10 +12,10 @@ import time
 import tty
 
 HERE = Path(__file__).resolve().parent
-PROBES = ("channels", "timer", "baud", "overlap", "daisy", "pty")
+PROBES = ("channels", "timer", "baud", "overlap", "daisy", "pty", "latch", "nmi", "nested")
 GUESTS = ("konaos", "zsdos")
 # Emulated-second verdict limit per case; MAME's own bound is one second later.
-LIMITS = {"channels": 2, "timer": 6, "baud": 2, "overlap": 2, "daisy": 2, "pty": 5, "konaos": 6, "zsdos": 6}
+LIMITS = {"channels": 2, "timer": 6, "baud": 2, "overlap": 2, "daisy": 2, "pty": 5, "latch": 4, "nmi": 3, "nested": 2, "konaos": 6, "zsdos": 6}
 BANNER = b"ZEPHYR80 SIO0B PTY 115200\r\n"
 
 

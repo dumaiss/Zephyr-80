@@ -99,9 +99,11 @@ acceptance.
 ## Clocks and interrupts
 
 Electrical evidence is the native KiCad netlist (`kicad-cli sch export netlist`)
-of `Schem/Zephyr-80-IO` and `Schem/Zephyr-80-CPU`, plus the pBITz backplane
-(`pBITzPlatform/pBITzBackplane/Backplane.kicad_sch`) for the bus pull-ups.
-On the IO board IC1 is the CTC, IC2 SIO0 and IC3 SIO1.
+of `Schem/Zephyr-80-IO` and `Schem/Zephyr-80-CPU`, the pBITz backplane
+(`pBITzPlatform/pBITzBackplane/Backplane.kicad_sch`) for the bus pull-ups, and
+the LunchCrema video card (`PercolatorLabs/Schem/LunchCrema`, HDL
+`Code/HDL/LunchCrema/v9958WSGenerator.pld`). On the IO board IC1 is the CTC,
+IC2 SIO0 and IC3 SIO1.
 
 | Signal | Nets | Machine |
 |---|---|---|
@@ -114,6 +116,7 @@ On the IO board IC1 is the CTC, IC2 SIO0 and IC3 SIO1.
 | CTC channel select | `/IO Controller Card/A1` → CS0, `A0` → CS1 | channel = A0·2 + A1: 40h ch0, 41h ch2, 42h ch1, 43h ch3; 44h–4Fh mirror |
 | Daisy chain | bus `CTRL_18` (backplane RN5 4.7 kΩ to +5 V) → `/IO Controller Card/IEI` → CTC; `Net-(IC1-IEO)` → SIO0 IEI; `Net-(IC2-IEO)` → SIO1 IEI; SIO1 IEO → `/IO Controller Card/IEO` (bus `CTRL_17`, unused) | priority CTC > SIO0 > SIO1 |
 | `/INT` | `/IO Controller Card/~{INT}` (CTC, SIO0, SIO1), bus `CTRL_14` (RN7 pull-up), CPU pin 16 | wired-OR level |
+| `/NMI` | CPU board `/CPU and Address Decoding/~{NMI}` = J2.A12 (`CTRL_15`) and Z80 U3 pin 17; bus `CTRL_15` (RN5.8 pull-up) | the V9958 card's NMI route |
 | Data bus idle | backplane D0–D7 pull-ups (RN5/RN6/RN7, 4.7 kΩ) | unclaimed acknowledge reads FFh |
 
 Guests program the tick as CTC channel 2 (port 41h) in timer mode, ÷256, time
@@ -127,18 +130,52 @@ chain, the CTC and SIOs request only while their IEI is high, and a source
 releasing its request never clears another's. The CTC and SIO devices keep the
 stock MAME acknowledge and RETI behaviour: the highest-priority requesting
 device supplies the vector, and a device in service blocks those below it until
-its RETI. An acknowledge no daisy device claims (the V9958) returns FFh.
+its RETI. The acknowledge stops at the first device in service, as the chain's
+IEI does: with a daisy ISR running under EI and a lower device requesting, a
+V9958 acknowledge reaches no device and reads FFh (backplane data pull-ups)
+instead of vectoring to the blocked device. MAME's Z80 daisy helper
+(`z80daisy.cpp:daisy_get_irq_device`) stops at the first device in service,
+as `daisy_update_irq_state` does.
+
+### V9958 card interrupt latch
+
+The LunchCrema card decodes `~{CS_VDP}` (window A0h–BFh; A3 and A4 are not
+decoded) with a 74AHCT139 (U10). Reads always select the V9958 by A1:A0, A2 is
+ignored (`~{CSR}`, half 1: A0 = `~{RD}`, A1 = GND). For writes, half 2 uses A0 =
+A2 and A1 = `~{WR}`: A2 = 0 is `~{CSW}` to the V9958 and A2 = 1 is
+`~{INT_MODE}`, which clocks the 74HC273 U3 (CP = `~{INT_MODE}`, MR =
+`~{RESET}`). That write never reaches the V9958. D0 loads Q0, D1 loads Q1 =
+`~{WS_EN}` (the WAIT generator U11 only); D2–D7 are tied low and Q2–Q7 are
+unconnected. Reset clears both bits.
+
+| Net | Nodes |
+|---|---|
+| `/Video/~{INT_i}` | U2 V9958 `~{INT}`, R5 pull-up, U8 74LVC1G19 `~{E}` |
+| U3 Q0 | U8 A: Q0 = 0 selects Y0, Q0 = 1 selects Y1 |
+| `/Video/~{INT}` | U8 Y0 through U9 (BAT54), J2.C11 (`CTRL_14`) |
+| `/Video/~{NMI}` | U8 Y1 through U9, J2.A12 (`CTRL_15`) |
+| `/Video/~{INT_MODE}` | U10 half 2 Y1, U3 CP |
+| `/Video/~{WS_EN}` | U3 Q1, U11 pin 5 |
+
+The card leaves `CTRL_17` and `CTRL_18` (IEO/IEI) unconnected. The CPU board
+wires `CTRL_14` to Z80 `~{INT}` (U3.16) and `CTRL_15` to Z80 `~{NMI}` (U3.17),
+so the machine models the latch as: Q0 = 0, the V9958 request joins the `/INT`
+wired-OR (acknowledge FFh, as above); Q0 = 1, the request drives the Z80 NMI
+line and leaves `/INT` alone. NMI has no acknowledge cycle and the Z80 takes it
+on the falling edge; a latch write re-routes an already asserted request, so
+moving a pending request to NMI takes the NMI at once and moving it back to
+`/INT` interrupts at the next EI. D1 is stored and has no timing effect. The
+WAIT generator fixes a board timing margin that the MAME Z80 core does not
+reproduce, and its speed effect is small, so it is deliberately not modelled.
 
 Simulation limits: the trigger inputs are channel clocks rather than edges, so
 edge polarity (control bit D4) and the phase between the divider outputs and
 SIO0/B's clock are not modelled; an externally triggered timer starts one
 trigger period after its constant. The IOC-driven `RESET_HIGH` divider reset
-is not modelled. No V9958 card schematic is in the hardware tree; its
-position outside the chain follows the board design, not a traced net. The
-MAME Z80 core picks the acknowledging device by request alone, so a V9958
-acknowledge taken while a daisy device is in service with interrupts
-re-enabled, and a lower daisy device is also requesting, would go to that lower
-device instead of reading FFh. SIO1's channel clocks are free-running
+is not modelled. The V9958 interrupt wiring above is traced on the card and
+CPU board only; no other slot card is modelled. A RETI that ends a V9958
+handler also ends the service of the daisy device in progress, as on the bus.
+SIO1's channel clocks are free-running
 placeholders and do not model the IOC link. The
 [clock and interrupt probes](../tests/README.md#clock-and-interrupt-probes)
 check these properties in MAME only; they are not physical-board evidence.

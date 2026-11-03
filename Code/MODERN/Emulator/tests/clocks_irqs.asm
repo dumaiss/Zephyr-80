@@ -7,15 +7,20 @@
 ; `unexpected`.  Handlers report through mailboxes the probe taps:
 ;   ENTRY  vector on handler entry       EXIT  vector just before EI/RETI
 ;   MARK   scenario markers              RXDATA  received SIO0/A byte
+;   NMICNT NMI handler entry count
 ; Assembled with sdasz80/sdldz80/makebin by clocks_irqs.py.
 
 CASE    = 0x7f00            ; set by the probe
 TC1     = 0x7f01            ; baud case: first CTC ch0 constant
 TC2     = 0x7f02            ; baud case: second CTC ch0 constant
+GO      = 0x7f03            ; route case: nonzero enables interrupts
+NESTED  = 0x7f04            ; nested case: 1 armed, 2 CTC handler in service
+NMIHOLD = 0x7f05            ; route case: nonzero leaves the V9958 request asserted
 ENTRY   = 0x9000
 EXIT    = 0x9002
 MARK    = 0x9003
 RXDATA  = 0x9001
+NMICNT  = 0x9004
 RXCOUNT = 0x9010
 TABLE   = 0x8000
 
@@ -33,7 +38,23 @@ VDPS    = 0xa1              ; V9958 status read / register write
 
 	.area	PROBE (ABS)
 	.org	0x0000
+	jp	start
 
+	.org	0x0066
+nmi:					; the Z80 NMI vector; no acknowledge cycle
+	push	af
+	ld	a,(NMIHOLD)
+	or	a
+	jr	nz,nmi_count
+	in	a,(VDPS)		; status read releases the request
+nmi_count:
+	ld	a,(NMICNT)
+	inc	a
+	ld	(NMICNT),a
+	pop	af
+	retn
+
+	.org	0x0100
 start:
 	di
 	ld	hl,#0
@@ -85,6 +106,10 @@ wait_case:
 	jp	z,case_daisy
 	cp	#6
 	jp	z,case_pty
+	cp	#7
+	jp	z,case_route
+	cp	#8
+	jp	z,case_nested
 	halt
 
 ; ---------------------------------------------------------------- cases
@@ -229,6 +254,37 @@ case_daisy:
 	ld	(MARK),a
 	jp	idle_ei
 
+case_route:				; interrupts stay off until the probe sets GO
+	ld	a,#0x01
+	ld	(MARK),a
+route_wait:
+	ld	a,(GO)
+	or	a
+	jr	z,route_wait
+	ei
+route_idle:
+	halt
+	jr	route_idle
+
+case_nested:				; CTC, SIO1 and V9958 all requesting
+	call	tick
+	ld	a,#0x18
+	out	(SIO1BC),a
+	ld	hl,#sio_daisy1
+	ld	b,#sio_daisy_end - sio_daisy0
+	ld	c,#SIO1BC
+	otir
+	ld	a,#0x20
+	out	(VDPS),a
+	ld	a,#0x81
+	out	(VDPS),a		; R#1 = 20h: vertical retrace interrupt
+	in	a,(VDPS)
+	ld	a,#1
+	ld	(NESTED),a		; the next CTC handler runs the scenario
+	ld	a,#0xc0
+	ld	(MARK),a
+	jp	idle_ei
+
 case_pty:
 	ld	a,#0x18
 	out	(SIO0BC),a
@@ -294,6 +350,8 @@ isr_common:
 	ld	(ENTRY),a
 	cp	#0xff
 	jr	z,svc_vdp
+	cp	#0x04
+	jr	z,svc_ctc
 	cp	#0x10
 	jr	z,svc_sio0b
 	cp	#0x1c
@@ -308,7 +366,32 @@ isr_exit:
 
 svc_vdp:
 	in	a,(VDPS)		; status S#0 read releases the request
+	ld	a,(NESTED)
+	cp	#2
 	ld	a,#0xff
+	jr	nz,isr_exit
+	ld	(EXIT),a		; inside the CTC handler: return without RETI,
+	pop	af			; which every daisy device would decode as
+	ei				; the end of the CTC's service
+	ret
+
+svc_ctc:
+	ld	a,(NESTED)
+	cp	#1
+	ld	a,#0x04
+	jr	nz,isr_exit
+	ld	a,#2
+	ld	(NESTED),a
+	ld	a,#0x5a
+	out	(SIO1BD),a		; SIO1 TxIP rises while the CTC is in service
+	ei				; nest: lower daisy devices stay blocked
+	push	hl
+	ld	hl,#9600
+	call	wait_hl			; 25 ms: a V9958 frame request arrives
+	pop	hl
+	xor	a
+	ld	(NESTED),a
+	ld	a,#0x04
 	jr	isr_exit
 
 svc_sio0b:

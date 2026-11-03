@@ -15,8 +15,9 @@ local handles = {}
 _G.clocks_irqs_handles = handles
 local done = false
 
-local TABLE, ENTRY, RXDATA, EXIT, MARK = 0x8000, 0x9000, 0x9001, 0x9002, 0x9003
-local CASES = { channels = 1, timer = 2, baud = 3, overlap = 4, daisy = 5, pty = 6 }
+local TABLE, ENTRY, RXDATA, EXIT, MARK, NMICNT = 0x8000, 0x9000, 0x9001, 0x9002, 0x9003, 0x9004
+local GO, NESTED, NMIHOLD = 0x7f03, 0x7f04, 0x7f05
+local CASES = { channels = 1, timer = 2, baud = 3, overlap = 4, daisy = 5, pty = 6, latch = 7, nmi = 7, nested = 8 }
 local TRG = { [0] = 1843200, 3686400, 7372800, 7372800 }
 
 local function now()
@@ -49,8 +50,8 @@ local function channel(port)
 end
 
 -- Event stream: acknowledges (vector-table reads) and handler mailboxes.
-local acks, exits, marks = {}, {}, {}
-local on_ack, on_exit, on_mark, on_rx = nil, nil, nil, nil
+local acks, exits, marks, nmis = {}, {}, {}, {}
+local on_ack, on_exit, on_mark, on_rx, on_nmi = nil, nil, nil, nil, nil
 
 local function tap_probe()
     local low = nil
@@ -65,7 +66,7 @@ local function tap_probe()
             low = nil
         end
     end))
-    handles[#handles + 1] = mem:install_write_tap(ENTRY, MARK, "clkirq-mailbox", guarded(function(offset, data)
+    handles[#handles + 1] = mem:install_write_tap(ENTRY, NMICNT, "clkirq-mailbox", guarded(function(offset, data)
         local event = { value = data & 0xff, t = now() }
         if offset == ENTRY then
             assert(event.value ~= 0x99, "unexpected IM2 vector")
@@ -75,6 +76,9 @@ local function tap_probe()
         elseif offset == MARK then
             marks[#marks + 1] = event
             if on_mark then on_mark(event) end
+        elseif offset == NMICNT then
+            nmis[#nmis + 1] = event
+            if on_nmi then on_nmi(event) end
         elseif offset == RXDATA and on_rx then
             on_rx(event)
         end
@@ -283,6 +287,234 @@ local function daisy()
     end
 end
 
+-- A script runs as a coroutine that resumes once per video frame; events keep
+-- arriving through the taps while it waits.
+local function script(body)
+    local co = coroutine.create(body)
+    handles[#handles + 1] = emu.add_machine_frame_notifier(guarded(function()
+        if coroutine.status(co) == "dead" then return end
+        local ok, err = coroutine.resume(co)
+        if not ok then error(debug.traceback(co, tostring(err)), 0) end
+    end))
+end
+
+local function frames(n)
+    for _ = 1, n do coroutine.yield() end
+end
+
+local function wait_for(condition)
+    while not condition() do coroutine.yield() end
+end
+
+-- V9958 ports through the machine's own I/O handlers (A1 command, A0 data).
+local function vdp_write_address(port, address)
+    io:write_u8(port + 1, address & 0xff)
+    io:write_u8(port + 1, 0x40 | ((address >> 8) & 0x3f))
+end
+
+local function vdp_read_address(port, address)
+    io:write_u8(port + 1, address & 0xff)
+    io:write_u8(port + 1, (address >> 8) & 0x3f)
+end
+
+local function vdp_frame_interrupt()
+    io:write_u8(0xa1, 0x20)
+    io:write_u8(0xa1, 0x81) -- R#1 = 20h: vertical retrace interrupt
+end
+
+local function ack_count(vector, from)
+    local n = 0
+    for i = from or 1, #acks do
+        if acks[i].vector == vector then n = n + 1 end
+    end
+    return n
+end
+
+-- LunchCrema configuration latch: a write with A2 = 1 loads it and never
+-- reaches the V9958; reads ignore A2; reset clears it.
+local function latch()
+    local vdp_space = machine.devices[":vdp"].spaces["vram"]
+    assert(vdp_space, "V9958 VRAM space")
+    on_mark = function() end
+    script(function()
+        wait_for(function() return #marks >= 1 end)
+        mem:write_u8(GO, 1)
+
+        -- VRAM, address pointer and the write/command sequencing stay put.
+        local before = { vdp_space:read_u8(0x0101), vdp_space:read_u8(0x0102), vdp_space:read_u8(0x0103) }
+        vdp_write_address(0xa0, 0x0100)
+        io:write_u8(0xa0, 0xa5)
+        io:write_u8(0xa4, 0x5a)
+        io:write_u8(0xa0, 0xc3)
+        io:write_u8(0xbc, 0x3c)
+        io:write_u8(0xa0, 0xd2)
+        assert(vdp_space:read_u8(0x0100) == 0xa5, "VRAM 0100h")
+        assert(vdp_space:read_u8(0x0101) == 0xc3, string.format("VRAM 0101h %02x after a latch write", vdp_space:read_u8(0x0101)))
+        assert(vdp_space:read_u8(0x0102) == 0xd2, string.format("VRAM 0102h %02x after a latch write", vdp_space:read_u8(0x0102)))
+        assert(vdp_space:read_u8(0x0103) == before[3], "VRAM 0103h written")
+        print("TRACE VRAM 0100h..0102h A5 C3 D2: A4h/BCh writes did not advance or write VRAM")
+
+        -- A3/A4 mirrors of the VDP ports still reach the VDP.
+        vdp_write_address(0xb8, 0x0200)
+        io:write_u8(0xb8, 0x11)
+        io:write_u8(0xa8, 0x22)
+        io:write_u8(0xb0, 0x33)
+        assert(vdp_space:read_u8(0x0200) == 0x11 and vdp_space:read_u8(0x0201) == 0x22 and vdp_space:read_u8(0x0202) == 0x33, "mirror writes")
+
+        -- Reads ignore A2: A4h/ACh/B4h/BCh read VRAM data like A0h.
+        vdp_read_address(0xa0, 0x0100)
+        local plain = { io:read_u8(0xa0), io:read_u8(0xa0), io:read_u8(0xa0) }
+        vdp_read_address(0xa0, 0x0100)
+        local mirrored = { io:read_u8(0xa4), io:read_u8(0xac), io:read_u8(0xbc) }
+        for i = 1, 3 do assert(plain[i] == mirrored[i], string.format("read %d: A0h %02x, A4h mirror %02x", i, plain[i], mirrored[i])) end
+        assert(plain[1] == 0xa5 and plain[2] == 0xc3 and plain[3] == 0xd2, "VRAM read-back")
+        print("TRACE reads at A4h/ACh/BCh equal reads at A0h")
+
+        -- Latch writes through A5h (a VDP command port if misrouted) must not
+        -- program R#1: the data bytes 20h, 81h would enable its interrupt.
+        io:write_u8(0xa5, 0x20)
+        io:write_u8(0xa5, 0x81)
+        local nmi0, ack0 = #nmis, #acks
+        frames(4)
+        assert(#nmis == nmi0 and #acks == ack0, string.format("A5h writes reached the VDP: %d NMI, %d acknowledges", #nmis - nmi0, #acks - ack0))
+
+        -- The same bytes through the VDP port enable the interrupt; the latch
+        -- last loaded 81h, so the request is an NMI.
+        vdp_frame_interrupt()
+        frames(4)
+        assert(#nmis - nmi0 >= 3 and #acks == ack0, string.format("after 81h: %d NMI, %d acknowledges", #nmis - nmi0, #acks - ack0))
+
+        local function route(port, value, nmi_wanted)
+            local n, a = #nmis, #acks
+            io:write_u8(port, value)
+            frames(3)
+            local dn, da = #nmis - n, #acks - a
+            if nmi_wanted then
+                assert(dn >= 2 and da == 0, string.format("%02x<-%02x: %d NMI, %d acknowledges, want NMI", port, value, dn, da))
+            else
+                assert(da >= 2 and dn == 0, string.format("%02x<-%02x: %d NMI, %d acknowledges, want /INT", port, value, dn, da))
+            end
+        end
+        -- D0 selects the route; D1 is stored without effect; D2-D7 are open.
+        for _, port in ipairs({ 0xa4, 0xa5, 0xa6, 0xa7, 0xac, 0xb4, 0xbc, 0xbf }) do
+            route(port, 0x01, true)
+            route(port, 0x00, false)
+        end
+        route(0xa4, 0xfd, true)
+        route(0xa4, 0xfe, false)
+        route(0xa4, 0x03, true)
+        route(0xa4, 0xfc, false)
+        for i = 1, #acks do assert(acks[i].vector == 0xff, string.format("vector %02x", acks[i].vector)) end
+        print("TRACE latch: 8 mirrors both directions, D1 and D2-D7 without route effect, /INT vector FFh")
+
+        -- Reset clears the latch and the V9958: with the latch at NMI, a
+        -- request after reset is /INT again.
+        io:write_u8(0xa4, 0x01)
+        local seen = #marks
+        machine:soft_reset()
+        wait_for(function() return #marks > seen end)
+        local n, a = #nmis, #acks
+        vdp_frame_interrupt()
+        frames(4)
+        assert(#nmis == n and #acks - a >= 3, string.format("after reset: %d NMI, %d acknowledges", #nmis - n, #acks - a))
+        for i = a + 1, #acks do assert(acks[i].vector == 0xff, "vector after reset") end
+        finish(true, "A4h-mirror writes load the latch and miss the VDP (VRAM, address, R#1); A3/A4 mirrors reach the VDP; reads ignore A2; D0 routes /INT or NMI; reset clears it")
+    end)
+end
+
+-- V9958 on the NMI route: no IM2 acknowledge, no IRQ0; back on /INT: FFh.
+local function nmi()
+    on_mark = function() end
+    script(function()
+        wait_for(function() return #marks >= 1 end)
+        -- Guest still runs with interrupts disabled.
+        vdp_frame_interrupt()
+        local t0 = now()
+        wait_for(function() return now() - t0 > 0.02 end)
+        assert(#acks == 0 and #nmis == 0, "guest took an interrupt with interrupts disabled")
+
+        -- An already asserted /INT request moves to NMI on the latch write.
+        local wrote = now()
+        io:write_u8(0xa4, 0x01)
+        wait_for(function() return #nmis >= 1 end)
+        assert(nmis[1].t - wrote < 50e-6, string.format("NMI %s after the latch write", us(nmis[1].t - wrote)))
+        assert(#acks == 0, "IM2 acknowledge on NMI")
+        local rerouted = nmis[1].t - wrote
+        print("TRACE asserted request re-routed: NMI " .. us(rerouted) .. " after the latch write")
+
+        -- Frame requests keep arriving as NMIs at the frame rate.
+        wait_for(function() return #nmis >= 6 end)
+        for i = 3, 6 do
+            local d = nmis[i].t - nmis[i - 1].t
+            assert(math.abs(d - 1 / 59.94) < 2e-4, "NMI interval " .. us(d))
+        end
+        assert(#acks == 0, "IM2 acknowledge on NMI")
+
+        -- Interrupts on: the request must not hold IRQ0.  The next NMI handler
+        -- leaves the V9958 request asserted, so a stuck /INT would be taken.
+        mem:write_u8(GO, 1)
+        frames(2)
+        mem:write_u8(NMIHOLD, 1)
+        local n = #nmis
+        wait_for(function() return #nmis > n end)
+        local held = now()
+        frames(3)
+        local held_for = now() - held
+        assert(#nmis == n + 1, "NMI repeated while the request stayed asserted")
+        assert(#acks == 0, string.format("%d IM2 acknowledges while the request was routed to NMI", #acks))
+
+        -- Back to /INT: the asserted request is acknowledged at once, vector FFh.
+        wrote = now()
+        io:write_u8(0xa4, 0x00)
+        wait_for(function() return #acks >= 1 end)
+        assert(acks[1].vector == 0xff, string.format("vector %02x", acks[1].vector))
+        assert(acks[1].t - wrote < 50e-6, string.format("acknowledge %s after the latch write", us(acks[1].t - wrote)))
+        local nmi_end = #nmis
+        mem:write_u8(NMIHOLD, 0)
+        wait_for(function() return #acks >= 5 end)
+        for i = 1, #acks do assert(acks[i].vector == 0xff, string.format("vector %02x", acks[i].vector)) end
+        assert(#nmis == nmi_end, "NMI after switching back to /INT")
+        finish(true, string.format("asserted request re-routed to NMI in %s; %d NMIs at 59.94 Hz, 0 acknowledges, IRQ0 free while asserted for %s; back on /INT: %d acknowledges, all vector FFh, no NMI",
+            us(rerouted), n + 1, us(held_for), #acks))
+    end)
+end
+
+-- CTC handler with interrupts enabled, SIO1 pending behind it, V9958 asserts.
+local function nested()
+    local armed = nil
+    on_mark = function(m)
+        if m.value == 0xc0 then armed = m end
+    end
+    script(function()
+        wait_for(function() return armed ~= nil end)
+        wait_for(function() return ack_count(0x20) >= 1 end)
+        local first
+        for _, a in ipairs(acks) do
+            if a.t > armed.t and a.vector == 0x04 then first = a; break end
+        end
+        assert(first, "no CTC acknowledge after arming")
+        local ctc_exit
+        for _, e in ipairs(exits) do
+            if e.value == 0x04 and e.t > first.t then ctc_exit = e; break end
+        end
+        assert(ctc_exit, "CTC handler never exited")
+        local inside = between(acks, first.t, ctc_exit.t)
+        assert(#inside >= 1, "no acknowledge while the CTC handler ran with interrupts enabled")
+        for _, a in ipairs(inside) do
+            assert(a.vector == 0xff, string.format("acknowledge %02x while the CTC was in service (SIO1 must stay blocked)", a.vector))
+        end
+        for _, a in ipairs(between(acks, armed.t, first.t)) do assert(a.vector ~= 0x20, "SIO1 acknowledged before the CTC handler") end
+        local sio1
+        for _, a in ipairs(acks) do
+            if a.vector == 0x20 and a.t > ctc_exit.t then sio1 = a; break end
+        end
+        assert(sio1, "SIO1 never served after the CTC RETI")
+        assert(sio1.t - ctc_exit.t < 100e-6, "SIO1 served " .. us(sio1.t - ctc_exit.t) .. " after the CTC RETI")
+        finish(true, string.format("CTC 04h in service %s with EI: %d V9958 acknowledge(s) vector FFh, SIO1 not acknowledged; SIO1 20h %s after the CTC RETI",
+            us(ctc_exit.t - first.t), #inside, us(sio1.t - ctc_exit.t)))
+    end)
+end
+
 -- Current guests: SIO1 interrupt enables stay clear (WR1 pointer decode).
 local function guest()
     local ptr, wr1, writes, reads, violations = { [0] = 0, 0 }, { [0] = {}, {} }, 0, 0, {}
@@ -341,7 +573,7 @@ end
 if case == "konaos" or case == "zsdos" then
     guest()
 else
-    local setup = { channels = channels, timer = timer, baud = baud, overlap = overlap, daisy = daisy }
+    local setup = { channels = channels, timer = timer, baud = baud, overlap = overlap, daisy = daisy, latch = latch, nmi = nmi, nested = nested }
     if case ~= "pty" then
         tap_probe()
         assert(setup[case], "unknown case " .. case)()

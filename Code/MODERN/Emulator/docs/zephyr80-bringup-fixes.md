@@ -84,9 +84,10 @@ dead — the proxy's `PROXY_READY` sequence did nothing.
    vector to `0xDD10` (`sio_core_isr`). The old code used a wired-OR IRQ with no
    vectoring, so the interrupt could never reach the ISR.
    **Fix:** added `Z80CTC` at `$40-$43` and a real IM2 daisy chain
-   (`z80_daisy_config { ctc, sio0, sio1 }`, `set_daisy_config`), with each device's
-   interrupt callback wired to `INPUT_LINE_IRQ0`. The daisy supplies the vector on
-   interrupt-acknowledge.
+   (`z80_daisy_config { ctc, sio0, sio1 }`, `set_daisy_config`). The daisy supplies the
+   vector on interrupt-acknowledge. The first version wired each device's interrupt
+   callback straight to `INPUT_LINE_IRQ0`; package 116 and its correction 01 replaced
+   that with a merged `/INT` (see "Clocks and interrupts" in `build-and-run.md`).
 
 3. **Console baud was 9600, hardware is 115200.**
    The firmware programs SIO0/B WR4 for a ×16 clock at 115200.
@@ -115,11 +116,13 @@ The proxy must open the pty in **raw** mode — the link is binary.
 
 ## Open items / assumptions to confirm against hardware
 
-- **Daisy priority order** `{ ctc, sio0, sio1 }` is the conventional Z80 arrangement
-  but the true IEI/IEO order is a hardware detail. It is functionally moot today
-  (the firmware disables the CTC and polls SIO1; only SIO0/B interrupts).
-- **CTC clock crystal** and the exact CTC-channel → user-baud / tick assignment are
-  placeholders; the firmware only disables the CTC at boot.
+- **Daisy priority order** `{ ctc, sio0, sio1 }` is confirmed against the IO board
+  netlist (CTC IEI from the bus, CTC IEO to SIO0 IEI, SIO0 IEO to SIO1 IEI; package 116).
+  The V9958 is outside the chain; the LunchCrema card routes its request to `/INT` or
+  the Z80 NMI through a latch at A4h (correction 01 to package 116).
+- **CTC clocks** are board values: CLK/TRG0-3 are the 74HC4040 outputs of the
+  14.7456 MHz oscillator (1.8432, 3.6864, 7.3728, 7.3728 MHz), ZC/TO0 clocks
+  SIO0/A, and the channel select is A0·2 + A1 (package 116).
 - **`/DCD` tied low on SIO0/B.** On real hardware `/DCD` is hardwired asserted so
   the WR3 Auto-Enables receiver is always enabled. In MAME the pty asserts DCD, but
   note the interaction between the SIO channel reset and the latched DCD state if a
