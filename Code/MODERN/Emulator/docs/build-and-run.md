@@ -96,6 +96,53 @@ available in the supplied HDL tree; fixture provenance is in
 `tests/fixtures/rev13-provenance.json`. MAME results are not physical-board
 acceptance.
 
+## Clocks and interrupts
+
+Electrical evidence is the native KiCad netlist (`kicad-cli sch export netlist`)
+of `Schem/Zephyr-80-IO` and `Schem/Zephyr-80-CPU`, plus the pBITz backplane
+(`pBITzPlatform/pBITzBackplane/Backplane.kicad_sch`) for the bus pull-ups.
+On the IO board IC1 is the CTC, IC2 SIO0 and IC3 SIO1.
+
+| Signal | Nets | Machine |
+|---|---|---|
+| CPU, CTC and SIO `CLK` | `CLK_10M` (CPU board Y1, bus `CLK0`) | Z80, CTC, SIOs at 10 MHz; CTC timer mode counts it through ÷16/÷256 |
+| CTC CLK/TRG0, SIO0 RxTxCB | `/Baud Clock/CLK_1M8432` = U8 74HC4040 Q2 | 14.7456 MHz ÷ 8 = 1.8432 MHz |
+| CTC CLK/TRG1 | `/Baud Clock/CLK_3M6864` = U8 Q1 | ÷ 4 = 3.6864 MHz |
+| CTC CLK/TRG2, CLK/TRG3 | `/Baud Clock/CLK_7M3728` = U8 Q0 | ÷ 2 = 7.3728 MHz |
+| U8 clock | `Net-(U8-CLK)` = Y1 ECS-2100AX-147.4 output | 14.7456 MHz oscillator |
+| SIO0 RxCA, TxCA | `USR_UART_BAUD_CLK` = CTC ZC/TO0 | TO0 pulses clock SIO0/A |
+| CTC channel select | `/IO Controller Card/A1` → CS0, `A0` → CS1 | channel = A0·2 + A1: 40h ch0, 41h ch2, 42h ch1, 43h ch3; 44h–4Fh mirror |
+| Daisy chain | bus `CTRL_18` (backplane RN5 4.7 kΩ to +5 V) → `/IO Controller Card/IEI` → CTC; `Net-(IC1-IEO)` → SIO0 IEI; `Net-(IC2-IEO)` → SIO1 IEI; SIO1 IEO → `/IO Controller Card/IEO` (bus `CTRL_17`, unused) | priority CTC > SIO0 > SIO1 |
+| `/INT` | `/IO Controller Card/~{INT}` (CTC, SIO0, SIO1), bus `CTRL_14` (RN7 pull-up), CPU pin 16 | wired-OR level |
+| Data bus idle | backplane D0–D7 pull-ups (RN5/RN6/RN7, 4.7 kΩ) | unclaimed acknowledge reads FFh |
+
+Guests program the tick as CTC channel 2 (port 41h) in timer mode, ÷256, time
+constant 250: 10 MHz / 64000 = 156.25 Hz. Counter mode with time constant N
+divides the channel's trigger clock by N; on channel 0 it sets SIO0/A's rate to
+1.8432 MHz / (16·N) in x16 mode (N = 1 gives 115200 baud, N = 12 gives 9600).
+CTC ZC/TO1 and ZC/TO2 only reach connectors.
+
+The machine composes `/INT` from its sources: the V9958 sits outside the daisy
+chain, the CTC and SIOs request only while their IEI is high, and a source
+releasing its request never clears another's. The CTC and SIO devices keep the
+stock MAME acknowledge and RETI behaviour: the highest-priority requesting
+device supplies the vector, and a device in service blocks those below it until
+its RETI. An acknowledge no daisy device claims (the V9958) returns FFh.
+
+Simulation limits: the trigger inputs are channel clocks rather than edges, so
+edge polarity (control bit D4) and the phase between the divider outputs and
+SIO0/B's clock are not modelled; an externally triggered timer starts one
+trigger period after its constant. The IOC-driven `RESET_HIGH` divider reset
+is not modelled. No V9958 card schematic is in the hardware tree; its
+position outside the chain follows the board design, not a traced net. The
+MAME Z80 core picks the acknowledging device by request alone, so a V9958
+acknowledge taken while a daisy device is in service with interrupts
+re-enabled, and a lower daisy device is also requesting, would go to that lower
+device instead of reading FFh. SIO1's channel clocks are free-running
+placeholders and do not model the IOC link. The
+[clock and interrupt probes](../tests/README.md#clock-and-interrupt-probes)
+check these properties in MAME only; they are not physical-board evidence.
+
 ## Serial and debugging
 
 SIO0/B has a fixed 115200 8N1 clock and exposes `pty` and `loopback` RS232

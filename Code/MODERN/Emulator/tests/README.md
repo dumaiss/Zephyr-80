@@ -56,3 +56,36 @@ and physical-board behavior are outside these probes. No electrical flash
 programming, PLD delay, permission-denied or mid-read I/O fault injection is
 claimed. These standalone probes supply the `memory-flash` case when the
 shared runner is available.
+
+## Clock and interrupt probes
+
+```sh
+python3 tests/clocks_irqs.py --mame mame/mamepbitzd \
+  --konaos-image /path/to/ZephyrOS/build/konaos.bin \
+  --zsdos-image /path/to/Zephyr-80/Code/HOST/CPM2.2/build/zephyr80.bin
+```
+
+The harness assembles `clocks_irqs.asm` with `sdasz80`, `sdldz80` and
+`makebin` into `tests/output/clocks_irqs/` and boots it as the flash image.
+The program copies itself into SRAM, installs an IM2 table at 8000h whose
+handlers report through mailboxes, and runs the case `clocks_irqs.lua` selects.
+The Lua side timestamps every acknowledge by tapping the CPU's vector-table
+read, and programs devices only through the machine's I/O handlers.
+`--case` selects one or more cases; each MAME process has an emulated-time
+verdict limit, MAME's own `-seconds_to_run` one second later, and a wall-time
+limit. A case passes only on exit 0 with its explicit PASS line.
+
+| Case | Proof |
+|---|---|
+| `channels` | All 16 ports 40h–4Fh: reads return the channel the same port's writes program; counter mode with constant 256 acknowledges vector 2·channel at the channel's trigger rate (A0·2 + A1 select, 1.8432/3.6864/7.3728/7.3728 MHz) |
+| `timer` | The guest tick bytes from the CPU (43h/41h reset, vector 00h, 41h A5h, FAh): 625 channel-2 acknowledges span 4 s (156.25 Hz), every interval 6.4 ms, 156 or 157 per second |
+| `baud` | SIO0/A on a `loopback` slot, clocked by TO0: character times at constants 12 and 1 match 9600 and 115200 baud, bytes intact |
+| `overlap` | V9958 and CTC requesting together: releasing the V9958 leaves the CTC pending; ten times the CTC (04h) is acknowledged first and the V9958 (FFh) immediately after the CTC's RETI; free-running counts |
+| `daisy` | CTC, SIO0 and SIO1 requesting together: order 04h, 10h, 20h; the CTC nests inside SIO0's service; SIO1 waits for SIO0's RETI |
+| `pty` | SIO0/B on a `pty` slot, throttled: the host reads the program's 115200 8N1 banner lines |
+| `konaos`, `zsdos` | The current guests boot without an IOC; decoding every SIO1 control write shows WR1 interrupt enables stay clear, so SIO1 raises no guest interrupt |
+
+`results.json` records each command, exit code, wall and emulated time, speed
+and input hash. These standalone probes supply the `clocks-irqs` case when the
+shared runner is available. The guest `/system/timer.exe` measurement needs a
+console and storage and is not part of these probes.
