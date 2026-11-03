@@ -1,265 +1,156 @@
-# Zephyr-80 — MAME Bring-Up Plan
+# Zephyr-80 MAME — Completion Plan
 
-*Working spec, distilled from design discussion. Intended as input to a code-tree
-gap analysis. Nothing here is external fact unless cited in §10.*
+The `zephyr80` machine (`mame/src/mame/pbitz/`) becomes an application
+development emulator for the current board: it boots KonaOS and ZSDOS images,
+shows the V9958, plays the sound card, reads the keyboard and serves an SD card.
+The physical board stays the reference; where the two disagree, the board wins
+and the emulator is fixed.
 
----
+## 1. Decisions
 
-## 0. How to use this document
+- **Two boot images, one machine.** Any flash image up to 512 KiB loads at
+  start: KonaOS (`ZephyrOS/build/konaos.bin`) or ZSDOS
+  (`Code/HOST/CPM2.2/build/zephyr80.bin`). Both run on the current hardware, so
+  both run here; neither needs a machine variant. The old CP/M firmware under
+  `Emulator/roms/` is obsolete and goes.
+- **The IOC is behavioural.** The emulator models what the Z80 observes at
+  SIO1 — lane registers, handshake lines, frames, replies and their effects —
+  not the PIC18F57Q84 or its firmware. The references are the firmware's
+  protocol (`Code/MCU/IOController/include/ioc_frame.h`, `src/fs2.c`,
+  `src/volume.c`, `src/ioc_hid.c`) read as a specification, and the KonaOS
+  simulator's register-level peer (`ZephyrOS/tests/z80sim.py`,
+  `IocCommandPeer`), which the KonaOS driver is validated against.
+- **Two card backends behind one interface:** a FAT image file (`-card sd.img`)
+  and a host folder (`-carddir dir/`). The folder mode presents what the
+  firmware's FatFs presents: 8.3 names (no LFN), case-insensitive lookup.
+- **Emulator tests live with the emulator.** Nothing is added to the KonaOS or
+  ZSDOS builds or their `make check`.
 
-Hand this to Claude Code alongside the MAME source tree. Ask it to:
+## 2. Where it stands
 
-1. **Inventory** what exists against each numbered item below.
-2. **Classify** each as **Present / Partial / Missing**, citing the file(s) and
-   class/method names it found.
-3. **Flag deviations** from the design invariants in §6 (these are the load-bearing
-   rules; a violation is worth calling out even if code "works").
-4. **Report open dependencies**: which blocking inputs (§8) and verification items
-   (§9) are still unresolved in the code.
-5. Output a short **"where we are"** summary + a suggested next-step ordering.
+| Area | State | Gap |
+|---|---|---|
+| Z80 at 10 MHz, handler-based memory | works | — |
+| Memory decoder | MEM_DECODER Rev 09 | Rev 13: latch modes 00/08/10/11, page field P, the mode-11 window, the mode-10 aperture |
+| Flash | 128 KiB `ROM_LOAD` with a fixed CRC | any image up to 512 KiB, no hash |
+| CTC | present at 40h-43h, A1:A0 as the channel | board order: 40h ch0, 42h ch1, 41h ch2, 43h ch3; trigger clocks 1.8432 / 3.6864 / 7.3728 / 7.3728 MHz unwired |
+| SIO0 | console on SIO0/B, pty or loopback | — |
+| SIO1 | placeholder clocks, `coffeeio` stub | the IOC: command lane, bulk lane, FS2, volumes, HID |
+| V9958 | stock device, 128 KiB VRAM | validation against KonaOS and ZSDOS graphics |
+| Sound | none | four SN76489 at 3.579545 MHz on E0h-E3h, the DAC on E4h |
 
-The device architecture (§5) is the part most likely to be under-built or built
-differently — spend analysis effort there.
+## 3. Milestones
 
----
+| | Proof |
+|---|---|
+| **A** | the KonaOS serial-console image boots to `/system>` on the pty |
+| **B** | the KonaOS production image shows its shell on the V9958 and takes keyboard input; ZSDOS shows its prompt |
+| **C** | programs load from both card backends; KonaOS `hwtest` reports `4/4 PASS`; ZSDOS reads and writes `B:` and a `C:` volume |
+| **D** | sntview and VGMPlayer play; sndtest passes |
+| **E** | `make run` from the KonaOS SDK; symbols in the debugger; headless scripted runs; the documents |
 
-## 1. Approach & rationale
+## 4. Work packages
 
-- **Tool: MAME.** Chosen for (a) device reuse across the Coffee Series lineup —
-  every planned CPU has a core — and (b) mature, accurate stock devices (especially
-  the V9958) so that CP/M video code stabilized against the emulator is trustworthy
-  for the real silicon. Fidelity of the emulated peripheral is the point, not a
-  side benefit.
-- **Behavior-only, not cycle-accurate.** Stock devices give accuracy for free;
-  "behavioral" applies only to custom glue (the IO controller / bridge). We are not
-  chasing cycle exactness.
-- **Everything is a MAME `device_t`.** "Driver" in MAME = the top-level machine
-  definition (the whole Zephyr-80). Our custom parts are *devices*, not drivers.
+Sizes: S a few days, M about a week, L two weeks or more.
 
----
+**WP0 — Clean-up (S).** Remove the `coffeeio` stub, the SIO TX logging and
+`Emulator/roms/`. Rewrite `build-and-run.md` for the two images.
 
-## 2. Target environment (MAME 0.289, docs dated 2026-07-01 — verify current)
+**WP1 — Rev 13 decoder and the flash device (S).** Transcribe
+`Code/HDL/WinCUPL/src/MEM_DECODER.pld` Rev 13 (the simulator's `MemoryDecoder`
+is a checked transcription). Latch bits become Q (D0-D2), mode (D3-D4) and P
+(D5-D7). The flash is an image device (`-flash image.bin`), padded with FFh.
+Check the decoder against the PLD's WinCUPL vectors in a debug self-test.
 
-- Systems live in per-manufacturer/system folders under `src/mame/<group>/`
-  (the old flat `drivers/ machine/ video/ audio/` split is gone).
-- Drivers registered in `src/mame/mame.lst` via `@source:` directives.
-- Build a subset with e.g.
-  `make SUBTARGET=zephyr SOURCES=src/mame/<group>/zephyr80.cpp REGENIE=1`.
-- **Check:** confirm the folder chosen for these files and that it's wired into
-  `mame.lst`.
+**WP2 — Clocks, CTC, interrupts (S).** Board CTC port order and trigger
+clocks; SIO0/B clocked from `CLK_1M8432`; SIO0/A from CTC TO0; the IEI/IEO
+daisy order from `Schem/`; the V9958 /INT outside the daisy chain (vector
+FFh). Proof: the KonaOS 156.25 Hz tick (`timer.exe`).
 
----
+**WP3 — Serial boot and the script harness (S) → A.** The KonaOS
+serial-console image on the pty. A Lua autoboot harness that types a line,
+waits for text on the console or the screen, and exits with a status
+(`-video none -sound none -nothrottle`); every later package proves itself with
+it.
 
-## 3. Milestones (staging)
+**WP4 — SIO1 lane model (M), a decision gate.** The KonaOS and ZSDOS drivers
+run SIO1 as external-sync x1 lanes: Hunt, RTS as the request, /DCDB as
+COMMAND_READY, /CTSB as the HID doorbell, /DCDA and /CTSA as bulk admission,
+EOM and underrun, wire-speed INI/OUTI loops. Try the stock `z80sio` fed byte
+by byte from the IOC side; otherwise replace SIO1 with a behavioural device
+that models exactly the registers and lines the drivers observe (the
+simulator's approach). SIO1 raises no interrupts in either OS. Exit: LINK_SYNC
+and PING complete with both drivers unchanged, and the choice is recorded here.
 
-| ID | Scope | Unblocks |
-|----|-------|----------|
-| **M1** | Z80 + 512 KiB banking + CTC + one SIO channel exposed to host serial | CP/M over serial console; **video + storage via existing host VDrip tooling** — a fully usable dev platform with *no* video/sound chip emulated |
-| **M2** | V9958 (stock `v9958_device`) | Migrate video from VDrip-over-serial to native emulated card; stabilize the real V9958 CP/M driver |
-| **M3** | 4× SN76489 (verify `SN76489A` variant) + AD7801 DAC | PETSCII Robots audio, GameOS sound |
-| **M4** | Native IO controller device (two-layer, §5) replacing the host-side VDrip endpoint: storage + HID + command/bulk channels | Self-contained machine; no external host tooling required |
+**WP5 — IOC command core (L).** Frames (`A5 5A LEN TYPE SEQ STATUS DATA CRC`,
+CRC-16-CCITT, `reply = request | 80h`, `FEh` unknown class); the command set
+both OSes use: PING, RESET, LINK_SYNC, XFER_STATUS, PROFILE, HID_INPUT, the
+FS2 family (CAPS through READ_RUN), the legacy FS_* commands, VOL_MOUNT and
+VOL_INFO, the SD record and block commands. Bulk READY/DONE admission and
+transfers up to 4 KiB. Status codes and limits as `ioc_frame.h` defines them.
+Keep the lane glue (WP4) and this core apart, so a future machine with another
+transport reuses the core.
 
-**Key M1 insight:** because the BIOS ships video (and dev-time storage) as VDrip
-packets over the serial link to a host-side TMS9918 emulator + VNC, exposing one SIO
-channel to the host lets the **unmodified BIOS VDrip driver** run. M1 alone is a
-usable machine. M4 later replaces that host endpoint with an in-MAME device.
+**WP6 — Card backends (M).** One interface — resolve, open, read, write,
+truncate, stat, directories, rename, space, generation — with two
+implementations: the image through MAME's `fs::fat` (`src/lib/formats/fs_fat`;
+confirm its write coverage, otherwise FatFs from the firmware's
+`third_party/`), and the host folder. Volume units (CP/M `C:`/`D:`) are files
+on the card mapped by extents, so both backends serve them. Raw block commands
+address the image directly; the folder backend answers them as having no
+volume.
 
-The M1 host-serial console path and the M4 native IO-controller device attach to the
-*same kind of SIO port* but are different things — don't conflate them.
+**WP7 — Lane timing (S).** Pace command turnaround and bulk bytes to the
+board's measurements (about 6 µs per byte on the bulk lane); `-ioc_speed fast`
+removes the pacing.
 
----
+**WP8 — HID keyboard (M) → B, with WP5.** MAME keyboard input as USB usages,
+translated as the firmware's `translate_key` does (text, control bytes, VT100
+sequences), queued with the doorbell on /CTSB. Proof: the KonaOS shell,
+KonaEdit and KonaCommander arrows, the ZSDOS prompt.
 
-## 4. M1 detail
+**WP9 — Sound card (S) → D.** Four SN76489 (confirm the part from the
+schematic: the noise taps differ by variant) and the 8-bit DAC, mixed mono.
+Reads at E0h-FFh (CTRL) return FFh until WP13.
 
-### 4.1 CPU + memory
-- `Z80(config, m_maincpu, XTAL)`; `set_addrmap(AS_PROGRAM, &mem_map)` and
-  `(AS_IO, &io_map)`.
-- **512 KiB banking.** Target is the existing banked model (512 KiB / 8 banks /
-  16 KiB common area, `LAUNCH` cross-bank primitive). Implement with a
-  `memory_view` for the boot-ROM → all-RAM overlay plus `memory_bank` entries for
-  the paged windows; the bank-register write handler decodes from the CPU-board PLD.
-- `memory_view` vs `address_map_bank_device` is decided by the reset-overlay logic.
-- **Blocked on** the CPU-board address-decode PLD + bank-register PLD (§8). CUPL
-  product terms map almost 1:1 onto address-map ranges + the bank write handler.
+**WP10 — V9958 validation (S).** KonaOS gfxtest, GfxDemo, sntview, DonkeyKong;
+the ZSDOS console. Compare sntview's exit timing lines with the board's to
+calibrate the VDP command timing.
 
-### 4.2 Serial console to host
-- Attach an `rs232_port_device` to the console SIO channel in the machine config.
-- At runtime: `-<port> null_modem -bitb socket.127.0.0.1:1234` (TCP, for the VDrip
-  host tool), or `-<port> pty` (pseudo-terminal on *nix), or `-bitb file.txt`
-  (capture). `null_modem` does behavioral stream↔baud with RTS flow control by
-  default; baud set in Machine Configuration.
-- *Confidence: high on the mechanism; medium that VDrip runs unmodified — loosen
-  the driver if it assumes tight handshake/flow-control timing.*
+**WP11 — Developer tooling (M) → E.** A `konaos` Lua plugin: symbols from
+`konaos.map`, a program's map and its `placement.json`; breakpoints by symbol;
+zone and segment addresses translated to physical banks; console capture. Debug
+views of the 512 KiB SRAM and the 128 KiB VRAM. `make run` in the KonaOS SDK
+rules: build, place the program in a card folder, start the emulator, run it.
+Save states over every device's state.
 
-### 4.3 CTC + SIO + interrupts
-- `Z80CTC` + two `Z80SIO`.
-- **IM2 daisy chain:** a `z80_daisy_config` array listing CTC + SIOs in hardware
-  priority order; `m_maincpu->set_daisy_config(...)`.
-- CTC channel outputs → SIO baud inputs (`zc_callback` → `rxca_w`/`txca_w`). The
-  CTC-owned sim/music tick is another `zc_callback` routed to an interrupt.
-- **Blocked on** IO-controller decode PLD (SIO/CTC port addresses) + the interrupt
-  topology / daisy priority order (§8).
+**WP12 — Acceptance and documents (M) → C, E.** Scripted runs kept in
+`Emulator/tests/`, run by hand: KonaOS boot, `hwtest`, sntview playback, a
+ZSDOS session over `B:` and `C:`, ZEXDOC. The documents: build and run, the
+device model, and a fidelity table (exact: CPU, VDP, PSG, decoder; approximate:
+IOC lane and card timing; board only: the `LD A,I` IFF2 erratum, real USB
+devices). KonaOS `docs/boot.md` §9 and the SDK point here.
 
----
+**WP13 — Later, with the OS features.** Gamepads and the mouse through the
+same HID path, from MAME joysticks and the mouse; the CTRL reads.
 
-## 5. IO controller device architecture (two layers)
+## 5. Order
 
-This is the native endpoint (M4) but its interface should be designed now. It is
-**not** an RX660 emulation — see §7. It is a command-protocol endpoint; the RX660 is
-an implementation note.
+```
+WP0 → WP1 → WP2 → WP3 (A) → WP4 → WP5 + WP6 → WP8 (B, C) → WP11, WP12 (E)
+                 └→ WP9 (D), WP10, WP7 in parallel once WP2 lands
+```
 
-### 5.1 Layer 1 — Core device (stable, shared)
-- Owns the **command interpreter** (a byte-fed packet parser) and its downstream
-  devices, instantiated as children via `device_add_mconfig()`: storage
-  (`harddisk_image_device` or a `generic_slot` block device) and HID.
-- **Two channels, each a method-pair — not one tagged stream.** Only the command
-  channel carries an interrupt (unsolicited traffic):
+The critical path is WP4 → WP5 → WP6: everything a developer sees needs the
+card and the keyboard.
 
-  **Command channel**
-  - down: `command_w(u8)`, `command_can_accept()`
-  - up: `out_command_irq` (a `devcb_write_line`) + `command_r()` pull
+## 6. Risks
 
-  **Bulk channel**
-  - down: `bulk_w(u8)`, `bulk_can_accept()`
-  - up: `out_bulk_ready` (a plain line, **no IRQ**) + `bulk_r()` pull
-
-- The core sees two ports only. It never learns "which channel/which chip" —
-  demux stays in the glue.
-- **Personalities** (derived from a shared base holding ingest/FIFO/status/handshake):
-  - IO-controller personality → storage/HID effects
-  - VDP personality → framebuffer/register effects
-  - Lean toward **two derived devices** over one mode-flagged device (effect
-    backends are completely different).
-
-### 5.2 Layer 2 — Glue device (variable, one per transport)
-- Where framing / deframing / sync-hunt / handshake with the stock glue chip happens.
-- **Owns its core as a subdevice** (a composite, e.g. `coffee_io_sio` news up the
-  core + the SIO adapter) and binds the core's `out_command_irq` in its own
-  `device_add_mconfig()`.
-- **Downstream (glue → core): direct method calls**, not devcb (fixed parent→child
-  ownership makes devcb unnecessary ceremony).
-- **SIO variant (Zephyr-80):** implements `device_serial_interface`; wires to a
-  `z80sio` channel exactly like a `null_modem` endpoint (SIO `out_txd` → glue rx;
-  glue tx → SIO `rxd`); deframes; calls the core.
-- **VIA variant (future machines):** port/handshake handlers wired to `via6522`
-  callbacks; latches a byte on the active CA2/CB1 edge; same downstream calls.
-
-### 5.3 The seam contract (core ⇄ glue)
-- **Direction asymmetry is deliberate:** downstream = direct calls; upstream =
-  abstract devcb (`out_command_irq`, `out_bulk_ready`). The core must never know the
-  glue's concrete type; the dependency points glue → core only.
-- **Return path is pull-on-signal, not push.** The core signals "I have data"
-  (command IRQ line / bulk ready line); the glue **pulls** with `command_r()` /
-  `bulk_r()` at its own transport pace. The core never pushes — it stays ignorant of
-  baud rate / handshake timing.
-- **Interrupt realization is the glue's job.** `out_command_irq` binds to the
-  **glue, never to the CPU** — the core never touches the daisy chain. Flow: core
-  asserts `out_command_irq` → glue pulls response bytes → glue injects them into the
-  SIO's receive path → the SIO raises its own RX interrupt through the daisy chain
-  already wired in §4.3. On a VIA machine the same core IRQ instead drives a
-  CA1/CB1 edge / the VIA's interrupt.
-
-### 5.4 Framing split (critical)
-- **Transport framing** (SIO sync bytes / hunt mode; VIA handshake edges) → **glue**.
-- **Command framing** (opcodes / args / length / checksum) → **core**. Stable.
-- Bytes crossing the seam are payload, in order, transport framing already stripped.
-- **Decision: in-band command framing** (length-prefix or in-payload delimiter),
-  **not** the SIO's out-of-band sync/hunt as a delimiter. The VIA machines have no
-  sync/hunt equivalent, so out-of-band framing would force every glue to synthesize
-  one. In-band keeps the core parser truly transport-agnostic and every glue dumb.
-
----
-
-## 6. Design invariants (flag any deviation)
-
-1. Core is transport-agnostic; it never references a glue/chip concrete type.
-2. Dependency direction is glue → core only.
-3. Downstream = direct calls; upstream = devcb lines. No pushing bytes from core.
-4. `out_command_irq` binds to glue, not CPU. Core never touches the daisy chain.
-5. Command framing lives in the core; transport framing lives in the glue.
-6. Framing is in-band (transport-neutral), not SIO-sync-derived.
-7. Command and bulk are separate method-pairs; only command has an IRQ.
-8. RX660 internals (instruction set, on-chip peripherals, firmware algorithms) are
-   **out of scope** for the device — only the boundary contract is modeled.
-
----
-
-## 7. RX660 stance (scope boundary)
-
-- MAME has **no Renesas RX core** (its Renesas coverage is H8/H8S and SuperH).
-  Do not emulate the RX660 as a CPU.
-- The IO controller is a **command-protocol endpoint** ("a thing on the far end of
-  the SIO that processes commands"). Model only: ingress packet format, egress
-  effects (storage r/w, HID injection, serial passthrough; framebuffer effects on
-  the VDP side), and host-synchronized state (FIFO full/empty, busy/ready, ping-pong
-  ownership on the VDP side, ack handshake).
-- Test RX660 **firmware** separately (Renesas e² studio RXv3 ISS, or real silicon via
-  E2/E2 Lite). RX660 is an RXv3 part; QEMU's RX target is RX62N/RXv1 with RX62N
-  peripherals, so it does not model this MCU.
-- Later payoff: the behavioral core can act as a **conformance oracle** — run the
-  same command stream through it and the real firmware, diff the framebuffer/IO
-  effects.
-
----
-
-## 8. Blocking inputs still needed (from Sebastien)
-
-- **CPU-board address-decode PLD** + **bank-register PLD** → `mem_map`/`io_map` +
-  banking decode.
-- **IO-controller decode PLD** → SIO/CTC port addresses.
-- **Interrupt topology / daisy priority order** (and where the V9958 VBlank IRQ lands
-  — needed at M2).
-- **Command/bulk packet format spec** (the protocol at the connector) → the core's
-  packet parser and opcode table.
-
-Claude Code: report which of these are already encoded (as constants, address maps,
-or comments) in the tree vs. still absent.
-
----
-
-## 9. Open verification items (confirm against MAME source, not memory)
-
-- **`z80sio` external-sync framing:** how much sync framing the device exposes vs.
-  what the glue must reassemble. *(medium confidence)*
-- **`z80sio` receive-injection API:** the exact call the glue uses to present an
-  unsolicited byte as received RX data upstream. *(medium confidence)*
-- **`SN76489A` vs `SN76489`** variant class name (M3) — noise/clock divider differs.
-- Later machines: confirm `arm920t` core presence (Pacamara-920) and `hd63484`
-  device (Nitro-30 VDP) class names.
-
----
-
-## 10. Immediate next code artifact (skeleton)
-
-Draft, as the M1/M4 stand-in:
-
-- **Core device**: the four method-pairs from §5.1 (`command_w`/`command_can_accept`
-  + `out_command_irq` + `command_r`; `bulk_w`/`bulk_can_accept` + `out_bulk_ready` +
-  `bulk_r`), a byte-fed packet-parser stub, and storage/HID child stubs.
-- **Abstract transport-adapter seam.**
-- **`coffee_io_sio` glue**: owns the core, implements `device_serial_interface`,
-  wires to a `z80sio` channel, binds `out_command_irq`, injects RX for the upstream
-  path.
-- **`via6522` glue stub**: so the seam is exercised by two transports from day one.
-- **v0 behavior**: ACK everything + model "FIFO not full" + the sync/ack handshake so
-  the driver runs without deadlocking — unblocks GameOS / CP/M dev before opcodes are
-  filled in.
-
----
-
-## Sources
-
-- MAME 0.289 build/subtarget + source layout (docs dated 2026-07-01):
-  <https://docs.mamedev.org/initialsetup/compilingmame.html>
-- Host serial (null_modem / bitbanger socket + pty, RTS flow-control default):
-  <https://blog.thestateofme.com/2022/05/25/attaching-a-terminal-emulator-to-a-mame-serial-port/>;
-  <https://wahki.mameau.com/index.php?title=Guides:MAME_-_driver_-_apple2p>
-- No RX core in MAME (CPU tree = H8/SH/6809/etc.), viewed 2026-07-08:
-  <https://github.com/mamedev/mame/tree/master/src/devices/cpu>
-- QEMU RX target = RX62N/RXv1: <https://www.qemu.org/docs/master/system/target-rx.html>
-- RXv3 = RX66x generation, E2 debug support:
-  <https://www.renesas.com/en/software-tool/e2-emulator-rte0t00020kce00000r>
-
-*Confidence: high on §2 layout, §7 (no RX core), host-serial mechanism; medium on
-VDrip-unmodified and the two `z80sio` items in §9; banking geometry is from the
-hardware design and pinned exactly only once the PLDs (§8) are in hand.*
+- **The SIO1 sync model (WP4).** The behavioural SIO1 device is the fallback.
+- **Behavioural drift from the firmware.** The firmware evolves; the core
+  follows `ioc_frame.h` and the FS2 status codes, and the WP12 sessions on both
+  OSes catch a divergence.
+- **VDP command timing.** WP10 measures it against the board instead of
+  assuming it.
+- **Speed.** Byte-level lane glue keeps the emulator well above real time;
+  bit-level SIO clocking is not attempted.

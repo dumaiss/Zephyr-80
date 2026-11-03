@@ -1,97 +1,108 @@
-# Zephyr-80 MAME — Build & Run
+# Zephyr-80 MAME — Build and run
 
-The Zephyr-80 machine is an out-of-tree MAME **subtarget** called `pbitz`. All
-custom sources live under `src/mame/pbitz/`; the machine is **not** registered in
-`mame.lst` (the `zephyr` token there is the unrelated `zms8085.cpp`). It is listed
-in `src/mame/pbitz/pbitz.lst` and built via its own subtarget script
-`scripts/target/mame/pbitz.lua`.
-
-All commands below run from the MAME tree root:
-
-    cd Zephyr-80/Code/MODERN/Emulator/mame
+The `zephyr80` machine is in the `pbitz` subtarget, registered in
+`mame/src/mame/pbitz/pbitz.lst` and built using
+`mame/scripts/target/mame/pbitz.lua`. The global `zephyr` entry is a different
+machine.
 
 ## Build
 
-Debug binary (recommended during bring-up — enables the `-debug` debugger and Lua
-taps):
+From `Code/MODERN/Emulator/mame`:
 
-    make SUBTARGET=pbitz DEBUG=1 -j$(nproc)      # -> ./mamepbitzd
+```sh
+make SUBTARGET=pbitz DEBUG=1 -j2   # ./mamepbitzd
+make SUBTARGET=pbitz -j2           # ./mamepbitz
+```
 
-Optimised binary:
+The debug binary supports `-debug` and Lua taps. Launch the binary just built;
+the debug and release names differ. The subtarget lists device source files
+explicitly in `pbitz.lua`. After changing that project file, regenerate the
+build files:
 
-    make SUBTARGET=pbitz -j$(nproc)              # -> ./mamepbitz
+```sh
+make SUBTARGET=pbitz DEBUG=1 REGENIE=1 -j2
+```
 
-### When to add `REGENIE=1`
+Generated build files can contain absolute paths. Regenerate them with the same
+command after moving the tree if they refer to an old location.
 
-The GENIE-generated makefiles under `build/` are only regenerated when you ask for
-it. Add `REGENIE=1` **whenever a project file changes**, i.e. after editing
-`scripts/target/mame/pbitz.lua` (for example, adding a new device source such as
-`z80ctc.cpp`). Editing only `.cpp`/`.h` under `src/mame/pbitz/` does **not** need it.
+## Images and operation
 
-    make SUBTARGET=pbitz DEBUG=1 REGENIE=1 -j$(nproc)
+Build current images from their source checkouts. Existing MAME ROM copies
+are archival and do not represent current guest builds.
 
-### Devices are listed explicitly
+```sh
+KONAOS_ROOT=/path/to/ZephyrOS
+ZEPHYR_ROOT=/path/to/Zephyr-80
+make -C "$KONAOS_ROOT" build/konaos.bin
+make -C "$ZEPHYR_ROOT/Code/HOST/CPM2.2" CCP=zshell BDOS=zsdos \
+  CONSOLE=v9958 STORAGE_A=rom build/zephyr80.bin
+```
 
-`pbitz.lua` does not pull the full MAME device set. Each device the driver uses is
-named directly in its `files{}` block (`z80sio.cpp`, `z80ctc.cpp`, the `rs232`
-bus, `pty`, `loopback`, …) plus `CPUS["Z80"]` and `MACHINES["Z80DAISY"]`. **If you
-reference a new device, add its `.cpp`/`.h` to `files{}` and rebuild with
-`REGENIE=1`**, or you will get an undefined `DEVICE_TYPE` link error.
+From `Code/MODERN/Emulator/mame`, either image uses the same machine:
 
-### Gotcha: stale absolute paths after a directory rename
+```sh
+./mamepbitzd zephyr80 -flash "$KONAOS_ROOT/build/konaos.bin"
+./mamepbitzd zephyr80 -flash "$ZEPHYR_ROOT/Code/HOST/CPM2.2/build/zephyr80.bin"
+```
 
-The generated files under `build/` bake **absolute** paths (e.g. the forced-include
-`src/osd/sdl/sdlprefix.h`). If the tree is moved or renamed, the OSD/SDL layer fails
-to compile with:
+`-flash` is required. The image must contain 1–524288 bytes, loaded without
+CRC/SHA1 pinning. Short images have an FFh tail; empty, oversized or unreadable
+images fail explicitly. All CPU writes go to SRAM: flash is read-only and
+MAME never writes the input file. The image manager/Lua `image:load()` replaces
+flash contents immediately and clears the entire previous image, retaining
+SRAM and the current latch. **Reset the machine after replacing media to boot
+it** (`manager.machine:soft_reset()` in Lua); reset selects latch 00h.
+Unloading or a failed replacement leaves erased flash. Save state registration
+covers SRAM, the latch and the flash contents; mounting media is still required
+when starting a machine.
 
-    fatal error: /…/<old-path>/…/sdlprefix.h: No such file or directory
+A bounded headless run uses:
 
-Fix by regenerating the project files at the current location:
+```sh
+./mamepbitzd zephyr80 -flash "$KONAOS_ROOT/build/konaos.bin" \
+  -video none -sound none -nothrottle -seconds_to_run 2
+```
 
-    make SUBTARGET=pbitz DEBUG=1 REGENIE=1 -j$(nproc)
+The [memory/flash probes](../tests/README.md) verify both reset copies and
+entry into OS mode. Serial/keyboard prompt operation and the IOC connection
+remain incomplete; loading an image does not imply full OS boot acceptance.
 
-or, to avoid a large rebuild, patch the stale paths in place (this tree was renamed
-from `Z80HomeBrew` to `Zephyr-80`):
+## Memory decode
 
-    grep -rlI Z80HomeBrew build | xargs sed -i 's#Z80HomeBrew#Zephyr-80#g'
+The programmed `Code/HDL/WinCUPL/src/MEM_DECODER.pld` Rev 13 is authoritative.
+The 74HC273 latch is mirrored at ports 00h–0Fh (high I/O address byte ignored):
+Q=D2:D0, binary mode=D4:D3, P=D7:D5. Its masked mode values are
+00h/08h/10h/18h. Reset sets every latch bit to zero.
 
-### Common failure: "I rebuilt but nothing changed"
+| Binary mode | Latch mask | Reads | Writes |
+|---|---|---|---|
+| 00 | 00h | Flash page P, all 64 KiB | SRAM Q, all 64 KiB |
+| 01 | 08h | SRAM Q, all 64 KiB | Same SRAM mapping |
+| 10 | 10h | SRAM Q below E000h; bank 0 at E000h–FFFFh; if P≠0, 8000h–BFFFh selects bank 7−P | Same SRAM mapping |
+| 11 | 18h | 0000h–1FFFh: Q; 2000h–5FFFh: bank 7; 6000h–DFFFh: bank 7−P; E000h–FFFFh: bank 0 | Same SRAM mapping |
 
-The debug binary is `mamepbitzd`; the release binary is `mamepbitz`. Confirm you
-launched the one you just built (check its timestamp with `ls -l mamepbitzd`). A
-stale binary is the most common source of "my fix didn't take effect".
+Both chips contain eight 64 KiB banks/pages (512 KiB each). A0–A15 always
+retain the CPU address; only the chip and bank/page change. P=0 disables the
+mode-10 aperture and selects bank 7 in the mode-11 window. The shared
+`zephyr80_map::decode()` supplies read chip/physical address and SRAM write
+address to CPU handlers and debugger clients.
 
-## ROM
+The model covers the memory selects/address decode, not PLD propagation,
+board wiring/analog timing or flash programming commands. It checks against
+the source PLD's inverted output equations and the read-only KonaOS
+`tests/z80sim.py:MemoryDecoder` reference. No matching WinCUPL vectors are
+available in the supplied HDL tree; fixture provenance is in
+`tests/fixtures/rev13-provenance.json`. MAME results are not physical-board
+acceptance.
 
-`ROM_START(zephyr80)` loads `roms/zephyr80/zephyr80.bin` — the current 128 KiB
-CP/M firmware — into a 512 KiB ROM region. The hash in the driver pins the current
-dump; if you rebuild the firmware, MAME prints a non-fatal `WRONG CHECKSUMS`
-warning until the `CRC(...) SHA1(...)` line in `zephyr80.cpp` is updated. The
-machine still runs with the warning.
+## Serial and debugging
 
-## Run
+SIO0/B has a fixed 115200 8N1 clock and exposes `pty` and `loopback` RS232
+slots; SIO0/A takes its clock from the CTC. `-listslots zephyr80` lists the
+slots. A pty session uses `-sio0b_rs232 pty` and MAME reports its host device;
+keep throttle enabled for real-time serial pacing. SIO1 is unconnected.
 
-The CP/M console and the Virtual Drip (VDrip) video/storage link share **SIO0/B**
-at a fixed **115200 8N1**. Expose it as a host pseudo-terminal for the VDrip proxy:
-
-    ./mamepbitzd zephyr80 -sio0b_rs232 pty -video none -sound none
-
-At startup MAME prints the allocated device:
-
-    :sio0b_rs232:pty: pseudo terminal slave /dev/pts/N
-
-Point the VDrip proxy at that `/dev/pts/N` (open it in **raw** mode — the link is
-binary, not line-oriented). Keep the default throttle (do not add `-nothrottle`) so
-the serial link runs in real time. `-video none -sound none` runs headless.
-
-`-listslots zephyr80` shows the serial ports:
-
-- `sio0a_rs232` — user serial channel (SIO0/A), baud from the CTC.
-- `sio0b_rs232` — console + VDrip link (SIO0/B), fixed 115200.
-
-### Debugging aids
-
-- `-debug` opens the interactive debugger (debug build only).
-- `-autoboot_script foo.lua -autoboot_delay 0` runs a Lua script at start — handy
-  for I/O taps, e.g. `space:install_write_tap()` on the bank latch (`$00`) or the
-  SIO ports (`$20-$23`) to trace boot/console behaviour.
+For debugging, `-debug` opens the interactive debugger in a debug build, and
+`-autoboot_script foo.lua -autoboot_delay 0` runs a Lua script at startup.
+`zephyr80-bringup-fixes.md` is a historical fix log.

@@ -1,0 +1,10 @@
+{
+  "source": "Code/HDL/WinCUPL/src/MEM_DECODER.pld",
+  "source_sha256": "4bc98e7713a220d2ff5220703a0f2dea4cd524c062ce618afc3b01dd43596037",
+  "reference": "ZephyrOS/tests/z80sim.py:MemoryDecoder",
+  "reference_sha256": "aeb61a67168588394ab46ebe50acd99628a08b0080681bd7cfba0eb43305877d",
+  "rows": 8192,
+  "select_checks": 16384,
+  "coverage": "256 latches x 8 decoded regions x start/interior/mid/end; reads and writes; all bus control combinations",
+  "vectors": "No .si vectors found in supplied HDL tree; ignored generated .sim uses older equations and is not an oracle."
+}
