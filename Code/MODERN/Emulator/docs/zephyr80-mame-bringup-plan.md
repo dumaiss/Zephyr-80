@@ -30,24 +30,24 @@ and the emulator is fixed.
 
 | Area | State | Gap |
 |---|---|---|
-| Z80 at 10 MHz, handler-based memory | works | — |
-| Memory decoder | MEM_DECODER Rev 09 | Rev 13: latch modes 00/08/10/11, page field P, the mode-11 window, the mode-10 aperture |
-| Flash | 128 KiB `ROM_LOAD` with a fixed CRC | any image up to 512 KiB, no hash |
-| CTC | present at 40h-43h, A1:A0 as the channel | board order: 40h ch0, 42h ch1, 41h ch2, 43h ch3; trigger clocks 1.8432 / 3.6864 / 7.3728 / 7.3728 MHz unwired |
+| Z80 at 10 MHz, handler-based memory | works; ZEXALL 67/67 (a superset of ZEXDOC) on ZSDOS | — |
+| Memory decoder | MEM_DECODER Rev 13: latch modes 00/08/10/11, page field P, the mode-11 window, the mode-10 aperture | — |
+| Flash | `-flash` image device, any image up to 512 KiB, no hash | — |
+| CTC | board order 40h ch0, 42h ch1, 41h ch2, 43h ch3; trigger clocks 1.8432 / 3.6864 / 7.3728 / 7.3728 MHz | — |
 | SIO0 | console on SIO0/B, pty or loopback | — |
-| SIO1 | placeholder clocks, `coffeeio` stub | the IOC: command lane, bulk lane, FS2, volumes, HID |
-| V9958 | stock device, 128 KiB VRAM | validation against KonaOS and ZSDOS graphics |
-| Sound | none | four SN76489 at 3.579545 MHz on E0h-E3h, the DAC on E4h |
+| SIO1 | behavioural `zephyr80_sio1` and the IOC: command lane, bulk lane, FS2, volumes, HID keyboard; card image or host folder | lane and card timing not board-measured; mouse and controllers (WP13) |
+| V9958 | stock device, 128 KiB VRAM, validated against both consoles, gfxtest, GfxDemo and sntview | short-command timing against the board |
+| Sound | four SN76489A at 3.579545 MHz on E0h-E3h, the DAC on E4h | analogue levels |
 
 ## 3. Milestones
 
 | | Proof |
 |---|---|
-| **A** | the KonaOS serial-console image boots to `/system>` on the pty |
-| **B** | the KonaOS production image shows its shell on the V9958 and takes keyboard input; ZSDOS shows its prompt |
-| **C** | programs load from both card backends; KonaOS `hwtest` reports `4/4 PASS`; ZSDOS reads and writes `B:` and a `C:` volume |
-| **D** | sntview and VGMPlayer play; sndtest passes |
-| **E** | `make run` from the KonaOS SDK; symbols in the debugger; headless scripted runs; the documents |
+| **A** | the KonaOS serial-console image boots to `/system>` on the pty — **met in MAME** |
+| **B** | the KonaOS production image shows its shell on the V9958 and takes keyboard input; ZSDOS shows its prompt — **met in MAME** |
+| **C** | programs load from both card backends; KonaOS `hwtest` reports `4/4 PASS`; ZSDOS reads and writes `B:` and a `C:` volume — **met in MAME** |
+| **D** | sntview and VGMPlayer play; sndtest passes — **met in MAME** |
+| **E** | `make run` from the KonaOS SDK; symbols in the debugger; headless scripted runs; the documents — **met in MAME** |
 
 ## 4. Work packages
 

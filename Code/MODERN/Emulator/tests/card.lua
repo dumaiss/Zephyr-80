@@ -6,11 +6,13 @@
 -- every expected substring; a step with none must answer nothing at all
 -- (the shells print nothing on success).  A program that ends through WBOOT
 -- with "[any key]" gets a key.  Each step's emulated duration is traced.
+-- HARNESS_STEP_TIMEOUT bounds one step in emulated seconds (default 60).
 local H = harness
 local S = H.serial
 
 local BANNER = "KonaOS 0.0\r\nplatform: Zephyr-80\r\n"
 local ANY_KEY = "[any key]"
+local STEP_TIMEOUT = tonumber(os.getenv("HARNESS_STEP_TIMEOUT") or "60")
 
 local function steps()
     local out = {}
@@ -63,7 +65,7 @@ H.case_body("card-shell", function()
     H.check(S.data:find(BANNER, 1, true), "the kernel banner is missing")
     H.trace("prompt %s at %.3f emulated s", H.escape(H.prompt), H.now())
     local list = steps()
-    for _, step in ipairs(list) do run_step(step, 60) end
+    for _, step in ipairs(list) do run_step(step, STEP_TIMEOUT) end
     return string.format("%d shell commands answered as expected", #list)
 end)
 
@@ -82,6 +84,6 @@ H.case_body("card-zsdos", function()
     S.wait(H.prompt, 10, mark, "the ZephyrShell prompt on the serial tee")
     H.trace("serial takeover at %.3f emulated s", H.now())
     local list = steps()
-    for _, step in ipairs(list) do run_step(step, 60) end
+    for _, step in ipairs(list) do run_step(step, STEP_TIMEOUT) end
     return string.format("%d ZephyrShell commands answered as expected", #list)
 end)

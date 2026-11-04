@@ -17,7 +17,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | Option | Meaning |
 |---|---|
 | `--mame PATH` | the MAME binary (`mame/mamepbitzd` debug or `mame/mamepbitz` release) |
-| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard`, `terminal-apps`, `sound`, `audio-playback`, `v9958`, `graphics-apps`, `debug-symbols`, `sdk-run` or `save-restore` |
+| `--case CASE` | repeatable; `acceptance` is the [acceptance group](#acceptance); a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard`, `terminal-apps`, `sound`, `audio-playback`, `v9958`, `graphics-apps`, `debug-symbols`, `sdk-run`, `save-restore`, `hwtest`, `zsdos-drives`, `zexdoc` or `zexall` |
 | `--list` | the cases, what each proves and the inputs it needs |
 | `--konaos-root`, `--zephyr-root` | the ZephyrOS and Zephyr-80 checkouts the inputs come from |
 | `--output DIR` | result directory, default `tests/output/run` (ignored by Git) |
@@ -52,6 +52,10 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `debug-symbols` | `konaos`, `sdk` | the two [developer-tool probes](#developer-tool-probes) of the `konaos` plugin under `-debug`: symbols, ambiguity, bank-aware breakpoints, physical views; the debugger's cost |
 | `sdk-run` | `konaos`, `sdk` | the three [developer-tool probes](#developer-tool-probes) of the SDK's `make run` from paths with spaces |
 | `save-restore` | `konaos`, `sdk` | the two [developer-tool probes](#developer-tool-probes): five save points on a card image and a card folder, each restored in a fresh process and compared with the saving run; changed media refused |
+| `hwtest` | `konaos`, `hwtest` | probes `image` and `folder`: the production image's `hwtest` typed at the shell with a writable card, `hwtest: 4/4 PASS` ([below](#acceptance)) |
+| `zsdos-drives` | `zsdos` | probes `image` and `folder`: ZSDOS's B: and C: written and read through BDOS, checked after each run and across a reopen ([below](#acceptance)) |
+| `zexdoc` | `zsdos`, `zexdoc` | ZEXDOC.COM on ZSDOS: every test OK ([below](#acceptance)) |
+| `zexall` | `zsdos`, `zexall` | the ZEXALL binary MAME's source carries, on ZSDOS: every test OK ([below](#acceptance)) |
 
 Inputs: `konaos` is `ZephyrOS/build/konaos.bin`, `zsdos` is
 `Zephyr-80/Code/HOST/CPM2.2/build/zephyr80.bin`, `serial` is
@@ -62,8 +66,16 @@ Inputs: `konaos` is `ZephyrOS/build/konaos.bin`, `zsdos` is
 program's directory), `gfxtest` and `iobench` are `ZephyrOS/build/user/gfxtest.exe` and
 `ZephyrOS/build/user/iobench.exe` (`make build/user/gfxtest.exe`, `make build/user/iobench.exe`), `gfxdemo` is
 `ZephyrOS/UserSoftware/GfxDemo/build/user/gfxdemo.exe` (`make` in its directory), `sdk` is
-`ZephyrOS/build/kos-sdk-<version>.tar.gz` (`make sdk`). A missing input stops the run before
-any case with exit 2, naming the file and the command that builds it.
+`ZephyrOS/build/kos-sdk-<version>.tar.gz` (`make sdk`), `hwtest` is `ZephyrOS/build/user/hwtest.exe`
+(the store's `/system/hwtest.exe`, recorded for its hash), `zexall` is
+`Zephyr-80/Code/MODERN/Emulator/mame/src/zexall/zexall.h` (tracked), and `zexdoc` is
+`Zephyr-80/Code/HOST/Software/disk1/0/zexdoc.com`, which neither checkout holds: Frank D.
+Cringle's ZEXDOC.COM (GPL-2; in the yaze-ag source distribution as `zexdoc.com`, or its
+`zexdoc.z80` assembled for CP/M at 0100h), placed at that path. A case whose input is missing
+does not run: it is reported `PENDING` with the file and how to build or obtain it, the other
+cases run, and the runner exits 2 (1 if any case failed); a group's optional case (`zexdoc` in
+`acceptance`) is reported `PENDING (optional)` and leaves the exit status alone. Pending is never
+a pass. `results.json` lists the pending cases.
 
 Each case gets a fresh directory under `--output`, removed and recreated
 when the case starts: `inputs.json` (MAME binary and input SHA-256, Git HEAD
@@ -72,7 +84,9 @@ command, the harness environment, flash image hash, limits), `mame.log`,
 `serial.bin` (bytes received from the guest), `serial-times.tsv` (emulated
 time of every received chunk and every sent byte), `result.json`, and the
 case's own cfg/nvram/state/snapshot directories. `results.json` in
-`--output` lists every case. MAME runs with `-noreadconfig`, so no saved
+`--output` lists every case, and `inputs.json` there every input of the run
+(path, size, SHA-256 and the command that builds it), the MAME binary, the
+`-ioc_speed` setting and the checkouts' revisions. MAME runs with `-noreadconfig`, so no saved
 setting or earlier output reaches a case.
 
 A case passes only when MAME exits 0 and the harness printed exactly one
@@ -450,18 +464,18 @@ KonaOS checkout. `audio-playback` needs `make -C $KONAOS_ROOT build/user/sndtest
 `make -C $KONAOS_ROOT/UserSoftware/VGMPlayer`.
 
 The ideal rendering is an event-driven model of the SN76489A fed with the
-writes the guest made (`sound.ChipModel`): the counters of the datasheet's
-count grid, the card's gains, the DAC. The capture is compared with it in 0.1 s
-windows after one global delay. The players must match every window (the
-correlation 0.9 or better, the swing within 3 %); the unfiltered rendering
-caps the correlation near 0.99. The `sndtest zvg` stream is a synthetic
-ring-wrap stress (three tones a few Hz apart, rewritten every tick). Its
-windows show a phase difference between the rendering and the chip after a
-tone counter reloads in the 12 us between the latch byte and the data byte of a
-tone write (the two counters then differ by up to 15 counts, as the chip's
-saved counters show at the end of the stream), which three near-equal tones
-make a large difference in a window; so only its median (0.95) is required and
-the spread is reported.
+writes the guest made (`sound.ChipModel`): the datasheet's counting rule, the
+card's gains, the DAC. Its counts fall where the stock device's do, since the
+capture is that device's: MAME runs the chip as a stream at the integer rate
+1,789,772 Hz (clock / 2, rounded down), counts on stream samples 8n + 7 and
+applies a write after the stream sample it lands in. A tone write's latch and
+data bytes arrive 12 us apart, and a reload between them takes the mixed
+period, so a grid even 4 us or 0.3 ppm off parts a channel's phase from the
+chip's for good. The capture is compared with the rendering in 0.1 s windows
+after one global delay: every window of every stream (the players' and the
+`sndtest zvg` ring-wrap stress, three tones a few Hz apart rewritten every
+tick) must correlate at 0.9 or better with the swing within 3 %; the unfiltered
+rendering caps the correlation near 0.99.
 
 ## Developer-tool probes
 
@@ -480,3 +494,33 @@ segment 1's, both at 8000h) and `tests/sdk/savework` (reads `/fs/INPUT.BIN`, wri
 | `sdk-run:names` | `examples/`: `KOS_RUN=files` with arguments and two assets (one renamed): FILES.EXE, NOTES.TXT and HELLOSRC.C staged and listed by the program; no `KOS_RUN` among several programs and an invalid asset name refused |
 | `sdk-run:no-mame` | `make` in `template/` with no MAME on PATH and none configured builds HELLO's EXE; `make run` names the missing binary (a path, and on PATH), the missing image and the missing plugin |
 | `save-restore:image`, `save-restore:folder` | savework from a 16 MiB FAT16 image or a folder: one run saves `idle` (the prompt), `command` (a command window clocking), `bulk` (the program's load, BULK_SEND), `write` (an OUTPUT.BIN block arriving, BULK_RECEIVE, the file open for writing) and `active` (tick 5: timer, console, PSG), copying the card at each save instant; each state restored in a fresh process onto its copy must match the saving run: the IO controller and SIO1 line state at the first frame after the save, every PSG/DAC write with its time, the VDP registers, VRAM, the screen, the end time and the card's final contents. The `bulk` state onto a card with one byte of INPUT.BIN changed, and (image) with a flash image one byte different, must end MAME with the socket's or the flash's fatal error |
+
+## Acceptance
+
+`--case acceptance` runs, in order: `memory-flash`, `clocks-irqs`, `serial-boot`, `timer`,
+`serial-pty`, `vdp-text`, `sio1-lanes`, `sio1-konaos`, `sio1-zsdos`, `ioc-core`, `ioc-timing`,
+`card-image`, `card-directory`, `cpm-volumes`, `zsdos-drives`, `keyboard`, `konaos-video-boot`,
+`zsdos-boot`, `terminal-apps`, `hwtest`, `sound`, `audio-playback`, `v9958`, `graphics-apps`,
+`debug-symbols`, `sdk-run`, `save-restore`, `zexall` and, optionally, `zexdoc`. With `--ioc-speed fast` it leaves out
+`sio1-lanes` (it asserts paced timing) and `ioc-timing` (it runs both modes itself).
+
+| Milestone | Cases |
+|---|---|
+| A: the serial-console image to `/system> ` on the pty | `serial-boot`, `serial-pty`, `timer` |
+| B: the production image's shell on the V9958 with keyboard input; ZSDOS's prompt | `konaos-video-boot`, `keyboard`, `zsdos-boot` |
+| C: programs from both card backends, `hwtest` 4/4 PASS, ZSDOS B: and a C: volume | `card-image`, `card-directory`, `terminal-apps`, `hwtest`, `cpm-volumes`, `zsdos-drives` |
+| D: sntview and VGMPlayer play, sndtest passes | `audio-playback`, `graphics-apps`, `sound` |
+| E: `make run`, symbols in the debugger, scripted runs | `sdk-run`, `debug-symbols`, `save-restore`, this runner |
+| CPU | `zexall` (67 tests; ZEXDOC's tests without its undocumented-flag mask, so a ZEXALL pass implies a ZEXDOC pass); `zexdoc` optional |
+
+The machine's own cases (`memory-flash`, `clocks-irqs`, `vdp-text`, `sio1-*`, `ioc-*`, `v9958`)
+run first, so a device failure shows before the guest cases that depend on it.
+
+`acceptance.py` holds the cases no device case covers (bodies in `acceptance.lua`; the ZSDOS
+sessions use `card.lua`'s `card-zsdos`):
+
+| Probe | Proof |
+|---|---|
+| `hwtest:image`, `hwtest:folder` | the production KonaOS image with a writable card (FAT16 image or folder holding a file and a directory): `hwtest` typed at the shell on the USB keyboard; `hwtest: begin`, `xmem+far PASS`, `files PASS`, `timer PASS`, `namespace+handles PASS` and exactly `hwtest: 4/4 PASS` on the console (every line read off the screen while it scrolls) and on the serial lane it mirrors to, no FAIL or PANIC, the shell's prompt again; after MAME exits the card holds exactly what it held before (the file stage works inside `/fs/HWTEST` and removes it), `fsck.fat -n` clean for the image |
+| `zsdos-drives:image`, `zsdos-drives:folder` | ZSDOS on a card with `/SHARED/NOTE.TXT`, `CPM_1.DRV` (C:, a text file), `CPM_2.DRV` (D:, empty) and `/CPM/B` (B:). Run 1: `SDGET NOTE.TXT` writes B:, `MCOPY C:=B:NOTE.TXT` reads B: and writes C: with its verify; after MAME exits B:'s file is `/SHARED/NOTE.TXT` in three records and C:'s copy, read from CPM_1.DRV's own directory, equals it, with C:'s other file, D: and `/SHARED` unchanged. Run 2, a new MAME on the same card: `SDPUT NOTE.TXT` reads B: back into `/SHARED` and `MCOPY D:=C:NOTE.TXT` reads C: back; after it `/SHARED/NOTE.TXT` is B:'s 384 bytes and D:'s copy equals C:'s. One MCOPY per run, last |
+| `zexdoc:run`, `zexall:run` | the exerciser as `/CPM/B/<NAME>.COM` on a card folder, started at ZephyrShell's prompt over the serial console; bounded by 9000 emulated seconds and a 5400-second watchdog (ZEXALL takes about 4700); its transcript (`exerciser.txt`) must hold the banner, 67 `OK` lines, no `ERROR` and `Tests complete`, and the shell's prompt must return. `zexall` extracts the binary from `mame/src/zexall/zexall.h` (its source is `zexall.z80` beside it) |

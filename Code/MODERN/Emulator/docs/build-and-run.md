@@ -3,7 +3,8 @@
 The `zephyr80` machine is in the `pbitz` subtarget, registered in
 `mame/src/mame/pbitz/pbitz.lst` and built using
 `mame/scripts/target/mame/pbitz.lua`. The global `zephyr` entry is a different
-machine.
+machine. What each device models, and on what evidence, is in
+[the device model](zephyr80-device-model.md).
 
 ## Build
 
@@ -14,8 +15,16 @@ make SUBTARGET=pbitz DEBUG=1 -j2   # ./mamepbitzd
 make SUBTARGET=pbitz -j2           # ./mamepbitz
 ```
 
-The debug binary supports `-debug` and Lua taps. Launch the binary just built;
-the debug and release names differ. The subtarget lists device source files
+Both binaries have the debugger (`-debug`) and Lua and run at about the same
+speed (`-bench 20` on the KonaOS image: about 440 % debug, 470 % release). Launch the binary just built; the debug and release
+names differ. MAME keeps the libraries of one configuration (debug or release)
+in `build/` for every subtarget, so a checkout that also builds the full
+`mame` target keeps the pbitz release apart with its own build directory:
+
+```sh
+make SUBTARGET=pbitz BUILDDIR=build-release -j8   # ./mamepbitz
+```
+ The subtarget lists device source files
 explicitly in `pbitz.lua`. After changing that project file, regenerate the
 build files:
 
@@ -258,6 +267,79 @@ CPU board only; no other slot card is modelled. A RETI that ends a V9958
 handler also ends the service of the daisy device in progress, as on the bus.
 The [clock and interrupt probes](../tests/README.md#clock-and-interrupt-probes)
 check these properties in MAME only; they are not physical-board evidence.
+
+## Running KonaOS programs: `make run`
+
+The KonaOS SDK's `make run` builds one program, stages it into a card folder
+and runs it on this machine with the `konaos` plugin (the SDK's `docs/sdk.md`,
+"Running in the emulator"):
+
+```sh
+make run KOS_MAME=/path/to/Code/MODERN/Emulator/mame/mamepbitz \
+  KOS_FLASH="$KONAOS_ROOT/build/konaos.bin" KOS_MAME_ARGS=-debug KOS_BREAK=main
+```
+
+`KOS_BREAK` breakpoints stop only in the bank the loader put the code in;
+[debugging KonaOS programs](zephyr80-debugging.md) describes the plugin, the
+physical memory views and the console capture.
+
+## Headless and scripted runs
+
+`-video none -sound none -nothrottle -seconds_to_run N` runs as fast as the
+host allows and ends after N emulated seconds; the screen still renders for
+Lua (`screen:pixels()`, `screen:snapshot()`) and `-wavwrite` still records the
+mix. `-autoboot_script foo.lua -autoboot_delay 0` runs a script from the first
+frame; the [test harness](../tests/README.md#serial-harness) is such a script,
+with the serial pty, the console as text, the keyboard and an explicit
+verdict. Keep `-noreadconfig` and per-run `-cfg_directory`,
+`-nvram_directory`, `-state_directory` and `-snapshot_directory` so no earlier
+setting or output reaches a run.
+
+## Acceptance
+
+```sh
+python3 tests/run.py --mame ./mame/mamepbitzd --case acceptance \
+  --konaos-root "$KONAOS_ROOT" --zephyr-root "$ZEPHYR_ROOT"
+python3 tests/run.py --mame ./mame/mamepbitzd --ioc-speed fast --case acceptance \
+  --konaos-root "$KONAOS_ROOT" --zephyr-root "$ZEPHYR_ROOT"
+```
+
+The `acceptance` group runs every case ([tests](../tests/README.md#acceptance)):
+both images' boots, the serial and video consoles, the keyboard, both card
+backends with the KonaOS shell, KonaEdit, KonaCommander and `hwtest`, ZSDOS's
+B:, C: and D:, the sound and graphics programs, the debugger, `make run`, save
+states and ZEXALL (its binary is in MAME's source; it is ZEXDOC's tests
+without the undocumented-flag mask, so a pass implies ZEXDOC's). Every guest
+image, program and asset is a current build output named with its hash in the
+run's `inputs.json`. A case whose input is missing is reported `PENDING` with
+the path it is expected at, and the run exits 2; the group's optional `zexdoc`
+(ZEXDOC.COM, in neither checkout) is reported pending without changing the exit
+status.
+
+## Save states and media
+
+`-state NAME` (or `manager.machine:save`/`load` in Lua) saves and restores
+every device. The flash image and the card are not copied into a state: their
+identity is, and a restore with other flash contents or other card media ends
+MAME with a fatal error (exit status 3) naming both identities. Keep a copy of
+the card with the state. Every card write reaches the host file or folder at
+once, so a card is changed in place: run on a copy. MAME's rewind, which saves
+every frame, reads the whole card each time and is not suited to a card in the
+socket ([save states](zephyr80-debugging.md#save-states)).
+
+## Failure diagnostics
+
+A scripted run fails with `FAIL harness CASE: reason` and `DIAG` lines: the
+emulated time, PC, SP, I, the memory latch, what the case was waiting for,
+the VDP mode, the console's rows read off the screen and the serial tail.
+Each case directory keeps `inputs.json` (the MAME binary and input SHA-256,
+the checkouts' HEADs and changed files), `manifest.json` (the exact command
+and environment), `mame.log`, `serial.bin` with `serial-times.tsv`, the
+screens as text and PNG, and `result.json`; that is enough to rerun the same
+command on the same inputs. MAME's own exit status tells the rest: 3 for a
+fatal error (a refused state, no `-flash` at all), 4 for a media error at start
+(a `-flash`, `-card` or `-carddir` path that is missing, empty, oversized or
+the wrong kind).
 
 ## Serial and debugging
 

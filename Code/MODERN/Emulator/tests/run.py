@@ -5,7 +5,10 @@ Runs bounded cases against the zephyr80 machine and writes, per case, a
 disposable directory with its manifest (command, inputs and hashes, source
 revisions, limits), MAME log, serial capture and result record.  A case
 passes only on MAME exit 0 with the harness's explicit PASS line; timeouts,
-failed expectations, missing inputs, crashes and Lua errors fail it.
+failed expectations, crashes and Lua errors fail it.  A case whose input is
+missing does not run: it is pending, named with the file and how to build or
+obtain it, and the run exits nonzero, except for a group's optional case.
+`--case acceptance` runs the acceptance group.
 
 Run from Code/MODERN/Emulator:
 
@@ -29,6 +32,7 @@ import tty
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import acceptance  # noqa: E402
 import card_backends  # noqa: E402
 import clocks_irqs  # noqa: E402
 import devtools  # noqa: E402
@@ -60,6 +64,12 @@ INPUTS = {
     "zvg": ("konaos", "tests/snd/fixtures/NIGHT.ZVG", "tracked file"),
     "wraps": ("konaos", "tests/snd/fixtures/wraps.zvg", "tracked file"),
     "sdk": ("konaos", "build/kos-sdk-{sdk_version}.tar.gz", "make -C {root} sdk"),
+    "hwtest": ("konaos", "build/user/hwtest.exe", "make -C {root} build/konaos.bin (the store's /system/hwtest.exe)"),
+    "zexall": ("zephyr", "Code/MODERN/Emulator/mame/src/zexall/zexall.h", "tracked file of the MAME checkout"),
+    "zexdoc": ("zephyr", "Code/HOST/Software/disk1/0/zexdoc.com",
+               "not in either checkout: obtain ZEXDOC.COM, Frank D. Cringle's Z80 documented-flags exerciser "
+               "(GPL-2; zexdoc.com, or zexdoc.z80 assembled for CP/M at 0100h, in the yaze-ag source distribution), "
+               "and place it at that path"),
 }
 
 # kind "suite": a probe module's run(); kind "lua": harness.lua with `script`.
@@ -132,7 +142,36 @@ CASES = {
     "save-restore": dict(kind="suite", module=devtools, inputs=("konaos", "sdk"), probes=devtools.PROBES["save-restore"],
                          call=lambda mame, inputs, out, sub: devtools.run("save-restore", mame, inputs, out, sub),
                          about="save states idle, mid-command, mid-bulk and active (timer, console, PSG) on a card image and a card folder, each restored in a fresh process onto its card snapshot and compared with the saving run; changed card and flash refused (2 probes)"),
+    "hwtest": dict(kind="suite", module=acceptance, inputs=("konaos", "hwtest"), probes=acceptance.PROBES["hwtest"],
+                   call=lambda mame, inputs, out, sub: acceptance.run("hwtest", mame, inputs, out, sub),
+                   about="the production KonaOS image's `hwtest` typed at the shell with a writable card image and card folder: `hwtest: 4/4 PASS` on the console and the serial lane, the card unchanged afterwards (2 probes)"),
+    "zsdos-drives": dict(kind="suite", module=acceptance, inputs=("zsdos",), probes=acceptance.PROBES["zsdos-drives"],
+                         call=lambda mame, inputs, out, sub: acceptance.run("zsdos-drives", mame, inputs, out, sub),
+                         about="ZSDOS B: and the C: volume written and read through BDOS (SDGET, MCOPY, SDPUT) on an image and a folder, checked after each MAME exit and across a reopen (2 probes)"),
+    "zexdoc": dict(kind="suite", module=acceptance, inputs=("zsdos", "zexdoc"), probes=acceptance.PROBES["zexdoc"],
+                   call=lambda mame, inputs, out, sub: acceptance.run("zexdoc", mame, inputs, out, sub),
+                   about="ZEXDOC on ZSDOS from B:, bounded: all 67 tests OK and `Tests complete` (1 probe)"),
+    "zexall": dict(kind="suite", module=acceptance, inputs=("zsdos", "zexall"), probes=acceptance.PROBES["zexall"],
+                   call=lambda mame, inputs, out, sub: acceptance.run("zexall", mame, inputs, out, sub),
+                   about="ZEXALL (the binary in MAME's mame/src/zexall/zexall.h) on ZSDOS from B:, bounded: all 67 tests OK and `Tests complete` (1 probe)"),
 }
+
+# Groups: `--case NAME` runs these cases in order.  Under `--ioc-speed fast` the
+# acceptance group leaves out `sio1-lanes`, which asserts paced timing, and
+# `ioc-timing`, which runs both modes itself.
+GROUPS = {
+    "acceptance": ("memory-flash", "clocks-irqs", "serial-boot", "timer", "serial-pty", "vdp-text",
+                   "sio1-lanes", "sio1-konaos", "sio1-zsdos", "ioc-core", "ioc-timing",
+                   "card-image", "card-directory", "cpm-volumes", "zsdos-drives",
+                   "keyboard", "konaos-video-boot", "zsdos-boot", "terminal-apps", "hwtest",
+                   "sound", "audio-playback", "v9958", "graphics-apps",
+                   "debug-symbols", "sdk-run", "save-restore", "zexall", "zexdoc"),
+}
+PACED_ONLY = ("sio1-lanes", "ioc-timing")
+# A group's optional cases run when their input is present; a missing input is reported
+# pending and neither fails the group nor counts as a pass.  ZEXALL closes the CPU gate
+# (ZEXDOC's tests without its flag mask, so a ZEXALL pass implies a ZEXDOC pass).
+OPTIONAL = {"acceptance": ("zexdoc",)}
 
 DEFAULT_PROMPT = "/system> "
 BANNER = b"KonaOS 0.0\r\nplatform: Zephyr-80\r\nkernel entry: OK\r\nserial: OK\r\n"
@@ -376,6 +415,8 @@ def run_suite(name, spec, mame, inputs, case_dir, subcases):
 
 def parse_case(text):
     name, _, sub = text.partition(":")
+    if name in GROUPS and not sub:
+        return name, ""
     if name not in CASES:
         raise argparse.ArgumentTypeError(f"unknown case {name!r}; --list shows the cases")
     if sub:
@@ -454,6 +495,9 @@ def main():
         for name, spec in CASES.items():
             needs = ", ".join(spec["inputs"]) or "none"
             print(f"{name:13} {spec['about']} [inputs: {needs}]")
+        for name, members in GROUPS.items():
+            print(f"{name:13} group: {' '.join(members)} (under --ioc-speed fast without {', '.join(PACED_ONLY)}; "
+                  f"optional: {', '.join(OPTIONAL.get(name, ())) or 'none'})")
         return 0
     if args.mame is None or not args.mame.is_file():
         print(f"run.py: MAME binary {args.mame} is missing; build it in mame/ with: make SUBTARGET=pbitz DEBUG=1 -j2",
@@ -466,37 +510,55 @@ def main():
     if not args.case:
         parser.error("no --case given; --list shows the cases")
 
-    # Group CASE:PROBE selections; a repeated plain case runs again.
-    runs = []
+    # Expand groups; group CASE:PROBE selections; a repeated plain case runs again.
+    selected, optional = [], set()
     for name, sub in args.case:
+        if name in GROUPS:
+            selected += [(member, "") for member in GROUPS[name]
+                         if not (args.ioc_speed == "fast" and member in PACED_ONLY)]
+            optional |= set(OPTIONAL.get(name, ()))
+        else:
+            selected.append((name, sub))
+    runs = []
+    for name, sub in selected:
         if sub and runs and runs[-1][0] == name and runs[-1][1]:
             runs[-1][1].append(sub)
         else:
             runs.append((name, [sub] if sub else []))
     needed = sorted({i for name, _ in runs for i in CASES[name]["inputs"]})
     inputs, errors = resolve_inputs(needed, args)
+    missing = {}
+    for error in errors:
+        missing[error.split(":", 1)[0].removeprefix("input ")] = error
+        print(f"run.py: {error}", file=sys.stderr)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    if errors:
-        for error in errors:
-            print(f"run.py: {error}", file=sys.stderr)
-        (output / "results.json").write_text(json.dumps({"error": "missing input", "details": errors}, indent=2) + "\n")
-        print(f"RESULT 0 passed, {len(runs)} failed, 0 skipped (missing input)")
-        return 2
 
     mame_sha = sha(args.mame)
     revisions = {"mame": revision(args.mame.parent),
                  "zephyr": revision(args.zephyr_root) if args.zephyr_root else None,
                  "konaos": revision(args.konaos_root) if args.konaos_root else None}
-    results, seen = [], {}
+    manifest = {"mame": {"path": str(args.mame), "bytes": args.mame.stat().st_size, "sha256": mame_sha},
+                "ioc_speed": args.ioc_speed or "paced", "revisions": revisions,
+                "inputs": {k: {"path": str(p), "bytes": p.stat().st_size, "sha256": sha(p),
+                               "provenance": INPUTS[k][2].format(root=getattr(args, f"{INPUTS[k][0]}_root").resolve())}
+                           for k, p in inputs.items()},
+                "missing": missing}
+    (output / "inputs.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    results, pending, seen = [], [], {}
     for name, subcases in runs:
         seen[name] = seen.get(name, 0) + 1
         label = name if seen[name] == 1 else f"{name}-{seen[name]}"
+        spec = CASES[name]
+        absent = [missing[k] for k in spec["inputs"] if k in missing]
+        if absent:
+            pending.append({"case": name, "label": label, "optional": name in optional, "pending": absent})
+            print(f"PENDING {label}{' (optional)' if name in optional else ''}: not run; " + "; ".join(absent), flush=True)
+            continue
         case_dir = output / label
         if case_dir.exists():
             shutil.rmtree(case_dir)
         case_dir.mkdir(parents=True)
-        spec = CASES[name]
         case_inputs = {k: inputs[k] for k in spec["inputs"]}
         (case_dir / "inputs.json").write_text(json.dumps({
             "mame": {"path": str(args.mame), "sha256": mame_sha}, "revisions": revisions,
@@ -526,11 +588,16 @@ def main():
                 print(f"  {line}")
         sys.stdout.flush()
     passed = sum(r["pass"] for r in results)
+    failed = len(results) - passed
     summary = {"mame": {"path": str(args.mame), "sha256": mame_sha}, "revisions": revisions,
-               "passed": passed, "failed": len(results) - passed, "skipped": 0, "results": results}
+               "ioc_speed": args.ioc_speed or "paced",
+               "passed": passed, "failed": failed, "skipped": 0, "pending": len(pending), "results": results,
+               "pending_cases": pending}
     (output / "results.json").write_text(json.dumps(summary, indent=2) + "\n")
-    print(f"RESULT {passed} passed, {len(results) - passed} failed, 0 skipped")
-    return 0 if passed == len(results) else 1
+    required = [p for p in pending if not p["optional"]]
+    print(f"RESULT {passed} passed, {failed} failed, 0 skipped, {len(pending)} pending"
+          + (f" ({len(pending) - len(required)} optional)" if len(required) < len(pending) else ""))
+    return 1 if failed else 2 if required else 0
 
 
 if __name__ == "__main__":

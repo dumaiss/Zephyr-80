@@ -172,13 +172,16 @@ def probe_state(mame, image, case_dir):
     runs, errors, log = {}, [], ""
     for speed in SPEEDS:
         card = make_card(case_dir / f"card-{speed}.img")
+        # The restore needs the card exactly as it was at the save (the socket checks its identity);
+        # the save run only reads, so a copy taken now is that card.
+        load_card = case_dir / f"card-{speed}-restored.img"
+        shutil.copyfile(card, load_card)
         speed_dir = case_dir / speed
         ok, code, text, command = run_body(mame, image, speed_dir, "state-save", speed, card, 40)
         log += f"== {speed} state-save\n{text}"
         if not ok:
             errors.append(f"{speed}: state-save failed")
             continue
-        load_card = make_card(case_dir / f"card-{speed}-restored.img")
         ok, code, text, command = run_body(mame, image, speed_dir, "state-load", speed, load_card, 40, extra=("-state", "midbulk"),
                                            extra_env={"HARNESS_PREV": str(speed_dir)})
         log += f"== {speed} state-load\n{text}"

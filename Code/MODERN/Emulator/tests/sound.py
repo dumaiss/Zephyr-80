@@ -566,11 +566,34 @@ class Psg:
 # An event-driven model of the SN76489A fed by the register events ------------------------
 #
 # Used to render, from the writes a guest made, the waveform the chips should produce
-# (ideal square waves on the chip's own count grid, no filtering).  The count grid is the
-# one the chip's datasheet gives: its clock divided by 16 per count; a tone channel toggles
-# when its counter, decremented each count, reaches zero and reloads the period; the noise
-# channel shifts its register on the same rule.  It is a second statement of the algorithm
-# of sound.py's noise model, not MAME's code: the check compares audio to it.
+# (ideal square waves on the chip's own count grid, no filtering).  The counting rule is the
+# chip datasheet's: a count every 16 clocks; a tone channel toggles when its counter,
+# decremented each count, reaches zero and reloads the period; the noise channel shifts its
+# register on the same rule.  It is a second statement of the algorithm of sound.py's noise
+# model, not MAME's code.  Where the counts fall is the stock device's, because the capture
+# is that device's: MAME runs the chip as a stream at the integer rate CLOCK // 2
+# (sound.cpp's u32 sample rate: 1,789,772 Hz, 0.28 ppm below CLOCK / 2), counts on stream
+# samples 8n + 7 (sn76496.cpp starts its divider at 7 and counts when it reaches 0), and
+# applies a write after the stream sample its time falls in (sound_stream::update
+# generates samples up to and including the current one first).  With an ideal grid the
+# counters drift a count from the chip's within about 20 s, and a tone write whose latch
+# and data bytes land on either side of a reload then reloads differently in the two: the
+# channel's phase parts for good although every period and level agrees.
+
+STREAM_RATE = CLOCK // 2      # the stock chip's stream: one sample per two clocks
+COUNT_SAMPLES = 8             # stream samples per count (16 clocks)
+COUNT_PHASE = 7               # the first count's stream sample
+
+
+def count_index(t):
+    """How many counts of the stock chip's grid have run before a write at time `t` takes
+    effect (counts at stream samples 8n + 7, n = 0, 1, ...; the write after sample floor(t R))."""
+    return (math.floor(t * STREAM_RATE) - COUNT_PHASE) // COUNT_SAMPLES + 1
+
+
+def count_time(step):
+    """The time of count number `step` (1-based, as ChipModel.advance numbers them)."""
+    return (COUNT_SAMPLES * (step - 1) + COUNT_PHASE) / STREAM_RATE
 
 NEVER = 10 ** 12
 
@@ -649,19 +672,18 @@ def render(writes, t_end):
     changes = []
     dac_level = 0.0
     events = [(t, p & 7, b) for t, p, b in writes if (p & 7) <= 4]  # in the guest's order
-    step_s = 16.0 / CLOCK
 
     def mix():
         return sum(PSG_GAIN[k] * parts[k] for k in range(4)) + dac_level
 
     for t, port, byte in events:
-        target = int(t / step_s)
+        target = count_index(t)
         for k, chip in enumerate(chips):
             def emit(step, k=k, chip=chip):
                 total = chip.total()
                 if total != parts[k]:
                     parts[k] = total
-                    changes.append((step * step_s, mix()))
+                    changes.append((count_time(step), mix()))
             chip.advance(target, emit)
         if port == 4:
             dac_level = DAC_GAIN * (byte - 128) / 128
@@ -674,8 +696,8 @@ def render(writes, t_end):
             total = chip.total()
             if total != parts[k]:
                 parts[k] = total
-                changes.append((step * step_s, mix()))
-        chip.advance(int(t_end / step_s), emit)
+                changes.append((count_time(step), mix()))
+        chip.advance(count_index(t_end), emit)
     changes.sort(key=lambda c: c[0])
     return changes
 
@@ -781,18 +803,13 @@ def silent_end(c, audio, writes, t_from, t_to, what):
           f"largest sample {np.abs(x).max() * 32768:.2f} LSB over {t_to - t_from:.2f} s")
 
 
-def correlation_check(c, writes, audio, t0, t1, what, strict=True):
-    """Compare the capture with the ideal rendering of the writes.  Strict: every window correlates
-    at 0.9 or better with a swing within 3 %.  Not strict (a synthetic stress stream whose three
-    near-equal tones make a window sensitive to a one-step phase difference): the median must
-    correlate at 0.95 and the median swing within 3 %; the spread is reported."""
+def correlation_check(c, writes, audio, t0, t1, what):
+    """Compare the capture with the ideal rendering of the writes: every window correlates at
+    0.9 or better with a swing within 3 %."""
     res, lag = compare_playback(writes, audio, t0, t1)
     corr = np.array([r[1] for r in res])
     ratio = np.array([r[2] for r in res if r[1] > 0])
-    if strict:
-        ok = len(res) > 20 and corr.min() >= 0.9 and ratio.min() >= 0.97 and ratio.max() <= 1.03
-    else:
-        ok = len(res) > 20 and np.median(corr) >= 0.95 and abs(np.median(ratio) - 1) <= 0.03
+    ok = len(res) > 20 and corr.min() >= 0.9 and ratio.min() >= 0.97 and ratio.max() <= 1.03
     c.add(f"{what}: audio against the registers' ideal waveform", ok,
           f"{len(res)} windows of 0.1 s after a {lag / audio.rate * 1e6:.1f} us delay: correlation min {corr.min():.3f} 5th percentile {np.percentile(corr, 5):.3f} median {np.median(corr):.3f}; swing ratio {ratio.min():.3f}-{ratio.max():.3f}")
     return {"lag_us": lag / audio.rate * 1e6, "windows": len(res), "corr_min": float(corr.min()), "corr_median": float(np.median(corr)),
@@ -891,7 +908,7 @@ def analyse_client(client, case_dir, wav):
         stream = len(per[0]) - len(per[1])
         c.add("zvg: PSG0 writes are the stream's", report is not None and stream == int(report.group(4)) and len(per[1]) == len(per[2]) == len(per[3]),
               f"chip 0 {len(per[0])} writes, chips 1-3 {[len(p) for p in per[1:]]}; the difference {stream} against the report's {report.group(4) if report else '?'}")
-        info["correlation"] = correlation_check(c, writes, audio, z0, z1, "sndtest zvg", strict=False)
+        info["correlation"] = correlation_check(c, writes, audio, z0, z1, "sndtest zvg")
         silent_end(c, audio, writes, ends["zvg " + "/fs/WRAPS.ZVG 0"] + 0.2, t_done, "sndtest")
         info["zvg_report"] = report.group(0) if report else None
     # the boot's power-on state: the PSGs sound until the driver silences them

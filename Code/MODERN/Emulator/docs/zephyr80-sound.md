@@ -115,6 +115,12 @@ output is mono).
 bounded by emulated time. The capture's group delay against the register
 events is about 16 µs.
 
+MAME runs each PSG as a sound stream at an integer rate, half its clock rounded
+down (1,789,772 Hz, 0.28 ppm slow), counting on every eighth stream sample; a
+register write takes effect after the stream sample its time falls in. A
+rendering of the register writes matches the capture sample for sample only on
+that grid (the tests' reference uses it).
+
 ## State
 
 The devices are stock and save their own state. The machine keeps no sound
