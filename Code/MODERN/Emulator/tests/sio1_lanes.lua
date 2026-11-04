@@ -65,6 +65,7 @@ local MB = {
     RESULT = 0x7f10, RR0TX = 0x7f11, RR0END = 0x7f12, RR1END = 0x7f13, READYLO = 0x7f14,
     DRAINED = 0x7f16, RAWLEN = 0x7f19, RR0STALL = 0x7f1b,
     READYTX = 0x7f1c, IRQS = 0x7f20, PKT = 0x7e00, PKT2 = 0x7e40, RAW = 0x7d00,
+    DOORBELL = 0x7f52,
 }
 
 local function poke(address, bytes)
@@ -583,3 +584,9 @@ H.case_body("ioc-zsdos", function()
     local T, seen = guest_replies(6, "ZSDOS boot")
     return string.format("%d exchanges: %s", #T.exchanges, seen)
 end)
+
+-- The probe-program operations for other lane-level cases (keyboard.lua).
+H.lanes = {
+    MB = MB, packet = packet, parse = parse, hx = hx, post = post, exchange = exchange,
+    expect_reply = expect_reply, init = init, link_sync = link_sync, ping = ping, start_probe = start_probe,
+}

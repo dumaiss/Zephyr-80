@@ -46,6 +46,7 @@ BHDR     = 0x7f40          ; op 7: the five header bytes (LEN, TYPE, SEQ, STATUS
 BHEAD    = 0x3ffb          ; op 6: the five header bytes land here, the payload at BBUF
 BBUF     = 0x4000          ; op 6/7/9: payload buffer (512 bytes)
 BZPTR    = 0x7f50          ; op 9: payload destination pointer (the driver reads it from memory)
+DOORBELL = 0x7f52          ; op 10: RR0 of SIO1/B after Reset External/Status
 PKT      = 0x7e00
 PKT2     = 0x7e40
 RAW      = 0x7d00          ; up to 64 captured bytes, each with its empty polls
@@ -106,6 +107,8 @@ idle:
 	jp	z,op_burst
 	cp	#9
 	jp	z,op_zread
+	cp	#10
+	jp	z,op_doorbell
 done:
 	xor	a
 	ld	(CMD),a
@@ -173,6 +176,16 @@ op_init:
 	out	(SIO1AC),a
 	xor	a
 	ld	(RESULT),a
+	jp	done
+
+; ---------------------------------------------------------------- op 10
+; The HID doorbell as the guests sample it (KonaOS ioc_io_status_sample,
+; ZSDOS hid_input_status): unlatch RR0, then read it; D5 is /CTSB.
+op_doorbell:
+	ld	a,#0x10
+	out	(SIO1BC),a
+	in	a,(SIO1BC)
+	ld	(DOORBELL),a
 	jp	done
 
 ; ---------------------------------------------------------------- op 4

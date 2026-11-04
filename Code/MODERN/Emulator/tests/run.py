@@ -33,6 +33,7 @@ import card_backends  # noqa: E402
 import clocks_irqs  # noqa: E402
 import ioc_core  # noqa: E402
 import ioc_timing  # noqa: E402
+import keyboard  # noqa: E402
 import mame_args  # noqa: E402
 import memory_flash  # noqa: E402
 import sio1_lanes  # noqa: E402
@@ -44,6 +45,8 @@ INPUTS = {
               "make -C {root}/Code/HOST/CPM2.2 CCP=zshell BDOS=zsdos CONSOLE=v9958 STORAGE_A=rom build/zephyr80.bin"),
     "serial": ("konaos", "build-console-serial-selftest/konaos-console-serial-selftest.bin",
                "make -C {root} console-serial-selftest"),
+    "kedit": ("konaos", "UserSoftware/KonaEdit/build/user/kedit.exe", "make -C {root}/UserSoftware/KonaEdit"),
+    "kc": ("konaos", "UserSoftware/KonaCommander/build/user/kc.exe", "make -C {root}/UserSoftware/KonaCommander"),
 }
 
 # kind "suite": a probe module's run(); kind "lua": harness.lua with `script`.
@@ -79,6 +82,18 @@ CASES = {
                         about="CP/M volume files on both backends (mount, extents, records, bounds, coherence), ZSDOS C:/D: on an image and a folder (3 probes)"),
     "ioc-timing": dict(kind="suite", module=ioc_timing, inputs=(),
                        about="IO controller lane timing: PING and 128 B / 512 B / 4 KiB reads and writes against the paced model, paced and fast outcomes, admission, partial transfers, resets with work pending, save state mid-transfer (6 probes)"),
+    "keyboard": dict(kind="suite", module=keyboard, inputs=(), probes=keyboard.PROBES["keyboard"],
+                     call=lambda mame, inputs, out, sub: keyboard.run("keyboard", mame, inputs, out, sub),
+                     about="USB keyboard through the IO controller: firmware translation, repeat, queue and status (host test); MAME key input over the SIO1/B lane: bytes, partial dequeue, /CTSB, repeat, overflow, resets; save state (3 probes)"),
+    "konaos-video-boot": dict(kind="suite", module=keyboard, inputs=("konaos",), probes=keyboard.PROBES["konaos-video-boot"],
+                              call=lambda mame, inputs, out, sub: keyboard.run("konaos-video-boot", mame, inputs, out, sub),
+                              about="production KonaOS to its shell on the V9958/HID console; typed commands, editing, Ctrl-L, history and repeat read off the GRAPHIC6 screen (1 probe)"),
+    "zsdos-boot": dict(kind="suite", module=keyboard, inputs=("zsdos",), probes=keyboard.PROBES["zsdos-boot"],
+                       call=lambda mame, inputs, out, sub: keyboard.run("zsdos-boot", mame, inputs, out, sub),
+                       about="ZSDOS to ZephyrShell's prompt on its V9958/HID console; echo, ls and Up recall typed and read off the screen (1 probe)"),
+    "terminal-apps": dict(kind="suite", module=keyboard, inputs=("konaos", "kedit", "kc"), probes=keyboard.PROBES["terminal-apps"],
+                          call=lambda mame, inputs, out, sub: keyboard.run("terminal-apps", mame, inputs, out, sub),
+                          about="KonaEdit and KonaCommander from a card image and a card folder, driven by keys and read off the screen; the edited file checked on the card (2 probes)"),
     "vdp-text": dict(kind="lua", script="vdp_text.lua", inputs=(), deadline=5, wall=60,
                      about="VDP observations: TEXT1/TEXT2/GRAPHIC1 text from VRAM, rendered pixels, a snapshot, bitmap refusal"),
 }

@@ -13,8 +13,12 @@
 --   harness.serial  SIO0/B as the host sees it: the bytes the pty slot
 --                   deserialized from the guest's TXD, and bytes written to
 --                   that slot for the guest's RXD, both in emulated time.
---   harness.vdp     V9958 registers, VRAM, name-table text and the rendered
+--   harness.vdp     V9958 registers, VRAM, name-table text, the GRAPHIC6
+--                   console's text (harness.vdp.console) and the rendered
 --                   screen bitmap.
+--
+-- Input: harness.keyboard presses and releases the USB keyboard's fields
+-- through MAME's input path and logs each change (inputs.tsv).
 if _G.harness then return end -- autoboot runs again after a soft reset
 
 local lio = io
@@ -187,6 +191,7 @@ local V = {}
 H.vdp = V
 local vdp_device = machine.devices[":vdp"]
 local vram = vdp_device.spaces["vram"]
+V.vram_space = vram -- for taps; reads through it have no side effects
 local registers = emu.item(vdp_device.items["0/m_cont_reg"])
 
 -- Mode number as the V9958 decodes it: M5:M3 from R#0 D3:D1, M1:M2 from R#1 D4:D3.
@@ -216,7 +221,7 @@ end
 
 -- The screen as name-table rows, read from VRAM: one string per row of the
 -- character codes (as bytes). Bitmap modes hold no character codes, so they
--- return nil and the reason.
+-- return nil and the reason; the GRAPHIC6 consoles are read by V.console.
 function V.text()
     local mode = V.mode()
     local layout = NAME_TABLES[mode]
@@ -263,6 +268,295 @@ function V.snapshot(name)
     return path
 end
 
+-- GRAPHIC6 console text ----------------------------------------------------------
+--
+-- Both guests' consoles draw 6x8 glyphs into a GRAPHIC6 bitmap (KonaOS
+-- drivers/v9958/v9958_driver.h, ZSDOS drivers/console/v9958.asm, default
+-- 85x26 mode): page 0 is a circular 256-line surface, logical text row r
+-- starts at scanline origin + 8r (mod 256), R#23 = origin - 4 (four margin
+-- lines above row 0), column c covers pixels 6c..6c+5, i.e. the three bytes
+-- 3c..3c+2 of a 256-byte line, left pixel in the high nibble.  Paper is
+-- colour 4 and ink colour F; a reverse-video cell swaps them.
+--
+-- V.console reads that bitmap from VRAM through the vdp's own address space
+-- (MAME stores GRAPHIC6/7 VRAM interleaved, as the V9958 does: logical byte
+-- L lives at ((L & 1) << 16) | (L >> 1), v9938.cpp vram_write) and R#23 from
+-- the saved register file.  It does no port I/O and reads no status
+-- register, so it changes nothing the guest can see.  Each cell's eight
+-- ink rows are matched exactly against the guest's own font (the 2048-byte
+-- glyph-major file tests/guest_font.py extracts from the flash image), then
+-- with ink and paper swapped for a reverse cell.  A cell that matches no
+-- glyph either way (a graphic drawn over text, a half-drawn glyph) is
+-- reported as unknown; the sprite cursor and pointer are not in the bitmap.
+-- A cell inked all over reads as a reverse-video space: it is pixel for
+-- pixel the full block (CP850 DBh), which libtui, KonaEdit and KonaCommander
+-- never draw (their bars are reverse spaces).
+-- Screens the console does not draw (other modes, other pages, graphics)
+-- are compared by snapshot instead (V.snapshot).
+local C = { columns = 85, rows = 26, cell_width = 6, cell_height = 8, offset = 4, paper = 0x4 }
+V.console = C
+C.UNKNOWN = "\1"
+local FULL_CELL = string.rep("\252", C.cell_height) -- every row FCh
+
+-- Load the font file (256 glyphs x 8 row bytes, pixels in bits 7..2).  When
+-- several codes share a bitmap, printable ASCII wins, then the lowest code.
+function C.load_font(path)
+    local f = assert(lio.open(path, "rb"))
+    local data = f:read("a")
+    f:close()
+    H.check(#data == 256 * C.cell_height, "font %s holds %d bytes", path, #data)
+    local glyphs = {}
+    local order = {}
+    for code = 0x20, 0x7e do order[#order + 1] = code end
+    for code = 0, 255 do
+        if code < 0x20 or code > 0x7e then order[#order + 1] = code end
+    end
+    for _, code in ipairs(order) do
+        local rows = {}
+        for r = 1, C.cell_height do
+            rows[r] = string.char(data:byte(code * C.cell_height + r) & 0xfc)
+        end
+        local key = table.concat(rows)
+        if glyphs[key] == nil then glyphs[key] = code end
+    end
+    C.glyphs = glyphs
+end
+
+-- One logical 256-byte bitmap line of page 0 as an array of byte values.
+local function g6_line(y)
+    local even = vram:read_range(y * 128, y * 128 + 127, 8)
+    local odd = vram:read_range(0x10000 + y * 128, 0x10000 + y * 128 + 127, 8)
+    local bytes = {}
+    for i = 1, 128 do
+        bytes[2 * i - 1] = even:byte(i)
+        bytes[2 * i] = odd:byte(i)
+    end
+    return bytes
+end
+
+-- The console as text: rows (strings of character codes; C.UNKNOWN for a
+-- cell matching no glyph), reverse (strings of "r"/" " per cell) and the
+-- number of unknown cells.  nil and the reason when the VDP is not showing
+-- a page-0 GRAPHIC6 console.
+function C.read()
+    H.check(C.glyphs ~= nil, "console font not loaded")
+    local mode = V.mode()
+    if mode ~= "GRAPHIC6" then
+        return nil, mode .. " is not the GRAPHIC6 console"
+    end
+    if (V.reg(2) & 0x20) ~= 0 then
+        return nil, "R#2 shows page 1, not the console page"
+    end
+    local linemask = ((V.reg(2) & 0x1f) << 3) | 7
+    local origin = (V.reg(23) + C.offset) & 0xff
+    local pair = {}
+    for b = 0, 255 do
+        pair[b] = (((b >> 4) ~= C.paper) and 2 or 0) | (((b & 15) ~= C.paper) and 1 or 0)
+    end
+    local glyphs, ink_rows = C.glyphs, {}
+    local rows, reverse, unknown = {}, {}, 0
+    for row = 0, C.rows - 1 do
+        local cells = {}
+        for c = 1, C.columns do cells[c] = {} end
+        for k = 0, C.cell_height - 1 do
+            local line = g6_line((origin + row * C.cell_height + k) & linemask)
+            for c = 0, C.columns - 1 do
+                local i = 3 * c + 1
+                cells[c + 1][k + 1] = (pair[line[i]] << 6) | (pair[line[i + 1]] << 4) | (pair[line[i + 2]] << 2)
+            end
+        end
+        local codes, attrs = {}, {}
+        for c = 1, C.columns do
+            local m = cells[c]
+            local key = string.char(m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8])
+            local code, rev = glyphs[key], " "
+            if key == FULL_CELL then
+                code, rev = 0x20, "r"
+            elseif code == nil then
+                key = string.char(m[1] ~ 0xfc, m[2] ~ 0xfc, m[3] ~ 0xfc, m[4] ~ 0xfc,
+                    m[5] ~ 0xfc, m[6] ~ 0xfc, m[7] ~ 0xfc, m[8] ~ 0xfc)
+                code, rev = glyphs[key], "r"
+            end
+            if code == nil then
+                code, rev, unknown = 1, "?", unknown + 1
+            end
+            codes[c] = string.char(code)
+            attrs[c] = rev
+        end
+        rows[row + 1] = table.concat(codes)
+        reverse[row + 1] = table.concat(attrs)
+    end
+    C.last = { rows = rows, reverse = reverse, unknown = unknown, time = H.now() }
+    return rows, reverse, unknown
+end
+
+-- A row for a transcript: printable ASCII as is, other codes '.', unknown '?'.
+function C.printable(line)
+    return (line:gsub("[^\32-\126]", function(c) return c == C.UNKNOWN and "?" or "." end))
+end
+
+-- The first row (1-based) and column holding `text`, or nil; `rows` defaults
+-- to a fresh read.
+function C.find(text, rows)
+    rows = rows or C.read()
+    if not rows then return nil end
+    for row, line in ipairs(rows) do
+        local column = line:find(text, 1, true)
+        if column then return row, column end
+    end
+    return nil
+end
+
+-- Wait until `text` is on the console; reads every `every` frames (default
+-- 3).  Returns the row, the column and the emulated time it was first seen.
+function C.wait(text, timeout, what, every)
+    every = every or 3
+    local frames = 0
+    local found = H.wait(function()
+        frames = frames + 1
+        if frames % every ~= 1 and every > 1 then return nil end
+        local row, column = C.find(text)
+        return row and { row, column, H.now() }
+    end, timeout, what or string.format("%q on the GRAPHIC6 console", text))
+    return found[1], found[2], found[3]
+end
+
+-- Wait until `predicate(rows, reverse)` holds on the console.
+function C.wait_for(predicate, timeout, what, every)
+    every = every or 3
+    local frames = 0
+    return H.wait(function()
+        frames = frames + 1
+        if frames % every ~= 1 and every > 1 then return nil end
+        local rows, reverse = C.read()
+        return rows and predicate(rows, reverse)
+    end, timeout, what)
+end
+
+-- Write the screen as text (and the reverse-video map) to the case
+-- directory; returns the path.
+function C.dump(name)
+    local rows, reverse, unknown = C.read()
+    local path = H.dir .. "/" .. name
+    local f = assert(lio.open(path, "w"))
+    if not rows then
+        f:write(string.format("no console: %s\n", reverse))
+    else
+        f:write(string.format("# %.6f emulated s, R#23 %02X, %d unknown cells\n", H.now(), V.reg(23), unknown))
+        for i, line in ipairs(rows) do
+            f:write(string.format("%2d |%s|  %s\n", i, C.printable(line), reverse[i]:find("[r?]") and reverse[i] or ""))
+        end
+    end
+    f:close()
+    return path
+end
+
+-- USB keyboard -------------------------------------------------------------------
+--
+-- Input goes through MAME's input path: the keyboard device's fields (one per
+-- HID usage, :ioc:keyboard), set and cleared with ioport_field:set_value,
+-- which the next frame's input update applies like a host key.  Every change
+-- is logged to the case's input manifest (inputs.tsv) with its emulated time.
+local K = { by_usage = {}, down = {}, log = nil, hold = 2, gap = 2 }
+H.keyboard = K
+
+-- US legends of the firmware's table (TinyUSB HID_KEYCODE_TO_ASCII): the
+-- usage and Shift for each printable character.
+local US = {}
+do
+    local lower = "abcdefghijklmnopqrstuvwxyz1234567890"
+    local upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()"
+    for i = 1, #lower do
+        US[lower:sub(i, i)] = { 0x03 + i, false }
+        US[upper:sub(i, i)] = { 0x03 + i, true }
+    end
+    local plain, shifted = " -=[]\\;'`,./", " _+{}|:\"~<>?"
+    local usages = { 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 }
+    for i = 1, #plain do
+        US[plain:sub(i, i)] = { usages[i], false }
+        if i > 1 then US[shifted:sub(i, i)] = { usages[i], true } end
+    end
+    US["\r"] = { 0x28, false }
+    US["\t"] = { 0x2b, false }
+    US["\b"] = { 0x2a, false }
+end
+K.US = US
+
+local function keyboard_fields()
+    for tag, port in pairs(machine.ioport.ports) do
+        local index = tag:match("^:ioc:keyboard:KEYS(%d)$")
+        local base = index and tonumber(index) * 16 or (tag == ":ioc:keyboard:MODIFIERS" and 0xe0)
+        if base then
+            for name, field in pairs(port.fields) do
+                local bit = 0
+                while (field.mask >> bit) & 1 == 0 do bit = bit + 1 end
+                K.by_usage[base + bit] = field
+                K.by_usage[name] = base + bit
+            end
+        end
+    end
+end
+keyboard_fields()
+
+-- A usage number or a field name ("Left Shift", "Enter", "Up", ...).
+function K.usage(key)
+    local usage = type(key) == "number" and key or K.by_usage[key]
+    H.check(usage and K.by_usage[usage], "no keyboard field %s", tostring(key))
+    return usage
+end
+
+function K.set(key, down)
+    local usage = K.usage(key)
+    local field = K.by_usage[usage]
+    field:set_value(down and 1 or 0)
+    K.down[usage] = down or nil
+    if not K.log then
+        K.log = assert(lio.open(H.dir .. "/inputs.tsv", "w"))
+        K.log:write("emulated_s\tusage\tfield\tstate\n")
+    end
+    K.log:write(string.format("%.6f\t%02X\t%s\t%s\n", H.now(), usage, field.name, down and "down" or "up"))
+    K.log:flush()
+end
+
+-- Wait `n` emulated frames (inside a case body).
+function K.frames(n)
+    for _ = 1, n do coroutine.yield() end
+end
+
+-- Press the keys of a chord in order, hold them `hold` frames, release in
+-- reverse order, then wait `gap` frames.
+function K.chord(keys, hold, gap)
+    for _, key in ipairs(keys) do K.set(key, true) end
+    K.frames(hold or K.hold)
+    for i = #keys, 1, -1 do K.set(keys[i], false) end
+    K.frames(gap or K.gap)
+end
+
+function K.tap(key, hold, gap)
+    K.chord({ key }, hold, gap)
+end
+
+-- Type printable text (and CR, TAB, BS) on the US layout, Shift as needed.
+function K.type(text, hold, gap)
+    for i = 1, #text do
+        local ch = text:sub(i, i)
+        local map = US[ch]
+        H.check(map, "no key types %q", ch)
+        if map[2] then
+            K.chord({ "Left Shift", map[1] }, hold, gap)
+        else
+            K.tap(map[1], hold, gap)
+        end
+    end
+end
+
+-- Release every key (the harness ends with nothing held).
+function K.release_all()
+    local held = {}
+    for usage in pairs(K.down) do held[#held + 1] = usage end
+    for _, usage in ipairs(held) do K.set(usage, false) end
+end
+
 -- Verdict ----------------------------------------------------------------------
 
 local function diagnostics()
@@ -273,6 +567,16 @@ local function diagnostics()
         state["I"].value, latch_item:read(0)))
     print(string.format("DIAG waiting for %s", waiting_for or "nothing"))
     print(string.format("DIAG vdp %s", V.mode()))
+    if C.glyphs then
+        local rows, why = C.read()
+        if not rows then
+            print("DIAG console " .. why)
+        else
+            for i, line in ipairs(rows) do
+                if line:find("[^ ]") then print(string.format("DIAG console %2d |%s|", i, C.printable(line))) end
+            end
+        end
+    end
     print(string.format("DIAG serial %d bytes received, last at %s; tail %s", #S.data,
         S.last and string.format("%.3f s", S.last) or "never", H.escape(S.tail())))
 end
@@ -284,6 +588,7 @@ function H.finish(ok, detail)
     print(string.format("TRACE emulated %.6f s", H.now()))
     print((ok and "PASS" or "FAIL") .. " harness " .. H.case .. ": " .. detail)
     S.close()
+    if K.log then K.log:close() end
     machine:exit()
 end
 

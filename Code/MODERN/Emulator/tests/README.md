@@ -17,7 +17,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | Option | Meaning |
 |---|---|
 | `--mame PATH` | the MAME binary (`mame/mamepbitzd` debug or `mame/mamepbitz` release) |
-| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory` or `cpm-volumes` |
+| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard` or `terminal-apps` |
 | `--list` | the cases, what each proves and the inputs it needs |
 | `--konaos-root`, `--zephyr-root` | the ZephyrOS and Zephyr-80 checkouts the inputs come from |
 | `--output DIR` | result directory, default `tests/output/run` (ignored by Git) |
@@ -40,12 +40,19 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `card-image` | `serial` | the three [card probes](#card-probes) for `-card` |
 | `card-directory` | `serial` | the three [card probes](#card-probes) for `-carddir` |
 | `cpm-volumes` | `zsdos` | the three [card probes](#card-probes) for CP/M volume files |
+| `keyboard` | none (the probe program) | the three [keyboard probes](#keyboard-probes): the HID module against the firmware, MAME key input on the SIO1/B lane, save state |
+| `konaos-video-boot` | `konaos` | the production KonaOS image to `/system> ` on its V9958/HID console, keys typed and the answers read off the screen ([below](#keyboard-probes)) |
+| `zsdos-boot` | `zsdos` | ZSDOS to ZephyrShell's `B0:/$ ` on its V9958/HID console, `echo`, `ls` and Up recall typed and read off the screen |
+| `terminal-apps` | `konaos`, `kedit`, `kc` | probes `image` and `folder`: KonaEdit and KonaCommander loaded from a card image and a card folder and driven by keys |
 | `vdp-text` | none (a DI/HALT image) | the VDP observations: TEXT1, TEXT2 and GRAPHIC1 text read from VRAM, rendered glyph pixels, a PNG snapshot, GRAPHIC6 refused |
 
 Inputs: `konaos` is `ZephyrOS/build/konaos.bin`, `zsdos` is
 `Zephyr-80/Code/HOST/CPM2.2/build/zephyr80.bin`, `serial` is
 `ZephyrOS/build-console-serial-selftest/konaos-console-serial-selftest.bin`
-(`make console-serial-selftest`). A missing input stops the run before any
+(`make console-serial-selftest`), `kedit` and `kc` are
+`ZephyrOS/UserSoftware/KonaEdit/build/user/kedit.exe` and
+`ZephyrOS/UserSoftware/KonaCommander/build/user/kc.exe` (`make` in each
+program's directory). A missing input stops the run before any
 case with exit 2, naming the file and the command that builds it.
 
 Each case gets a fresh directory under `--output`, removed and recreated
@@ -72,6 +79,8 @@ A change to the controller's lane timing, the SIO1 model or the transport is rep
 `cpm-volumes` in the default mode, and (apart from `sio1-lanes`, which asserts paced timing and `ioc-timing`,
 which runs both modes itself) again with `--ioc-speed fast`. `cpm-volumes` is the ZSDOS bulk reader: its
 call-based marker scan and its setup before the INI loop leave the least cover of any guest path.
+A change to the keyboard, the HID module or the console observer is replayed with `keyboard`,
+`konaos-video-boot`, `zsdos-boot`, `terminal-apps` and `ioc-core`.
 
 ## Serial harness
 
@@ -99,6 +108,12 @@ writes to the SIO are never read as console output.
 | `harness.vdp.mode()`, `reg(n)`, `vram(addr)` | V9958 mode, control registers and VRAM, read from the device |
 | `harness.vdp.text()`, `wait_text(text, t)` | name-table rows read from VRAM |
 | `harness.vdp.pixels()`, `snapshot(name)` | the rendered bitmap; a PNG in the case directory |
+| `harness.vdp.console.load_font(path)` | the guest's 6x8 console font (`guest_font.py` writes it from the flash image) |
+| `harness.vdp.console.read()` | the GRAPHIC6 console as text: rows of character codes, the reverse-video map, the count of cells that match no glyph |
+| `harness.vdp.console.find(text)`, `wait(text, t)`, `wait_for(pred, t, what)` | where text is on the console; waits read the screen every few frames |
+| `harness.vdp.console.dump(name)`, `printable(row)` | the screen as a text file; a row as printable ASCII |
+| `harness.keyboard.set(key, down)`, `tap(key)`, `chord(keys)`, `type(text)` | the USB keyboard's fields (a usage or its name, `"Left Shift"`, `"Up"`, `"F5"`) through MAME's input path; each change is logged with its emulated time to `inputs.tsv` |
+| `harness.keyboard.frames(n)`, `release_all()` | wait `n` frames; release every held key |
 
 The guest's console receiver is polled one byte deep, so `type` sends each
 byte only after the previous one's echo. Name-table text is the character
@@ -106,15 +121,15 @@ codes in VRAM, read as ASCII: it matches what the screen shows when the
 pattern table holds an ASCII-ordered font. TEXT1, TEXT2 and GRAPHIC1–3 are
 decoded (vertical scroll R#23 is not applied); MULTICOLOR and the bitmap
 modes GRAPHIC4–7 hold no character codes and `text()` returns `nil` with the
-reason. Both guests' V9958 consoles draw glyphs into GRAPHIC6, so their
-screen text is not readable this way; the rendered bitmap and snapshots
-are. A case can add MAME options (`mame_args` in `run.py`), for example
+reason. Both guests' V9958 consoles draw glyphs into GRAPHIC6; their
+screen text is read by `harness.vdp.console` ([below](#the-graphic6-console)).
+A case can add MAME options (`mame_args` in `run.py`), for example
 `-wavwrite` for audio or a video mode for rendering.
 
 The serial cases boot the console-serial image against the IOC model
 ([SIO1 and the IO controller](../docs/zephyr80-sio1-ioc.md)): the link comes
 up, the shell banner reports `IOC version 75` from PING, the card socket is
-empty and no keyboard is attached, the prompt follows about 3 emulated seconds after the host
+empty and no key is pressed, the prompt follows about 3 emulated seconds after the host
 sync, and the shell starts
 in `/system`. `timer` taps the CTC's I/O writes and the IM2 vector fetch of
 channel 2, then runs `timer stage` (INFO 390625/250, 10,000 monotonic
@@ -309,3 +324,43 @@ is mounted or written.
 the probe writes, each answer checked for its expected text (or for no output
 at all), a key sent when a program ends with `[any key]`, and each step's
 emulated time traced.
+
+## Keyboard probes
+
+`keyboard`, `konaos-video-boot`, `zsdos-boot` and `terminal-apps`
+(`keyboard.py`, bodies in `keyboard.lua`) test [the USB
+keyboard](../docs/zephyr80-keyboard.md). Keys go through MAME's input path
+(`harness.keyboard`): a field set in one frame is applied by the next frame's
+input update, where the keyboard scans and reports. Every guest step waits for
+the screen the guest draws in answer; the screen of every step is in the case
+directory as text and PNG, with `transcript.txt` and `inputs.tsv`.
+
+| Probe | Proof |
+|---|---|
+| `keyboard:host` | `keyboard/hid_test.cpp`, built with the HID module and the core and run on the host, every expected byte, count and time from the firmware: 303 translation vectors (letters with either Shift, Alt, GUI; digits and punctuation; Ctrl to control bytes and NUL, Ctrl falling through; navigation, editing and function keys; the keypad with NumLock on), the keypad's NumLock-off layer and CapsLock, report edges (only new usages, slot order, rollover, the report's own modifiers, no keyboard), locks and their LEDs, the repeat (500 ms, 60 ms from the tick it ran at, takeover, Shift re-sampled, the half-queue limit), the queue (whole admission, drops saturating, partial dequeue, the doorbell, reset), Ctrl+Alt+Esc, HID_STATUS page 0, save registration |
+| `keyboard:lane` | the probe program on SIO1/B: HID_STATUS page 0; `/CTSB` (Reset External/Status, RR0 D5) idle, then asserted by a, Shift+b, Ctrl+c, Up and F5, held through a partial HID_INPUT of 2 and released by the rest (`61 42 03 1B 5B 41 1B 5B 31 35 7E`); x held a second (the firmware's count from the press and release times, nothing after the release); z held 6 s undrained (64 queued, no drop); 43 arrows and three letters (126 then 128 queued, two drops, 24 a reply); a machine reset (queue and drops gone; a key held across it reported once, no repeat after its release); Ctrl+Alt+Esc (the controller restarts, no Escape queued) |
+| `keyboard:state` | three processes on the probe program: the first saves a state with `ab` queued and R held mid-repeat, then records what it queues by a later check time; a restore with R held queues the same bytes by that time (queue, held key and repeat phase restored); a restore with R up keeps the saved bytes and repeats no more |
+| `konaos-video-boot` | the production KonaOS image without a card: `/system> ` on the screen; `echo Hello World` (the first key's input-to-screen time), CapsLock, Backspace, F5 swallowed, `pwd`, Ctrl-L clearing the screen, Up/Down history, a held key's repeat on the line (the firmware's count) and a held Backspace erasing it |
+| `zsdos-boot` | ZSDOS with a card folder holding only `/CPM/B` (ZephyrShell's B:; without it ZSDOS stops at `ZSDOS error on B: No Drive`): `B0:/$ ` on the screen, `echo Hello ZSDOS`, `ls` answering `SYSTEM/`, Up recalling `ls` |
+| `terminal-apps:image`, `terminal-apps:folder` | a card (FAT16 image or folder) with `/BIN/KEDIT.EXE`, `/BIN/KC.EXE`, `NOTE.TXT` and `DOCS/A.TXT`. KonaEdit opens `/fs/NOTE.TXT` (menu bar, text, status `Ln 1 Col 1`); Down, End, Home, Right, Up move the status position; typing, Enter and Backspace edit the text (the modified mark); F1 and Down open the File menu, Escape closes the pop-up and the bar; F7 marks, Escape clears it; F2 saves; F10 exits. KonaCommander lists the card, its PC link times out, the arrows move the selection both ways, Enter opens `DOCS`, Backspace returns, Enter on `NOTE.TXT` opens the viewer with KonaEdit's text, Escape returns, `q` exits. The card then holds exactly KonaEdit's saved text and nothing else changed (`fsck.fat -n` clean for the image) |
+
+### The GRAPHIC6 console
+
+Both consoles draw 6x8 glyphs into a GRAPHIC6 bitmap (KonaOS
+`drivers/v9958/v9958_driver.h`, ZSDOS `drivers/console/v9958.asm`): 85
+columns by 26 rows, page 0 a circular 256-line surface, row r at scanline
+R#23 + 4 + 8r, column c at bytes 3c–3c+2 of a line, paper colour 4, ink F.
+`harness.vdp.console.read()` reads those lines from the vdp's address space
+(MAME stores GRAPHIC6 VRAM interleaved: logical byte L at
+`((L & 1) << 16) | (L >> 1)`) and R#2, R#9 and R#23 from the saved register
+file. It does no port I/O and reads no status register. A cell's eight rows of
+ink are matched exactly against the guest's own font, which `guest_font.py`
+reads from the flash image: KonaOS's from the ROMFS `v9958.mod` mapped
+segment (the driver's paged font), ZSDOS's from flash 78000h
+(`CONSOLE_FONT_ROM_BASE` in bank 7). A cell matching with ink and paper
+swapped is reverse video; a fully inked cell is a reverse space (pixel for
+pixel CP850's full block, which these programs do not draw). Any colour other
+than paper counts as ink. Cells that match no glyph (the KonaOS logo, a glyph
+half drawn) are counted as unknown. Sprites (the text cursor, the pointer) are
+not in the bitmap. Another mode, another page or a graphics screen is not a
+console; it is captured by `snapshot`.

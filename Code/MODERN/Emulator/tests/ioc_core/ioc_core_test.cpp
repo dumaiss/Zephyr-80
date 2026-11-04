@@ -680,9 +680,9 @@ void hid_queue()
 {
 	rig t;
 	u8 const key[] = { 0x1b, '[', 'A' };
-	check(t.core.hid_input_put(key, 3) && t.link.doorbell, "a key's bytes queued, /CTSB asserted");
+	check(t.core.hid().put(key, 3) && t.link.doorbell, "a key's bytes queued, /CTSB asserted");
 	u8 const text[] = { 'a', 'b' };
-	t.core.hid_input_put(text, 2);
+	t.core.hid().put(text, 2);
 	reply_t r = t.cmd(0x0e, { 2 });
 	check(r.data.size() == 4 && r.data[0] == 3 && r.data[1] == 0 && r.data[2] == 0x1b && r.data[3] == '[', "partial dequeue: 2 of 5, 3 left");
 	check(t.link.doorbell, "doorbell stays asserted after a partial dequeue");
@@ -691,8 +691,8 @@ void hid_queue()
 	r = t.cmd(0x0e, { 200 });
 	check(r.data.size() == 5 && r.data[0] == 0 && r.data[2] == 'A' && r.data[4] == 'b' && !t.link.doorbell, "drain: doorbell released");
 	bytes fill(128, 'x');
-	check(t.core.hid_input_put(fill.data(), 127), "127 bytes queued");
-	check(!t.core.hid_input_put(key, 3), "a 3-byte sequence with 1 byte free is refused whole");
+	check(t.core.hid().put(fill.data(), 127), "127 bytes queued");
+	check(!t.core.hid().put(key, 3), "a 3-byte sequence with 1 byte free is refused whole");
 	r = t.cmd(0x0e, { 30 });
 	check(r.data.size() == 26 && r.data[0] == 103 && r.data[1] == 1, "dequeue capped at 24; dropped 1");
 }

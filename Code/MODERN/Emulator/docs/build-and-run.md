@@ -71,10 +71,24 @@ A bounded headless run uses:
 
 The [test runner](../tests/README.md) runs bounded, scripted cases: both
 images' reset copies and OS-mode entry, the clocks and interrupts, and the
-serial-console image to its shell prompt, and the IOC link. SIO1 carries a
-behavioural IO controller ([SIO1 and the IO controller](zephyr80-sio1-ioc.md))
-with its [protocol core](zephyr80-ioc-core.md). No keyboard is attached, so
-the V9958/HID console takes no keyboard input.
+serial-console image to its shell prompt, the IOC link, the keyboard and both
+guests' V9958/HID consoles. SIO1 carries a behavioural IO controller
+([SIO1 and the IO controller](zephyr80-sio1-ioc.md)) with its
+[protocol core](zephyr80-ioc-core.md) and a [USB keyboard](zephyr80-keyboard.md).
+
+## The keyboard
+
+The production images' console is the V9958 screen and the USB keyboard. With
+a window (`-video` other than `none`), MAME's key input goes to the keyboard
+while MAME's UI controls are off; the host's Scroll Lock toggles them, and the
+function keys reach the guest only while they are off. Keys are positional
+(US legends) and the controller translates and repeats them, as the firmware
+does; the host's layout and key repeat do not apply. Ctrl+Alt+Esc resets the
+machine.
+
+```sh
+./mamepbitzd zephyr80 -flash "$KONAOS_ROOT/build/konaos.bin" -carddir card/
+```
 
 ## The SD card
 

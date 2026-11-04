@@ -147,7 +147,8 @@ def build_host(case_dir):
         ["gcc", "-std=gnu99", "-O1", "-g", "-Wall", "-Werror", "-I", str(FATFS), "-c", str(PBITZ / "zephyr80_fatfs.c"), "-o", str(obj)],
         ["c++", "-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-Werror", "-I", str(HERE / "ioc_core"),
          "-I", str(EMULATOR / "mame/src/osd"), "-I", str(PBITZ), "-I", str(FATFS), str(HERE / "card/card_test.cpp"),
-         str(PBITZ / "zephyr80_card.cpp"), str(PBITZ / "zephyr80_ioc_core.cpp"), str(obj), "-o", str(binary)],
+         str(PBITZ / "zephyr80_card.cpp"), str(PBITZ / "zephyr80_ioc_core.cpp"),
+         str(PBITZ / "zephyr80_ioc_hid.cpp"), str(obj), "-o", str(binary)],
     ]
     log = ""
     for command in commands:

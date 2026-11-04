@@ -6,7 +6,9 @@ the request found in a command window and returns the reply, arms the bulk
 transfer a reply announces (READY), checks and commits what the bulk lane
 brings back, and answers the DONE query. It holds every protocol object; the
 media behind it are a `zephyr80_ioc_storage` backend
-(`zephyr80_ioc_storage.h`), the machine's [card socket](zephyr80-card.md). The transport that runs it over SIO1 is
+(`zephyr80_ioc_storage.h`), the machine's [card socket](zephyr80-card.md). Its HID
+module, `zephyr80_ioc_hid`, is the controller's keyboard input
+([the USB keyboard](zephyr80-keyboard.md)). The transport that runs it over SIO1 is
 `zephyr80_ioc` ([SIO1 and the IO controller](zephyr80-sio1-ioc.md)).
 
 The specification is the controller firmware (`Code/MCU/IOController`) as
@@ -48,8 +50,8 @@ with no `-card` or `-carddir` media: the firmware with no card in the socket
 | 09h SD_WRITE_REC | 89h | READY for 128 bytes from the Z80; the commit writes the record (DONE) | READY, DONE 15h | card media |
 | 0Ah SD_FLUSH | 8Ah | the backend's flush | 00h | card media |
 | 0Ch LINK_SYNC | 8Ch | both lanes drop their boundary before the reply | 00h | core |
-| 0Dh HID_STATUS | 8Dh | page 0 (26 bytes), 6 (26) and 7 (21); other pages answer page 0. No USB host controller is modelled: bring-up NOT_STARTED, revision 0, `/USB_INT` idle, nothing mounted, speed FFh; gamepad sentinels FFh, latches 7Fh | 00h | keyboard, mouse and controller devices |
-| 0Eh HID_INPUT | 8Eh | up to min(DATA 0, 24) queued bytes, then queued and dropped counts | 00h, empty | keyboard device |
+| 0Dh HID_STATUS | 8Dh | page 0 (26 bytes), 6 (26) and 7 (21); other pages answer page 0. No USB host controller is modelled: bring-up NOT_STARTED, revision 0, `/USB_INT` idle; page 0's live fields are the keyboard's (one device, address 1, reports, last report, full speed); gamepad sentinels FFh, latches 7Fh | 00h | HID module (keyboard); mouse and controller devices |
+| 0Eh HID_INPUT | 8Eh | up to min(DATA 0, 24) queued bytes, then queued and dropped counts | 00h | HID module |
 | 0Fh SD_READ_BLOCK | 8Fh | READY, 512 bytes, block echo | 15h | card media |
 | 10h VOL_MOUNT | 90h | the unit dropped, then `/CPM/<name>` of exactly 8 MiB mounted; unit ≥ 2 30h, missing 10h, wrong size 32h | 15h | card media |
 | 11h VOL_INFO | 91h | unit, mode, extents, base block, records, name, boot guard (clear) | 00h, unmounted | card media |
@@ -99,7 +101,7 @@ layers; results are the firmware's codes and the core converts them.
 | `/SHARED` handle number, directory session, cached position | core |
 | Volume unit table (mode, name, records, reported extents and base), mount and auto-mount flags | core |
 | Transfer ids, the armed transfer, the DONE record, staged write parameters, bulk buffers | core |
-| HID input queue and doorbell, mouse read state | core |
+| HID module (keyboard reports, translation, repeat, input queue and doorbell), mouse read state | core |
 | Media contents, the FAT mount, open file/directory/image objects, caching and write-back | backend |
 
 Paths are the firmware's FatFs paths, built by the core (`/SHARED/NAME.EXT`,
@@ -148,12 +150,12 @@ command byte reaches them.
 | Run | 2048 bytes (`IOC_FS2_RUN_MAX`) |
 | Buffers | chunk 2048, block 512, record 128 bytes |
 | FS2 | 2 files, 1 directory, path 239 characters, 16 components |
-| HID input queue | 128 bytes, a key's bytes whole or dropped, drop count saturating at FFh |
+| HID input queue | 128 bytes, a key's bytes whole or dropped, drop count saturating at FFh; a repeat only below 64 |
 | Volume units | 2 |
 
-The core object is 3232 bytes on x86-64 (buffers 2688, resolver 240, HID queue
-128, the rest counters, tables and two pointers); the transport adds 36 + 35 +
-539 bytes of lane buffers.
+The core object is 3272 bytes on x86-64 (buffers 2688, resolver 240, the HID
+module 168 of which 128 are its queue, the rest counters, tables and two
+pointers); the transport adds 36 + 35 + 539 bytes of lane buffers.
 Every member of both is save-registered.
 
 ## Not modelled
@@ -162,6 +164,6 @@ The PIC, the MAX3421E and USB, the SD card and its SPI trace, the SD block
 cache's timing and write-back (the backend decides when writes reach the media;
 a record write is a read-modify-write of its block), bulk CRC (the deployed
 bypass), the diagnostic profile, the PROFILE timers, the boot guard (never
-degraded, no resets counted), the power handshake beyond PING's idle byte, and
-any HID device: keyboard translation and the queue's producer arrive with the
-keyboard, the mouse and controllers with their devices.
+degraded, no resets counted), the power handshake beyond PING's idle byte, USB
+below the HID usages ([the USB keyboard](zephyr80-keyboard.md#not-modelled)),
+and the mouse and controller devices.

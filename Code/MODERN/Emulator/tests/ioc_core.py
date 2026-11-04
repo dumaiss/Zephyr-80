@@ -1,7 +1,8 @@
 """IOC core probes: the `ioc-core` case of tests/run.py.
 
 `core` builds tests/ioc_core/ioc_core_test.cpp with the protocol core
-(mame/src/mame/pbitz/zephyr80_ioc_core.cpp) and an in-memory card, and runs
+(mame/src/mame/pbitz/zephyr80_ioc_core.cpp, its HID module zephyr80_ioc_hid.cpp)
+and an in-memory card, and runs
 it: real frames against firmware-derived replies, bulk transfers, media
 effects.  `konaos` and `zsdos` boot each guest against the machine's empty
 card socket and check every reply (sio1_lanes.lua ioc-konaos, ioc-zsdos)."""
@@ -30,6 +31,7 @@ def run_core(case_dir):
     build = ["c++", "-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
              "-I", str(HERE / "ioc_core"), "-I", str(EMULATOR / "mame/src/osd"), "-I", str(EMULATOR / "mame/src/mame/pbitz"),
              str(HERE / "ioc_core/ioc_core_test.cpp"), str(EMULATOR / "mame/src/mame/pbitz/zephyr80_ioc_core.cpp"),
+             str(EMULATOR / "mame/src/mame/pbitz/zephyr80_ioc_hid.cpp"),
              "-o", str(binary)]
     built = subprocess.run(build, capture_output=True, text=True)
     log = "$ " + " ".join(build) + "\n" + built.stdout + built.stderr

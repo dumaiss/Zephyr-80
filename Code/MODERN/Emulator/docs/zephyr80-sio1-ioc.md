@@ -64,7 +64,7 @@ other end, and what the model does.
 | RR0 D0 | receive available | — | FIFO non-empty |
 | RR0 D2 | before every data write | — | buffer empty and no CRC byte pending |
 | RR0 D3, `/DCDB` | COMMAND_READY, waited 8 × 65535 polls | asserted while idle; dropped from accepting a request to the end of its service | the IOC drives it |
-| RR0 D5, `/CTSB` | the HID doorbell (`ioc_status`) | asserted while the HID queue holds bytes | the IOC drives it from the core's input queue |
+| RR0 D5, `/CTSB` | the HID doorbell (`ioc_status`) | asserted while the HID queue holds bytes | the IOC drives it from the HID module's input queue ([the USB keyboard](zephyr80-keyboard.md)) |
 | RR0 D3, `/DCDA` | read admission | asserted before the clock gate opens | the IOC drives it: asserted from admission to the end of a transfer to the Z80 |
 | RR0 D5, `/CTSA` | write admission and phase active | held for the transfer | the IOC drives it: asserted from admission until the bytes are clocked |
 | RR0 D4 | — | — | Hunt |
@@ -183,7 +183,10 @@ transport only through `zephyr80_ioc_core::link` (`resync_lanes`,
 core for the armed transfer and hands it the captured window
 (`bulk_armed`, `bulk_packet`, `bulk_sent`, `bulk_window`, `bulk_received`,
 `bulk_no_host`, `run_more`, `run_next`, `run_end`) and runs its idle pass
-after every service (`idle`). The card socket attaches with
+after every service: the HID module's waiting keyboard report and repeat
+(`zephyr80_ioc_hid::report`, `task`), then `idle`. The keyboard
+(`zephyr80_usb_keyboard`, the IOC's `keyboard` subdevice) hands its reports to
+the IOC (`zephyr80_usb_keyboard_device::host`). The card socket attaches with
 `zephyr80_ioc_device::set_storage` (a `zephyr80_ioc_storage` backend,
 required before the device starts). The
 core includes no SIO, CPU or lane type, no host path operation, and never
