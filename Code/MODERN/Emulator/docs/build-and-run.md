@@ -37,7 +37,12 @@ ZEPHYR_ROOT=/path/to/Zephyr-80
 make -C "$KONAOS_ROOT" build/konaos.bin
 make -C "$ZEPHYR_ROOT/Code/HOST/CPM2.2" CCP=zshell BDOS=zsdos \
   CONSOLE=v9958 STORAGE_A=rom build/zephyr80.bin
+make -C "$KONAOS_ROOT" console-serial-selftest   # serial-console image
 ```
+
+The serial-console image,
+`build-console-serial-selftest/konaos-console-serial-selftest.bin`, is the
+production driver set with the console on SIO0/B.
 
 From `Code/MODERN/Emulator/mame`, either image uses the same machine:
 
@@ -64,9 +69,12 @@ A bounded headless run uses:
   -video none -sound none -nothrottle -seconds_to_run 2
 ```
 
-The [memory/flash probes](../tests/README.md) verify both reset copies and
-entry into OS mode. Serial/keyboard prompt operation and the IOC connection
-remain incomplete; loading an image does not imply full OS boot acceptance.
+The [test runner](../tests/README.md) runs bounded, scripted cases: both
+images' reset copies and OS-mode entry, the clocks and interrupts, and the
+serial-console image to its shell prompt. SIO1 is unconnected (the machine
+has no IOC): the guests' IOC, HID and card drivers take their bounded
+absent-link paths, so the V9958/HID console takes no keyboard input and no
+card is served.
 
 ## Memory decode
 
@@ -184,8 +192,17 @@ check these properties in MAME only; they are not physical-board evidence.
 
 SIO0/B has a fixed 115200 8N1 clock and exposes `pty` and `loopback` RS232
 slots; SIO0/A takes its clock from the CTC. `-listslots zephyr80` lists the
-slots. A pty session uses `-sio0b_rs232 pty` and MAME reports its host device;
-keep throttle enabled for real-time serial pacing. SIO1 is unconnected.
+slots. A pty session uses `-sio0b_rs232 pty` and MAME reports its host device
+(`:sio0b_rs232:pty: pseudo terminal slave /dev/pts/N`); keep throttle enabled
+for real-time serial pacing. SIO1 is unconnected.
+
+The serial-console image holds its banner until the host sends AAh 55h on
+SIO0/B, and its console receiver is polled one byte deep, so a terminal types
+one byte at a time. Without an IOC the shell prompt `/system> ` follows about
+47 seconds after the sync. `python3 tests/run.py --mame ./mame/mamepbitzd
+--interactive --konaos-root "$KONAOS_ROOT"` starts the image in real time,
+sends the sync and prints the pty for a terminal such as
+`picocom -b 115200 /dev/pts/N`.
 
 For debugging, `-debug` opens the interactive debugger in a debug build, and
 `-autoboot_script foo.lua -autoboot_delay 0` runs a Lua script at startup.

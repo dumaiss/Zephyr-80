@@ -1,8 +1,126 @@
-# Memory and flash probes
+# Emulator tests
 
-Run from `Code/MODERN/Emulator`. Use current guest build outputs as described
-in [build-and-run](../docs/build-and-run.md); MAME's archived ROM files are not
-current guest inputs. The probes require no guest source/ABI changes.
+Run from `Code/MODERN/Emulator`. `tests/run.py` is the one entry point: it
+runs bounded cases against the `zephyr80` machine and records each result.
+Guest images are current build outputs from their own checkouts (see
+[build-and-run](../docs/build-and-run.md)); MAME's archived ROM files are not
+guest inputs, and nothing here is part of either OS's build or `make check`.
+
+```sh
+python3 tests/run.py --list
+python3 tests/run.py --mame ./mame/mamepbitzd \
+  --case memory-flash --case clocks-irqs --case serial-boot --case timer \
+  --konaos-root /path/to/ZephyrOS --zephyr-root /path/to/Zephyr-80
+```
+
+| Option | Meaning |
+|---|---|
+| `--mame PATH` | the MAME binary (`mame/mamepbitzd` debug or `mame/mamepbitz` release) |
+| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash` or `clocks-irqs` |
+| `--list` | the cases, what each proves and the inputs it needs |
+| `--konaos-root`, `--zephyr-root` | the ZephyrOS and Zephyr-80 checkouts the inputs come from |
+| `--output DIR` | result directory, default `tests/output/run` (ignored by Git) |
+| `--prompt TEXT` | the serial shell prompt the serial cases wait for, default `/system> ` |
+| `--interactive` | boot the serial image in real time on a pty for a terminal (below); no verdict |
+
+| Case | Input | Proof |
+|---|---|---|
+| `memory-flash` | `konaos`, `zsdos` | the twelve [memory and flash probes](#memory-and-flash-probes) |
+| `clocks-irqs` | `konaos`, `zsdos` | the eleven [clock and interrupt probes](#clock-and-interrupt-probes) |
+| `serial-boot` | `serial` | SIO0/B: host sync, the banner, `console: driver OK`, the shell prompt, `pwd` answered `/system`, the prompt again |
+| `timer` | `serial` | `/system/timer.exe` on the guest's CTC tick (below) |
+| `serial-pty` | `serial` | throttled, real time: the runner is the host terminal on the pty and types `pwd` paced by the host clock |
+| `vdp-text` | none (a DI/HALT image) | the VDP observations: TEXT1, TEXT2 and GRAPHIC1 text read from VRAM, rendered glyph pixels, a PNG snapshot, GRAPHIC6 refused |
+
+Inputs: `konaos` is `ZephyrOS/build/konaos.bin`, `zsdos` is
+`Zephyr-80/Code/HOST/CPM2.2/build/zephyr80.bin`, `serial` is
+`ZephyrOS/build-console-serial-selftest/konaos-console-serial-selftest.bin`
+(`make console-serial-selftest`). A missing input stops the run before any
+case with exit 2, naming the file and the command that builds it.
+
+Each case gets a fresh directory under `--output`, removed and recreated
+when the case starts: `inputs.json` (MAME binary and input SHA-256, Git HEAD
+and changed files of the three checkouts), `manifest.json` (the exact MAME
+command, the harness environment, flash image hash, limits), `mame.log`,
+`serial.bin` (bytes received from the guest), `serial-times.tsv` (emulated
+time of every received chunk and every sent byte), `result.json`, and the
+case's own cfg/nvram/state/snapshot directories. `results.json` in
+`--output` lists every case. MAME runs with `-noreadconfig`, so no saved
+setting or earlier output reaches a case.
+
+A case passes only when MAME exits 0 and the harness printed exactly one
+`PASS harness CASE:` line. A failed expectation, the emulated deadline, the
+host watchdog (MAME is killed, exit 124), a MAME error exit or signal, and a
+Lua error all fail it; the runner then exits 1. Failures print `DIAG` lines:
+the case, emulated time, PC, SP, I, the memory latch, what the case was
+waiting for, the VDP mode and the serial tail. Headless cases use
+`-video none -sound none -nothrottle`; each has an emulated-time deadline,
+MAME's `-seconds_to_run` two seconds later, and a wall-time watchdog.
+
+## Serial harness
+
+`harness.lua` is the autoboot script of every Lua case. It loads the case
+script (`serial.lua`, `vdp_text.lua`), runs the case body as a coroutine
+resumed once per emulated frame, and ends the run with `machine:exit()`
+after its verdict. Taps and notifiers are kept referenced for the whole run;
+a guard keeps a soft reset from starting the harness twice.
+
+SIO0/B is MAME's stock `pty` slot (`-sio0b_rs232 pty`). The runner opens
+the slave the slot advertises, sets it raw at 115200 8N1 with non-blocking
+reads, and names it to the harness. The harness opens the same slave: what
+it reads is what the slot deserialized from the guest's TXD, and what it
+writes the slot shifts into the guest's RXD, both at emulated time. CPU
+writes to the SIO are never read as console output.
+
+| Operation | Meaning |
+|---|---|
+| `harness.wait(pred, timeout, what)` | wait until `pred()` returns a value, at most `timeout` emulated seconds |
+| `harness.serial.attach(t)` | open the runner's pty slave |
+| `harness.serial.host_sync(t)` | send AAh 55h every 0.25 s until the guest's first byte (the serial images hold their banner for it) |
+| `harness.serial.wait(text, t, from)` | wait for text in the received bytes at or after offset `from` |
+| `harness.serial.type(line)` | send a line one byte per echo, then CR; returns where the answer starts |
+| `harness.serial.data`, `mark()`, `tail()` | the received bytes and offsets |
+| `harness.vdp.mode()`, `reg(n)`, `vram(addr)` | V9958 mode, control registers and VRAM, read from the device |
+| `harness.vdp.text()`, `wait_text(text, t)` | name-table rows read from VRAM |
+| `harness.vdp.pixels()`, `snapshot(name)` | the rendered bitmap; a PNG in the case directory |
+
+The guest's console receiver is polled one byte deep, so `type` sends each
+byte only after the previous one's echo. Name-table text is the character
+codes in VRAM, read as ASCII: it matches what the screen shows when the
+pattern table holds an ASCII-ordered font. TEXT1, TEXT2 and GRAPHIC1–3 are
+decoded (vertical scroll R#23 is not applied); MULTICOLOR and the bitmap
+modes GRAPHIC4–7 hold no character codes and `text()` returns `nil` with the
+reason. Both guests' V9958 consoles draw glyphs into GRAPHIC6, so their
+screen text is not readable this way; the rendered bitmap and snapshots
+are. A case can add MAME options (`mame_args` in `run.py`), for example
+`-wavwrite` for audio or a video mode for rendering.
+
+The serial cases boot the console-serial image without an IOC: the IOC,
+HID and card drivers take their bounded absent-link paths, so the prompt
+follows about 47 emulated seconds after the host sync, and the shell starts
+in `/system`. `timer` taps the CTC's I/O writes and the IM2 vector fetch of
+channel 2, then runs `timer stage` (INFO 390625/250, 10,000 monotonic
+readings, a one-second advance within 39062–39312 counts, the bounds of
+ZephyrOS `tests/test_timer.py`) and the bare `timer` (one line a second for
+60 s). It requires channel 2 programmed for 10 MHz / 256 / 250 = 156.25 Hz,
+the acknowledge rate during the run within 0.1 % of 156.25 Hz, no gap of
+1.5 tick periods, and the guest's 60 lines 0.99–1.05 s apart.
+
+`serial-pty` keeps throttle on: host serial pacing and `-nothrottle` run on
+different clocks, so the host-paced session (sync, prompt, `pwd` one byte
+per echo) runs in real time, and the harness only bounds it and reports the
+host's verdict.
+
+`--interactive` starts the serial image throttled, prints the pty MAME
+advertises, sends the host sync until the banner starts, then leaves the pty
+to a terminal, for example `picocom -b 115200 /dev/pts/N`. The prompt
+arrives about 47 seconds later. Its MAME directories are under
+`--output/interactive`; it stops after an hour or on Ctrl-C.
+
+## Memory and flash probes
+
+The runner's `memory-flash` case runs the media, decoder, reload and guest
+probes. The fixture check and the debug self-test run on their own:
 
 ```sh
 python3 tests/decoder_fixture.py --check \
@@ -11,16 +129,13 @@ c++ -std=c++17 -DMAME_DEBUG -Wall -Wextra -Werror \
   -I mame/src/osd -I mame/src/mame/pbitz \
   tests/decoder_selftest.cpp -o tests/output/decoder_selftest
 tests/output/decoder_selftest tests/fixtures/rev13.txt
-python3 tests/memory_flash.py --mame mame/mamepbitzd \
-  --konaos-image /path/to/ZephyrOS/build/konaos.bin \
-  --zsdos-image /path/to/Zephyr-80/Code/HOST/CPM2.2/build/zephyr80.bin
 ```
 
-Create `tests/output` first (`mkdir -p tests/output`). It is ignored and holds
-all disposable media, logs, SRAM snapshots and `results.json` (exact commands,
-exit codes, wall times and input hashes). `--case` selects one or more cases:
-`one`, `partial`, `full`, `empty`, `oversized`, `absent`, `missing`,
-`unreadable`, `decoder`, `reload`, `konaos`, `zsdos`. Each MAME process has a
+The case directory holds all disposable media, logs, SRAM snapshots and the
+probes' `results.json` (exact commands, exit codes, wall times and input
+hashes). `memory-flash:PROBE` selects probes: `one`, `partial`, `full`,
+`empty`, `oversized`, `absent`, `missing`, `unreadable`, `decoder`,
+`reload`, `konaos`, `zsdos`. Each MAME process has a
 2-second emulated-time limit and a 60-second wall-time limit; timeout/signal
 termination never passes. Positive cases require an explicit PASS marker.
 Negative cases require the normal MAME error exit and diagnostic. Unreadable
@@ -54,24 +169,18 @@ Guest copy references: KonaOS `boot/shadow_copy.asm` (page 0→bank 0 and page
 (page 0→bank 0 and page 7→bank 7). Full prompts, serial, IOC, interrupt timing,
 and physical-board behavior are outside these probes. No electrical flash
 programming, PLD delay, permission-denied or mid-read I/O fault injection is
-claimed. These standalone probes supply the `memory-flash` case when the
-shared runner is available.
+claimed.
 
 ## Clock and interrupt probes
 
-```sh
-python3 tests/clocks_irqs.py --mame mame/mamepbitzd \
-  --konaos-image /path/to/ZephyrOS/build/konaos.bin \
-  --zsdos-image /path/to/Zephyr-80/Code/HOST/CPM2.2/build/zephyr80.bin
-```
-
-The harness assembles `clocks_irqs.asm` with `sdasz80`, `sdldz80` and
-`makebin` into `tests/output/clocks_irqs/` and boots it as the flash image.
+`python3 tests/run.py --case clocks-irqs` assembles `clocks_irqs.asm` with
+`sdasz80`, `sdldz80` and `makebin` into the case directory and boots it as
+the flash image.
 The program copies itself into SRAM, installs an IM2 table at 8000h whose
 handlers report through mailboxes, and runs the case `clocks_irqs.lua` selects.
 The Lua side timestamps every acknowledge by tapping the CPU's vector-table
 read, and programs devices only through the machine's I/O handlers.
-`--case` selects one or more cases; each MAME process has an emulated-time
+`clocks-irqs:PROBE` selects probes; each MAME process has an emulated-time
 verdict limit, MAME's own `-seconds_to_run` one second later, and a wall-time
 limit. A case passes only on exit 0 with its explicit PASS line.
 
@@ -88,7 +197,6 @@ limit. A case passes only on exit 0 with its explicit PASS line.
 | `pty` | SIO0/B on a `pty` slot, throttled: the host reads the program's 115200 8N1 banner lines |
 | `konaos`, `zsdos` | The current guests boot without an IOC; decoding every SIO1 control write shows WR1 interrupt enables stay clear, so SIO1 raises no guest interrupt |
 
-`results.json` records each command, exit code, wall and emulated time, speed
-and input hash. These standalone probes supply the `clocks-irqs` case when the
-shared runner is available. The guest `/system/timer.exe` measurement needs a
-console and storage and is not part of these probes.
+The probes' `results.json` records each command, exit code, wall and
+emulated time, speed and input hash. The guest `/system/timer.exe`
+measurement is the `timer` case.

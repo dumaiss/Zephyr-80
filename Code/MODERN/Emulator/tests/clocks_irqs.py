@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-"""Bounded standalone clock/interrupt probes, for integration with the shared runner."""
-import argparse
+"""Clock and interrupt probes: the `clocks-irqs` case of tests/run.py."""
 import hashlib
 import json
 import os
@@ -14,6 +12,7 @@ import tty
 HERE = Path(__file__).resolve().parent
 PROBES = ("channels", "timer", "baud", "overlap", "daisy", "pty", "latch", "nmi", "nested")
 GUESTS = ("konaos", "zsdos")
+CASES = PROBES + GUESTS
 # Emulated-second verdict limit per case; MAME's own bound is one second later.
 LIMITS = {"channels": 2, "timer": 6, "baud": 2, "overlap": 2, "daisy": 2, "pty": 5, "latch": 4, "nmi": 3, "nested": 2, "konaos": 6, "zsdos": 6}
 BANNER = b"ZEPHYR80 SIO0B PTY 115200\r\n"
@@ -68,23 +67,16 @@ def pty_session(command, environment, wall):
     return code, (log + rest).decode(errors="replace"), received
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mame", required=True, type=Path)
-    parser.add_argument("--konaos-image", required=True, type=Path)
-    parser.add_argument("--zsdos-image", required=True, type=Path)
-    parser.add_argument("--case", action="append", choices=PROBES + GUESTS)
-    parser.add_argument("--output", type=Path, default=HERE / "output")
-    args = parser.parse_args()
-    output = args.output.resolve()
+def run(mame, konaos_image, zsdos_image, output, cases=None):
+    """Run the probes (all of CASES by default) into `output`; returns one record per probe."""
     output.mkdir(parents=True, exist_ok=True)
     probe = assemble(output)
-    cases = args.case or list(PROBES + GUESTS)
+    cases = cases or CASES
     results = []
     for case in cases:
-        image = {"konaos": args.konaos_image, "zsdos": args.zsdos_image}.get(case, probe).resolve()
+        image = {"konaos": konaos_image, "zsdos": zsdos_image}.get(case, probe).resolve()
         limit = LIMITS[case]
-        command = [str(args.mame.resolve()), "zephyr80", "-noreadconfig", "-video", "none", "-sound", "none",
+        command = [str(mame.resolve()), "zephyr80", "-noreadconfig", "-video", "none", "-sound", "none",
                    "-skip_gameinfo", "-seconds_to_run", str(limit + 1), "-cfg_directory", str(output / "cfg"),
                    "-nvram_directory", str(output / "nvram"), "-state_directory", str(output / "sta"),
                    "-snapshot_directory", str(output / "snap"), "-flash", str(image),
@@ -117,16 +109,7 @@ def main():
         verdict = next((line for line in log.splitlines() if re.match(r"(PASS|FAIL) clocks-irqs ", line)), None)
         record = {"case": case, "pass": ok, "exit": code, "wall_seconds": round(wall, 3), "emulated_seconds": emulated,
                   "speed_percent": round(100 * emulated / wall, 1) if emulated and case != "pty" else None,
-                  "verdict": verdict, "command": command, "image": str(image), "sha256": sha(image)}
+                  "verdict": verdict, "log": str(output / f"{case}.log"), "command": command, "image": str(image), "sha256": sha(image)}
         results.append(record)
-        print(json.dumps(record), flush=True)
-        if not ok:
-            print(log, flush=True)
     (output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    passed = sum(r["pass"] for r in results)
-    print(f"RESULT {passed}/{len(results)} passed, {len(results) - passed} failed, 0 skipped")
-    return 0 if passed == len(results) else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    return results
