@@ -101,9 +101,9 @@ released within the bound, gets no reply.
 | CMD_RESET to the machine reset | 10 ms | `handler_reset` |
 | request detection, decoding, dispatch, media access | 0 | not modelled |
 
-Each reply comes from the core: the classes, their replies and the empty card
-socket the machine has until card media are attached are in
-[The IO controller's protocol core](zephyr80-ioc-core.md). CMD_RESET answers
+Each reply comes from the core: the classes and their replies are in
+[The IO controller's protocol core](zephyr80-ioc-core.md), the media behind
+them in [the card socket](zephyr80-card.md). CMD_RESET answers
 nothing and resets the machine after its hold. A machine reset resets the
 controller with the board: no service in flight, both `/SYNC` lines released,
 READY asserted.
@@ -140,8 +140,9 @@ transport only through `zephyr80_ioc_core::link` (`resync_lanes`,
 core for the armed transfer and hands it the captured window
 (`bulk_armed`, `bulk_packet`, `bulk_sent`, `bulk_window`, `bulk_received`,
 `bulk_no_host`, `run_more`, `run_next`, `run_end`) and runs its idle pass
-after every service (`idle`). Card media attach with
-`zephyr80_ioc_device::set_storage` (a `zephyr80_ioc_storage` backend). The
+after every service (`idle`). The card socket attaches with
+`zephyr80_ioc_device::set_storage` (a `zephyr80_ioc_storage` backend,
+required before the device starts). The
 core includes no SIO, CPU or lane type, no host path operation, and never
 touches an interrupt line.
 

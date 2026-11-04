@@ -73,9 +73,26 @@ The [test runner](../tests/README.md) runs bounded, scripted cases: both
 images' reset copies and OS-mode entry, the clocks and interrupts, and the
 serial-console image to its shell prompt, and the IOC link. SIO1 carries a
 behavioural IO controller ([SIO1 and the IO controller](zephyr80-sio1-ioc.md))
-with its [protocol core](zephyr80-ioc-core.md); the card socket is empty and
-no keyboard is attached, so the V9958/HID console takes no keyboard input and
-the guests report no filesystem.
+with its [protocol core](zephyr80-ioc-core.md). No keyboard is attached, so
+the V9958/HID console takes no keyboard input.
+
+## The SD card
+
+The controller's card socket takes a card image or a host folder
+([the card socket](zephyr80-card.md)):
+
+```sh
+./mamepbitzd zephyr80 -flash "$KONAOS_ROOT/build/konaos.bin" -card sd.img
+./mamepbitzd zephyr80 -flash "$KONAOS_ROOT/build/konaos.bin" -carddir card/
+```
+
+`-card` takes a raw card, or a FAT16/FAT32 volume (superfloppy or MBR); a
+FAT image is made with, for example, `truncate -s 64M sd.img` and
+`mkfs.fat -F 16 sd.img`. `-carddir` serves a folder's 8.3-named files and
+directories; CP/M volumes there are `CPM/CPM_1.DRV` and `CPM/CPM_2.DRV`,
+8 MiB each. The two options are exclusive, and both write the media in
+place: use a copy. Without either the socket is empty and the guests report
+no filesystem.
 
 ## Memory decode
 

@@ -34,7 +34,6 @@ public:
 	bool read_only = false;   // writes are refused (FR_WRITE_PROTECTED)
 	u32 capacity = 1u << 20;  // bytes the volume holds
 	fr fail_next = fr::OK;    // the next filesystem call answers this
-	u32 generation = 1;
 
 	std::map<std::string, node> tree;    // upper-case absolute path -> node
 	std::vector<std::string> order;      // creation order (directory order)
@@ -50,7 +49,6 @@ public:
 		auto it = tree.find(upper(path));
 		return (it == tree.end() || it->second.dir) ? nullptr : &it->second.data;
 	}
-	void replace_media() { generation++; ready = false; mounted = false; for (auto &o : objects) o.valid = false; }
 	unsigned open_objects() const { return unsigned(std::count_if(objects.begin(), objects.end(), [] (obj const &o) { return o.used; })); }
 
 	// A digest of everything on the media, for "unchanged" checks.
@@ -78,7 +76,6 @@ public:
 		return card::OK;
 	}
 	virtual bool card_ready() const override { return ready; }
-	virtual u32 media_generation() const override { return generation; }
 	virtual void controller_reset() override { objects.clear(); mounted = false; ready = false; }
 	virtual bool raw_blocks() const override { return raw; }
 	virtual card block_read(u32 lba, u8 *data) override
@@ -86,6 +83,11 @@ public:
 		card const st = card_init();
 		if (st != card::OK)
 			return st;
+		if (!raw && lba == 0)
+		{
+			std::fill_n(data, BLOCK_BYTES, 0); // a folder: the card answers, block 0 blank
+			return card::OK;
+		}
 		if (!raw || lba >= blocks.size())
 			return card::READ;
 		std::copy(blocks[lba].begin(), blocks[lba].end(), data);

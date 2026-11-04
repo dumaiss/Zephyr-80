@@ -29,6 +29,7 @@ import tty
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import card_backends  # noqa: E402
 import clocks_irqs  # noqa: E402
 import ioc_core  # noqa: E402
 import memory_flash  # noqa: E402
@@ -65,6 +66,15 @@ CASES = {
                        about="ZSDOS IOC transport over SIO1: LINK_SYNC bring-up and every boot request answered"),
     "ioc-core": dict(kind="suite", module=ioc_core, inputs=("konaos", "zsdos"),
                      about="IOC protocol core: frames, bulk and media effects (host test); both guests' replies from the empty card socket (3 probes)"),
+    "card-image": dict(kind="suite", module=card_backends, inputs=("serial",), probes=card_backends.PROBES["image"],
+                       call=lambda mame, inputs, out, sub: card_backends.run("image", mame, inputs, out, sub),
+                       about="-card: FAT16/FAT32/MBR images through FatFs (host workload, read-only, full, raw, coherence, media change), the KonaOS shell, option errors (3 probes)"),
+    "card-directory": dict(kind="suite", module=card_backends, inputs=("serial",), probes=card_backends.PROBES["directory"],
+                           call=lambda mame, inputs, out, sub: card_backends.run("directory", mame, inputs, out, sub),
+                           about="-carddir: a host folder as the card (host workload, names, collisions, links, read-only, full, no raw unit), the KonaOS shell, option errors (3 probes)"),
+    "cpm-volumes": dict(kind="suite", module=card_backends, inputs=("zsdos",), probes=card_backends.PROBES["volumes"],
+                        call=lambda mame, inputs, out, sub: card_backends.run("volumes", mame, inputs, out, sub),
+                        about="CP/M volume files on both backends (mount, extents, records, bounds, coherence), ZSDOS C:/D: on an image and a folder (3 probes)"),
     "vdp-text": dict(kind="lua", script="vdp_text.lua", inputs=(), deadline=5, wall=60,
                      about="VDP observations: TEXT1/TEXT2/GRAPHIC1 text from VRAM, rendered pixels, a snapshot, bitmap refusal"),
 }
@@ -297,7 +307,10 @@ def run_lua(name, spec, mame, inputs, case_dir, prompt):
 
 
 def run_suite(name, spec, mame, inputs, case_dir, subcases):
-    records = spec["module"].run(mame, inputs.get("konaos"), inputs.get("zsdos"), case_dir, subcases or None)
+    if "call" in spec:
+        records = spec["call"](mame, inputs, case_dir, subcases or None)
+    else:
+        records = spec["module"].run(mame, inputs.get("konaos"), inputs.get("zsdos"), case_dir, subcases or None)
     passed = sum(r["pass"] for r in records)
     return {"case": name, "pass": passed == len(records) and bool(records),
             "probes": {"passed": passed, "failed": len(records) - passed, "skipped": 0},
@@ -309,7 +322,8 @@ def parse_case(text):
     if name not in CASES:
         raise argparse.ArgumentTypeError(f"unknown case {name!r}; --list shows the cases")
     if sub:
-        if CASES[name]["kind"] != "suite" or sub not in CASES[name]["module"].CASES:
+        spec = CASES[name]
+        if spec["kind"] != "suite" or sub not in spec.get("probes", getattr(spec["module"], "CASES", ())):
             raise argparse.ArgumentTypeError(f"case {name} has no probe {sub!r}")
     return name, sub
 

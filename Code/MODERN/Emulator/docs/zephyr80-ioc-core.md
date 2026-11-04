@@ -6,7 +6,7 @@ the request found in a command window and returns the reply, arms the bulk
 transfer a reply announces (READY), checks and commits what the bulk lane
 brings back, and answers the DONE query. It holds every protocol object; the
 media behind it are a `zephyr80_ioc_storage` backend
-(`zephyr80_ioc_storage.h`). The transport that runs it over SIO1 is
+(`zephyr80_ioc_storage.h`), the machine's [card socket](zephyr80-card.md). The transport that runs it over SIO1 is
 `zephyr80_ioc` ([SIO1 and the IO controller](zephyr80-sio1-ioc.md)).
 
 The specification is the controller firmware (`Code/MCU/IOController`) as
@@ -34,8 +34,8 @@ every time, so no byte of an earlier reply survives into it.
 ## Command and status matrix
 
 Statuses are `ioc_frame.h` values. "Empty socket" is what the machine answers
-until card media are attached: the firmware with no card in
-the socket (`sd_card_init` reports `SD_ERR_NO_CARD`).
+with no `-card` or `-carddir` media: the firmware with no card in the socket
+(`sd_card_init` reports `SD_ERR_NO_CARD`).
 
 | Class | Reply | Behaviour | Empty socket | Served from |
 |---|---|---|---|---|
@@ -68,7 +68,10 @@ The FS2 commands' statuses: 40h not found, 41h end of listing, 42h exists,
 (length 0 or above 512, a run unaligned or above 2048, mode above 2, a 17th
 resolver component), 4Bh no media, 4Eh I/O. A media-level FatFs failure (disk
 error, not ready, no filesystem) drops every FS2 context and advances the
-generation.
+generation. That is the only way a media change is noticed: the backend never
+announces one, and its session (`card_ready`) ends only when an access fails;
+record and block access re-initialise the card and drop the units when they
+find the session ended (`vol_ensure_mounted`).
 
 Volumes (`volume.c`): the first record or block access brings the card up and
 mounts unit 0 raw (the card itself, 65536 records) when nothing is mounted and
@@ -85,7 +88,7 @@ layers; results are the firmware's codes and the core converts them.
 
 | Group | Operations | Firmware |
 |---|---|---|
-| Card session | `card_init`, `card_ready`, `media_generation`, `controller_reset` | `sd_card_init`, `sd_card_is_initialized`; a media change is a lost session |
+| Card session | `card_init`, `card_ready`, `controller_reset` | `sd_card_init`, `sd_card_is_initialized` (false only after a failed access) |
 | Raw blocks | `raw_blocks`, `block_read`, `block_write`, `flush` | `sd_card`, `sd_cache` |
 | FAT volume | `fs_mount`, `fs_unmount`, `fs_geometry`, `stat`, `open`, `close`, `size`, `seek`, `read`, `write`, `truncate`, `sync`, `opendir`, `readdir`, `closedir`, `unlink`, `mkdir`, `rename` | `sdfs`, FatFs (`FRESULT` numbering; `seek` clips a read-only file and grows a writable one) |
 | Volume images | `image_open`, `image_close`, `image_read`, `image_write` | `fatmap_resolve` (`FatMapStatus`) and the volume's blocks |
@@ -105,7 +108,9 @@ unmount leaves the backend's objects allocated but answering INVALID_OBJECT
 until the core closes them; `controller_reset` drops them all (controller RAM
 is lost; the media keep their contents). The core keeps at most eight objects
 open. Media without card blocks (a host folder) answer `raw_blocks` false and
-get no raw unit.
+get no raw unit. The core needs a backend before it starts; the machine's is
+`zephyr80_card_socket`, and the host test's in-memory card is
+`tests/ioc_core/memory_storage.h`.
 
 ## Bulk
 
@@ -146,7 +151,7 @@ command byte reaches them.
 | HID input queue | 128 bytes, a key's bytes whole or dropped, drop count saturating at FFh |
 | Volume units | 2 |
 
-The core object is 3240 bytes on x86-64 (buffers 2688, resolver 240, HID queue
+The core object is 3232 bytes on x86-64 (buffers 2688, resolver 240, HID queue
 128, the rest counters, tables and two pointers); the transport adds 36 + 35 +
 539 bytes of lane buffers.
 Every member of both is save-registered.

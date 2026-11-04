@@ -17,7 +17,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | Option | Meaning |
 |---|---|
 | `--mame PATH` | the MAME binary (`mame/mamepbitzd` debug or `mame/mamepbitz` release) |
-| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes` or `ioc-core` |
+| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory` or `cpm-volumes` |
 | `--list` | the cases, what each proves and the inputs it needs |
 | `--konaos-root`, `--zephyr-root` | the ZephyrOS and Zephyr-80 checkouts the inputs come from |
 | `--output DIR` | result directory, default `tests/output/run` (ignored by Git) |
@@ -35,6 +35,9 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `sio1-konaos` | `serial` | the KonaOS IOC driver over SIO1 (below): LINK_SYNC at its first attempt, the shell's PING, every request answered; the same after a reset at the prompt and a reset inside the PING reply |
 | `sio1-zsdos` | `zsdos` | the ZSDOS transport over SIO1: LINK_SYNC at its first attempt and every boot request answered |
 | `ioc-core` | `konaos`, `zsdos` | the three [IOC core probes](#ioc-core-probes): the protocol core against real frames, and both guests' replies from the empty card socket |
+| `card-image` | `serial` | the three [card probes](#card-probes) for `-card` |
+| `card-directory` | `serial` | the three [card probes](#card-probes) for `-carddir` |
+| `cpm-volumes` | `zsdos` | the three [card probes](#card-probes) for CP/M volume files |
 | `vdp-text` | none (a DI/HALT image) | the VDP observations: TEXT1, TEXT2 and GRAPHIC1 text read from VRAM, rendered glyph pixels, a PNG snapshot, GRAPHIC6 refused |
 
 Inputs: `konaos` is `ZephyrOS/build/konaos.bin`, `zsdos` is
@@ -249,10 +252,32 @@ nonzero. ZSDOS sends no PING.
 
 | Probe | Proof |
 |---|---|
-| `core` | `ioc_core/ioc_core_test.cpp`, built with the core source and run on the host: every request a complete packet in a 36-byte window, every reply encoded, CRC-checked and decoded again, bulk packets and capture windows built as the lanes carry them, expected values from the firmware source. Its eleven tests: framing (bad CRC, length, truncation, unadmitted class, nonzero STATUS, idle window, a valid frame after a broken one, counters, no stale bytes), the transport-level classes (diagnostic classes FEh, LINK_SYNC, RESET without a reply), the empty socket for every class, FS2 reads (EOF, ranges, runs of 512-byte packets, wrong cookie, stale generation after FS2_RESET, a media change and a disk error), directories and the 16-component resolver, bad names and refused requests leaving the media unchanged, FS2 writes (DONE, partial, wrong SEQ or TYPE, late marker, no host, underrun under the CRC bypass, reset mid-transfer, truncate, full volume, namespace commands), the `/SHARED` family, records, blocks and volumes (raw, auto-mount, file images, ranges, folder media), the HID input queue (partial dequeue, doorbell, overflow) and save registration |
+| `core` | `ioc_core/ioc_core_test.cpp`, built with the core source and run on the host: every request a complete packet in a 36-byte window, every reply encoded, CRC-checked and decoded again, bulk packets and capture windows built as the lanes carry them, expected values from the firmware source. Its eleven tests: framing (bad CRC, length, truncation, unadmitted class, nonzero STATUS, idle window, a valid frame after a broken one, counters, no stale bytes), the transport-level classes (diagnostic classes FEh, LINK_SYNC, RESET without a reply), the empty socket for every class, FS2 reads (EOF, ranges, runs of 512-byte packets, wrong cookie, stale generation after FS2_RESET, a removed card noticed at its first failing access, a disk error), directories and the 16-component resolver, bad names and refused requests leaving the media unchanged, FS2 writes (DONE, partial, wrong SEQ or TYPE, late marker, no host, underrun under the CRC bypass, reset mid-transfer, truncate, full volume, namespace commands), the `/SHARED` family, records, blocks and volumes (raw, auto-mount, file images, ranges, folder media), the HID input queue (partial dequeue, doorbell, overflow) and save registration |
 | `konaos` | the production KonaOS image boots for 10 emulated seconds: each of its requests gets its class's reply with the empty-socket status, FS2_RESET generations count from 2, and the bulk lane's data port is never touched |
 | `zsdos` | the same for the ZSDOS image over 8 emulated seconds |
 
-`ioc_core/memory_storage.h` is the in-memory card the host test uses, and
-`ioc_core/emu.h` supplies the MAME integer types; neither is part of the
-emulator. The build command and the test's output are in the probe's log.
+`ioc_core/rig.h` drives the core as the transport does (shared with the card
+host test), `ioc_core/memory_storage.h` is the in-memory card the core test
+uses, and `ioc_core/emu.h` supplies the MAME integer types; none of them is
+part of the emulator. The build command and the test's output are in the probe's log.
+
+## Card probes
+
+`card-image`, `card-directory` and `cpm-volumes` test [the card
+socket](../docs/zephyr80-card.md) (`card_backends.py`); `CASE:PROBE` selects
+one probe. All media are made fresh in the probe's directory: FAT images by
+`mkfs.fat` and filled by `fat_fixture.py`'s own FAT writer, folders by the
+host, CP/M volumes by `card_backends.py` in ZSDOS's SD geometry. Nothing else
+is mounted or written.
+
+| Probe | Proof |
+|---|---|
+| `host` | `card/card_test.cpp`, built with the core, the production socket and FatFs and run on the host on those media, through real frames (`ioc_core/rig.h`); then what it wrote is read back independently (`fat_fixture.Volume` and `fsck.fat -n` for images, the host filesystem for folders, volume and raw records at their file offsets). `card-image`: the shared workload (listing, reads to and past the end, READ_RUN, create, write, overwrite, sync, truncate, append, EXISTS/NOT_FOUND/IS_DIR/BAD_NAME, MKDIR, RENAME, RMDIR of a non-empty directory, UNLINK, STAT, SPACE, a stale token, the `/SHARED` family and FS2 reading what it wrote, then a new socket reading it all back) on FAT16, FAT32 and MBR-partitioned FAT32; a read-only image; a full volume; a raw card (first-access raw unit, the auto-mount dropping it, the range, a card smaller than the raw unit); a raw write to the block FatFs holds dirty; removal and an unnoticed swap; a controller reset. `card-directory`: the same workload on a folder; a read-only folder; a full folder (RLIMIT_FSIZE); 8.3 names, case, collisions, links, `.`/`..`, long and non-ASCII names; no raw unit. `cpm-volumes`: auto-mount, VOL_INFO extents and base (a 3-extent CPM_2.DRV), records across extents and at both ends, VOL_RANGE and VOL_UNMOUNTED, a cut write, FS2 and the volume seeing each other's writes, VOL_MOUNT of a wrong-size, missing and 17-extent image, on an image and a folder; a read-only volume file |
+| `konaos` | the KonaOS serial image boots with the card and its shell runs `ls`, `cat`, `cp`, `stat`, `mkdir`, `mv` across directories, `cp` of 64 KiB into `/SHARED`, `rm`, `rmdir` and a missing file; each answer is checked, the card is then read back independently (and `fsck.fat -n` for the image), and a second MAME run on the same card lists and stats the results |
+| `options` | MAME refuses `-card` with `-carddir`, a missing path and the wrong kind of path, each with its message |
+| `zsdos-image`, `zsdos-folder` | ZSDOS boots with `/CPM/CPM_1.DRV` (C:, a text file), `CPM_2.DRV` (D:, empty), `/CPM/B` (B:) and `/SHARED/NOTE.TXT`; three ESC on the serial port hand ZephyrShell to it (`card.lua`), then `VOLINFO` (units, base, extents), `SDDIR`, `SDGET NOTE.TXT` to B: and `MCOPY D:=C:HELLO.TXT` (copy and verify); afterwards D:'s copy is read from CPM_2.DRV's own directory and compared with C:'s, C: must be unchanged and `/CPM/B/NOTE.TXT` must hold `/SHARED/NOTE.TXT` |
+
+`card.lua` runs the guest sessions: one command per line of the steps file
+the probe writes, each answer checked for its expected text (or for no output
+at all), a key sent when a program ends with `[any key]`, and each step's
+emulated time traced.

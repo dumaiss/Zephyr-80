@@ -1,239 +1,14 @@
 // license:BSD-3-Clause
 // copyright-holders:Kitamura
-// TEST-ONLY: the IOC protocol core against real wire frames.  Each request
-// is a complete A5 5A ... CRC packet inside a 36-byte command window; each
-// reply is encoded, CRC-checked and decoded again; bulk transfers run as the
-// transport runs them (the packet to the Z80 byte for byte, the window from
-// the Z80 as the KonaOS write path fills it).  Expected values come from the
-// firmware source, cited per check.  Media: tests/ioc_core/memory_storage.h.
-#include "emu.h"
-#include "zephyr80_ioc_core.h"
+// TEST-ONLY: the IOC protocol core against real wire frames (rig.h).
+// Expected values come from the firmware source, cited per check.  Media:
+// tests/ioc_core/memory_storage.h.
+#include "rig.h"
 #include "memory_storage.h"
-
-#include <cstdarg>
-#include <cstdio>
-#include <functional>
-#include <string>
-#include <vector>
 
 namespace {
 
-using bytes = std::vector<u8>;
-using core_t = zephyr80_ioc_core;
-using bulk_dir = core_t::bulk_dir;
-
-unsigned g_checks, g_failed, g_test_failed;
-
-void check(bool ok, char const *format, ...)
-{
-	g_checks++;
-	if (ok)
-		return;
-	g_failed++;
-	g_test_failed++;
-	va_list args;
-	va_start(args, format);
-	std::printf("  FAIL ");
-	std::vprintf(format, args);
-	std::printf("\n");
-	va_end(args);
-}
-
-struct fake_link : core_t::link
-{
-	unsigned resyncs = 0;
-	unsigned resets = 0;
-	bool synced = true;
-	bool doorbell = false;
-	virtual void resync_lanes() override { resyncs++; }
-	virtual bool command_lane_synced() const override { return synced; }
-	virtual void hid_doorbell(bool asserted) override { doorbell = asserted; }
-	virtual void host_reset() override { resets++; }
-};
-
-struct reply_t
-{
-	bool answered = false;
-	u8 cls = 0, seq = 0, status = 0;
-	bytes data;
-	u32 u32_at(unsigned i) const { return data[i] | (data[i + 1] << 8) | (data[i + 2] << 16) | (u32(data[i + 3]) << 24); }
-	u16 u16_at(unsigned i) const { return data[i] | (data[i + 1] << 8); }
-};
-
-bytes packet(u8 type, u8 seq, bytes const &data, u8 status = 0)
-{
-	bytes p{ 0xa5, 0x5a, u8(3 + data.size()), u8((3 + data.size()) >> 8), type, seq, status };
-	p.insert(p.end(), data.begin(), data.end());
-	u16 crc = 0;
-	for (size_t i = 2; i < p.size(); i++)
-		crc = core_t::crc16(crc, p[i]);
-	p.push_back(u8(crc >> 8));
-	p.push_back(u8(crc));
-	return p;
-}
-
-bytes name11(std::string const &base, std::string const &ext = "")
-{
-	bytes n(11, ' ');
-	for (size_t i = 0; i < base.size() && i < 8; i++)
-		n[i] = u8(base[i]);
-	for (size_t i = 0; i < ext.size() && i < 3; i++)
-		n[8 + i] = u8(ext[i]);
-	return n;
-}
-
-bytes le16(u16 v) { return { u8(v), u8(v >> 8) }; }
-bytes le32(u32 v) { return { u8(v), u8(v >> 8), u8(v >> 16), u8(v >> 24) }; }
-bytes cat(std::initializer_list<bytes> parts)
-{
-	bytes out;
-	for (auto const &p : parts)
-		out.insert(out.end(), p.begin(), p.end());
-	return out;
-}
-bytes pattern(size_t n, u8 seed)
-{
-	bytes b(n);
-	for (size_t i = 0; i < n; i++)
-		b[i] = u8(seed + i * 7 + (i >> 8));
-	return b;
-}
-
-// The controller and its media, driven as the transport drives them.
-struct rig
-{
-	fake_link link;
-	memory_storage media;
-	core_t core{ link };
-	u8 seq = 0;
-	u8 last_type = 0;
-
-	explicit rig(bool with_media = true)
-	{
-		core.set_storage(with_media ? &media : nullptr);
-		core.reset();
-	}
-
-	// One service of a window: decode, dispatch, encode, and the reply
-	// decoded back off the wire.
-	reply_t serve(bytes window)
-	{
-		window.resize(36, 0xff);
-		reply_t r;
-		core.begin();
-		core_t::frame request, reply;
-		if (!core.decode(window.data(), unsigned(window.size()), request))
-		{
-			core.abort();
-			end();
-			return r;
-		}
-		if (!core.dispatch(request, reply))
-			return r;
-		u8 wire[core_t::MAX_WIRE];
-		unsigned const n = core_t::encode(reply, wire);
-		u16 crc = 0;
-		for (unsigned i = 2; i < n - 2; i++)
-			crc = core_t::crc16(crc, wire[i]);
-		unsigned const length = wire[2] | (wire[3] << 8);
-		check(wire[0] == 0xa5 && wire[1] == 0x5a && n == 2 + 2 + length + 2 && length >= 3 && length <= 29 &&
-				crc == ((wire[n - 2] << 8) | wire[n - 1]), "reply wire form (%u bytes)", n);
-		r.answered = true;
-		r.cls = wire[4];
-		r.seq = wire[5];
-		r.status = wire[6];
-		r.data.assign(wire + 7, wire + n - 2);
-		if (core.bulk_armed() == bulk_dir::NONE)
-			end();
-		return r;
-	}
-
-	reply_t cmd(u8 type, bytes const &data = {})
-	{
-		++seq;
-		last_type = type;
-		reply_t r = serve(cat({ { 0xff }, packet(type, seq, data) }));
-		check(r.answered && r.seq == seq, "class %02X: answered with its sequence", type);
-		return r;
-	}
-
-	// The end of a service: main.c fs2_run_end, then the idle pass.
-	void end()
-	{
-		core.run_end();
-		core.idle();
-	}
-
-	// Transport, to the Z80: every packet of the armed transfer (a run's
-	// packets in order), each checked as bulk_run_send builds it.
-	std::vector<bytes> take(u8 type, u8 sequence)
-	{
-		std::vector<bytes> packets;
-		while (core.bulk_armed() == bulk_dir::TO_Z80)
-		{
-			u8 wire[core_t::BULK_WIRE_MAX];
-			unsigned const n = core.bulk_packet(wire);
-			unsigned const length = wire[2] | (wire[3] << 8);
-			check(n >= 9 && wire[0] == 0xa5 && wire[1] == 0x5a && length + 6 == n && wire[4] == type && wire[5] == sequence &&
-					wire[6] == 0 && wire[n - 2] == 0 && wire[n - 1] == 0, "bulk packet header/trailer (%u bytes)", n);
-			packets.emplace_back(wire + 7, wire + n - 2);
-			core.bulk_sent();
-			if (!core.run_more() || !core.run_next())
-				break;
-		}
-		end();
-		return packets;
-	}
-
-	bytes take_all(u8 type, u8 sequence)
-	{
-		bytes all;
-		for (auto const &p : take(type, sequence))
-			all.insert(all.end(), p.begin(), p.end());
-		return all;
-	}
-
-	// Transport, from the Z80: the capture window as the KonaOS bulk write
-	// fills it: the lead-in, the packet, its two trailer bytes, then fill.
-	// `cut` stops the host after that many packet bytes (an underrun: WR7
-	// fill follows); `late` delays its start.
-	void give(bytes const &payload, u8 type, u8 sequence, int cut = -1, unsigned late = 0, u8 status = 0)
-	{
-		check(core.bulk_armed() == bulk_dir::FROM_Z80, "a receive is armed");
-		unsigned const window = core.bulk_window();
-		bytes w(late, 0xff);
-		w.push_back(0x00); // lead-in
-		bytes p = { 0xa5, 0x5a, u8(3 + payload.size()), u8((3 + payload.size()) >> 8), type, sequence, status };
-		p.insert(p.end(), payload.begin(), payload.end());
-		p.push_back(0x12); // the SIO's CRC bytes, not checked under the bypass
-		p.push_back(0x34);
-		if (cut >= 0 && size_t(cut) < p.size())
-			p.resize(cut);
-		w.insert(w.end(), p.begin(), p.end());
-		w.resize(window, 0xaa);
-		core.bulk_received(w.data(), unsigned(w.size()));
-		end();
-	}
-
-	void no_host()
-	{
-		core.bulk_no_host();
-		end();
-	}
-
-	reply_t done()
-	{
-		reply_t r = cmd(0x06);
-		check(r.cls == 0x86 && r.status == 0 && r.data.size() == 20, "XFER_STATUS: DONE record, 20 DATA bytes");
-		return r;
-	}
-};
-
-struct test
-{
-	char const *name;
-	std::function<void()> body;
-};
+using rig = rig_t<memory_storage>;
 
 //**************************************************************************
 //  Framing and the transport-level classes
@@ -311,7 +86,8 @@ void classes()
 
 void empty_socket()
 {
-	rig t(false);
+	rig t;
+	t.media.present = false;
 	reply_t r = t.cmd(0x03);
 	check(r.cls == 0x83 && r.status == 0x15 && r.data == bytes(8, 0), "SD_READ: SD_NO_CARD, 8 trace bytes (zero)");
 	r = t.cmd(0x08, le32(5));
@@ -463,15 +239,23 @@ void fs2_read()
 	check(r.status == 0x49, "token from the previous generation: STALE");
 	check(t.media.open_objects() == 0, "FS2_RESET closed every context (%u open)", t.media.open_objects());
 
-	// A media change is a new generation; the resolver is back at the root.
+	// A removed card is noticed only by the first access that fails
+	// (map_result): then the generation advances, the old token is STALE and
+	// the resolver is back at the root.
 	t.cmd(0x34, name11("DOCS"));
 	r = t.cmd(0x35, name11("READ", "TXT"));
 	u16 const token2 = r.u16_at(0);
-	t.media.replace_media();
+	u32 const generation = t.cmd(0x31).u32_at(0);
+	t.media.present = false;
+	check(t.cmd(0x31).u32_at(0) == generation, "a removal alone changes nothing (no detection)");
 	r = t.cmd(0x36, cat({ le16(token2), le32(0), le16(16) }));
-	check(r.status == 0x49, "after a media change: STALE");
+	check(r.status == 0x4b, "the first access without the card: NO_MEDIA");
+	check(t.cmd(0x31).u32_at(0) == generation + 1, "the failure advanced the generation");
+	t.media.present = true;
+	r = t.cmd(0x36, cat({ le16(token2), le32(0), le16(16) }));
+	check(r.status == 0x49, "the card back: the old token is STALE");
 	r = t.cmd(0x35, name11("READ", "TXT"));
-	check(r.status == 0x40, "after a media change the resolver is at the root: NOT_FOUND");
+	check(r.status == 0x40, "the resolver is at the root: NOT_FOUND");
 
 	// A media-level failure (FR_DISK_ERR) drops every context (map_result).
 	t.cmd(0x34, name11("DOCS"));
@@ -885,7 +669,7 @@ void volumes()
 	r = f.cmd(0x08, le32(0));
 	check(r.status == 0x30, "folder media: record read VOL_UNMOUNTED (no raw unit)");
 	r = f.cmd(0x03);
-	check(r.status == 0x13, "folder media: SD_READ fails");
+	check(r.status == 0 && r.data == bytes(16, 0), "folder media: SD_READ answers, block 0 blank");
 }
 
 //**************************************************************************
@@ -938,14 +722,5 @@ int main()
 		{ "hid-queue", hid_queue },
 		{ "save-state", save_registration },
 	};
-	unsigned passed = 0;
-	for (auto const &t : tests)
-	{
-		g_test_failed = 0;
-		t.body();
-		std::printf("%s %s\n", g_test_failed ? "FAIL" : "PASS", t.name);
-		passed += !g_test_failed;
-	}
-	std::printf("RESULT %u passed, %u failed, 0 skipped (%u checks, %u failed)\n", passed, unsigned(tests.size()) - passed, g_checks, g_failed);
-	return passed == tests.size() ? 0 : 1;
+	return run_tests(tests);
 }
