@@ -31,6 +31,7 @@ sys.path.insert(0, str(HERE))
 
 import clocks_irqs  # noqa: E402
 import memory_flash  # noqa: E402
+import sio1_lanes  # noqa: E402
 
 # Guest inputs: (root, path under it, the existing target that builds it).
 INPUTS = {
@@ -55,6 +56,12 @@ CASES = {
     "serial-pty": dict(kind="lua", script="serial.lua", inputs=("serial",), deadline=150, wall=180, pty=True,
                        throttle=True, host="session",
                        about="real-time pty: the runner syncs, waits for the prompt and types `pwd` as a host terminal"),
+    "sio1-lanes": dict(kind="suite", module=sio1_lanes, inputs=(),
+                       about="SIO1 lanes against the probe program: exchanges, Hunt, underrun, READY, drain, overrun, reset, no IRQ, save state (8 probes)"),
+    "sio1-konaos": dict(kind="lua", script="sio1_lanes.lua", inputs=("serial",), deadline=60, wall=120, pty=True,
+                        about="KonaOS IOC driver over SIO1: LINK_SYNC, the shell's PING, every reply; machine resets idle and mid-reply"),
+    "sio1-zsdos": dict(kind="lua", script="sio1_lanes.lua", inputs=("zsdos",), deadline=8, wall=60,
+                       about="ZSDOS IOC transport over SIO1: LINK_SYNC bring-up and every boot request answered"),
     "vdp-text": dict(kind="lua", script="vdp_text.lua", inputs=(), deadline=5, wall=60,
                      about="VDP observations: TEXT1/TEXT2/GRAPHIC1 text from VRAM, rendered pixels, a snapshot, bitmap refusal"),
 }
@@ -251,7 +258,7 @@ def mame_command(mame, image, case_dir, spec, deadline):
 
 def run_lua(name, spec, mame, inputs, case_dir, prompt):
     if inputs:
-        image = inputs["serial"]
+        image = inputs[spec["inputs"][0]]
     else:
         image = case_dir / "halt.bin"
         image.write_bytes(b"\xf3\x76")  # DI; HALT
@@ -287,7 +294,7 @@ def run_lua(name, spec, mame, inputs, case_dir, prompt):
 
 
 def run_suite(name, spec, mame, inputs, case_dir, subcases):
-    records = spec["module"].run(mame, inputs["konaos"], inputs["zsdos"], case_dir, subcases or None)
+    records = spec["module"].run(mame, inputs.get("konaos"), inputs.get("zsdos"), case_dir, subcases or None)
     passed = sum(r["pass"] for r in records)
     return {"case": name, "pass": passed == len(records) and bool(records),
             "probes": {"passed": passed, "failed": len(records) - passed, "skipped": 0},
@@ -336,7 +343,7 @@ def interactive(args):
             first = os.read(slave, 4096)
         print(f"run.py: first bytes {first!r}")
         print(f"run.py: attach a terminal, for example: picocom -b 115200 {path}")
-        print("run.py: the shell prompt follows in about a minute; close MAME or press Ctrl-C to end")
+        print("run.py: the shell prompt follows in a few seconds; close MAME or press Ctrl-C to end")
         while process.poll() is None:
             chunk = os.read(process.stdout.fileno(), 4096)
             if not chunk:

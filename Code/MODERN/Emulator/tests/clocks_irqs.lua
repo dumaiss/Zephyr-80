@@ -250,7 +250,8 @@ local function overlap()
     end
 end
 
--- CTC > SIO0 > SIO1 priority, nesting and RETI release.
+-- CTC > SIO0 priority, nesting and RETI release.  SIO1, programmed the same
+-- way, is the IO-controller link model, which has no interrupt path.
 local function daisy()
     local start = nil
     on_mark = function(m)
@@ -273,17 +274,16 @@ local function daisy()
             error(string.format("no exit %02x", v))
         end
         assert(list[1].vector == 0x04, string.format("first %02x", list[1].vector))
-        local sio0, sio1 = only(0x10), only(0x20)
+        local sio0 = only(0x10)
         local first_exit = exit_of(0x04, list[1].t)
         local sio0_exit = exit_of(0x10, sio0.t)
         assert(sio0.t > first_exit.t, "SIO0 acknowledged while the CTC was in service")
-        assert(sio1.t > sio0_exit.t, "SIO1 acknowledged before SIO0's RETI")
         local nested = between(list, sio0.t, sio0_exit.t)
         assert(#nested >= 1, "CTC did not nest inside SIO0's service")
         for _, x in ipairs(nested) do assert(x.vector == 0x04, string.format("nested %02x", x.vector)) end
-        for _, x in ipairs(list) do assert(x.vector == 0x04 or x.vector == 0x10 or x.vector == 0x20, string.format("vector %02x", x.vector)) end
-        finish(true, string.format("order CTC 04h, SIO0 10h (+%s), SIO1 20h %s after SIO0 RETI; %d CTC nested in SIO0 service",
-            us(sio0.t - list[1].t), us(sio1.t - sio0_exit.t), #nested))
+        for _, x in ipairs(list) do assert(x.vector == 0x04 or x.vector == 0x10, string.format("vector %02x", x.vector)) end
+        finish(true, string.format("order CTC 04h, SIO0 10h (+%s); %d CTC nested in SIO0 service; SIO1 (WR1 06h, Tx buffer written) never acknowledged",
+            us(sio0.t - list[1].t), #nested))
     end
 end
 
@@ -479,7 +479,7 @@ local function nmi()
     end)
 end
 
--- CTC handler with interrupts enabled, SIO1 pending behind it, V9958 asserts.
+-- CTC handler with interrupts enabled, SIO0 pending behind it, V9958 asserts.
 local function nested()
     local armed = nil
     on_mark = function(m)
@@ -487,7 +487,7 @@ local function nested()
     end
     script(function()
         wait_for(function() return armed ~= nil end)
-        wait_for(function() return ack_count(0x20) >= 1 end)
+        wait_for(function() return ack_count(0x10) >= 1 end)
         local first
         for _, a in ipairs(acks) do
             if a.t > armed.t and a.vector == 0x04 then first = a; break end
@@ -501,17 +501,17 @@ local function nested()
         local inside = between(acks, first.t, ctc_exit.t)
         assert(#inside >= 1, "no acknowledge while the CTC handler ran with interrupts enabled")
         for _, a in ipairs(inside) do
-            assert(a.vector == 0xff, string.format("acknowledge %02x while the CTC was in service (SIO1 must stay blocked)", a.vector))
+            assert(a.vector == 0xff, string.format("acknowledge %02x while the CTC was in service (SIO0 must stay blocked)", a.vector))
         end
-        for _, a in ipairs(between(acks, armed.t, first.t)) do assert(a.vector ~= 0x20, "SIO1 acknowledged before the CTC handler") end
-        local sio1
+        for _, a in ipairs(between(acks, armed.t, first.t)) do assert(a.vector ~= 0x10, "SIO0 acknowledged before the CTC handler") end
+        local sio0
         for _, a in ipairs(acks) do
-            if a.vector == 0x20 and a.t > ctc_exit.t then sio1 = a; break end
+            if a.vector == 0x10 and a.t > ctc_exit.t then sio0 = a; break end
         end
-        assert(sio1, "SIO1 never served after the CTC RETI")
-        assert(sio1.t - ctc_exit.t < 100e-6, "SIO1 served " .. us(sio1.t - ctc_exit.t) .. " after the CTC RETI")
-        finish(true, string.format("CTC 04h in service %s with EI: %d V9958 acknowledge(s) vector FFh, SIO1 not acknowledged; SIO1 20h %s after the CTC RETI",
-            us(ctc_exit.t - first.t), #inside, us(sio1.t - ctc_exit.t)))
+        assert(sio0, "SIO0 never served after the CTC RETI")
+        assert(sio0.t - ctc_exit.t < 100e-6, "SIO0 served " .. us(sio0.t - ctc_exit.t) .. " after the CTC RETI")
+        finish(true, string.format("CTC 04h in service %s with EI: %d V9958 acknowledge(s) vector FFh, SIO0 not acknowledged; SIO0 10h %s after the CTC RETI",
+            us(ctc_exit.t - first.t), #inside, us(sio0.t - ctc_exit.t)))
     end)
 end
 

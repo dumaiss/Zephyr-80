@@ -10,13 +10,14 @@ guest inputs, and nothing here is part of either OS's build or `make check`.
 python3 tests/run.py --list
 python3 tests/run.py --mame ./mame/mamepbitzd \
   --case memory-flash --case clocks-irqs --case serial-boot --case timer \
+  --case sio1-lanes --case sio1-konaos --case sio1-zsdos \
   --konaos-root /path/to/ZephyrOS --zephyr-root /path/to/Zephyr-80
 ```
 
 | Option | Meaning |
 |---|---|
 | `--mame PATH` | the MAME binary (`mame/mamepbitzd` debug or `mame/mamepbitz` release) |
-| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash` or `clocks-irqs` |
+| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs` or `sio1-lanes` |
 | `--list` | the cases, what each proves and the inputs it needs |
 | `--konaos-root`, `--zephyr-root` | the ZephyrOS and Zephyr-80 checkouts the inputs come from |
 | `--output DIR` | result directory, default `tests/output/run` (ignored by Git) |
@@ -30,6 +31,9 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `serial-boot` | `serial` | SIO0/B: host sync, the banner, `console: driver OK`, the shell prompt, `pwd` answered `/system`, the prompt again |
 | `timer` | `serial` | `/system/timer.exe` on the guest's CTC tick (below) |
 | `serial-pty` | `serial` | throttled, real time: the runner is the host terminal on the pty and types `pwd` paced by the host clock |
+| `sio1-lanes` | none (the probe program) | the eight [SIO1 lane probes](#sio1-lane-probes) |
+| `sio1-konaos` | `serial` | the KonaOS IOC driver over SIO1 (below): LINK_SYNC at its first attempt, the shell's PING, every request answered; the same after a reset at the prompt and a reset inside the PING reply |
+| `sio1-zsdos` | `zsdos` | the ZSDOS transport over SIO1: LINK_SYNC at its first attempt and every boot request answered |
 | `vdp-text` | none (a DI/HALT image) | the VDP observations: TEXT1, TEXT2 and GRAPHIC1 text read from VRAM, rendered glyph pixels, a PNG snapshot, GRAPHIC6 refused |
 
 Inputs: `konaos` is `ZephyrOS/build/konaos.bin`, `zsdos` is
@@ -95,9 +99,11 @@ screen text is not readable this way; the rendered bitmap and snapshots
 are. A case can add MAME options (`mame_args` in `run.py`), for example
 `-wavwrite` for audio or a video mode for rendering.
 
-The serial cases boot the console-serial image without an IOC: the IOC,
-HID and card drivers take their bounded absent-link paths, so the prompt
-follows about 47 emulated seconds after the host sync, and the shell starts
+The serial cases boot the console-serial image against the IOC model
+([SIO1 and the IO controller](../docs/zephyr80-sio1-ioc.md)): the link comes
+up, the shell banner reports `IOC version 75` from PING, no filesystem or
+keyboard is served, the prompt follows about 3 emulated seconds after the host
+sync, and the shell starts
 in `/system`. `timer` taps the CTC's I/O writes and the IM2 vector fetch of
 channel 2, then runs `timer stage` (INFO 390625/250, 10,000 monotonic
 readings, a one-second advance within 39062–39312 counts, the bounds of
@@ -114,7 +120,7 @@ host's verdict.
 `--interactive` starts the serial image throttled, prints the pty MAME
 advertises, sends the host sync until the banner starts, then leaves the pty
 to a terminal, for example `picocom -b 115200 /dev/pts/N`. The prompt
-arrives about 47 seconds later. Its MAME directories are under
+arrives a few seconds later. Its MAME directories are under
 `--output/interactive`; it stops after an hour or on Ctrl-C.
 
 ## Memory and flash probes
@@ -190,13 +196,47 @@ limit. A case passes only on exit 0 with its explicit PASS line.
 | `timer` | The guest tick bytes from the CPU (43h/41h reset, vector 00h, 41h A5h, FAh): 625 channel-2 acknowledges span 4 s (156.25 Hz), every interval 6.4 ms, 156 or 157 per second |
 | `baud` | SIO0/A on a `loopback` slot, clocked by TO0: character times at constants 12 and 1 match 9600 and 115200 baud, bytes intact |
 | `overlap` | V9958 and CTC requesting together: releasing the V9958 leaves the CTC pending; ten times the CTC (04h) is acknowledged first and the V9958 (FFh) immediately after the CTC's RETI; free-running counts |
-| `daisy` | CTC, SIO0 and SIO1 requesting together: order 04h, 10h, 20h; the CTC nests inside SIO0's service; SIO1 waits for SIO0's RETI |
+| `daisy` | CTC and SIO0 requesting together: order 04h, 10h; the CTC nests inside SIO0's service; SIO1, programmed with WR1 06h and a written Tx buffer, is never acknowledged (it has no interrupt model) |
 | `latch` | The V9958 card's configuration latch: writes with A2 = 1 (A4h–A7h and mirrors) never change VRAM, the VRAM address pointer or R#1, while A3/A4 mirrors of the ports still reach the V9958; reads at A4h and mirrors equal reads at A0h; D0 selects NMI or `/INT` through every mirror, D1 and D2–D7 have no route effect; reset clears the latch |
 | `nmi` | NMI route: an asserted request moves to the NMI vector (0066h) at once on the latch write, frame requests arrive as NMIs at 59.94 Hz with no IM2 acknowledge, a request left asserted does not hold IRQ0 with EI, and switching back acknowledges at once with vector FFh and no NMI |
-| `nested` | A CTC handler runs with EI, SIO1 is pending and the V9958 asserts: the acknowledge reads FFh, SIO1 is not acknowledged, and SIO1 is served right after the CTC's RETI |
+| `nested` | A CTC handler runs with EI, SIO0 is pending and the V9958 asserts: the acknowledge reads FFh, SIO0 is not acknowledged, and SIO0 is served right after the CTC's RETI |
 | `pty` | SIO0/B on a `pty` slot, throttled: the host reads the program's 115200 8N1 banner lines |
-| `konaos`, `zsdos` | The current guests boot without an IOC; decoding every SIO1 control write shows WR1 interrupt enables stay clear, so SIO1 raises no guest interrupt |
+| `konaos`, `zsdos` | The current guests boot; decoding every SIO1 control write shows WR1 interrupt enables stay clear |
 
 The probes' `results.json` records each command, exit code, wall and
 emulated time, speed and input hash. The guest `/system/timer.exe`
 measurement is the `timer` case.
+
+## SIO1 lane probes
+
+`sio1-lanes` assembles `sio1_lanes.asm` and runs each probe in its own MAME
+process (`state` in two) under `harness.lua` (`sio1_lanes.lua`), with a 3-second emulated and
+60-second wall limit. The program serves operations the Lua side posts in a
+mailbox: the KonaOS lane initialisation, and exchanges built from the KonaOS
+driver's sequences (`ioc_io_wait_ready`, `ioc_io_tx`, the receive arm), whose
+receive side records every byte the lane delivers and the empty RR0 polls
+before it. `sio1-lanes:PROBE` selects probes.
+
+| Probe | Proof |
+|---|---|
+| `exchange` | LINK_SYNC with Enter Hunt, then three PINGs: echo, level 75, power 6Fh, service counters +1 each, no abort; READY (`/DCDB`) low while a request is served; the capture loop finds the FIFO empty before every reply byte (the receiver is paced by the lane) |
+| `hunt` | after a channel reset the receiver hunts: a PING is served (its counter shows it) but never received, since `/SYNCB` stays low; LINK_SYNC's edge resynchronises the lane |
+| `underrun` | a request stalled 60 µs after its fifth byte latches Tx underrun (RR0 D6) and gets no reply; the next PING succeeds and reports one abort |
+| `early` | a second request issued straight after the first waits on READY; the first reply fills the FIFO meanwhile, the bounded drain removes four stale bytes and the capture finds the second reply |
+| `overrun` | a 1 ms pause after three reply bytes sets RR1 D5 and loses the reply; the next PING succeeds without Hunt |
+| `reset` | a channel reset after four reply bytes ends reception (Hunt, nothing available); after LINK_SYNC the capture holds only that reply |
+| `irq` | WR1 1Fh on both channels and traffic with interrupts enabled: no acknowledge |
+| `state` | two processes: the first saves a lane synchronised by LINK_SYNC; the second starts from that state and a PING without Hunt is answered, its service counter continuing the saved count |
+
+`sio1-konaos` boots the console-serial image four times in one run: cold to the
+prompt and `pwd`, after a machine reset at the prompt, and after a reset taken
+on the eighth byte the driver reads following the shell's PING. `sio1-zsdos`
+boots the ZSDOS image for 6 emulated seconds. Both tap SIO1's ports and keep
+the CPU-side register trace (`sio1-trace.tsv`: every write, every data read)
+and the command-lane exchanges decoded from it (`exchanges.tsv`: request bytes
+are the data writes while the transmitter is enabled for a request, reply bytes
+the data reads after its release). Every request must parse and receive a
+CRC-valid reply with its sequence, the first exchange of each boot must be
+LINK_SYNC armed with Enter Hunt and be the only one, KonaOS must send a PING
+answered with level 75 and the synchronised link bit, and no WR1 write may be
+nonzero. ZSDOS sends no PING.

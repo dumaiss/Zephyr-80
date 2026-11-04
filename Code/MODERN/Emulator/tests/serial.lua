@@ -1,8 +1,8 @@
 -- license:BSD-3-Clause
 -- Serial-console cases for the KonaOS console-serial image
 -- (ZephyrOS `make console-serial-selftest`), whose whole console is SIO0/B.
--- No IOC is attached: the IOC, HID and card drivers take their bounded
--- absent-link paths, and the shell starts in /system.
+-- The IOC model answers its LINK_SYNC and PING and no filesystem or HID
+-- command, so the shell reports no filesystem and starts in /system.
 local H = harness
 local S = H.serial
 

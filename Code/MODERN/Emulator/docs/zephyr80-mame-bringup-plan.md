@@ -81,6 +81,13 @@ by byte from the IOC side; otherwise replace SIO1 with a behavioural device
 that models exactly the registers and lines the drivers observe (the
 simulator's approach). SIO1 raises no interrupts in either OS. Exit: LINK_SYNC
 and PING complete with both drivers unchanged, and the choice is recorded here.
+Decision: SIO1 is the behavioural device `zephyr80_sio1`; SIO0 stays stock.
+Fed one byte per eight x1 clock edges, the stock `z80sio` puts the request on
+TxD only at a 3-bit offset behind a WR6 sync character, ends External Sync Hunt
+on the inactive `/SYNC` level and resynchronises without an edge, so the lane
+contract needs bit-level clocking or changes to its generic synchronous logic.
+The probes, the register and line contract and the IOC transport are in
+[SIO1 and the IO controller](zephyr80-sio1-ioc.md).
 
 **WP5 — IOC command core (L).** Frames (`A5 5A LEN TYPE SEQ STATUS DATA CRC`,
 CRC-16-CCITT, `reply = request | 80h`, `FEh` unknown class); the command set

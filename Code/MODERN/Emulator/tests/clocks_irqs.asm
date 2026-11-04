@@ -249,7 +249,7 @@ case_daisy:
 	out	(SIO0BD),a		; transmit buffer empties: TxIP
 	out	(SIO1BD),a
 	ld	hl,#770
-	call	wait_hl			; 2 ms: CTC, SIO0 and SIO1 all pending
+	call	wait_hl			; 2 ms: CTC and SIO0 pending; SIO1 has no interrupt
 	ld	a,#0xe0
 	ld	(MARK),a
 	jp	idle_ei
@@ -266,13 +266,13 @@ route_idle:
 	halt
 	jr	route_idle
 
-case_nested:				; CTC, SIO1 and V9958 all requesting
+case_nested:				; CTC, SIO0 and V9958 all requesting
 	call	tick
 	ld	a,#0x18
-	out	(SIO1BC),a
-	ld	hl,#sio_daisy1
+	out	(SIO0BC),a
+	ld	hl,#sio_daisy0
 	ld	b,#sio_daisy_end - sio_daisy0
-	ld	c,#SIO1BC
+	ld	c,#SIO0BC
 	otir
 	ld	a,#0x20
 	out	(VDPS),a
@@ -383,7 +383,7 @@ svc_ctc:
 	ld	a,#2
 	ld	(NESTED),a
 	ld	a,#0x5a
-	out	(SIO1BD),a		; SIO1 TxIP rises while the CTC is in service
+	out	(SIO0BD),a		; SIO0 TxIP rises while the CTC is in service
 	ei				; nest: lower daisy devices stay blocked
 	push	hl
 	ld	hl,#9600
