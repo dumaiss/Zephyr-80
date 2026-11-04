@@ -20,6 +20,7 @@ import subprocess
 import time
 
 import fat_fixture as fat
+import mame_args
 
 HERE = Path(__file__).resolve().parent
 EMULATOR = HERE.parent
@@ -266,7 +267,7 @@ def mame_run(mame, image, case_dir, body, media_args, deadline, wall, steps=None
                "-cfg_directory", str(case_dir / "cfg"), "-nvram_directory", str(case_dir / "nvram"),
                "-state_directory", str(case_dir / "sta"), "-snapshot_directory", str(case_dir / "snap"),
                "-flash", str(image), "-autoboot_script", str(HERE / "harness.lua"), "-autoboot_delay", "0",
-               "-sio0b_rs232", "pty", *media_args]
+               "-sio0b_rs232", "pty", *mame_args.EXTRA, *media_args]
     environment = dict(os.environ, HARNESS_CASE=body, HARNESS_SCRIPT=str(HERE / script), HARNESS_DIR=str(case_dir),
                        HARNESS_DEADLINE=str(deadline), HARNESS_TTY_FILE=str(case_dir / "serial.tty"))
     if prompt:

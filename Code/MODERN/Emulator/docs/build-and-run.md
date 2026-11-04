@@ -94,6 +94,19 @@ directories; CP/M volumes there are `CPM/CPM_1.DRV` and `CPM/CPM_2.DRV`,
 place: use a copy. Without either the socket is empty and the guests report
 no filesystem.
 
+## IO controller timing
+
+`-ioc_speed paced` (the default) clocks the controller's lanes on the byte
+periods of the [timing table](zephyr80-sio1-ioc.md#the-controllers-command-transport):
+a 512-byte read is about 6.1 ms of controller time and a 512-byte write about
+14 ms. `-ioc_speed fast` clocks each byte as soon as the Z80 can take it, which
+shortens command exchanges and writes and leaves the protocol and the media
+results unchanged ([pacing](zephyr80-sio1-ioc.md#pacing--ioc_speed)):
+
+```sh
+./mamepbitzd zephyr80 -flash "$KONAOS_ROOT/build/konaos.bin" -card sd.img -ioc_speed fast
+```
+
 ## Memory decode
 
 The programmed `Code/HDL/WinCUPL/src/MEM_DECODER.pld` Rev 13 is authoritative.

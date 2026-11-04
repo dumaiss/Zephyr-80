@@ -32,6 +32,8 @@ sys.path.insert(0, str(HERE))
 import card_backends  # noqa: E402
 import clocks_irqs  # noqa: E402
 import ioc_core  # noqa: E402
+import ioc_timing  # noqa: E402
+import mame_args  # noqa: E402
 import memory_flash  # noqa: E402
 import sio1_lanes  # noqa: E402
 
@@ -75,6 +77,8 @@ CASES = {
     "cpm-volumes": dict(kind="suite", module=card_backends, inputs=("zsdos",), probes=card_backends.PROBES["volumes"],
                         call=lambda mame, inputs, out, sub: card_backends.run("volumes", mame, inputs, out, sub),
                         about="CP/M volume files on both backends (mount, extents, records, bounds, coherence), ZSDOS C:/D: on an image and a folder (3 probes)"),
+    "ioc-timing": dict(kind="suite", module=ioc_timing, inputs=(),
+                       about="IO controller lane timing: PING and 128 B / 512 B / 4 KiB reads and writes against the paced model, paced and fast outcomes, admission, partial transfers, resets with work pending, save state mid-transfer (6 probes)"),
     "vdp-text": dict(kind="lua", script="vdp_text.lua", inputs=(), deadline=5, wall=60,
                      about="VDP observations: TEXT1/TEXT2/GRAPHIC1 text from VRAM, rendered pixels, a snapshot, bitmap refusal"),
 }
@@ -266,7 +270,7 @@ def mame_command(mame, image, case_dir, spec, deadline):
         command.append("-nothrottle")
     if spec.get("pty"):
         command += ["-sio0b_rs232", "pty"]
-    return command + list(spec.get("mame_args", ()))
+    return command + mame_args.EXTRA + list(spec.get("mame_args", ()))
 
 
 def run_lua(name, spec, mame, inputs, case_dir, prompt):
@@ -387,6 +391,8 @@ def main():
     parser.add_argument("--zephyr-root", type=Path, help="Zephyr-80 checkout")
     parser.add_argument("--output", type=Path, default=HERE / "output" / "run", help="result directory (default tests/output/run)")
     parser.add_argument("--prompt", default=DEFAULT_PROMPT, help=f"serial shell prompt (default {DEFAULT_PROMPT!r})")
+    parser.add_argument("--ioc-speed", choices=("paced", "fast"),
+                        help="pass -ioc_speed to the guest-driven MAME runs (default: the machine's paced default)")
     parser.add_argument("--interactive", action="store_true",
                         help="boot the serial image in real time on a pty for a terminal (no verdict)")
     args = parser.parse_args()
@@ -401,6 +407,7 @@ def main():
               file=sys.stderr)
         return 2
     args.mame = args.mame.resolve()
+    mame_args.ioc_speed(args.ioc_speed)
     if args.interactive:
         return interactive(args)
     if not args.case:

@@ -21,6 +21,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `--list` | the cases, what each proves and the inputs it needs |
 | `--konaos-root`, `--zephyr-root` | the ZephyrOS and Zephyr-80 checkouts the inputs come from |
 | `--output DIR` | result directory, default `tests/output/run` (ignored by Git) |
+| `--ioc-speed paced\|fast` | pass `-ioc_speed` to the guest-driven MAME runs (`sio1-*`, `serial-*`, `ioc-core` guests, `card-*`, `cpm-volumes`, `timer`); `sio1-lanes` asserts the paced lane timing and fails under fast; `ioc-timing` runs both modes itself |
 | `--prompt TEXT` | the serial shell prompt the serial cases wait for, default `/system> ` |
 | `--interactive` | boot the serial image in real time on a pty for a terminal (below); no verdict |
 
@@ -35,6 +36,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `sio1-konaos` | `serial` | the KonaOS IOC driver over SIO1 (below): LINK_SYNC at its first attempt, the shell's PING, every request answered; the same after a reset at the prompt and a reset inside the PING reply |
 | `sio1-zsdos` | `zsdos` | the ZSDOS transport over SIO1: LINK_SYNC at its first attempt and every boot request answered |
 | `ioc-core` | `konaos`, `zsdos` | the three [IOC core probes](#ioc-core-probes): the protocol core against real frames, and both guests' replies from the empty card socket |
+| `ioc-timing` | none (the probe program) | the six [IOC timing probes](#ioc-timing-probes) |
 | `card-image` | `serial` | the three [card probes](#card-probes) for `-card` |
 | `card-directory` | `serial` | the three [card probes](#card-probes) for `-carddir` |
 | `cpm-volumes` | `zsdos` | the three [card probes](#card-probes) for CP/M volume files |
@@ -64,6 +66,12 @@ the case, emulated time, PC, SP, I, the memory latch, what the case was
 waiting for, the VDP mode and the serial tail. Headless cases use
 `-video none -sound none -nothrottle`; each has an emulated-time deadline,
 MAME's `-seconds_to_run` two seconds later, and a wall-time watchdog.
+
+A change to the controller's lane timing, the SIO1 model or the transport is replayed with `ioc-timing`,
+`sio1-lanes`, `sio1-konaos`, `sio1-zsdos`, `serial-boot`, `ioc-core`, `card-image`, `card-directory` and
+`cpm-volumes` in the default mode, and (apart from `sio1-lanes`, which asserts paced timing and `ioc-timing`,
+which runs both modes itself) again with `--ioc-speed fast`. `cpm-volumes` is the ZSDOS bulk reader: its
+call-based marker scan and its setup before the INI loop leave the least cover of any guest path.
 
 ## Serial harness
 
@@ -260,6 +268,26 @@ nonzero. ZSDOS sends no PING.
 host test), `ioc_core/memory_storage.h` is the in-memory card the core test
 uses, and `ioc_core/emu.h` supplies the MAME integer types; none of them is
 part of the emulator. The build command and the test's output are in the probe's log.
+
+## IOC timing probes
+
+`ioc-timing` (`ioc_timing.py`, `ioc_timing.lua`) runs the probe program's bulk
+operations on a disposable FAT16 image, each probe in both `-ioc_speed` modes
+([pacing](../docs/zephyr80-sio1-ioc.md#pacing--ioc_speed)). The operations are
+the KonaOS bulk read and write sequences (`ioc_io_bulk_read`,
+`ioc_io_bulk_write`) in `sio1_lanes.asm`. Timing is taken from taps on ports
+30h-33h with emulated time, so the guest and the device carry no probe code
+and collecting it changes nothing; `HARNESS_TRACE` writes each transfer's
+accesses to `<label>.tsv`. `ioc-timing:PROBE` selects one.
+
+| Probe | Proof |
+|---|---|
+| `transfers` | LINK_SYNC, PINGs, and `/SHARED` reads and writes of 128 B, 512 B and 8 x 512 B. In paced mode each phase is checked against the timing table: the reply's start and span, the admission (guard and first byte), the header and payload spans of a read, a write's first byte, byte span and `/CTSA` window. Both modes must return the same replies and payload sums, leave the same files on the card (the written file complete, `fsck.fat -n` clean) and fast must not be slower for any phase total. `TIME` lines in the log list each phase |
+| `zsdos` | a reader in the ZSDOS driver's shape (`sio1_lanes.asm` op 9: drain, a call-based marker scan at 11.1 µs a byte, an INI header, 17.2 µs of setup, an INI payload) reads 128 B and 512 B records on a lane that has just hunted, just written and just read; every byte must arrive. It bounds the bulk packet's byte spacing from below (marker and header 11.1 µs plus margin; payload 6.6 µs plus margin) and fails at the firmware's 7 µs and 6 µs targets |
+| `admission` | a `READY` the host never admits holds `/DCDB` low for 500 ms and ends with DONE 21h; two requests back to back are both answered; a request whose transmitter stalls inside it is dropped (one abort) and the next is served |
+| `partial` | a read abandoned after 100 bytes and a write short by 212 bytes both end, DONE reports them, the 300 bytes sent are on the card, and the controller serves the next requests |
+| `reset` | the machine resets inside the request window, the reply, a bulk read, a bulk write and the wait for the host: the transport is idle with nothing counted or scheduled, LINK_SYNC and PINGs follow, and requests run back to back across the instant the cancelled 500 ms wait would have ended |
+| `state` | a bulk read is saved at its 300th data read and a second process restores that state: it finds the transport in the packet phase with about 300 bytes clocked, the read completes with all 512 bytes, DONE is OK and the service counters continue |
 
 ## Card probes
 

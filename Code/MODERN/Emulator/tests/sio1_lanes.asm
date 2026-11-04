@@ -31,12 +31,28 @@ NONFF    = 0x7f1d          ; bytes captured other than FFh
 IRQS     = 0x7f20          ; unexpected interrupt acknowledges (kept across operations)
 RR0STALL = 0x7f1b          ; RR0 at the end of a send stall
 READYTX  = 0x7f1c          ; RR0 D3 sampled after the request was sent
+BLEN     = 0x7f30          ; op 6/7: payload length (16-bit)
+BHUNT    = 0x7f32          ; op 6: 1 = arm the bulk receiver with Enter Hunt
+BNORTS   = 0x7f33          ; op 6/7: 1 = never assert the bulk RTS (no host)
+BSTOP    = 0x7f34          ; op 6: stop reading after this many bytes (16-bit, 0 = all)
+BRES     = 0x7f36          ; op 6/7: bulk result (ioc_io_bulk_read / write codes, 5 = abandoned)
+BCOUNT   = 0x7f37          ; op 6: bytes of the stream (16-bit)
+BCNT     = 0x7f39          ; op 6: the stream's count, low byte
+BBLK     = 0x7f3a          ; op 6: ... and its 256-byte blocks
+BURSTN   = 0x7f3b          ; op 8: requests left in the burst
+BURST    = 0x7f3c          ; op 8: requests to send, back to back
+BCRC     = 0x7f3d          ; op 9: the trailer bytes
+BHDR     = 0x7f40          ; op 7: the five header bytes (LEN, TYPE, SEQ, STATUS)
+BHEAD    = 0x3ffb          ; op 6: the five header bytes land here, the payload at BBUF
+BBUF     = 0x4000          ; op 6/7/9: payload buffer (512 bytes)
+BZPTR    = 0x7f50          ; op 9: payload destination pointer (the driver reads it from memory)
 PKT      = 0x7e00
 PKT2     = 0x7e40
 RAW      = 0x7d00          ; up to 64 captured bytes, each with its empty polls
 TABLE    = 0x8000
 
 LATCH    = 0x00
+SIO1AD   = 0x30
 SIO1AC   = 0x31
 SIO1BD   = 0x32
 SIO1BC   = 0x33
@@ -82,6 +98,14 @@ idle:
 	jp	z,op_exchange
 	cp	#5
 	jp	z,op_early
+	cp	#6
+	jp	z,op_read
+	cp	#7
+	jp	z,op_write
+	cp	#8
+	jp	z,op_burst
+	cp	#9
+	jp	z,op_zread
 done:
 	xor	a
 	ld	(CMD),a
@@ -179,6 +203,27 @@ op_early:
 	jr	nz,op_fail
 	call	capture
 	jr	op_fail
+
+; ---------------------------------------------------------------- op 8
+; BURST requests (PKT) back to back, each reply captured; stops at the first
+; request that goes unanswered.
+op_burst:
+	call	clear_results
+	ld	a,(BURST)
+	ld	(BURSTN),a
+1$:	ld	hl,#PKT
+	ld	a,(PKTLEN)
+	call	request
+	jp	nz,op_fail
+	call	capture
+	or	a
+	jp	nz,op_fail
+	ld	a,(BURSTN)
+	dec	a
+	ld	(BURSTN),a
+	jr	nz,1$
+	xor	a
+	jp	op_fail
 
 clear_results:
 	ld	hl,#RESULT
@@ -447,6 +492,534 @@ rx_event:
 	ret
 2$:	ld	a,#0x18
 	out	(SIO1BC),a
+	ret
+
+; ---------------------------------------------------------------- op 6
+; A request and its reply, then the bulk read the reply's READY admits
+; (ioc_io_bulk_read): the marker scan, the header and BLEN payload bytes into
+; BHEAD.., the two trailer bytes, RTS off, /CTSA closing.  BSTOP abandons the
+; read after that many bytes (RTS released, no wait for /CTSA).
+op_read:
+	call	clear_results
+	ld	hl,#PKT
+	ld	a,(PKTLEN)
+	call	request
+	jp	nz,op_fail
+	call	capture
+	or	a
+	jp	nz,op_fail
+	call	bulk_read
+	ld	(BRES),a
+	xor	a
+	jp	op_fail
+
+bulk_read:
+	ld	a,#0x30
+	out	(SIO1AC),a
+	ld	a,#0x03
+	out	(SIO1AC),a
+	ld	a,(BHUNT)
+	or	a
+	ld	a,#0xc9
+	jr	z,1$
+	ld	a,#0xd9
+1$:	out	(SIO1AC),a
+	ld	b,#4
+2$:	in	a,(SIO1AC)
+	and	#0x01
+	jr	z,3$
+	in	a,(SIO1AD)
+	djnz	2$
+3$:	ld	hl,(BLEN)		; the stream's count, split before admission
+	ld	de,#5
+	add	hl,de
+	ld	de,(BSTOP)
+	ld	a,d
+	or	e
+	jr	z,9$
+	ex	de,hl
+9$:	ld	a,l
+	ld	(BCNT),a
+	ld	a,h
+	ld	(BBLK),a
+	ld	(BCOUNT),hl
+	ld	a,(BNORTS)
+	or	a
+	jp	nz,br_nohost
+	ld	a,#0x05
+	out	(SIO1AC),a
+	ld	a,#0xeb
+	out	(SIO1AC),a
+	ld	bc,#0
+4$:	ld	a,#0x10
+	out	(SIO1AC),a
+	in	a,(SIO1AC)
+	and	#0x08
+	jr	nz,5$
+	dec	bc
+	ld	a,b
+	or	c
+	jr	nz,4$
+	jp	br_timeout
+5$:	ld	b,#8
+	ld	de,#0
+scan0:
+	in	a,(SIO1AC)
+	and	#0x01
+	jr	nz,scan0_got
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,scan0
+	jp	br_timeout
+scan0_got:
+	in	a,(SIO1AD)
+	cp	#0xa5
+	jr	z,scan1
+	djnz	scan0
+	jp	br_marker
+scan1:
+	in	a,(SIO1AC)
+	and	#0x01
+	jr	nz,scan1_got
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,scan1
+	jp	br_timeout
+scan1_got:
+	in	a,(SIO1AD)
+	cp	#0x5a
+	jr	z,stream
+	cp	#0xa5
+	jr	z,scan1
+	djnz	scan0
+	jp	br_marker
+stream:
+	ld	hl,#BHEAD
+	ld	c,#SIO1AD
+	ld	a,(BCNT)
+	ld	b,a
+	or	a
+	jr	nz,poll
+chunk:
+	ld	a,(BBLK)
+	or	a
+	jr	z,streamed
+	dec	a
+	ld	(BBLK),a
+	ld	b,#0
+poll:
+	in	a,(SIO1AC)
+	and	#0x01
+	jr	nz,got
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,poll
+	jp	br_timeout
+got:
+	ini
+	jp	nz,poll
+	jr	chunk
+streamed:
+	ld	hl,(BSTOP)
+	ld	a,h
+	or	l
+	jr	nz,br_abandon
+	ld	de,#0
+	call	get_one
+	jp	c,br_timeout
+	call	get_one
+	jp	c,br_timeout
+	call	rts_off_a
+	ld	de,#0
+7$:	ld	a,#0x10
+	out	(SIO1AC),a
+	in	a,(SIO1AC)
+	and	#0x20
+	jr	z,8$
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,7$
+	ld	a,#4
+	ret
+8$:	xor	a
+	ret
+br_abandon:
+	call	rts_off_a
+	ld	a,#5
+	ret
+br_nohost:
+	ld	a,#6
+	ret
+br_timeout:
+	call	rts_off_a
+	ld	a,#1
+	ret
+br_marker:
+	call	rts_off_a
+	ld	a,#3
+	ret
+
+; One byte from the data port, polling; DE is the stall budget.
+get_one:
+	in	a,(SIO1AC)
+	and	#0x01
+	jr	nz,1$
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,get_one
+	scf
+	ret
+1$:	in	a,(SIO1AD)
+	or	a
+	ret
+
+rts_off_a:
+	ld	a,#0x05
+	out	(SIO1AC),a
+	ld	a,#0xe0
+	out	(SIO1AC),a
+	ret
+
+; ---------------------------------------------------------------- op 7
+; A request and its reply, then the bulk write the reply's READY admits
+; (ioc_io_bulk_write): lead-in, RTS, /CTSA, marker, BHDR, BLEN payload bytes
+; from BBUF (OUTI-shaped), the EOM reset and wait, RTS off, /CTSA closing.
+op_write:
+	call	clear_results
+	ld	hl,#PKT
+	ld	a,(PKTLEN)
+	call	request
+	jp	nz,op_fail
+	call	capture
+	or	a
+	jp	nz,op_fail
+	call	bulk_write
+	ld	(BRES),a
+	xor	a
+	jp	op_fail
+
+bulk_write:
+	ld	a,#0x30
+	out	(SIO1AC),a
+	ld	a,#0x03
+	out	(SIO1AC),a
+	ld	a,#0xc1
+	out	(SIO1AC),a
+	ld	a,#0x06
+	out	(SIO1AC),a
+	ld	a,#0xaa
+	out	(SIO1AC),a
+	ld	a,#0x07
+	out	(SIO1AC),a
+	ld	a,#0xaa
+	out	(SIO1AC),a
+	ld	a,#0x05
+	out	(SIO1AC),a
+	ld	a,#0xe9
+	out	(SIO1AC),a
+	ld	a,#0x80
+	out	(SIO1AC),a
+	xor	a
+	call	bput
+	jp	c,bw_stall
+	ld	a,(BNORTS)
+	or	a
+	jp	nz,bw_nohost
+	ld	a,#0x05
+	out	(SIO1AC),a
+	ld	a,#0xeb
+	out	(SIO1AC),a
+	ld	de,#0
+1$:	ld	a,#0x10
+	out	(SIO1AC),a
+	in	a,(SIO1AC)
+	and	#0x20
+	jr	nz,2$
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,1$
+	jp	bw_stall
+2$:	ld	a,#0xa5
+	call	bput
+	jp	c,bw_stall
+	ld	a,#0x5a
+	call	bput
+	jp	c,bw_stall
+	ld	hl,#BHDR
+	ld	b,#5
+3$:	ld	a,(hl)
+	call	bput
+	jp	c,bw_stall
+	inc	hl
+	djnz	3$
+	ld	hl,#BBUF
+	ld	de,(BLEN)
+	ld	a,d
+	ld	b,e
+	push	af
+	ld	c,#SIO1AD
+	ld	de,#0
+	ld	a,b
+	or	a
+	jp	nz,wpoll
+wchunk:
+	pop	af
+	or	a
+	jp	z,wsent
+	dec	a
+	push	af
+	ld	b,#0
+wpoll:
+	in	a,(SIO1AC)
+	and	#0x04
+	jr	nz,wgot
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,wpoll
+	pop	af
+	jp	bw_stall
+wgot:
+	outi
+	jp	nz,wpoll
+	jr	wchunk
+wsent:
+	ld	a,#0xc0
+	out	(SIO1AC),a
+	ld	de,#0
+4$:	in	a,(SIO1AC)
+	and	#0x40
+	jr	nz,5$
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,4$
+	jp	bw_stall
+5$:	ld	de,#128
+6$:	dec	de
+	ld	a,d
+	or	e
+	jr	nz,6$
+	call	rts_off_a
+	ld	de,#0
+7$:	ld	a,#0x10
+	out	(SIO1AC),a
+	in	a,(SIO1AC)
+	and	#0x20
+	jr	z,8$
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,7$
+	ld	a,#2
+	ret
+8$:	xor	a
+	ret
+bw_nohost:
+	ld	a,#6
+	ret
+bw_stall:
+	call	rts_off_a
+	ld	a,#1
+	ret
+
+; bput: wait for Tx buffer empty on channel A, write A.  Carry on timeout.
+bput:
+	push	bc
+	ld	c,a
+	ld	de,#0
+1$:	in	a,(SIO1AC)
+	and	#0x04
+	jr	nz,2$
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,1$
+	pop	bc
+	scf
+	ret
+2$:	ld	a,c
+	out	(SIO1AD),a
+	pop	bc
+	or	a
+	ret
+
+; ---------------------------------------------------------------- op 9
+; A request and its reply, then the bulk read in the ZSDOS driver's shape
+; (IOCBULK in drivers/transport/ioc_command.asm): drain, RTS, the /DCDA wait,
+; a marker scan that calls a one-byte helper (111 T-states a byte), the five
+; header bytes in an INI loop, the register setup before the payload INI loop
+; (about 17 us), the trailer through the helper.  Same results as op 6.
+op_zread:
+	call	clear_results
+	ld	hl,#PKT
+	ld	a,(PKTLEN)
+	call	request
+	jp	nz,op_fail
+	call	capture
+	or	a
+	jp	nz,op_fail
+	call	zsdos_read
+	ld	(BRES),a
+	xor	a
+	jp	op_fail
+
+zsdos_read:
+	ld	a,#0x30
+	out	(SIO1AC),a
+	ld	a,#0x03
+	out	(SIO1AC),a
+	ld	a,(BHUNT)
+	or	a
+	ld	a,#0xc9
+	jr	z,1$
+	ld	a,#0xd9
+1$:	out	(SIO1AC),a
+	ld	b,#4
+2$:	in	a,(SIO1AC)
+	and	#0x01
+	jr	z,3$
+	in	a,(SIO1AD)
+	djnz	2$
+3$:	ld	a,#0x05
+	out	(SIO1AC),a
+	ld	a,#0xeb
+	out	(SIO1AC),a
+	ld	bc,#0
+4$:	ld	a,#0x10
+	out	(SIO1AC),a
+	in	a,(SIO1AC)
+	and	#0x08
+	jr	nz,5$
+	dec	bc
+	ld	a,b
+	or	c
+	jr	nz,4$
+	jp	zr_timeout
+5$:	ld	b,#8
+zr_sync0:
+	call	zr_get
+	jp	c,zr_timeout
+	cp	#0xa5
+	jr	z,zr_sync1
+	djnz	zr_sync0
+	jp	zr_marker
+zr_sync1:
+	call	zr_get
+	jp	c,zr_timeout
+	cp	#0x5a
+	jr	z,zr_header
+	cp	#0xa5
+	jr	z,zr_sync1
+	djnz	zr_sync0
+	jp	zr_marker
+zr_header:
+	call	zr_get_header
+	jp	c,zr_timeout
+	ld	hl,(BZPTR)
+	ld	de,(BLEN)
+	ld	a,d
+	ld	b,e
+	push	af
+	ld	c,#SIO1AD
+	ld	de,#0
+	ld	a,b
+	or	a
+	jr	nz,zr_poll
+zr_chunk:
+	pop	af
+	or	a
+	jr	z,zr_trailer
+	dec	a
+	push	af
+	ld	b,#0
+zr_poll:
+	in	a,(SIO1AC)
+	and	#0x01
+	jr	nz,zr_got
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,zr_poll
+	pop	af
+	jp	zr_timeout
+zr_got:
+	ini
+	jp	nz,zr_poll
+	jr	zr_chunk
+zr_trailer:
+	call	zr_get
+	jp	c,zr_timeout
+	ld	(BCRC + 1),a
+	call	zr_get
+	jp	c,zr_timeout
+	ld	(BCRC),a
+	call	rts_off_a
+	ld	de,#0
+7$:	ld	a,#0x10
+	out	(SIO1AC),a
+	in	a,(SIO1AC)
+	and	#0x20
+	jr	z,8$
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,7$
+	ld	a,#4
+	ret
+8$:	xor	a
+	ret
+zr_marker:
+	call	rts_off_a
+	ld	a,#3
+	ret
+zr_timeout:
+	call	rts_off_a
+	ld	a,#1
+	ret
+
+zr_get_header:
+	ld	hl,#BHEAD
+	ld	b,#5
+	ld	c,#SIO1AD
+	ld	de,#0
+zrh_wait:
+	in	a,(SIO1AC)
+	and	#0x01
+	jr	nz,zrh_ready
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,zrh_wait
+	scf
+	ret
+zrh_ready:
+	ini
+	jp	nz,zrh_wait
+	or	a
+	ret
+
+zr_get:
+	ld	de,#0
+zrg_wait:
+	in	a,(SIO1AC)
+	and	#0x01
+	jr	nz,zrg_ready
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,zrg_wait
+	scf
+	ret
+zrg_ready:
+	in	a,(SIO1AD)
+	or	a
 	ret
 
 code_end:

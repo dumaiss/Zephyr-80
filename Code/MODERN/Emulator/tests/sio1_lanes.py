@@ -10,6 +10,8 @@ import re
 import subprocess
 import time
 
+import mame_args
+
 HERE = Path(__file__).resolve().parent
 CASES = ("exchange", "hunt", "underrun", "early", "overrun", "reset", "irq", "state")
 DEADLINE = 3   # emulated seconds per probe; MAME's own bound is two seconds later
@@ -38,7 +40,7 @@ def run_body(mame, image, case_dir, body, extra=(), deadline=DEADLINE):
                "-nothrottle", "-seconds_to_run", str(deadline + 2),
                "-cfg_directory", str(case_dir / "cfg"), "-nvram_directory", str(case_dir / "nvram"),
                "-state_directory", str(case_dir / "sta"), "-snapshot_directory", str(case_dir / "snap"),
-               "-flash", str(image), "-autoboot_script", str(HERE / "harness.lua"), "-autoboot_delay", "0", *extra]
+               "-flash", str(image), "-autoboot_script", str(HERE / "harness.lua"), "-autoboot_delay", "0", *mame_args.EXTRA, *extra]
     environment = dict(os.environ, HARNESS_CASE=body, HARNESS_SCRIPT=str(HERE / "sio1_lanes.lua"),
                        HARNESS_DIR=str(case_dir), HARNESS_DEADLINE=str(deadline))
     try:

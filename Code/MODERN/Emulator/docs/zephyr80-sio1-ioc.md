@@ -91,15 +91,23 @@ released within the bound, gets no reply.
 
 | Delay | Value | Basis |
 |---|---|---|
-| command-lane byte | 20 µs | the firmware's target is 16 µs (`EXTSYNC_TARGET_BYTE_US`) plus its per-byte overhead, not derived; the KonaOS request loop (175 T-states a byte, one transmit buffer) works on the board, so the board's period is at least 17.5 µs |
+| command-lane byte | 20 µs | provisional. The firmware's target is 16 µs (`EXTSYNC_TARGET_BYTE_US`) plus its per-byte overhead; the KonaOS request loop (175 T-states a byte, one transmit buffer) works on the board, so the board's period is at least 17.5 µs, and 16 µs underruns it here. No record gives the board value |
 | reply guard | 200 µs | `EXTSYNC_REPLY_GUARD_US` |
 | `/RTSB` release bound after the window | 1 ms | the firmware bounds it by a loop count; not derived |
-| bulk byte to the Z80 | 20 µs | the command lane's value; the firmware's target is 6 µs (`BULK_TARGET_BYTE_US`) and the KonaOS read-path measurement records about 25 µs; not derived |
-| bulk byte from the Z80 | 24 µs | `BULK_RX_TARGET_BYTE_US` |
 | bulk admission guard | 100 µs | `BULK_ADMISSION_GUARD_US` |
+| bulk marker, header and CRC bytes, to the Z80 | 18 µs each | lower bound inferred from ZSDOS working on the board; calibrate with the board measurement of the bulk packet's byte spacing. The firmware's target is about 7 µs (`bulk_send_packet_byte`: 4 µs of SPI clocking, a 2 µs gap, the call). ZSDOS's marker scan calls a one-byte helper that costs 11.1 µs a byte, so a faster wire byte builds a backlog behind the 17 µs of setup before its payload loop that the 3-deep FIFO and the pipeline cannot hold; 11.1 µs plus 6 µs of margin, rounded up. The establishing byte of an unsynchronised lane gets the same |
+| bulk payload byte, to the Z80 | 9 µs | lower bound inferred from ZSDOS working on the board; calibrate likewise. The firmware's target is 6 µs (`BULK_TARGET_BYTE_US`). The same reader takes its first payload byte 21-26 µs after it arrives (INI poll phase 4-9 µs, then 17.2 µs of setup) against a cover of four payload periods, so the period is at least 6.6 µs; with one period of cover as margin (4P - P >= 26.3 µs) it is 9 µs |
+| bulk byte from the Z80 | 24 µs | `BULK_RX_TARGET_BYTE_US`, every byte of the window (length + 27 bytes: the packet, the 16-byte marker search and slack) |
 | wait for `/RTSA`, and for its release between a run's packets | 500 ms | `BULK_HOST_READY_TIMEOUT_MS` |
 | CMD_RESET to the machine reset | 10 ms | `handler_reset` |
-| request detection, decoding, dispatch, media access | 0 | not modelled |
+| request detection, decoding, dispatch, media access (backend latency) | 0 | no record separates the card's access time from the lane and the controller's request handling |
+
+Admission overhead is the guards (reply, bulk), the byte time is length
+dependent (the byte rows), and backend latency is the last row. A command
+exchange is the 36-byte request window, the reply guard and the reply, about
+1.3 ms for a short reply at 20 µs a byte. A 512-byte read is that exchange,
+the admission guard and 4.8 ms of bytes; a 512-byte write is that exchange and
+the 539-byte window at 24 µs, about 13 ms.
 
 Each reply comes from the core: the classes and their replies are in
 [The IO controller's protocol core](zephyr80-ioc-core.md), the media behind
@@ -125,6 +133,39 @@ between packets) ends the phase; the core records BULK_NO_HOST. The service,
 the commit included, ends before READY returns, so a following DONE query sees
 the backend's effect.
 
+## Pacing: `-ioc_speed`
+
+`-ioc_speed paced` (the default) clocks every byte on its period in the table
+above. `-ioc_speed fast` clocks a byte as soon as the other end can take it:
+
+- to the Z80, when the receive FIFO has room (`lane_rx_room`);
+- from the Z80, when its transmitter holds a character (`lane_tx_loaded`);
+- the SIO reports data port accesses (`lane_data_event`), so a waiting byte is
+  clocked one microsecond after its counterpart is ready.
+  A slot never takes less than that yield, so a polling guest always runs.
+
+A request window keeps its 36 slots: a slot with no byte loaded waits its
+deadline, so the reply starts as late as it does paced. A guest arms its
+receiver after it releases the request (WR3, the error reset, the stale-byte
+drain), and that takes longer than the reply guard alone when a timer interrupt
+lands in it; the window's unused slots are the margin.
+
+A slot whose counterpart is not ready is clocked at a deadline: one period
+after the last byte for a character from the Z80, five periods for a character
+to the Z80 (what a paced lane gives a guest before its first overrun; fast keeps
+the receive FIFO full, so it must not give less). A bulk write whose transmitter
+misses a deadline has ended its transmission and the rest of the window is
+fill; a later deadline to the Z80 is one period. The reply and admission
+guards stay: they are the time a guest takes to arm its receiver (WR3, the
+stale-byte drain, `RTS`) and the arming order the guests rely on. Bounded
+waits (the host's `/RTSA`, `/RTSB` release) are unchanged.
+
+Replies, statuses, transfer ids, `READY`/`DONE` ownership, line transitions
+and the bytes on the card are the same in both modes for a guest that keeps up
+with the wire; only elapsed time differs. A guest that stalls inside a bulk
+write corrupts the transfer in both modes, not necessarily with the same
+bytes.
+
 ## Interfaces
 
 `zephyr80_ioc_lane.h` is the lane boundary. `zephyr80_ioc_lane_port`, which
@@ -132,8 +173,10 @@ SIO1 implements, is what the controller drives and samples per lane
 (`zephyr80_ioc_lane::COMMAND` or `BULK`): `lane_clock(lane, to_z80)` is one
 full-duplex character time and returns what the transmitter sent;
 `lane_sync`, `lane_dcd`, `lane_cts` set the controller's outputs;
-`lane_rts` reads `/RTS`. `zephyr80_ioc_lane_client`, which the IOC implements,
-receives `lane_rts_changed`. The IOC owns the scheduling (MAME timers) and the
+`lane_rts` reads `/RTS`; `lane_rx_room` and `lane_tx_loaded` tell fast pacing
+whether the Z80 can take or has supplied a character.
+`zephyr80_ioc_lane_client`, which the IOC implements, receives
+`lane_rts_changed` and `lane_data_event` (the Z80 read or wrote the data port). The IOC owns the scheduling (MAME timers) and the
 transport state; the core owns frames and protocol state and reaches the
 transport only through `zephyr80_ioc_core::link` (`resync_lanes`,
 `command_lane_synced`, `hid_doorbell`, `host_reset`). The transport asks the
@@ -146,7 +189,14 @@ required before the device starts). The
 core includes no SIO, CPU or lane type, no host path operation, and never
 touches an interrupt line.
 
-All lane, transport and core state is save-registered.
+All lane, transport and core state is save-registered, and the scheduler saves
+the transport's timer: a state saved in the middle of a command exchange or a
+bulk transfer resumes it, at the same phase and byte, on restore. The card
+socket's state (its open objects and mount) is not saved: a restored read
+finishes its bytes, but a restored process has to reopen files before a
+transfer can reach the media.
+A machine reset cancels the timer and returns the transport to idle, so no
+callback reaches the next transaction.
 
 ## Not modelled
 
@@ -154,4 +204,5 @@ Interrupts, the daisy chain and WAIT/READY on SIO1; modes other than External
 Sync x1; Auto Enables; receive CRC, parity, break/abort, DTR; the position of
 `/SYNC` inside a character and anything else below byte granularity (the
 bulk receive's bit-phase marker search is a byte search); bulk CRC (the
-deployed bypass); board-measured timing.
+deployed bypass); the controller's request handling and the card's access
+time, which take no emulated time.
