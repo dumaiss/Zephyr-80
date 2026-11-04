@@ -17,7 +17,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | Option | Meaning |
 |---|---|
 | `--mame PATH` | the MAME binary (`mame/mamepbitzd` debug or `mame/mamepbitz` release) |
-| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs` or `sio1-lanes` |
+| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes` or `ioc-core` |
 | `--list` | the cases, what each proves and the inputs it needs |
 | `--konaos-root`, `--zephyr-root` | the ZephyrOS and Zephyr-80 checkouts the inputs come from |
 | `--output DIR` | result directory, default `tests/output/run` (ignored by Git) |
@@ -34,6 +34,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `sio1-lanes` | none (the probe program) | the eight [SIO1 lane probes](#sio1-lane-probes) |
 | `sio1-konaos` | `serial` | the KonaOS IOC driver over SIO1 (below): LINK_SYNC at its first attempt, the shell's PING, every request answered; the same after a reset at the prompt and a reset inside the PING reply |
 | `sio1-zsdos` | `zsdos` | the ZSDOS transport over SIO1: LINK_SYNC at its first attempt and every boot request answered |
+| `ioc-core` | `konaos`, `zsdos` | the three [IOC core probes](#ioc-core-probes): the protocol core against real frames, and both guests' replies from the empty card socket |
 | `vdp-text` | none (a DI/HALT image) | the VDP observations: TEXT1, TEXT2 and GRAPHIC1 text read from VRAM, rendered glyph pixels, a PNG snapshot, GRAPHIC6 refused |
 
 Inputs: `konaos` is `ZephyrOS/build/konaos.bin`, `zsdos` is
@@ -101,8 +102,8 @@ are. A case can add MAME options (`mame_args` in `run.py`), for example
 
 The serial cases boot the console-serial image against the IOC model
 ([SIO1 and the IO controller](../docs/zephyr80-sio1-ioc.md)): the link comes
-up, the shell banner reports `IOC version 75` from PING, no filesystem or
-keyboard is served, the prompt follows about 3 emulated seconds after the host
+up, the shell banner reports `IOC version 75` from PING, the card socket is
+empty and no keyboard is attached, the prompt follows about 3 emulated seconds after the host
 sync, and the shell starts
 in `/system`. `timer` taps the CTC's I/O writes and the IM2 vector fetch of
 channel 2, then runs `timer stage` (INFO 390625/250, 10,000 monotonic
@@ -240,3 +241,18 @@ CRC-valid reply with its sequence, the first exchange of each boot must be
 LINK_SYNC armed with Enter Hunt and be the only one, KonaOS must send a PING
 answered with level 75 and the synchronised link bit, and no WR1 write may be
 nonzero. ZSDOS sends no PING.
+
+## IOC core probes
+
+`ioc-core` runs three probes ([The IO controller's protocol core](../docs/zephyr80-ioc-core.md)).
+`ioc-core:PROBE` selects one.
+
+| Probe | Proof |
+|---|---|
+| `core` | `ioc_core/ioc_core_test.cpp`, built with the core source and run on the host: every request a complete packet in a 36-byte window, every reply encoded, CRC-checked and decoded again, bulk packets and capture windows built as the lanes carry them, expected values from the firmware source. Its eleven tests: framing (bad CRC, length, truncation, unadmitted class, nonzero STATUS, idle window, a valid frame after a broken one, counters, no stale bytes), the transport-level classes (diagnostic classes FEh, LINK_SYNC, RESET without a reply), the empty socket for every class, FS2 reads (EOF, ranges, runs of 512-byte packets, wrong cookie, stale generation after FS2_RESET, a media change and a disk error), directories and the 16-component resolver, bad names and refused requests leaving the media unchanged, FS2 writes (DONE, partial, wrong SEQ or TYPE, late marker, no host, underrun under the CRC bypass, reset mid-transfer, truncate, full volume, namespace commands), the `/SHARED` family, records, blocks and volumes (raw, auto-mount, file images, ranges, folder media), the HID input queue (partial dequeue, doorbell, overflow) and save registration |
+| `konaos` | the production KonaOS image boots for 10 emulated seconds: each of its requests gets its class's reply with the empty-socket status, FS2_RESET generations count from 2, and the bulk lane's data port is never touched |
+| `zsdos` | the same for the ZSDOS image over 8 emulated seconds |
+
+`ioc_core/memory_storage.h` is the in-memory card the host test uses, and
+`ioc_core/emu.h` supplies the MAME integer types; neither is part of the
+emulator. The build command and the test's output are in the probe's log.

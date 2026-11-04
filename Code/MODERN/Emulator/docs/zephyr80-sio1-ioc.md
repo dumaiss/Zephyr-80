@@ -8,12 +8,14 @@ across 30h–3Fh. Both guests poll SIO1 with its interrupts disabled.
 The machine models SIO1 as a behavioural device, `zephyr80_sio1`
 (`mame/src/mame/pbitz/zephyr80_sio1.*`), and the controller as
 `zephyr80_ioc` (`zephyr80_ioc.*`) with its transport-independent protocol
-core `zephyr80_ioc_core` (`zephyr80_ioc_core.*`). SIO0 is MAME's stock
+core `zephyr80_ioc_core` (`zephyr80_ioc_core.*`, described in
+[The IO controller's protocol core](zephyr80-ioc-core.md)). SIO0 is MAME's stock
 `z80sio`. The specification is the KonaOS IOC driver
 (`ZephyrOS/drivers/ioc/ioc_boot.c`, `ioc_io.asm`, `ioc.c`,
 `platform/zephyr80/public/hardware.h`) and the controller firmware
 (`Code/MCU/IOController`: `src/main.c`, `src/external_sync.c`,
-`src/handlers.c`, `include/ioc_frame.h`, `include/external_sync.h`). No
+`src/bulk_channel.c`, `src/handlers.c`, `include/ioc_frame.h`,
+`include/external_sync.h`). No
 firmware runs, and nothing below the lane pins (the PIC, SPI2, the clock
 gates, USB, the card) is modelled.
 
@@ -62,9 +64,9 @@ other end, and what the model does.
 | RR0 D0 | receive available | — | FIFO non-empty |
 | RR0 D2 | before every data write | — | buffer empty and no CRC byte pending |
 | RR0 D3, `/DCDB` | COMMAND_READY, waited 8 × 65535 polls | asserted while idle; dropped from accepting a request to the end of its service | the IOC drives it |
-| RR0 D5, `/CTSB` | the HID doorbell (`ioc_status`) | asserted while the HID queue holds bytes | the IOC drives it; deasserted (no HID queue) |
-| RR0 D3, `/DCDA` | read admission | asserted before the clock gate opens | the IOC drives it; deasserted (no bulk) |
-| RR0 D5, `/CTSA` | write admission and phase active | held for the transfer | the IOC drives it; deasserted (no bulk) |
+| RR0 D5, `/CTSB` | the HID doorbell (`ioc_status`) | asserted while the HID queue holds bytes | the IOC drives it from the core's input queue |
+| RR0 D3, `/DCDA` | read admission | asserted before the clock gate opens | the IOC drives it: asserted from admission to the end of a transfer to the Z80 |
+| RR0 D5, `/CTSA` | write admission and phase active | held for the transfer | the IOC drives it: asserted from admission until the bytes are clocked |
 | RR0 D4 | — | — | Hunt |
 | RR0 D6 | the bulk write waits for it after WR0 C0h | — | set on underrun, transmitter disable and reset |
 | RR1 | — | — | D0 All Sent (always, a synchronous mode), D5 overrun |
@@ -92,17 +94,36 @@ released within the bound, gets no reply.
 | command-lane byte | 20 µs | the firmware's target is 16 µs (`EXTSYNC_TARGET_BYTE_US`) plus its per-byte overhead, not derived; the KonaOS request loop (175 T-states a byte, one transmit buffer) works on the board, so the board's period is at least 17.5 µs |
 | reply guard | 200 µs | `EXTSYNC_REPLY_GUARD_US` |
 | `/RTSB` release bound after the window | 1 ms | the firmware bounds it by a loop count; not derived |
-| request detection, decoding, dispatch | 0 | not modelled |
+| bulk byte to the Z80 | 20 µs | the command lane's value; the firmware's target is 6 µs (`BULK_TARGET_BYTE_US`) and the KonaOS read-path measurement records about 25 µs; not derived |
+| bulk byte from the Z80 | 24 µs | `BULK_RX_TARGET_BYTE_US` |
+| bulk admission guard | 100 µs | `BULK_ADMISSION_GUARD_US` |
+| wait for `/RTSA`, and for its release between a run's packets | 500 ms | `BULK_HOST_READY_TIMEOUT_MS` |
+| CMD_RESET to the machine reset | 10 ms | `handler_reset` |
+| request detection, decoding, dispatch, media access | 0 | not modelled |
 
-The core serves PING (`handler_ping`: the 16-byte echo, level 75, the power
-byte of a powered board with no shutdown request plus `IOC_PING_LINK_SYNCED`,
-the service and abort counters) and LINK_SYNC (`handler_link_sync`: both
-lanes drop their boundary, so the reply re-establishes the command lane's).
-Every other class the firmware's request gate admits is answered as the
-firmware answers a class it does not serve: RSP_UNKNOWN_COMMAND (FEh), status
-IOC_STATUS_UNKNOWN_CMD. The guests then report no filesystem and no input
-device. A machine reset resets the controller with the board: no service in
-flight, both `/SYNC` lines released, READY asserted.
+Each reply comes from the core: the classes, their replies and the empty card
+socket the machine has until card media are attached are in
+[The IO controller's protocol core](zephyr80-ioc-core.md). CMD_RESET answers
+nothing and resets the machine after its hold. A machine reset resets the
+controller with the board: no service in flight, both `/SYNC` lines released,
+READY asserted.
+
+## The bulk transport
+
+A reply that arms a transfer (READY) is followed by its bulk phase on SIO1/A
+before READY returns (`bulk_channel_run_if_armed`). The controller waits for
+the host's `/RTSA` (the KonaOS read and write paths assert it once they are in
+their loops), then asserts `/CTSA`, and `/DCDA` too for a transfer to the Z80,
+and waits the admission guard. Towards the Z80 it clocks, while the lane is not
+synchronised, a disposable byte and the falling `/SYNCA` edge (held low from
+then on until LINK_SYNC), then the packet and one flush byte, and drops both
+lines. From the Z80 it clocks the capture window (FFh towards the Z80), drops
+`/CTSA` and hands the window to the core, which checks the packet and runs the
+commit. A FS2_READ_RUN's further packets each wait for `/RTSA` to be released
+and asserted again. A host that never asserts `/RTSA` (or never releases it
+between packets) ends the phase; the core records BULK_NO_HOST. The service,
+the commit included, ends before READY returns, so a following DONE query sees
+the backend's effect.
 
 ## Interfaces
 
@@ -115,7 +136,13 @@ full-duplex character time and returns what the transmitter sent;
 receives `lane_rts_changed`. The IOC owns the scheduling (MAME timers) and the
 transport state; the core owns frames and protocol state and reaches the
 transport only through `zephyr80_ioc_core::link` (`resync_lanes`,
-`command_lane_synced`). The core includes no SIO, CPU or lane type and never
+`command_lane_synced`, `hid_doorbell`, `host_reset`). The transport asks the
+core for the armed transfer and hands it the captured window
+(`bulk_armed`, `bulk_packet`, `bulk_sent`, `bulk_window`, `bulk_received`,
+`bulk_no_host`, `run_more`, `run_next`, `run_end`) and runs its idle pass
+after every service (`idle`). Card media attach with
+`zephyr80_ioc_device::set_storage` (a `zephyr80_ioc_storage` backend). The
+core includes no SIO, CPU or lane type, no host path operation, and never
 touches an interrupt line.
 
 All lane, transport and core state is save-registered.
@@ -124,6 +151,6 @@ All lane, transport and core state is save-registered.
 
 Interrupts, the daisy chain and WAIT/READY on SIO1; modes other than External
 Sync x1; Auto Enables; receive CRC, parity, break/abort, DTR; the position of
-`/SYNC` inside a character and anything else below byte granularity; the HID
-queue and doorbell; bulk transfers and bulk admission; CMD_RESET; every
-command class but PING and LINK_SYNC; board-measured timing.
+`/SYNC` inside a character and anything else below byte granularity (the
+bulk receive's bit-phase marker search is a byte search); bulk CRC (the
+deployed bypass); board-measured timing.

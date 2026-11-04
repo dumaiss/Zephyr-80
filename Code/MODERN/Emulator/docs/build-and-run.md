@@ -73,9 +73,9 @@ The [test runner](../tests/README.md) runs bounded, scripted cases: both
 images' reset copies and OS-mode entry, the clocks and interrupts, and the
 serial-console image to its shell prompt, and the IOC link. SIO1 carries a
 behavioural IO controller ([SIO1 and the IO controller](zephyr80-sio1-ioc.md))
-that serves LINK_SYNC and PING and answers every other command class as
-unknown, so the V9958/HID console takes no keyboard input and no card is
-served.
+with its [protocol core](zephyr80-ioc-core.md); the card socket is empty and
+no keyboard is attached, so the V9958/HID console takes no keyboard input and
+the guests report no filesystem.
 
 ## Memory decode
 

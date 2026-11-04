@@ -32,15 +32,15 @@ def assemble(output):
     return image
 
 
-def run_body(mame, image, case_dir, body, extra=()):
+def run_body(mame, image, case_dir, body, extra=(), deadline=DEADLINE):
     """One MAME process running case body `body`; returns (ok, exit code, log, command)."""
     command = [str(mame.resolve()), "zephyr80", "-noreadconfig", "-skip_gameinfo", "-video", "none", "-sound", "none",
-               "-nothrottle", "-seconds_to_run", str(DEADLINE + 2),
+               "-nothrottle", "-seconds_to_run", str(deadline + 2),
                "-cfg_directory", str(case_dir / "cfg"), "-nvram_directory", str(case_dir / "nvram"),
                "-state_directory", str(case_dir / "sta"), "-snapshot_directory", str(case_dir / "snap"),
                "-flash", str(image), "-autoboot_script", str(HERE / "harness.lua"), "-autoboot_delay", "0", *extra]
     environment = dict(os.environ, HARNESS_CASE=body, HARNESS_SCRIPT=str(HERE / "sio1_lanes.lua"),
-                       HARNESS_DIR=str(case_dir), HARNESS_DEADLINE=str(DEADLINE))
+                       HARNESS_DIR=str(case_dir), HARNESS_DEADLINE=str(deadline))
     try:
         result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=WALL)
         code, log = result.returncode, result.stdout + result.stderr

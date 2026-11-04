@@ -30,6 +30,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import clocks_irqs  # noqa: E402
+import ioc_core  # noqa: E402
 import memory_flash  # noqa: E402
 import sio1_lanes  # noqa: E402
 
@@ -62,6 +63,8 @@ CASES = {
                         about="KonaOS IOC driver over SIO1: LINK_SYNC, the shell's PING, every reply; machine resets idle and mid-reply"),
     "sio1-zsdos": dict(kind="lua", script="sio1_lanes.lua", inputs=("zsdos",), deadline=8, wall=60,
                        about="ZSDOS IOC transport over SIO1: LINK_SYNC bring-up and every boot request answered"),
+    "ioc-core": dict(kind="suite", module=ioc_core, inputs=("konaos", "zsdos"),
+                     about="IOC protocol core: frames, bulk and media effects (host test); both guests' replies from the empty card socket (3 probes)"),
     "vdp-text": dict(kind="lua", script="vdp_text.lua", inputs=(), deadline=5, wall=60,
                      about="VDP observations: TEXT1/TEXT2/GRAPHIC1 text from VRAM, rendered pixels, a snapshot, bitmap refusal"),
 }

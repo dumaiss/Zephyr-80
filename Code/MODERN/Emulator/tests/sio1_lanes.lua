@@ -504,3 +504,82 @@ H.case_body("sio1-zsdos", function()
     H.check(#found[LINK_SYNC] == 1, "%d LINK_SYNC exchanges", #found[LINK_SYNC])
     return "LINK_SYNC first attempt; " .. summary(T, found)
 end)
+
+-- IOC core replies (the `ioc-core` case's guest probes) ---------------------
+
+-- What the core answers each class with an empty card socket
+-- (Code/MCU/IOController src/dispatch.c, handlers.c, fs2.c, fs_share.c):
+-- a status, and a check of the DATA where it is fixed.
+local NO_MEDIA, NO_HANDLE = 0x4b, 0x48
+local EMPTY_SOCKET = {
+    [0x01] = { 0x00 }, [0x0c] = { 0x00 }, [0x33] = { 0x00 }, [0x0a] = { 0x00 }, [0x11] = { 0x00 },
+    [0x30] = { 0x00, function(d) return #d == 14 and d[1] == 1 and d[3] == 0xfe and d[4] == 0x1f end },
+    [0x31] = { 0x00 }, [0x32] = { 0x00 },
+    [0x34] = { NO_MEDIA }, [0x35] = { NO_MEDIA }, [0x38] = { NO_MEDIA }, [0x3b] = { NO_MEDIA }, [0x3c] = { NO_MEDIA },
+    [0x3d] = { NO_MEDIA }, [0x41] = { NO_MEDIA }, [0x42] = { NO_MEDIA }, [0x43] = { NO_MEDIA }, [0x44] = { NO_MEDIA },
+    [0x36] = { NO_HANDLE }, [0x37] = { NO_HANDLE }, [0x39] = { NO_HANDLE }, [0x3a] = { NO_HANDLE },
+    [0x3e] = { NO_HANDLE }, [0x3f] = { NO_HANDLE }, [0x40] = { NO_HANDLE }, [0x45] = { NO_HANDLE },
+    [0x08] = { 0x15 }, [0x0f] = { 0x15 }, [0x03] = { 0x15 }, [0x10] = { 0x15 },
+    [0x20] = { 0x13 }, [0x22] = { 0x13 }, [0x26] = { 0x13 }, [0x27] = { 0x13 }, [0x28] = { 0x13 },
+    [0x0d] = { 0x00, function(d) return (#d == 26 or #d == 21) end },
+    [0x0e] = { 0x00, function(d) return #d == 2 and d[1] == 0 and d[2] == 0 end },
+    [0x12] = { 0x00, function(d) for i = 1, 9 do if d[i] ~= 0 then return false end end return #d == 9 end },
+}
+
+-- Every exchange answered with the class's response and the empty-socket
+-- status; FS2 generations advance by one per FS2_RESET from 1; nothing ever
+-- touches the bulk lane's data port (no READY is issued without media).
+local function check_core_replies(T, bulk)
+    local generation, seen = 1, {}
+    for i, x in ipairs(T.exchanges) do
+        local q, a = x.request_frame, x.reply_frame
+        local want = EMPTY_SOCKET[q.class]
+        H.check(want, "exchange %d: class %02X is not in the empty-socket table", i, q.class)
+        H.check(a.class == (q.class | 0x80) and a.status == want[1],
+            "exchange %d: request %02X answered %02X status %02X, want %02X status %02X", i, q.class, a.class, a.status,
+            q.class | 0x80, want[1])
+        if want[2] then H.check(want[2](a.data), "exchange %d (%02X): reply DATA %s", i, q.class, hx(a.data)) end
+        if q.class == 0x32 then
+            generation = generation + 1
+            local g = a.data[1] | (a.data[2] << 8) | (a.data[3] << 16) | (a.data[4] << 24)
+            H.check(g == generation, "FS2_RESET generation %d, want %d", g, generation)
+        end
+        seen[#seen + 1] = string.format("%02X>%02X/%02X", q.class, a.class, a.status)
+    end
+    H.check(bulk.data == 0, "%d bulk-lane data accesses with no READY", bulk.data)
+    return table.concat(seen, " ")
+end
+
+local function bulk_data_tap()
+    local bulk = { data = 0 }
+    H.keep(H.io:install_read_tap(0x30, 0x30, "ioc-bulk-r", function() bulk.data = bulk.data + 1 end))
+    H.keep(H.io:install_write_tap(0x30, 0x30, "ioc-bulk-w", function() bulk.data = bulk.data + 1 end))
+    return bulk
+end
+
+-- A guest boot for `seconds`: its requests and the core's replies.
+local function guest_replies(seconds, what)
+    local T = trace_sio1()
+    local bulk = bulk_data_tap()
+    H.wait(function() return H.now() > seconds end, seconds + 2, what)
+    T.close()
+    report_exchanges(T)
+    H.check(#T.exchanges > 0, "%s sent no IOC request", what)
+    check_exchanges(T, 1)
+    return T, check_core_replies(T, bulk)
+end
+
+-- The production KonaOS image (V9958 console): its IOC, filesystem and HID
+-- drivers' boot requests against the empty socket.
+H.case_body("ioc-konaos", function()
+    local T, seen = guest_replies(8, "KonaOS boot")
+    local classes = {}
+    for _, x in ipairs(T.exchanges) do classes[x.request_frame.class] = true end
+    H.check(classes[0x32] and classes[0x30] and classes[0x38], "KonaOS sent no FS2_RESET/CAPS/OPENDIR")
+    return string.format("%d exchanges: %s", #T.exchanges, seen)
+end)
+
+H.case_body("ioc-zsdos", function()
+    local T, seen = guest_replies(6, "ZSDOS boot")
+    return string.format("%d exchanges: %s", #T.exchanges, seen)
+end)
