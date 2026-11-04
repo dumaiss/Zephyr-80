@@ -17,7 +17,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | Option | Meaning |
 |---|---|
 | `--mame PATH` | the MAME binary (`mame/mamepbitzd` debug or `mame/mamepbitz` release) |
-| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard`, `terminal-apps`, `sound`, `audio-playback`, `v9958` or `graphics-apps` |
+| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard`, `terminal-apps`, `sound`, `audio-playback`, `v9958`, `graphics-apps`, `debug-symbols`, `sdk-run` or `save-restore` |
 | `--list` | the cases, what each proves and the inputs it needs |
 | `--konaos-root`, `--zephyr-root` | the ZephyrOS and Zephyr-80 checkouts the inputs come from |
 | `--output DIR` | result directory, default `tests/output/run` (ignored by Git) |
@@ -49,6 +49,9 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `v9958` | `konaos`, `zsdos` | the five [V9958 probes](#v9958-probes): the observers against known VRAM, the ports, the command engine, both guests' consoles |
 | `graphics-apps` | `konaos`, `gfxtest`, `gfxdemo`, `sntview`, `iobench`, `ztr` | the six [graphics program probes](#graphics-program-probes): gfxtest (every mode), GfxDemo and sntview observed on the VDP, iobench and sntview timing at both IO controller settings |
 | `vdp-text` | none (a DI/HALT image) | the VDP observations: TEXT1, TEXT2 and GRAPHIC1 text read from VRAM, rendered glyph pixels, a PNG snapshot, GRAPHIC6 refused |
+| `debug-symbols` | `konaos`, `sdk` | the two [developer-tool probes](#developer-tool-probes) of the `konaos` plugin under `-debug`: symbols, ambiguity, bank-aware breakpoints, physical views; the debugger's cost |
+| `sdk-run` | `konaos`, `sdk` | the three [developer-tool probes](#developer-tool-probes) of the SDK's `make run` from paths with spaces |
+| `save-restore` | `konaos`, `sdk` | the two [developer-tool probes](#developer-tool-probes): five save points on a card image and a card folder, each restored in a fresh process and compared with the saving run; changed media refused |
 
 Inputs: `konaos` is `ZephyrOS/build/konaos.bin`, `zsdos` is
 `Zephyr-80/Code/HOST/CPM2.2/build/zephyr80.bin`, `serial` is
@@ -58,7 +61,8 @@ Inputs: `konaos` is `ZephyrOS/build/konaos.bin`, `zsdos` is
 `ZephyrOS/UserSoftware/KonaCommander/build/user/kc.exe` (`make` in each
 program's directory), `gfxtest` and `iobench` are `ZephyrOS/build/user/gfxtest.exe` and
 `ZephyrOS/build/user/iobench.exe` (`make build/user/gfxtest.exe`, `make build/user/iobench.exe`), `gfxdemo` is
-`ZephyrOS/UserSoftware/GfxDemo/build/user/gfxdemo.exe` (`make` in its directory). A missing input stops the run before
+`ZephyrOS/UserSoftware/GfxDemo/build/user/gfxdemo.exe` (`make` in its directory), `sdk` is
+`ZephyrOS/build/kos-sdk-<version>.tar.gz` (`make sdk`). A missing input stops the run before
 any case with exit 2, naming the file and the command that builds it.
 
 Each case gets a fresh directory under `--output`, removed and recreated
@@ -91,6 +95,9 @@ A change to the sound card or the I/O map is replayed with `sound`, `audio-playb
 `keyboard` and `terminal-apps`.
 A change to the V9958, the screen or the observers is replayed with `v9958`, `graphics-apps`, `clocks-irqs`,
 `konaos-video-boot`, `zsdos-boot`, `keyboard`, `terminal-apps` and `audio-playback`.
+A change to save-state registration touches every device: replay `save-restore` with `serial-boot`,
+`konaos-video-boot`, `keyboard`, `terminal-apps`, `card-image`, `card-directory`, `cpm-volumes`, `ioc-timing`,
+`sound` and `v9958`. A change to the plugin or the SDK's run rule is replayed with `debug-symbols` and `sdk-run`.
 
 ## Serial harness
 
@@ -455,3 +462,21 @@ tone write (the two counters then differ by up to 15 counts, as the chip's
 saved counters show at the end of the stream), which three near-equal tones
 make a large difference in a window; so only its median (0.95) is required and
 the spread is reported.
+
+## Developer-tool probes
+
+`tests/devtools.py` with `devtools.lua` under the harness and the `konaos` plugin
+(`-pluginspath mame/plugins -plugin konaos`; [debugging KonaOS programs](../docs/zephyr80-debugging.md)).
+Every probe unpacks the `sdk` tarball into its own directory and builds its fixtures with it:
+`tests/sdk/bankbp` (a placed program: `home_step` is the home zone's first code and `far_step` far
+segment 1's, both at 8000h) and `tests/sdk/savework` (reads `/fs/INPUT.BIN`, writes and re-reads
+`/fs/OUTPUT.BIN`, twenty 20 ms timer waits each with a PSG0 tone and a console line).
+
+| Probe | Proof |
+|---|---|
+| `debug-symbols:banks` | under `-debug -debugger none`: errors for nothing loaded, a missing OS or program map, a placement naming a home area the map lacks; `kos_entry` and `main` ambiguous between bankbp and the template hello, `image:name` and the `_name` fallback, an unknown name and image, refused breakpoints on an absolute and a caller-window symbol, the nucleus's bank 7 and common bank 0; breakpoints on `home_step` and `far_step` pending until the launch, then stopping home/far three times each at 8000h in two banks, the far stops with mode 10 and P ≠ 0; at a far stop the SRAM share, the debugger's `dump` of it (`addr:sram.s`) and of VRAM (`addr:vdp`) read the home bank, the far bank and VRAM's upper 64 KiB while the latch and the VDP status registers stay unchanged; a plain `bpset 8000` stops in bankbp's two banks six times and wherever else code runs at 8000h |
+| `debug-symbols:timing` | the same boot and run without the debugger, with it, and with the two breakpoints (six stops): wall time per emulated second, informational |
+| `sdk-run:run` | the SDK unpacked under a path with spaces, MAME, the image and the card folder at paths with spaces, `make run KOS_BREAK=main` in `template/` with `-debug -debugger none`: HELLO.EXE staged, the breakpoint reported pending and then stopped at `hello:_main`, the program's lines in `result.txt`, exit 0 |
+| `sdk-run:names` | `examples/`: `KOS_RUN=files` with arguments and two assets (one renamed): FILES.EXE, NOTES.TXT and HELLOSRC.C staged and listed by the program; no `KOS_RUN` among several programs and an invalid asset name refused |
+| `sdk-run:no-mame` | `make` in `template/` with no MAME on PATH and none configured builds HELLO's EXE; `make run` names the missing binary (a path, and on PATH), the missing image and the missing plugin |
+| `save-restore:image`, `save-restore:folder` | savework from a 16 MiB FAT16 image or a folder: one run saves `idle` (the prompt), `command` (a command window clocking), `bulk` (the program's load, BULK_SEND), `write` (an OUTPUT.BIN block arriving, BULK_RECEIVE, the file open for writing) and `active` (tick 5: timer, console, PSG), copying the card at each save instant; each state restored in a fresh process onto its copy must match the saving run: the IO controller and SIO1 line state at the first frame after the save, every PSG/DAC write with its time, the VDP registers, VRAM, the screen, the end time and the card's final contents. The `bulk` state onto a card with one byte of INPUT.BIN changed, and (image) with a flash image one byte different, must end MAME with the socket's or the flash's fatal error |

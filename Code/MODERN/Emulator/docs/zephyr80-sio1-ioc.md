@@ -194,10 +194,9 @@ touches an interrupt line.
 
 All lane, transport and core state is save-registered, and the scheduler saves
 the transport's timer: a state saved in the middle of a command exchange or a
-bulk transfer resumes it, at the same phase and byte, on restore. The card
-socket's state (its open objects and mount) is not saved: a restored read
-finishes its bytes, but a restored process has to reopen files before a
-transfer can reach the media.
+bulk transfer resumes it, at the same phase and byte, on restore, and the
+card socket restores its open objects and mount onto the same media
+([card socket](zephyr80-card.md#save-states)).
 A machine reset cancels the timer and returns the transport to idle, so no
 callback reaches the next transaction.
 

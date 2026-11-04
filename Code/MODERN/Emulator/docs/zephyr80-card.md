@@ -173,8 +173,31 @@ once; an open host file adds its stdio stream and a listing its names.
 
 ## Save states
 
-The socket's session, FatFs state and open objects are not save-registered;
-a state saved with objects open does not restore them.
+The socket's state is saved with the machine's, with no host pointer or file
+in it:
+
+| State | Saved as |
+|---|---|
+| session, replaced flag, FAT and folder mounts, insertion serial | the values |
+| each of the 16 objects | its type, validity, media serial, write mode, position, length, extents; a folder object's file as its path below the folder's root; a folder directory's names still to be read |
+| FatFs | the FATFS fields and its 512-byte window (dirty or not), every FIL and DIR with its volume and window pointers as presence and window offsets, and FatFs's mount counter |
+| the media | their identity: kind (none, image, folder), write protection, an image's size, and a SHA-1 of what the card presents: an image's bytes, or a folder's 8.3 tree depth first in 8.3 order, each name with its kind, ambiguity and write permission, then a file's size and bytes |
+
+The media themselves are never copied into the state. On load the socket
+identifies the inserted media the same way and compares: a difference in kind,
+write protection, size or content ends MAME with a fatal error naming both
+identities, so no saved FatFs window, position or pending write is ever
+applied to other media. The media's path does not matter: a copy of the card
+as it was at the save restores. With matching media the socket reopens each
+folder object's file at its path and mode, rebuilds the folder listings from
+the saved names, registers the FatFs volume again and restores its objects'
+pointers. A file the restore cannot reopen is a fatal error too. Objects left
+from media that were ejected keep their serial and fail their next access, as
+before the save.
+
+Identifying the media reads them whole on every save and load (a 16 MiB
+image in tens of milliseconds); MAME's rewind feature, which saves every frame,
+is not suited to a card in the socket.
 
 ## Not modelled
 

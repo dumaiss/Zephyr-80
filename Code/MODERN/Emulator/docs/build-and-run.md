@@ -58,9 +58,9 @@ MAME never writes the input file. The image manager/Lua `image:load()` replaces
 flash contents immediately and clears the entire previous image, retaining
 SRAM and the current latch. **Reset the machine after replacing media to boot
 it** (`manager.machine:soft_reset()` in Lua); reset selects latch 00h.
-Unloading or a failed replacement leaves erased flash. Save state registration
-covers SRAM, the latch and the flash contents; mounting media is still required
-when starting a machine.
+Unloading or a failed replacement leaves erased flash. A save state holds SRAM
+and the latch, and only the flash contents' identity: restore it with the same
+`-flash` image ([save states](zephyr80-debugging.md#save-states)).
 
 A bounded headless run uses:
 
@@ -276,5 +276,10 @@ sends the sync and prints the pty for a terminal such as
 `picocom -b 115200 /dev/pts/N`.
 
 For debugging, `-debug` opens the interactive debugger in a debug build, and
-`-autoboot_script foo.lua -autoboot_delay 0` runs a Lua script at startup.
+`-autoboot_script foo.lua -autoboot_delay 0` runs a Lua script at startup. The
+`konaos` plugin (`-plugin konaos`) adds KonaOS symbols, bank-aware breakpoints,
+views of all SRAM and VRAM and the console as text, and runs the KonaOS SDK's
+`make run` ([debugging KonaOS programs](zephyr80-debugging.md)). SRAM is the
+`:sram` memory share, so the debugger's memory window and its `dump`, `save`,
+`load`, `find` and `fill` commands (`58000:sram.s`) reach every bank.
 `zephyr80-bringup-fixes.md` is a historical fix log.

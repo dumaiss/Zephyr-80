@@ -31,6 +31,7 @@ sys.path.insert(0, str(HERE))
 
 import card_backends  # noqa: E402
 import clocks_irqs  # noqa: E402
+import devtools  # noqa: E402
 import ioc_core  # noqa: E402
 import ioc_timing  # noqa: E402
 import keyboard  # noqa: E402
@@ -58,6 +59,7 @@ INPUTS = {
     "ztr": ("konaos", "UserSoftware/SNTracker/songs/night-market.ztr", "tracked file"),
     "zvg": ("konaos", "tests/snd/fixtures/NIGHT.ZVG", "tracked file"),
     "wraps": ("konaos", "tests/snd/fixtures/wraps.zvg", "tracked file"),
+    "sdk": ("konaos", "build/kos-sdk-{sdk_version}.tar.gz", "make -C {root} sdk"),
 }
 
 # kind "suite": a probe module's run(); kind "lua": harness.lua with `script`.
@@ -121,6 +123,15 @@ CASES = {
                           about="gfxtest (every mode), GfxDemo and sntview from a card image on the production KonaOS image, observed on the VDP; iobench and sntview timing at the paced and fast IO controller settings (6 probes)"),
     "vdp-text": dict(kind="lua", script="vdp_text.lua", inputs=(), deadline=5, wall=60,
                      about="VDP observations: TEXT1/TEXT2/GRAPHIC1 text from VRAM, rendered pixels, a snapshot, bitmap refusal"),
+    "debug-symbols": dict(kind="suite", module=devtools, inputs=("konaos", "sdk"), probes=devtools.PROBES["debug-symbols"],
+                          call=lambda mame, inputs, out, sub: devtools.run("debug-symbols", mame, inputs, out, sub),
+                          about="the konaos plugin under -debug: map/placement diagnostics, ambiguity rules, bank-aware breakpoints on a placed program's home zone and far segment at 8000h (mode-10 aperture), physical SRAM/VRAM views; the debugger's cost (2 probes)"),
+    "sdk-run": dict(kind="suite", module=devtools, inputs=("konaos", "sdk"), probes=devtools.PROBES["sdk-run"],
+                    call=lambda mame, inputs, out, sub: devtools.run("sdk-run", mame, inputs, out, sub),
+                    about="the standalone SDK's make run from a path with spaces: template to the program's output with a breakpoint, program choice, arguments and 8.3 assets, an ordinary build without MAME and the run target's errors (3 probes)"),
+    "save-restore": dict(kind="suite", module=devtools, inputs=("konaos", "sdk"), probes=devtools.PROBES["save-restore"],
+                         call=lambda mame, inputs, out, sub: devtools.run("save-restore", mame, inputs, out, sub),
+                         about="save states idle, mid-command, mid-bulk and active (timer, console, PSG) on a card image and a card folder, each restored in a fresh process onto its card snapshot and compared with the saving run; changed card and flash refused (2 probes)"),
 }
 
 DEFAULT_PROMPT = "/system> "
@@ -150,6 +161,8 @@ def resolve_inputs(names, args):
         if root is None:
             errors.append(f"input {name}: pass --{root_name}-root")
             continue
+        if "{sdk_version}" in relative:
+            relative = relative.format(sdk_version=devtools.sdk_version(root))
         path = (root / relative).resolve()
         if not path.is_file():
             errors.append(f"input {name}: {path} is missing; build it with: {build.format(root=root.resolve())}")
