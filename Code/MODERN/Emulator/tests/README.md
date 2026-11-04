@@ -17,7 +17,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | Option | Meaning |
 |---|---|
 | `--mame PATH` | the MAME binary (`mame/mamepbitzd` debug or `mame/mamepbitz` release) |
-| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard`, `terminal-apps`, `sound` or `audio-playback` |
+| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard`, `terminal-apps`, `sound`, `audio-playback`, `v9958` or `graphics-apps` |
 | `--list` | the cases, what each proves and the inputs it needs |
 | `--konaos-root`, `--zephyr-root` | the ZephyrOS and Zephyr-80 checkouts the inputs come from |
 | `--output DIR` | result directory, default `tests/output/run` (ignored by Git) |
@@ -46,6 +46,8 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `konaos-video-boot` | `konaos` | the production KonaOS image to `/system> ` on its V9958/HID console, keys typed and the answers read off the screen ([below](#keyboard-probes)) |
 | `zsdos-boot` | `zsdos` | ZSDOS to ZephyrShell's `B0:/$ ` on its V9958/HID console, `echo`, `ls` and Up recall typed and read off the screen |
 | `terminal-apps` | `konaos`, `kedit`, `kc` | probes `image` and `folder`: KonaEdit and KonaCommander loaded from a card image and a card folder and driven by keys |
+| `v9958` | `konaos`, `zsdos` | the five [V9958 probes](#v9958-probes): the observers against known VRAM, the ports, the command engine, both guests' consoles |
+| `graphics-apps` | `konaos`, `gfxtest`, `gfxdemo`, `sntview`, `iobench`, `ztr` | the six [graphics program probes](#graphics-program-probes): gfxtest (every mode), GfxDemo and sntview observed on the VDP, iobench and sntview timing at both IO controller settings |
 | `vdp-text` | none (a DI/HALT image) | the VDP observations: TEXT1, TEXT2 and GRAPHIC1 text read from VRAM, rendered glyph pixels, a PNG snapshot, GRAPHIC6 refused |
 
 Inputs: `konaos` is `ZephyrOS/build/konaos.bin`, `zsdos` is
@@ -54,8 +56,10 @@ Inputs: `konaos` is `ZephyrOS/build/konaos.bin`, `zsdos` is
 (`make console-serial-selftest`), `kedit` and `kc` are
 `ZephyrOS/UserSoftware/KonaEdit/build/user/kedit.exe` and
 `ZephyrOS/UserSoftware/KonaCommander/build/user/kc.exe` (`make` in each
-program's directory). A missing input stops the run before any
-case with exit 2, naming the file and the command that builds it.
+program's directory), `gfxtest` and `iobench` are `ZephyrOS/build/user/gfxtest.exe` and
+`ZephyrOS/build/user/iobench.exe` (`make build/user/gfxtest.exe`, `make build/user/iobench.exe`), `gfxdemo` is
+`ZephyrOS/UserSoftware/GfxDemo/build/user/gfxdemo.exe` (`make` in its directory). A missing input stops the run before
+any case with exit 2, naming the file and the command that builds it.
 
 Each case gets a fresh directory under `--output`, removed and recreated
 when the case starts: `inputs.json` (MAME binary and input SHA-256, Git HEAD
@@ -85,6 +89,8 @@ A change to the keyboard, the HID module or the console observer is replayed wit
 `konaos-video-boot`, `zsdos-boot`, `terminal-apps` and `ioc-core`.
 A change to the sound card or the I/O map is replayed with `sound`, `audio-playback`, `clocks-irqs`, `serial-boot`,
 `keyboard` and `terminal-apps`.
+A change to the V9958, the screen or the observers is replayed with `v9958`, `graphics-apps`, `clocks-irqs`,
+`konaos-video-boot`, `zsdos-boot`, `keyboard`, `terminal-apps` and `audio-playback`.
 
 ## Serial harness
 
@@ -116,6 +122,11 @@ writes to the SIO are never read as console output.
 | `harness.vdp.console.read()` | the GRAPHIC6 console as text: rows of character codes, the reverse-video map, the count of cells that match no glyph |
 | `harness.vdp.console.find(text)`, `wait(text, t)`, `wait_for(pred, t, what)` | where text is on the console; waits read the screen every few frames |
 | `harness.vdp.console.dump(name)`, `printable(row)` | the screen as a text file; a row as printable ASCII |
+| `harness.vdp.console.as_read(code)`, `text_at(x, y, n, paper)` | what the console reads back for a glyph the guest drew with `code`; text a program drew at a pixel position, read with the guest's font |
+| `harness.vdp.display()`, `pixel(x, y, page)`, `byte(L)`, `bytes(L, n)` | the shown bitmap mode (width, lines, page, scroll, YJK); a GRAPHIC4/6/7 pixel; a logical VRAM byte (GRAPHIC6/7 interleave applied) |
+| `harness.vdp.palette()`, `palette_rgb(i)`, `g7_rgb(b)`, `sprite_rgb(c)` | the 16 palette entries as saved; the colour MAME draws for an entry, a GRAPHIC7 byte and a sprite colour code |
+| `harness.vdp.status(n)`, `sprites()` | a status register as saved (no port read, nothing cleared); the sprite attribute table (sprite mode 2) |
+| `harness.vdp.image()`, `rendered(image, x, y)`, `histogram(x, y, w, h)`, `render_check(y0, y1)` | the rendered bitmap; the colour drawn at a display pixel; colour counts over a display rectangle; every pixel outside the sprites compared with VRAM and the palette |
 | `harness.keyboard.set(key, down)`, `tap(key)`, `chord(keys)`, `type(text)` | the USB keyboard's fields (a usage or its name, `"Left Shift"`, `"Up"`, `"F5"`) through MAME's input path; each change is logged with its emulated time to `inputs.tsv` |
 | `harness.keyboard.frames(n)`, `release_all()` | wait `n` frames; release every held key |
 
@@ -368,6 +379,40 @@ than paper counts as ink. Cells that match no glyph (the KonaOS logo, a glyph
 half drawn) are counted as unknown. Sprites (the text cursor, the pointer) are
 not in the bitmap. Another mode, another page or a graphics screen is not a
 console; it is captured by `snapshot`.
+
+## V9958 probes
+
+`v9958` (`video.py`; bodies in `video.lua` and `vdp_text.lua`; the command probe program `video.asm`) tests the stock
+V9958 as the machine wires it ([the video card](../docs/zephyr80-video.md)). Each probe is one MAME process.
+
+| Probe | What it checks |
+|---|---|
+| `v9958:bitmap` | a DI/HALT image drives the chip through its ports and the observers read it back: GRAPHIC6 corner pixels, the palette, 212 and 192 lines (the active area at row 22 and 42 of the 544×466 bitmap), the vertical scroll mapped and rendered, page 1 through R#2, a sprite in sprite mode 2 (decoded, drawn two hi-res pixels wide, gone with R#8's SPD), the status flag left for the guest's first read after fifty observer reads, a pending control byte, palette byte and read-ahead left untouched by every observer and a snapshot (and changed by a port status read), GRAPHIC7 (fixed palette), and a pixel written but not yet drawn that the render check must catch |
+| `v9958:ports` | seventeen addresses across the 16 KiB banks and the A16 boundary written and read back; GRAPHIC1's counter wrapping inside its bank; GRAPHIC6 runs crossing 3FFFh/4000h, FFFFh/10000h and the last byte; the GRAPHIC6 interleave; the mirrors across A0h–BFh and writes with A2 set; the sixteen palette entries (pointer wrap, upper bits) and their rendered colours; the indirect register port with and without auto-increment; S#1's ID, S#0's frame flag and its clear on read |
+| `v9958:commands` | `video.asm` runs the KonaOS driver's sequence (the 15-byte block through the indirect port, S#2 polled until CE clears) on the real Z80; taps log the starting write and the first poll that saw CE clear. HMMV, HMMM, a console glyph HMMM with sprites on and off, LMMV with IMP/AND/OR/XOR, LMMM IMP/TIMP and PSET in GRAPHIC7 and GRAPHIC6 are compared pixel for pixel with references; LINE in eight octants plus horizontal and diagonal is checked for its start dot, one connected path, one dot per major step and its direction; a full-screen HMMV shows CE busy for its whole time; HMMV 128×40 by display and sprite state. `commands.tsv` lists every run's busy time |
+| `v9958:konaos-console`, `v9958:zsdos-console` | the production image's console from a card file: the prompt screen against the rendered bitmap and the sprite cursor (pattern 0, colour 11, on the cell after the prompt); an ANSI listing (the font's glyphs 20h–7Eh and 80h–FCh, cursor positioning, reverse video drawn ink-on-paper swapped, erase to the end and the start of a line, wrap at column 85, wrap off, tab, backspace, insert line, the shell prompt written where the cursor was left); a 100-line listing that runs the circular surface past its end (the last rows in order, R#23 moved, the prompt and the cursor on the last row, every pixel as VRAM says); every status read selects S#2 and `/INT` stays low. ZSDOS's `cat` pages (`--More--`); the probe presses a key at each page |
+
+A cell is read back as the first code sharing its bitmap, printable ASCII first, so the expected text of a glyph
+row is the font's own (`console.as_read`); the bytes FDh–FFh are not in the ZSDOS listing because its `cat` writes
+through BDOS function 6, where they mean console input.
+
+## Graphics program probes
+
+`graphics-apps` (`video.py`; bodies in `apps.lua`) runs the real programs from a card image on the production KonaOS
+image, typed at the shell. A program that takes the display is held at its key stops (the console's interlace bit gone
+and no VDP port write for half a second), observed, and released with a key; the lines it prints are read off the
+restored console. Every capture is a PNG listed in `captures.tsv` and `captures.json` with its file SHA-256 and the SHA-256 of its decoded pixels (the file's text chunks carry MAME's version string, the pixels do not), the program,
+its arguments, the stop and the program and asset hashes.
+
+| Probe | What it checks |
+|---|---|
+| `graphics-apps:gfxtest` | every gfxtest mode. `info`: the record (`v1 b1 fF r128 pA0 A1 A2 A3 A4 c0`). `mode6`, `mode7`, `yjk`: the held screen is one colour over every VRAM byte (R#25's YJK bit for `yjk`), rendered as VRAM says. `reopen`, `text`: their result lines. `upload`: every byte of the four uploaded rectangles (chunks of 1, 7, 256 and 4096; page 0 and page 1) seen written to its VRAM address, and the page-1 bytes in place. `palette`: entries 1–3 as saved. `prims`: the fill ordering, the 32 of 33 queued fills drawn at the auto-flush, the four overlapping copies against a memmove reference, the page copies in both directions. `shapes`, `atlas`, `timing`: every held screen rendered as VRAM says with its captures. `pages`: the upload winning over a fill in flight, page 1 shown (band and body colours), three retrace waits, the partial present, twelve page flips at the frame rate. `pointer`: the sprite's position, size, colour and pattern against the program's shape, drawn at the hot spot. Every mode's own result lines are in `gfxtest-results.txt`; the markers of `timing` give `gfxtest-timing.tsv` (the twelve windows in µs and T-states) |
+| `graphics-apps:gfxdemo` | the cleared screen, two bars, the box and its copies, both texts read back with the font, the application glyph and its restore, rendered as VRAM says, and the exit line |
+| `graphics-apps:sntview`, `graphics-apps:sntview-fast` | the tracker viewer on `NIGHT.ZTR`: the first screen rendered as VRAM says, a page flip by Space (R#2) and back, forty seconds of playing (the screen changes; at most 10 % of its pixels trail VRAM at an instant), and the exit report (`underruns 0, overruns 0, missed ticks 0`, the late counts and the per-step timing line, kept in `sntview-exit.txt`), at the paced and the fast IO controller setting |
+| `graphics-apps:iobench`, `graphics-apps:iobench-fast` | the I/O bench: the console, VDP, direct-write and card rows (`iobench.tsv`), at both settings |
+
+A rendered-bitmap check compares MAME's frame with VRAM; it holds on a held screen and is a tolerance during
+playback, where the foreground draws while the frame is rendered.
 
 ## Sound probes
 

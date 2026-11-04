@@ -50,8 +50,8 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def mame_run(mame, image, case_dir, body, deadline, wall, extra=(), font=None, env=None, state_dir=None):
-    """One MAME process running keyboard.lua's `body`; returns (ok, exit code, log, command)."""
+def mame_run(mame, image, case_dir, body, deadline, wall, extra=(), font=None, env=None, state_dir=None, script="keyboard.lua"):
+    """One MAME process running `script`'s case body `body` (keyboard.lua by default); returns (ok, exit code, log, command)."""
     case_dir.mkdir(parents=True, exist_ok=True)
     command = [str(mame.resolve()), "zephyr80", "-noreadconfig", "-skip_gameinfo", "-video", "none", "-sound", "none",
                "-nothrottle", "-seconds_to_run", str(deadline + 2),
@@ -59,7 +59,7 @@ def mame_run(mame, image, case_dir, body, deadline, wall, extra=(), font=None, e
                "-state_directory", str(state_dir or case_dir / "sta"), "-snapshot_directory", str(case_dir / "snap"),
                "-flash", str(image), "-autoboot_script", str(HERE / "harness.lua"), "-autoboot_delay", "0",
                *mame_args.EXTRA, *extra]
-    environment = dict(os.environ, HARNESS_CASE=body, HARNESS_SCRIPT=str(HERE / "keyboard.lua"),
+    environment = dict(os.environ, HARNESS_CASE=body, HARNESS_SCRIPT=str(HERE / script),
                        HARNESS_DIR=str(case_dir), HARNESS_DEADLINE=str(deadline), **(env or {}))
     manifest = {"body": body, "command": command, "flash": {"path": str(image), "sha256": sha(Path(image).read_bytes())},
                 "limits": {"emulated_seconds": deadline, "wall_seconds": wall}}

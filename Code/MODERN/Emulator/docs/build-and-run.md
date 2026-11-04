@@ -75,7 +75,7 @@ serial-console image to its shell prompt, the IOC link, the keyboard and both
 guests' V9958/HID consoles. SIO1 carries a behavioural IO controller
 ([SIO1 and the IO controller](zephyr80-sio1-ioc.md)) with its
 [protocol core](zephyr80-ioc-core.md), a [USB keyboard](zephyr80-keyboard.md) and the
-[sound card](zephyr80-sound.md).
+[sound card](zephyr80-sound.md) and the [V9958 video card](zephyr80-video.md).
 
 ## The keyboard
 
@@ -100,6 +100,21 @@ recorded independently of any audio device, bounded by emulated time:
 ```sh
 ./mamepbitzd zephyr80 -flash "$KONAOS_ROOT/build/konaos.bin" -carddir card/ \
   -sound none -wavwrite out.wav -samplerate 48000 -seconds_to_run 60
+```
+
+## Video
+
+The [V9958 card](zephyr80-video.md) is MAME's stock chip on an NTSC screen. With a window it shows the guest's
+screen at the 544×466 frame size; headless runs (`-video none`) still render, and the harness reads or saves the
+frame (`screen:pixels()`, `screen:snapshot()`) and the chip's VRAM, palette, sprites and registers without touching
+a port. The graphics programs run from a card image on the production image:
+
+```sh
+make -C $KONAOS_ROOT build/user/gfxtest.exe build/user/iobench.exe
+make -C $KONAOS_ROOT/UserSoftware/GfxDemo
+make -C $KONAOS_ROOT/UserSoftware/SNTracker
+python3 tests/run.py --mame ./mame/mamepbitzd --case v9958 --case graphics-apps \
+  --konaos-root $KONAOS_ROOT --zephyr-root $ZEPHYR_ROOT
 ```
 
 ## The SD card

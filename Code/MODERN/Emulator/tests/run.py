@@ -38,6 +38,7 @@ import mame_args  # noqa: E402
 import memory_flash  # noqa: E402
 import sio1_lanes  # noqa: E402
 import sound  # noqa: E402
+import video  # noqa: E402
 
 # Guest inputs: (root, path under it, the existing target that builds it).
 INPUTS = {
@@ -48,6 +49,9 @@ INPUTS = {
                "make -C {root} console-serial-selftest"),
     "kedit": ("konaos", "UserSoftware/KonaEdit/build/user/kedit.exe", "make -C {root}/UserSoftware/KonaEdit"),
     "kc": ("konaos", "UserSoftware/KonaCommander/build/user/kc.exe", "make -C {root}/UserSoftware/KonaCommander"),
+    "gfxtest": ("konaos", "build/user/gfxtest.exe", "make -C {root} build/user/gfxtest.exe"),
+    "gfxdemo": ("konaos", "UserSoftware/GfxDemo/build/user/gfxdemo.exe", "make -C {root}/UserSoftware/GfxDemo"),
+    "iobench": ("konaos", "build/user/iobench.exe", "make -C {root} build/user/iobench.exe"),
     "sndtest": ("konaos", "build/user/sndtest.exe", "make -C {root} build/user/sndtest.exe"),
     "sntview": ("konaos", "UserSoftware/SNTracker/build/user/sntview.exe", "make -C {root}/UserSoftware/SNTracker"),
     "vgmplay": ("konaos", "UserSoftware/VGMPlayer/build/user/vgmplay.exe", "make -C {root}/UserSoftware/VGMPlayer"),
@@ -108,6 +112,13 @@ CASES = {
                            probes=sound.PROBES["audio-playback"],
                            call=lambda mame, inputs, out, sub: sound.run_playback("audio-playback", mame, inputs, out, sub),
                            about="the real sndtest, sntview and VGMPlayer from a card image on the production KonaOS image, driven by keys; audio and register events checked against the programs' reports and an ideal rendering of the writes (3 probes)"),
+    "v9958": dict(kind="suite", module=video, inputs=("konaos", "zsdos"), probes=video.PROBES["v9958"],
+                  call=lambda mame, inputs, out, sub: video.run("v9958", mame, inputs, out, sub),
+                  about="the stock V9958 as wired: VRAM range, banks and mirrors, palette, registers, status, the command engine run by real Z80 code (results, busy state, time), observers against known VRAM, and both guests' consoles (glyphs, cursor, reverse video, erase, wrap, scrolling, colours, status reads) (5 probes)"),
+    "graphics-apps": dict(kind="suite", module=video, inputs=("konaos", "gfxtest", "gfxdemo", "sntview", "iobench", "ztr"),
+                          probes=video.PROBES["graphics-apps"],
+                          call=lambda mame, inputs, out, sub: video.run("graphics-apps", mame, inputs, out, sub),
+                          about="gfxtest (every mode), GfxDemo and sntview from a card image on the production KonaOS image, observed on the VDP; iobench and sntview timing at the paced and fast IO controller settings (6 probes)"),
     "vdp-text": dict(kind="lua", script="vdp_text.lua", inputs=(), deadline=5, wall=60,
                      about="VDP observations: TEXT1/TEXT2/GRAPHIC1 text from VRAM, rendered pixels, a snapshot, bitmap refusal"),
 }

@@ -14,8 +14,9 @@
 --                   deserialized from the guest's TXD, and bytes written to
 --                   that slot for the guest's RXD, both in emulated time.
 --   harness.vdp     V9958 registers, VRAM, name-table text, the GRAPHIC6
---                   console's text (harness.vdp.console) and the rendered
---                   screen bitmap.
+--                   console's text (harness.vdp.console), bitmap pixels,
+--                   palette, sprites, saved status registers and the rendered
+--                   screen bitmap; none of it reads a port.
 --
 -- Input: harness.keyboard presses and releases the USB keyboard's fields
 -- through MAME's input path and logs each change (inputs.tsv).
@@ -268,6 +269,266 @@ function V.snapshot(name)
     return path
 end
 
+-- Bitmap screens, palette, sprites, status --------------------------------------
+--
+-- Observers for the graphics programs' modes (GRAPHIC4, GRAPHIC6, GRAPHIC7,
+-- and YJK as raw bytes).  Every read goes through the vdp's address space and
+-- its saved state (m_cont_reg, m_pal_reg, m_stat_reg), never a port: the
+-- status registers are read as stored, so nothing the guest can see is
+-- cleared or advanced, and an observer polling every frame changes no
+-- interrupt flag, read-ahead or address latch.
+--
+-- MAME keeps GRAPHIC6/7 VRAM interleaved (logical byte L at ((L & 1) << 16) |
+-- (L >> 1), v9938.cpp vram_write; sprite tables are read through the same
+-- mapping, vram_read), so logical addresses are mapped here.  The rendered
+-- bitmap (screen:pixels()) is 544 wide: the active area starts at x 16 and
+-- is 512 hi-res pixels wide (a 256-pixel mode doubles each pixel); each
+-- display line is two bitmap rows (interlace or not), the first at row 22
+-- for 212 lines and 42 for 192, measured by vdp_text.lua's render geometry
+-- check.
+local status_reg = emu.item(vdp_device.items["0/m_stat_reg"])
+local palette_reg = emu.item(vdp_device.items["0/m_pal_reg"])
+
+function V.status(n)
+    return status_reg:read(n)
+end
+
+-- The 16 palette entries as saved by the chip: { r, g, b }, 0..7 each.
+function V.palette()
+    local out = {}
+    for i = 0, 15 do
+        local rb, g = palette_reg:read(2 * i), palette_reg:read(2 * i + 1)
+        out[i] = { (rb >> 4) & 7, g & 7, rb & 7 }
+    end
+    return out
+end
+
+local function pal3bit(v)
+    return (v << 5) | (v << 2) | (v >> 1)
+end
+
+local function argb(r, g, b)
+    return 0xff000000 | (r << 16) | (g << 8) | b
+end
+
+-- The colour MAME shows for palette entry `i` (0xAARRGGBB), as the chip's
+-- own pen tables define it: pal3bit of each 3-bit component.
+function V.palette_rgb(i)
+    local e = V.palette()[i]
+    return argb(pal3bit(e[1]), pal3bit(e[2]), pal3bit(e[3]))
+end
+
+-- GRAPHIC7's fixed palette: byte GGGRRRBB (the blue levels 0, 2, 4, 7).
+function V.g7_rgb(byte)
+    local blue = (byte << 1) & 6
+    if blue == 6 then blue = 7 end
+    return argb(pal3bit((byte >> 2) & 7), pal3bit((byte >> 5) & 7), pal3bit(blue))
+end
+
+-- A sprite's colour code as drawn: the palette entry, except in GRAPHIC7, where the chip draws
+-- sprites from a fixed table (v9938.cpp g7_ind16, nine bits of R G B).
+local G7_SPRITE = { [0] = 0, 2, 192, 194, 48, 50, 240, 242, 482, 7, 448, 455, 56, 63, 504, 511 }
+function V.sprite_rgb(code)
+    if V.mode() ~= "GRAPHIC7" then return V.palette_rgb(code) end
+    local v = G7_SPRITE[code & 15]
+    return argb(pal3bit((v >> 6) & 7), pal3bit((v >> 3) & 7), pal3bit(v & 7))
+end
+
+local INTERLEAVED = { GRAPHIC6 = true, GRAPHIC7 = true }
+
+-- A logical VRAM byte (the address the CPU's port writes name).
+function V.byte(address, mode)
+    mode = mode or V.mode()
+    if INTERLEAVED[mode] then address = ((address & 1) << 16) | ((address & 0x1ffff) >> 1) end
+    return vram:read_u8(address & 0x1ffff)
+end
+
+-- The bitmap modes the programs use: width in pixels, bytes per line and
+-- pixels per byte.
+local BITMAP = {
+    GRAPHIC4 = { width = 256, pitch = 128, per_byte = 2 },
+    GRAPHIC5 = { width = 512, pitch = 128, per_byte = 4 },
+    GRAPHIC6 = { width = 512, pitch = 256, per_byte = 2 },
+    GRAPHIC7 = { width = 256, pitch = 256, per_byte = 1 },
+}
+
+-- The display as the registers set it: mode, size, which 64K/32K page R#2
+-- selects and the display-enable, sprite-disable and scroll registers.
+function V.display()
+    local mode = V.mode()
+    local d = { mode = mode, enabled = (V.reg(1) & 0x40) ~= 0, lines = (V.reg(9) & 0x80) ~= 0 and 212 or 192,
+                scroll = V.reg(23), sprites_off = (V.reg(8) & 0x02) ~= 0, yjk = (V.reg(25) & 0x08) ~= 0,
+                backdrop = V.reg(7) & 0x0f }
+    local b = BITMAP[mode]
+    if b then
+        d.width, d.pitch, d.per_byte = b.width, b.pitch, b.per_byte
+        d.page_bytes = b.pitch * 256
+        d.page = (V.reg(2) >> 5) & (mode == "GRAPHIC6" and 1 or mode == "GRAPHIC7" and 1 or 3)
+        d.base = d.page * (mode == "GRAPHIC6" and 0x10000 or mode == "GRAPHIC7" and 0x10000 or 0x8000)
+        d.line_mask = ((V.reg(2) & 0x1f) << 3) | 7
+    end
+    return d
+end
+
+-- The colour index at display pixel (x, y) of `page` (default: the shown
+-- page), the vertical scroll applied.  Unscrolled with `raw`.
+function V.pixel(x, y, page, raw)
+    local d = V.display()
+    local b = BITMAP[d.mode]
+    if not b then return nil, d.mode .. " is not a bitmap mode" end
+    local base = page and page * (b.pitch * 256) or d.base
+    local line = raw and y or ((y + d.scroll) & 0xff)
+    local at = base + line * b.pitch + x // b.per_byte
+    local byte = V.byte(at, d.mode)
+    if b.per_byte == 1 then return byte end
+    if b.per_byte == 2 then return (x & 1) == 0 and (byte >> 4) or (byte & 15) end
+    return (byte >> (6 - 2 * (x & 3))) & 3
+end
+
+-- Logical bytes [from, from + count) as a Lua string.
+function V.bytes(from, count, mode)
+    mode = mode or V.mode()
+    local out = {}
+    for i = 0, count - 1 do out[#out + 1] = string.char(V.byte(from + i, mode)) end
+    return table.concat(out)
+end
+
+-- The sprites the chip would evaluate: sprite mode 2 (GRAPHIC3 and up) from
+-- the SAT at R#11:R#5, the colour table 512 bytes below it, patterns at R#6.
+-- Each entry: slot, y (the SAT byte), x, pattern, colour, flags (CC, IC, EC
+-- from the colour table's first line), size (8 or 16), zoom.  The list ends
+-- at the D8h terminator.
+function V.sprites()
+    local d = V.display()
+    local mode2 = d.mode ~= "GRAPHIC1" and d.mode ~= "MULTICOLOR" and d.mode ~= "TEXT1" and d.mode ~= "TEXT2"
+    if not mode2 then return nil, d.mode .. " uses sprite mode 1" end
+    local sat = ((V.reg(5) & 0xfc) << 7) + (V.reg(11) << 15)
+    local colours = ((V.reg(5) & 0xf8) << 7) + (V.reg(11) << 15)
+    local patterns = V.reg(6) << 11
+    local size = (V.reg(1) & 2) ~= 0 and 16 or 8
+    local zoom = (V.reg(1) & 1) ~= 0 and 2 or 1
+    local out = {}
+    for slot = 0, 31 do
+        local y = V.byte(sat + 4 * slot, d.mode)
+        if y == 0xd8 then break end
+        local colour = V.byte(colours + 16 * (slot & (((V.reg(5) & 3) << 3) | 7)), d.mode)
+        out[#out + 1] = { slot = slot, y = y, x = V.byte(sat + 4 * slot + 1, d.mode),
+                          pattern = V.byte(sat + 4 * slot + 2, d.mode) & (size == 16 and 0xfc or 0xff),
+                          colour = colour & 15, cc = (colour & 0x40) ~= 0, ic = (colour & 0x20) ~= 0,
+                          ec = (colour & 0x80) ~= 0, size = size, zoom = zoom }
+    end
+    return out
+end
+
+-- Where the rendered bitmap shows display pixel (x, y): the bitmap column
+-- and the first of its two rows, and the pixel's width in bitmap columns.
+function V.geometry()
+    local d = V.display()
+    local lines = d.lines
+    return { x0 = 16, y0 = 22 + (212 - lines), rows = 2, lines = lines }
+end
+
+-- A parsed copy of the rendered bitmap: pixels(x, y) -> 0xAARRGGBB for
+-- bitmap coordinates; `w`, `h`.  One copy per call keeps a screen coherent.
+function V.image()
+    local raw, w, h = V.pixels()
+    local image = { raw = raw, w = w, h = h }
+    function image.at(x, y)
+        return (string.unpack("<I4", raw, (y * w + x) * 4 + 1))
+    end
+    return image
+end
+
+-- The rendered colour of display pixel (x, y) (no scroll: screen line y).
+function V.rendered(image, x, y)
+    local g = V.geometry()
+    local d = V.display()
+    local scale = 512 // (d.width or 512)
+    return image.at(g.x0 + x * scale, g.y0 + y * g.rows)
+end
+
+-- Histogram of the rendered colours of a display rectangle (screen lines):
+-- { [argb] = count } and the total.
+function V.histogram(x, y, w, h)
+    local image = V.image()
+    local out, total = {}, 0
+    for j = y, y + h - 1 do
+        for i = x, x + w - 1 do
+            local c = V.rendered(image, i, j)
+            out[c] = (out[c] or 0) + 1
+            total = total + 1
+        end
+    end
+    return out, total
+end
+
+-- Compare the shown bitmap (VRAM through the palette) with the rendered
+-- bitmap over screen lines [y0, y1): every display pixel against what the
+-- registers and VRAM say it should be (colour only: MAME draws the
+-- backdrop and colour-0 pen with alpha 0).  Pixels under a visible sprite
+-- are skipped (the sprite planes are drawn over them).  Returns the pixels
+-- compared, the mismatches, the skipped and the first mismatch.  GRAPHIC4/6
+-- use the palette, GRAPHIC7 its fixed palette; YJK is not decoded.
+function V.render_check(y0, y1)
+    local d = V.display()
+    local b = BITMAP[d.mode]
+    if not b or d.mode == "GRAPHIC5" then return nil, d.mode .. " is not decoded" end
+    if d.mode == "GRAPHIC7" and d.yjk then return nil, "YJK is not decoded" end
+    local image = V.image()
+    local palette, skip = {}, {}
+    for i = 0, 15 do palette[i] = V.palette_rgb(i) end
+    local scale = 512 // d.width
+    local g = V.geometry()
+    local boxes = {}
+    if not d.sprites_off then
+        for _, s in ipairs(V.sprites() or {}) do
+            local h = s.size * s.zoom
+            local w = s.size * s.zoom
+            local x = s.x - (s.ec and 32 or 0)
+            local y = ((s.y - d.scroll) & 255) + 1
+            boxes[#boxes + 1] = { x, y, w, h }
+        end
+    end
+    y0, y1 = y0 or 0, y1 or d.lines
+    local compared, bad, skipped, first = 0, 0, 0, nil
+    for y = y0, y1 - 1 do
+        local line = (y + d.scroll) & 0xff
+        local row_base = d.base + line * b.pitch
+        local ybox = {}
+        for _, box in ipairs(boxes) do
+            if y >= box[2] and y < box[2] + box[4] then ybox[#ybox + 1] = box end
+        end
+        for x = 0, d.width - 1 do
+            local covered = false
+            for _, box in ipairs(ybox) do
+                -- sprite pixels are 2 hi-res pixels wide in the 512-wide modes
+                local hx = d.width == 512 and x // 2 or x
+                if hx >= box[1] and hx < box[1] + box[3] then covered = true break end
+            end
+            if covered then
+                skipped = skipped + 1
+            else
+                local byte = V.byte(row_base + x // b.per_byte, d.mode)
+                local want
+                if d.mode == "GRAPHIC7" then
+                    want = V.g7_rgb(byte)
+                else
+                    local index = (x & 1) == 0 and (byte >> 4) or (byte & 15)
+                    want = palette[index == 0 and d.backdrop or index]
+                    if index == 0 and (V.reg(8) & 0x20) ~= 0 then want = palette[0] end
+                end
+                local got = image.at(g.x0 + x * scale, g.y0 + y * g.rows)
+                compared = compared + 1
+                if (got & 0xffffff) ~= (want & 0xffffff) then
+                    bad = bad + 1
+                    first = first or string.format("(%d,%d) shows %08X, VRAM says %08X", x, y, got, want)
+                end
+            end
+        end
+    end
+    return compared, bad, skipped, first
+end
+
 -- GRAPHIC6 console text ----------------------------------------------------------
 --
 -- Both guests' consoles draw 6x8 glyphs into a GRAPHIC6 bitmap (KonaOS
@@ -320,6 +581,20 @@ function C.load_font(path)
         if glyphs[key] == nil then glyphs[key] = code end
     end
     C.glyphs = glyphs
+    C.font = data
+end
+
+-- What C.read() reports for a cell the guest drew with `code`: the code of
+-- the first glyph sharing its bitmap (printable ASCII first, so CP850's O-slash
+-- reads as 0), and "r" for the full block, which reads as a reverse space.
+function C.as_read(code)
+    local rows = {}
+    for r = 1, C.cell_height do
+        rows[r] = string.char(C.font:byte(code * C.cell_height + r) & 0xfc)
+    end
+    local key = table.concat(rows)
+    if key == FULL_CELL then return 0x20, "r" end
+    return C.glyphs[key], " "
 end
 
 -- One logical 256-byte bitmap line of page 0 as an array of byte values.
@@ -388,6 +663,28 @@ function C.read()
     end
     C.last = { rows = rows, reverse = reverse, unknown = unknown, time = H.now() }
     return rows, reverse, unknown
+end
+
+-- Text drawn at pixel (x, y) of the shown page by a program (libgfx's 6x8 text, not the console):
+-- `count` cells of 6x8, a pixel that is not `paper` counts as ink.  Returns the string of glyph codes
+-- (C.UNKNOWN for a cell matching no glyph).  GRAPHIC6, screen lines, no scroll applied beyond R#23.
+function C.text_at(x, y, count, paper)
+    H.check(C.glyphs ~= nil, "console font not loaded")
+    local out = {}
+    for c = 0, count - 1 do
+        local rows = {}
+        for r = 0, C.cell_height - 1 do
+            local bits = 0
+            for p = 0, C.cell_width - 1 do
+                local colour = V.pixel(x + c * C.cell_width + p, y + r)
+                bits = (bits << 1) | ((colour ~= paper) and 1 or 0)
+            end
+            rows[r + 1] = string.char(bits << 2)
+        end
+        local code = C.glyphs[table.concat(rows)]
+        out[#out + 1] = code and string.char(code) or C.UNKNOWN
+    end
+    return table.concat(out)
 end
 
 -- A row for a transcript: printable ASCII as is, other codes '.', unknown '?'.
