@@ -74,7 +74,8 @@ images' reset copies and OS-mode entry, the clocks and interrupts, and the
 serial-console image to its shell prompt, the IOC link, the keyboard and both
 guests' V9958/HID consoles. SIO1 carries a behavioural IO controller
 ([SIO1 and the IO controller](zephyr80-sio1-ioc.md)) with its
-[protocol core](zephyr80-ioc-core.md) and a [USB keyboard](zephyr80-keyboard.md).
+[protocol core](zephyr80-ioc-core.md), a [USB keyboard](zephyr80-keyboard.md) and the
+[sound card](zephyr80-sound.md).
 
 ## The keyboard
 
@@ -88,6 +89,17 @@ machine.
 
 ```sh
 ./mamepbitzd zephyr80 -flash "$KONAOS_ROOT/build/konaos.bin" -carddir card/
+```
+
+## Sound
+
+The [sound card](zephyr80-sound.md) (four SN76489A and a DAC) plays through
+MAME's mixer to the host's default output with a window, and the mix can be
+recorded independently of any audio device, bounded by emulated time:
+
+```sh
+./mamepbitzd zephyr80 -flash "$KONAOS_ROOT/build/konaos.bin" -carddir card/ \
+  -sound none -wavwrite out.wav -samplerate 48000 -seconds_to_run 60
 ```
 
 ## The SD card

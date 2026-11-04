@@ -37,6 +37,7 @@ import keyboard  # noqa: E402
 import mame_args  # noqa: E402
 import memory_flash  # noqa: E402
 import sio1_lanes  # noqa: E402
+import sound  # noqa: E402
 
 # Guest inputs: (root, path under it, the existing target that builds it).
 INPUTS = {
@@ -47,6 +48,12 @@ INPUTS = {
                "make -C {root} console-serial-selftest"),
     "kedit": ("konaos", "UserSoftware/KonaEdit/build/user/kedit.exe", "make -C {root}/UserSoftware/KonaEdit"),
     "kc": ("konaos", "UserSoftware/KonaCommander/build/user/kc.exe", "make -C {root}/UserSoftware/KonaCommander"),
+    "sndtest": ("konaos", "build/user/sndtest.exe", "make -C {root} build/user/sndtest.exe"),
+    "sntview": ("konaos", "UserSoftware/SNTracker/build/user/sntview.exe", "make -C {root}/UserSoftware/SNTracker"),
+    "vgmplay": ("konaos", "UserSoftware/VGMPlayer/build/user/vgmplay.exe", "make -C {root}/UserSoftware/VGMPlayer"),
+    "ztr": ("konaos", "UserSoftware/SNTracker/songs/night-market.ztr", "tracked file"),
+    "zvg": ("konaos", "tests/snd/fixtures/NIGHT.ZVG", "tracked file"),
+    "wraps": ("konaos", "tests/snd/fixtures/wraps.zvg", "tracked file"),
 }
 
 # kind "suite": a probe module's run(); kind "lua": harness.lua with `script`.
@@ -94,6 +101,13 @@ CASES = {
     "terminal-apps": dict(kind="suite", module=keyboard, inputs=("konaos", "kedit", "kc"), probes=keyboard.PROBES["terminal-apps"],
                           call=lambda mame, inputs, out, sub: keyboard.run("terminal-apps", mame, inputs, out, sub),
                           about="KonaEdit and KonaCommander from a card image and a card folder, driven by keys and read off the screen; the edited file checked on the card (2 probes)"),
+    "sound": dict(kind="suite", module=sound, inputs=(), probes=sound.PROBES["sound"],
+                  call=lambda mame, inputs, out, sub: sound.run("sound", mame, inputs, out, sub),
+                  about="Afternoon Blend: four SN76489A and the DAC on E0h-FFh, captured with -wavwrite: tone periods, per-chip isolation, mirrors, attenuation, noise against the SN76489A model, DAC codes, loud-mix peaks; real Z80 OTIR/IN/OUT, the READY stretch, reads, reset (2 probes)"),
+    "audio-playback": dict(kind="suite", module=sound, inputs=("konaos", "sndtest", "sntview", "vgmplay", "ztr", "zvg", "wraps"),
+                           probes=sound.PROBES["audio-playback"],
+                           call=lambda mame, inputs, out, sub: sound.run_playback("audio-playback", mame, inputs, out, sub),
+                           about="the real sndtest, sntview and VGMPlayer from a card image on the production KonaOS image, driven by keys; audio and register events checked against the programs' reports and an ideal rendering of the writes (3 probes)"),
     "vdp-text": dict(kind="lua", script="vdp_text.lua", inputs=(), deadline=5, wall=60,
                      about="VDP observations: TEXT1/TEXT2/GRAPHIC1 text from VRAM, rendered pixels, a snapshot, bitmap refusal"),
 }

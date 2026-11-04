@@ -17,7 +17,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | Option | Meaning |
 |---|---|
 | `--mame PATH` | the MAME binary (`mame/mamepbitzd` debug or `mame/mamepbitz` release) |
-| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard` or `terminal-apps` |
+| `--case CASE` | repeatable; a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard`, `terminal-apps`, `sound` or `audio-playback` |
 | `--list` | the cases, what each proves and the inputs it needs |
 | `--konaos-root`, `--zephyr-root` | the ZephyrOS and Zephyr-80 checkouts the inputs come from |
 | `--output DIR` | result directory, default `tests/output/run` (ignored by Git) |
@@ -40,6 +40,8 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `card-image` | `serial` | the three [card probes](#card-probes) for `-card` |
 | `card-directory` | `serial` | the three [card probes](#card-probes) for `-carddir` |
 | `cpm-volumes` | `zsdos` | the three [card probes](#card-probes) for CP/M volume files |
+| `sound` | none (the probe program) | the two [sound probes](#sound-probes): the card's tones, mirrors, noise, DAC and mix on a `-wavwrite` capture, and real Z80 writes, reads and a reset |
+| `audio-playback` | `konaos`, `sndtest`, `sntview`, `vgmplay` and their assets | the real sndtest, sntview and VGMPlayer playing from a card image, their audio captured and checked ([below](#sound-probes)) |
 | `keyboard` | none (the probe program) | the three [keyboard probes](#keyboard-probes): the HID module against the firmware, MAME key input on the SIO1/B lane, save state |
 | `konaos-video-boot` | `konaos` | the production KonaOS image to `/system> ` on its V9958/HID console, keys typed and the answers read off the screen ([below](#keyboard-probes)) |
 | `zsdos-boot` | `zsdos` | ZSDOS to ZephyrShell's `B0:/$ ` on its V9958/HID console, `echo`, `ls` and Up recall typed and read off the screen |
@@ -81,6 +83,8 @@ which runs both modes itself) again with `--ioc-speed fast`. `cpm-volumes` is th
 call-based marker scan and its setup before the INI loop leave the least cover of any guest path.
 A change to the keyboard, the HID module or the console observer is replayed with `keyboard`,
 `konaos-video-boot`, `zsdos-boot`, `terminal-apps` and `ioc-core`.
+A change to the sound card or the I/O map is replayed with `sound`, `audio-playback`, `clocks-irqs`, `serial-boot`,
+`keyboard` and `terminal-apps`.
 
 ## Serial harness
 
@@ -364,3 +368,45 @@ than paper counts as ink. Cells that match no glyph (the KonaOS logo, a glyph
 half drawn) are counted as unknown. Sprites (the text cursor, the pointer) are
 not in the bitmap. Another mode, another page or a graphics screen is not a
 console; it is captured by `snapshot`.
+
+## Sound probes
+
+`sound` and `audio-playback` (`sound.py`, bodies in `sound.lua`, the probe
+program `sound.asm`) test [the sound card](../docs/zephyr80-sound.md). Every
+run captures the mixed audio with `-wavwrite` at 192 kHz under `-sound none`
+(no host audio device) and logs each write and read of E0h-FFh with its
+emulated time and each phase's start and end to `events.tsv`; `sound.py` reads
+both. The audio is analysed with numpy: tone frequencies from interpolated
+edge crossings, spectra with a Goertzel filter, levels as means and swings,
+all against the decoder and mix constants of the machine. Its delay against the
+events (about 16 us, the resampler's) is found from the audio itself.
+
+| Probe | What it checks |
+|---|---|
+| `sound:bus` | Lua writes the bus. All twelve tone channels alone through their own port: frequency within 0.002 and swing within 3 % of 3579545 / (32 N) and the chip's level; the 12 mirrored ports (E8h-FBh); ports 5-7 and their mirrors silent; four chips at once (a spectrum line each) then each silenced alone while the others stay; the sixteen attenuation steps (2 dB, 15 off); the noise generator (rates 0-3, white and periodic, the retriggering rewrite, chip 3 through FBh) decoded to bits and matched to a model of the SN76489A, and a model of the SN76489 shown not to match; the periodic ring repeating every 15 shifts; ten DAC codes through the port and its mirrors (80h is zero, FFh +0.992, 00h -1.0); loud mixes (every voice of every chip plus the DAC at each extreme) for peaks and clipping; silence between phases to 2 LSB |
+| `sound:guest` | the probe program with real instructions. `OTIR` of the driver's silence bytes into each PSG (every byte arrives; consecutive writes 10.6 us apart against 8.94 us for 32 PSG clocks) and into the DAC (2.1 us, no stretch); `IN A,(C)` over E0h-FFh while a tone sounds (all FFh, 32 read events, no writes, the tone's frequency unchanged); `OUT (C),A` to chip 3 through F3h and the DAC through FCh; a machine reset with a tone and the DAC high (the DAC register clears to 00h, the tone continues); silence after the silence sequence |
+| `audio-playback:sndtest` | the real `sndtest` modes `tones`, `adsr`, `noise`, `modes`, `catchup`, `close` and `zvg` of a short stream, run from a card image on the production KonaOS image, driven by keys and read off the console: every PASS and printed count, the twelve held notes' divisors on the four chips against the library's table, the noise control bytes E1 E1 E7, the stream's PSG0 writes against its report, silence and the DAC at 80h after the exit |
+| `audio-playback:sntview` | the real `sntview` playing the tracker song: it plays, pauses (no write and no sound for two seconds), resumes and quits; its report; the audio against an ideal rendering of the writes; silence after the exit |
+| `audio-playback:vgmplay` | the real VGMPlayer playing the music stream for twelve seconds and stopped by a key: its report, the PSG0 writes against the report (the chips 1-3 receive only the driver's and library's own writes), the audio against the rendering, silence after the stop |
+
+The program names come from the build manifests (`<name>/<name>.json` beside
+each packed program), the card paths follow them, and the assets are
+`UserSoftware/SNTracker/songs/night-market.ztr`,
+`tests/snd/fixtures/NIGHT.ZVG` and `tests/snd/fixtures/wraps.zvg` of the
+KonaOS checkout. `audio-playback` needs `make -C $KONAOS_ROOT build/user/sndtest.exe`,
+`make -C $KONAOS_ROOT/UserSoftware/SNTracker` and
+`make -C $KONAOS_ROOT/UserSoftware/VGMPlayer`.
+
+The ideal rendering is an event-driven model of the SN76489A fed with the
+writes the guest made (`sound.ChipModel`): the counters of the datasheet's
+count grid, the card's gains, the DAC. The capture is compared with it in 0.1 s
+windows after one global delay. The players must match every window (the
+correlation 0.9 or better, the swing within 3 %); the unfiltered rendering
+caps the correlation near 0.99. The `sndtest zvg` stream is a synthetic
+ring-wrap stress (three tones a few Hz apart, rewritten every tick). Its
+windows show a phase difference between the rendering and the chip after a
+tone counter reloads in the 12 us between the latch byte and the data byte of a
+tone write (the two counters then differ by up to 15 counts, as the chip's
+saved counters show at the end of the stream), which three near-equal tones
+make a large difference in a window; so only its median (0.95) is required and
+the spread is reported.
