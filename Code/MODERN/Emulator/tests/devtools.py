@@ -293,10 +293,12 @@ def media_bytes(kind, path):
 
 def parse_final(path):
     lines = Path(path).read_text().split("\n")
-    out = {"regs": None, "sound": [], "screen": None}
+    out = {"regs": None, "ports": None, "sound": [], "screen": None}
     for i, line in enumerate(lines):
         if line.startswith("regs "):
             out["regs"] = line[5:]
+        elif line.startswith("ports "):
+            out["ports"] = line[6:]
         elif line.startswith("sound "):
             out["sound"].append(line[6:])
         elif line == "screen":
@@ -403,6 +405,8 @@ def run_save(kind, mame, inputs, case_dir):
         after_b = parse_after(load_dir / "run/after.tsv")
         compare = {
             "line state": (after_a[name], after_b[name]),
+            "input state at the save and after the restore": (after_a["input:" + name], after_b["input:" + name]),
+            "controller ports at the end": (a["ports"], b["ports"]),
             "end time": (after_a["done"], after_b["done"]),
             "PSG/DAC writes": (a["sound"], b["sound"]),
             "VDP registers": (a["regs"], b["regs"]),

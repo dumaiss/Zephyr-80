@@ -35,7 +35,7 @@ and the emulator is fixed.
 | Flash | `-flash` image device, any image up to 512 KiB, no hash | — |
 | CTC | board order 40h ch0, 42h ch1, 41h ch2, 43h ch3; trigger clocks 1.8432 / 3.6864 / 7.3728 / 7.3728 MHz | — |
 | SIO0 | console on SIO0/B, pty or loopback | — |
-| SIO1 | behavioural `zephyr80_sio1` and the IOC: command lane, bulk lane, FS2, volumes, HID keyboard; card image or host folder | lane and card timing not board-measured; mouse and controllers (WP13) |
+| SIO1 | behavioural `zephyr80_sio1` and the IOC: command lane, bulk lane, FS2, volumes, HID keyboard, mouse and two F310 pads (controller latches at E0h-FFh); card image or host folder | lane and card timing not board-measured |
 | V9958 | stock device, 128 KiB VRAM, validated against both consoles, gfxtest, GfxDemo and sntview | short-command timing against the board |
 | Sound | four SN76489A at 3.579545 MHz on E0h-E3h, the DAC on E4h | analogue levels |
 
@@ -118,7 +118,7 @@ KonaEdit and KonaCommander arrows, the ZSDOS prompt.
 
 **WP9 — Sound card (S) → D.** Four SN76489 (confirm the part from the
 schematic: the noise taps differ by variant) and the 8-bit DAC, mixed mono.
-Reads at E0h-FFh (CTRL) return FFh until WP13.
+Reads at E0h-FFh (CTRL) are the controller latches (WP13).
 
 **WP10 — V9958 validation (S).** KonaOS gfxtest, GfxDemo, sntview, DonkeyKong;
 the ZSDOS console. Compare sntview's exit timing lines with the board's to
@@ -138,8 +138,11 @@ device model, and a fidelity table (exact: CPU, VDP, PSG, decoder; approximate:
 IOC lane and card timing; board only: the `LD A,I` IFF2 erratum, real USB
 devices). KonaOS `docs/boot.md` §9 and the SDK point here.
 
-**WP13 — Later, with the OS features.** Gamepads and the mouse through the
-same HID path, from MAME joysticks and the mouse; the CTRL reads.
+**WP13 — Mouse and controllers (M).** Gamepads and the mouse through the
+same HID path, from MAME joysticks and the mouse; the CTRL reads. **Done in
+MAME**: the [USB mouse and controller document](zephyr80-input.md) describes
+the model; the KonaOS mouse and joy programs, KonaEdit, KonaCommander and the
+libgfx pointer example run against it.
 
 ## 5. Order
 

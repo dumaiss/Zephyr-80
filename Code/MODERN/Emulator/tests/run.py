@@ -41,6 +41,7 @@ import ioc_timing  # noqa: E402
 import keyboard  # noqa: E402
 import mame_args  # noqa: E402
 import memory_flash  # noqa: E402
+import mouse_controllers  # noqa: E402
 import sio1_lanes  # noqa: E402
 import sound  # noqa: E402
 import video  # noqa: E402
@@ -54,6 +55,9 @@ INPUTS = {
                "make -C {root} console-serial-selftest"),
     "kedit": ("konaos", "UserSoftware/KonaEdit/build/user/kedit.exe", "make -C {root}/UserSoftware/KonaEdit"),
     "kc": ("konaos", "UserSoftware/KonaCommander/build/user/kc.exe", "make -C {root}/UserSoftware/KonaCommander"),
+    "gfxmouse": ("konaos", "build/user/gfx_mouse.exe", "make -C {root} build/user/gfx_mouse.exe"),
+    "mouse": ("konaos", "build/user/mouse.exe", "make -C {root} build/konaos.bin (the store's /system/mouse.exe)"),
+    "joy": ("konaos", "build/user/joy.exe", "make -C {root} build/konaos.bin (the store's /system/joy.exe)"),
     "gfxtest": ("konaos", "build/user/gfxtest.exe", "make -C {root} build/user/gfxtest.exe"),
     "gfxdemo": ("konaos", "UserSoftware/GfxDemo/build/user/gfxdemo.exe", "make -C {root}/UserSoftware/GfxDemo"),
     "iobench": ("konaos", "build/user/iobench.exe", "make -C {root} build/user/iobench.exe"),
@@ -117,6 +121,9 @@ CASES = {
     "terminal-apps": dict(kind="suite", module=keyboard, inputs=("konaos", "kedit", "kc"), probes=keyboard.PROBES["terminal-apps"],
                           call=lambda mame, inputs, out, sub: keyboard.run("terminal-apps", mame, inputs, out, sub),
                           about="KonaEdit and KonaCommander from a card image and a card folder, driven by keys and read off the screen; the edited file checked on the card (2 probes)"),
+    "mouse-controllers": dict(kind="suite", module=mouse_controllers, inputs=("konaos", "kedit", "kc", "gfxmouse", "mouse", "joy"), probes=mouse_controllers.PROBES["mouse-controllers"],
+                              call=lambda mame, inputs, out, sub: mouse_controllers.run("mouse-controllers", mame, inputs, out, sub),
+                              about="USB mouse and gamepads through the IO controller: the firmware's decode against the HID module (host test), MAME mouse input on the SIO1/B lane, controller bytes read with IN over E0h-FFh, input latency, save state, and the real mouse, joy, KonaEdit, KonaCommander and gfx_mouse (8 probes)"),
     "sound": dict(kind="suite", module=sound, inputs=(), probes=sound.PROBES["sound"],
                   call=lambda mame, inputs, out, sub: sound.run("sound", mame, inputs, out, sub),
                   about="Afternoon Blend: four SN76489A and the DAC on E0h-FFh, captured with -wavwrite: tone periods, per-chip isolation, mirrors, attenuation, noise against the SN76489A model, DAC codes, loud-mix peaks; real Z80 OTIR/IN/OUT, the READY stretch, reads, reset (2 probes)"),
@@ -141,7 +148,7 @@ CASES = {
                     about="the standalone SDK's make run from a path with spaces: template to the program's output with a breakpoint, program choice, arguments and 8.3 assets, an ordinary build without MAME and the run target's errors (3 probes)"),
     "save-restore": dict(kind="suite", module=devtools, inputs=("konaos", "sdk"), probes=devtools.PROBES["save-restore"],
                          call=lambda mame, inputs, out, sub: devtools.run("save-restore", mame, inputs, out, sub),
-                         about="save states idle, mid-command, mid-bulk and active (timer, console, PSG) on a card image and a card folder, each restored in a fresh process onto its card snapshot and compared with the saving run; changed card and flash refused (2 probes)"),
+                         about="save states idle, mid-command, mid-bulk and active (timer, console, PSG) on a card image and a card folder, each restored in a fresh process onto its card snapshot and compared with the saving run, with mouse and pad input held (the HID and device state equal at the save and after the restore); changed card and flash refused (2 probes)"),
     "hwtest": dict(kind="suite", module=acceptance, inputs=("konaos", "hwtest"), probes=acceptance.PROBES["hwtest"],
                    call=lambda mame, inputs, out, sub: acceptance.run("hwtest", mame, inputs, out, sub),
                    about="the production KonaOS image's `hwtest` typed at the shell with a writable card image and card folder: `hwtest: 4/4 PASS` on the console and the serial lane, the card unchanged afterwards (2 probes)"),
@@ -163,7 +170,7 @@ GROUPS = {
     "acceptance": ("memory-flash", "clocks-irqs", "serial-boot", "timer", "serial-pty", "vdp-text",
                    "sio1-lanes", "sio1-konaos", "sio1-zsdos", "ioc-core", "ioc-timing",
                    "card-image", "card-directory", "cpm-volumes", "zsdos-drives",
-                   "keyboard", "konaos-video-boot", "zsdos-boot", "terminal-apps", "hwtest",
+                   "keyboard", "konaos-video-boot", "zsdos-boot", "terminal-apps", "mouse-controllers", "hwtest",
                    "sound", "audio-playback", "v9958", "graphics-apps",
                    "debug-symbols", "sdk-run", "save-restore", "zexall", "zexdoc"),
 }

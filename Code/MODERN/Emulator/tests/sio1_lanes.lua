@@ -65,7 +65,7 @@ local MB = {
     RESULT = 0x7f10, RR0TX = 0x7f11, RR0END = 0x7f12, RR1END = 0x7f13, READYLO = 0x7f14,
     DRAINED = 0x7f16, RAWLEN = 0x7f19, RR0STALL = 0x7f1b,
     READYTX = 0x7f1c, IRQS = 0x7f20, PKT = 0x7e00, PKT2 = 0x7e40, RAW = 0x7d00,
-    DOORBELL = 0x7f52,
+    DOORBELL = 0x7f52, PAIRN = 0x7f60, PAIRS = 0x7f61, SCAN = 0x7f80, SCAN2 = 0x7fa0,
 }
 
 local function poke(address, bytes)

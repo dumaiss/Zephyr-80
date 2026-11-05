@@ -23,15 +23,17 @@ right and the emulator is wrong.
 | IO controller | transport, protocol core, HID module | `zephyr80_ioc*.*` | [SIO1 and the IO controller](zephyr80-sio1-ioc.md), [protocol core](zephyr80-ioc-core.md) |
 | SD card | `-card` image (the firmware's FatFs) or `-carddir` folder | `zephyr80_card*.*`, `zephyr80_fatfs.c` | [card socket](zephyr80-card.md) |
 | USB keyboard | boot reports from MAME key fields | `zephyr80_usb_keyboard.*` | [USB keyboard](zephyr80-keyboard.md) |
+| USB mouse, gamepads, controller latches | mouse and F310 reports from MAME input; the latches read at E0h–FFh | `zephyr80_usb_mouse.*`, `zephyr80_usb_gamepad.*`, `zephyr80_controller_latch.h`, `zephyr80.cpp` | [mouse and controllers](zephyr80-input.md) |
 | V9958 card | stock `V9958`, 128 KiB VRAM, the card's latch | `zephyr80.cpp` | [V9958 card](zephyr80-video.md) |
 | Sound card | four stock `SN76489A`, `DAC_8BIT_R2R`, mono mix | `zephyr80.cpp` | [sound card](zephyr80-sound.md) |
 | `konaos` plugin | symbols, bank breakpoints, console text, `make run` | `mame/plugins/konaos` | [debugging](zephyr80-debugging.md) |
 
 The IO controller is behavioural: it reproduces what the Z80 observes at
 SIO1 (registers, lines, frames, replies and their effects on the media) from
-the firmware's source. No PIC is emulated and no firmware runs. Mouse and
-game controllers are not modelled yet: `HID_MOUSE` and the HID status pages
-report no device, and reads of E0h–FFh (the controller latches) answer FFh.
+the firmware's source. No PIC is emulated and no firmware runs. A USB mouse
+and two F310 gamepads feed the controller's HID module; the Z80 reads the
+mouse with `HID_MOUSE` and the controller latches at E0h–FFh
+([mouse and controllers](zephyr80-input.md)).
 
 ## Fidelity
 
@@ -70,7 +72,12 @@ Question numbers refer to the owner question list (`ZephyrOS/work/MAME-OWNER-QUE
 | SD card, SPI, the controller's write-back cache, card-detect timing | not modelled | writes reach the host file at once; a swapped card is noticed at its first failing access, as the firmware does (question 2) |
 | Keyboard translation, repeat, queue, doorbell | copied | firmware `ioc_hid.c` (`translate_key`, report edges, 500/60 ms repeat on 10 ms ticks, 128-byte queue, `/CTSB`) and TinyUSB's key table |
 | USB enumeration, MAX3421E, real USB devices, poll interval | not modelled | board only: the keyboard mounts with the controller reset; HID_STATUS page 0 reports no controller probe (question 9) |
-| Mouse, game controllers, CTRL reads | not modelled | a later stage; `HID_MOUSE` reports no mouse, E0h–FFh reads answer FFh |
+| Mouse report decode, accumulation, saturation, take and clear | copied | firmware `ioc_hid.c` (`tuh_hid_report_received_cb`, `hid_mouse_take`), `handlers.c` (`handler_hid_mouse`); 7-byte dongle reports, motion capped at ±32767, presses latched until read |
+| F310 report to controller byte, keypad priority, the keyboard's number keys on port 0 | copied | firmware `controller_latch.c`, `ioc_hid.c` (`coleco_keypad_for_report`); 10 ms pad poll in the idle pass |
+| Reads of E0h–FFh (the controller latches) | copied | `IO_DECODER.pld` (`CTRL`), the IO board's U6 74HC138: bus A0 selects the pad (FCh and FFh as the ColecoVision A1 decode would; the other thirty addresses differ: question 26); ColecoVision mode-select writes decode to nothing |
+| HID_STATUS pages 6 and 7 | copied | `handlers.c` page layouts over the module's live state; device VID/PID of the dongle unknown |
+| Mouse and pad devices, host bindings | emulator semantics | MAME's relative mouse and joystick inputs as the report fields; a motion total and a button ring bound what a device holds between polls; the connection is a machine configuration |
+| Real USB mice and pads, enumeration, hubs, the device limit | not modelled | board only: the board's two-device TinyUSB limit (a keyboard and two pads together) is not enforced (question 27); pad and mouse timing beyond the 10 ms poll |
 | V9958 registers, modes, sprites, palette, command engine | stock | MAME `v9958_device`, 21.477272 MHz, NTSC 59.92 Hz. Short commands complete earlier than the engine's own table (a 6×8 glyph HMMM 26 µs against 95 µs; question 14) |
 | V9958 port decode, interrupt latch | copied | `IO_DECODER.pld`, LunchCrema netlist (A0h–BFh, A2 write = latch) |
 | Video output levels, overscan, NTSC artefacts | not modelled | board only; the frame is the digital bitmap |

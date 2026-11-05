@@ -183,10 +183,18 @@ transport only through `zephyr80_ioc_core::link` (`resync_lanes`,
 core for the armed transfer and hands it the captured window
 (`bulk_armed`, `bulk_packet`, `bulk_sent`, `bulk_window`, `bulk_received`,
 `bulk_no_host`, `run_more`, `run_next`, `run_end`) and runs its idle pass
-after every service: the HID module's waiting keyboard report and repeat
-(`zephyr80_ioc_hid::report`, `task`), then `idle`. The keyboard
-(`zephyr80_usb_keyboard`, the IOC's `keyboard` subdevice) hands its reports to
-the IOC (`zephyr80_usb_keyboard_device::host`). The card socket attaches with
+after every service: the HID module's waiting keyboard report, the mounted and
+removed USB devices, the mouse's reports and each pad's 10 ms poll
+(`zephyr80_ioc_hid::report`, `mouse_report`, `gamepad_report`) and the repeat
+(`task`), then `idle`. The keyboard (`zephyr80_usb_keyboard`, the IOC's
+`keyboard` subdevice) hands its reports to the IOC
+(`zephyr80_usb_keyboard_device::host`); the mouse and the two pads
+(`zephyr80_usb_mouse`, `zephyr80_usb_gamepad`, subdevices `mouse`, `pad1`,
+`pad2`) tell it when they have something (`usb_input_ready`) and are pulled in
+the idle pass, a change during a service waiting for its end
+([mouse and controllers](zephyr80-input.md)). The timer that wakes the idle
+pass is the repeat's or the next pad poll's. The controller latches read at
+E0h–FFh are the module's (`zephyr80_ioc_device::controller`). The card socket attaches with
 `zephyr80_ioc_device::set_storage` (a `zephyr80_ioc_storage` backend,
 required before the device starts). The
 core includes no SIO, CPU or lane type, no host path operation, and never

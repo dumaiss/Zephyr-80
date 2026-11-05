@@ -17,7 +17,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | Option | Meaning |
 |---|---|
 | `--mame PATH` | the MAME binary (`mame/mamepbitzd` debug or `mame/mamepbitz` release) |
-| `--case CASE` | repeatable; `acceptance` is the [acceptance group](#acceptance); a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard`, `terminal-apps`, `sound`, `audio-playback`, `v9958`, `graphics-apps`, `debug-symbols`, `sdk-run`, `save-restore`, `hwtest`, `zsdos-drives`, `zexdoc` or `zexall` |
+| `--case CASE` | repeatable; `acceptance` is the [acceptance group](#acceptance); a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard`, `terminal-apps`, `mouse-controllers`, `sound`, `audio-playback`, `v9958`, `graphics-apps`, `debug-symbols`, `sdk-run`, `save-restore`, `hwtest`, `zsdos-drives`, `zexdoc` or `zexall` |
 | `--list` | the cases, what each proves and the inputs it needs |
 | `--konaos-root`, `--zephyr-root` | the ZephyrOS and Zephyr-80 checkouts the inputs come from |
 | `--output DIR` | result directory, default `tests/output/run` (ignored by Git) |
@@ -40,6 +40,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `card-image` | `serial` | the three [card probes](#card-probes) for `-card` |
 | `card-directory` | `serial` | the three [card probes](#card-probes) for `-carddir` |
 | `cpm-volumes` | `zsdos` | the three [card probes](#card-probes) for CP/M volume files |
+| `mouse-controllers` | `konaos`, `kedit`, `kc`, `gfxmouse`, `mouse`, `joy` | the eight [mouse and controller probes](#mouse-and-controller-probes): the firmware's decode against the HID module (host test), MAME mouse input on the SIO1/B lane, controller bytes read with IN over E0h-FFh, input latency, save state, and the real `mouse`, `joy`, KonaEdit, KonaCommander and gfx_mouse |
 | `sound` | none (the probe program) | the two [sound probes](#sound-probes): the card's tones, mirrors, noise, DAC and mix on a `-wavwrite` capture, and real Z80 writes, reads and a reset |
 | `audio-playback` | `konaos`, `sndtest`, `sntview`, `vgmplay` and their assets | the real sndtest, sntview and VGMPlayer playing from a card image, their audio captured and checked ([below](#sound-probes)) |
 | `keyboard` | none (the probe program) | the three [keyboard probes](#keyboard-probes): the HID module against the firmware, MAME key input on the SIO1/B lane, save state |
@@ -51,7 +52,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `vdp-text` | none (a DI/HALT image) | the VDP observations: TEXT1, TEXT2 and GRAPHIC1 text read from VRAM, rendered glyph pixels, a PNG snapshot, GRAPHIC6 refused |
 | `debug-symbols` | `konaos`, `sdk` | the two [developer-tool probes](#developer-tool-probes) of the `konaos` plugin under `-debug`: symbols, ambiguity, bank-aware breakpoints, physical views; the debugger's cost |
 | `sdk-run` | `konaos`, `sdk` | the three [developer-tool probes](#developer-tool-probes) of the SDK's `make run` from paths with spaces |
-| `save-restore` | `konaos`, `sdk` | the two [developer-tool probes](#developer-tool-probes): five save points on a card image and a card folder, each restored in a fresh process and compared with the saving run; changed media refused |
+| `save-restore` | `konaos`, `sdk` | the two [developer-tool probes](#developer-tool-probes): five save points on a card image and a card folder, each restored in a fresh process and compared with the saving run (with a mouse click and motion unread, the right button and two pads held: the HID module's and devices' input state equal at the save and after the restore, the controller ports equal at the end); changed media refused |
 | `hwtest` | `konaos`, `hwtest` | probes `image` and `folder`: the production image's `hwtest` typed at the shell with a writable card, `hwtest: 4/4 PASS` ([below](#acceptance)) |
 | `zsdos-drives` | `zsdos` | probes `image` and `folder`: ZSDOS's B: and C: written and read through BDOS, checked after each run and across a reopen ([below](#acceptance)) |
 | `zexdoc` | `zsdos`, `zexdoc` | ZEXDOC.COM on ZSDOS: every test OK ([below](#acceptance)) |
@@ -104,7 +105,9 @@ A change to the controller's lane timing, the SIO1 model or the transport is rep
 which runs both modes itself) again with `--ioc-speed fast`. `cpm-volumes` is the ZSDOS bulk reader: its
 call-based marker scan and its setup before the INI loop leave the least cover of any guest path.
 A change to the keyboard, the HID module or the console observer is replayed with `keyboard`,
-`konaos-video-boot`, `zsdos-boot`, `terminal-apps` and `ioc-core`.
+`konaos-video-boot`, `zsdos-boot`, `terminal-apps` and `ioc-core`; a change to the mouse, the
+pads or the controller latches, with `mouse-controllers`, `keyboard`, `sound`, `ioc-core`,
+`terminal-apps`, `save-restore` and `serial-boot`.
 A change to the sound card or the I/O map is replayed with `sound`, `audio-playback`, `clocks-irqs`, `serial-boot`,
 `keyboard` and `terminal-apps`.
 A change to the V9958, the screen or the observers is replayed with `v9958`, `graphics-apps`, `clocks-irqs`,
@@ -150,6 +153,8 @@ writes to the SIO are never read as console output.
 | `harness.vdp.image()`, `rendered(image, x, y)`, `histogram(x, y, w, h)`, `render_check(y0, y1)` | the rendered bitmap; the colour drawn at a display pixel; colour counts over a display rectangle; every pixel outside the sprites compared with VRAM and the palette |
 | `harness.keyboard.set(key, down)`, `tap(key)`, `chord(keys)`, `type(text)` | the USB keyboard's fields (a usage or its name, `"Left Shift"`, `"Up"`, `"F5"`) through MAME's input path; each change is logged with its emulated time to `inputs.tsv` |
 | `harness.keyboard.frames(n)`, `release_all()` | wait `n` frames; release every held key |
+| `harness.mouse.move(dx, dy, wheel)`, `button(which, down)`, `connect(on)`, `release_all()` | the USB mouse's fields: the host moves by dx, dy (+y down) and turns the wheel by notches; a button (`"Left"`, `"Right"`, `"Middle"`); the "USB mouse" configuration. The position is kept as a 16-bit value the device differences |
+| `harness.pad(n).set(name, down)`, `connect(on)`, `release_all()` | USB gamepad `n` (1 or 2): a field by its F310 name (`"A"`, `"Start"`, `"D-Pad Up"`, `"Left Stick Left"`, ...); the "USB gamepad n" configuration. Every change is logged to `inputs.tsv` like a key |
 
 The guest's console receiver is polled one byte deep, so `type` sends each
 byte only after the previous one's echo. Name-table text is the character
@@ -380,6 +385,25 @@ directory as text and PNG, with `transcript.txt` and `inputs.tsv`.
 | `zsdos-boot` | ZSDOS with a card folder holding only `/CPM/B` (ZephyrShell's B:; without it ZSDOS stops at `ZSDOS error on B: No Drive`): `B0:/$ ` on the screen, `echo Hello ZSDOS`, `ls` answering `SYSTEM/`, Up recalling `ls` |
 | `terminal-apps:image`, `terminal-apps:folder` | a card (FAT16 image or folder) with `/BIN/KEDIT.EXE`, `/BIN/KC.EXE`, `NOTE.TXT` and `DOCS/A.TXT`. KonaEdit opens `/fs/NOTE.TXT` (menu bar, text, status `Ln 1 Col 1`); Down, End, Home, Right, Up move the status position; typing, Enter and Backspace edit the text (the modified mark); F1 and Down open the File menu, Escape closes the pop-up and the bar; F7 marks, Escape clears it; F2 saves; F10 exits. KonaCommander lists the card, its PC link times out, the arrows move the selection both ways, Enter opens `DOCS`, Backspace returns, Enter on `NOTE.TXT` opens the viewer with KonaEdit's text, Escape returns, `q` exits. The card then holds exactly KonaEdit's saved text and nothing else changed (`fsck.fat -n` clean for the image) |
 
+## Mouse and controller probes
+
+`mouse-controllers` (`mouse_controllers.py`, bodies in `mouse_controllers.lua`) tests
+[the mouse and the controllers](../docs/zephyr80-input.md). Input goes through MAME's input
+path (`harness.mouse`, `harness.pad`, `harness.keyboard`); the lane probes use the probe
+program (`sio1_lanes.asm` ops 10-12: the doorbell, `IN` over E0h-FFh, and `OUT` pairs each
+followed by `IN FCh`, `IN FFh`).
+
+| Probe | Proof |
+|---|---|
+| `host` | `controllers/controllers_test.cpp`, built with the HID module and the core and run on the host, every expected byte from the firmware: no mouse (flags 0, zeros), mounted and silent (1), the first report (3), reports that are not the mouse, the boot mouse ignored, the keyboardless interface; accumulation, the 12-bit extremes, presses between takes, held buttons across takes, the keyboard beside the mouse; saturation at exactly +/-32767 and never -32768; page 7's totals and raw report; removal and reset; the F310's eight hat directions, the stick's dead zone edges, hat over stick, fire, the keypad priority (Back, Start, X, Y), D7 low for every report; the keypad mirror of the number keys and its overlap with a pad; pad slots, mount order, removal, reset; the 10 ms poll; page 6; save registration |
+| `mouse` | the probe program on SIO1/B: HID_MOUSE flags, motion both ways, the wheel, accumulation across frames, a 5000/-3000/+300 frame arriving whole, saturation at +/-32767 after three +/-20000 frames, a click between reads (pressed 1, held 0), two held buttons across reads, a key beside the mouse (neither disturbs the other, no doorbell from the mouse), removal with a button down and motion owed (flags 0, nothing pending, input dropped), replug with a held button (one press), a machine reset (the owed motion gone, a held button reported once), page 7 |
+| `controllers` | the probe program reading E0h-FFh with `IN`: all 32 reads 7Fh with nothing attached and with an idle pad; the D-pad's eight directions and opposite pairs, the left stick, hat over stick, A/B fire, bumpers/triggers/stick buttons changing nothing; X, Y, Back, Start and their priority over the hat and stick with fire kept; two pads independent through every mirror (even addresses pad 0, odd pad 1); the keyboard's digits 0-9, keypad 7 and *, Shift+8 and Shift+3 on port 0 with no pad and over a pad; removal, replug and mount order; sound writes (PSG tone and its mirror, a mirrored attenuation, the DAC, a dead port, a second PSG) each followed by `IN FCh`/`IN FFh` with the pads unchanged, the PSG registers as written and no write from a read; the ColecoVision mode-select writes from Lua and from the guest changing nothing; a machine reset |
+| `latency` | the frames from a change in MAME's fields to the controller holding it, read from the module's items each frame: a mouse motion in the pending total (one frame) and a pad's fire in its latch (two frames: the frame's scan, then the 10 ms poll) |
+| `state` | two processes on the probe program: the first saves with motion read, motion pending (11,-7, wheel 2), a click unread, the right button held, a keypad key held, two pads held and 21,0 not yet scanned; a second restores onto the same host input and reads the same HID_MOUSE reply, page 7's totals and both latch bytes; the next read is empty |
+| `shell` | the production KonaOS image's own `mouse` and `joy` programs at the shell: with no mouse attached the pointer sprite (slot 1) sits at the centre and no "present" line prints; with the mouse attached the first motion prints `mouse: present 1`, the sprite follows 60,40 as 30,40 (x halved), each button's click prints its cell and `pressed` value, 5000,5000 and -5000,-5000 stop at cells 84,25 and 0,0, a key hides the pointer; `joy` prints the byte of each pad as it changes (up+A, X, Start with A, released) |
+| `apps` | KonaEdit and KonaCommander from a card image: with no mouse attached KonaEdit's pointer sprite is at the centre; a click places the cursor (Ln, Col read off the status line, past the line end too), the wheel scrolls three lines a notch, a drag selects (MARK), a click on File opens the pop-up and one outside closes it; in KonaCommander a click selects, a double click opens a directory and a file's viewer, a right click returns; the card is unchanged afterwards (`fsck.fat -n` clean) |
+| `gfx` | the libgfx pointer example from a card image: the pointer sprite follows 40,30 as 20,30 in the 512 x 212 mode, a left drag paints 61 of 61 pixels of colour 0Ah and leaves the canvas untouched, the right button switches to the 256 x 212 mode where a drag paints FCh, a key exits |
+
 ### The GRAPHIC6 console
 
 Both consoles draw 6x8 glyphs into a GRAPHIC6 bitmap (KonaOS
@@ -450,7 +474,7 @@ events (about 16 us, the resampler's) is found from the audio itself.
 | Probe | What it checks |
 |---|---|
 | `sound:bus` | Lua writes the bus. All twelve tone channels alone through their own port: frequency within 0.002 and swing within 3 % of 3579545 / (32 N) and the chip's level; the 12 mirrored ports (E8h-FBh); ports 5-7 and their mirrors silent; four chips at once (a spectrum line each) then each silenced alone while the others stay; the sixteen attenuation steps (2 dB, 15 off); the noise generator (rates 0-3, white and periodic, the retriggering rewrite, chip 3 through FBh) decoded to bits and matched to a model of the SN76489A, and a model of the SN76489 shown not to match; the periodic ring repeating every 15 shifts; ten DAC codes through the port and its mirrors (80h is zero, FFh +0.992, 00h -1.0); loud mixes (every voice of every chip plus the DAC at each extreme) for peaks and clipping; silence between phases to 2 LSB |
-| `sound:guest` | the probe program with real instructions. `OTIR` of the driver's silence bytes into each PSG (every byte arrives; consecutive writes 10.6 us apart against 8.94 us for 32 PSG clocks) and into the DAC (2.1 us, no stretch); `IN A,(C)` over E0h-FFh while a tone sounds (all FFh, 32 read events, no writes, the tone's frequency unchanged); `OUT (C),A` to chip 3 through F3h and the DAC through FCh; a machine reset with a tone and the DAC high (the DAC register clears to 00h, the tone continues); silence after the silence sequence |
+| `sound:guest` | the probe program with real instructions. `OTIR` of the driver's silence bytes into each PSG (every byte arrives; consecutive writes 10.6 us apart against 8.94 us for 32 PSG clocks) and into the DAC (2.1 us, no stretch); `IN A,(C)` over E0h-FFh while a tone sounds (all 7Fh, the idle latches, 32 read events, no writes, the tone's frequency unchanged); `OUT (C),A` to chip 3 through F3h and the DAC through FCh; a machine reset with a tone and the DAC high (the DAC register clears to 00h, the tone continues); silence after the silence sequence |
 | `audio-playback:sndtest` | the real `sndtest` modes `tones`, `adsr`, `noise`, `modes`, `catchup`, `close` and `zvg` of a short stream, run from a card image on the production KonaOS image, driven by keys and read off the console: every PASS and printed count, the twelve held notes' divisors on the four chips against the library's table, the noise control bytes E1 E1 E7, the stream's PSG0 writes against its report, silence and the DAC at 80h after the exit |
 | `audio-playback:sntview` | the real `sntview` playing the tracker song: it plays, pauses (no write and no sound for two seconds), resumes and quits; its report; the audio against an ideal rendering of the writes; silence after the exit |
 | `audio-playback:vgmplay` | the real VGMPlayer playing the music stream for twelve seconds and stopped by a key: its report, the PSG0 writes against the report (the chips 1-3 receive only the driver's and library's own writes), the audio against the rendering, silence after the stop |
@@ -493,15 +517,15 @@ segment 1's, both at 8000h) and `tests/sdk/savework` (reads `/fs/INPUT.BIN`, wri
 | `sdk-run:run` | the SDK unpacked under a path with spaces, MAME, the image and the card folder at paths with spaces, `make run KOS_BREAK=main` in `template/` with `-debug -debugger none`: HELLO.EXE staged, the breakpoint reported pending and then stopped at `hello:_main`, the program's lines in `result.txt`, exit 0 |
 | `sdk-run:names` | `examples/`: `KOS_RUN=files` with arguments and two assets (one renamed): FILES.EXE, NOTES.TXT and HELLOSRC.C staged and listed by the program; no `KOS_RUN` among several programs and an invalid asset name refused |
 | `sdk-run:no-mame` | `make` in `template/` with no MAME on PATH and none configured builds HELLO's EXE; `make run` names the missing binary (a path, and on PATH), the missing image and the missing plugin |
-| `save-restore:image`, `save-restore:folder` | savework from a 16 MiB FAT16 image or a folder: one run saves `idle` (the prompt), `command` (a command window clocking), `bulk` (the program's load, BULK_SEND), `write` (an OUTPUT.BIN block arriving, BULK_RECEIVE, the file open for writing) and `active` (tick 5: timer, console, PSG), copying the card at each save instant; each state restored in a fresh process onto its copy must match the saving run: the IO controller and SIO1 line state at the first frame after the save, every PSG/DAC write with its time, the VDP registers, VRAM, the screen, the end time and the card's final contents. The `bulk` state onto a card with one byte of INPUT.BIN changed, and (image) with a flash image one byte different, must end MAME with the socket's or the flash's fatal error |
+| `save-restore:image`, `save-restore:folder` | savework from a 16 MiB FAT16 image or a folder: one run saves `idle` (the prompt), `command` (a command window clocking), `bulk` (the program's load, BULK_SEND), `write` (an OUTPUT.BIN block arriving, BULK_RECEIVE, the file open for writing) and `active` (tick 5: timer, console, PSG), copying the card at each save instant; each state restored in a fresh process onto its copy must match the saving run: the IO controller and SIO1 line state at the first frame after the save, every PSG/DAC write with its time, the VDP registers, VRAM, the screen, the end time and the card's final contents. Both runs hold the same host input from before the first save (a mouse motion and a click not yet read, the right button, two pads): the HID module's and the mouse device's state (totals, pending motion and presses, pad slots and latches, last positions) read at the instant of each save equals what is read at the instant after the restore, and the controller ports read at the end agree. The `bulk` state onto a card with one byte of INPUT.BIN changed, and (image) with a flash image one byte different, must end MAME with the socket's or the flash's fatal error |
 
 ## Acceptance
 
 `--case acceptance` runs, in order: `memory-flash`, `clocks-irqs`, `serial-boot`, `timer`,
 `serial-pty`, `vdp-text`, `sio1-lanes`, `sio1-konaos`, `sio1-zsdos`, `ioc-core`, `ioc-timing`,
 `card-image`, `card-directory`, `cpm-volumes`, `zsdos-drives`, `keyboard`, `konaos-video-boot`,
-`zsdos-boot`, `terminal-apps`, `hwtest`, `sound`, `audio-playback`, `v9958`, `graphics-apps`,
-`debug-symbols`, `sdk-run`, `save-restore`, `zexall` and, optionally, `zexdoc`. With `--ioc-speed fast` it leaves out
+`zsdos-boot`, `terminal-apps`, `mouse-controllers`, `hwtest`, `sound`, `audio-playback`, `v9958`,
+`graphics-apps`, `debug-symbols`, `sdk-run`, `save-restore`, `zexall` and, optionally, `zexdoc`. With `--ioc-speed fast` it leaves out
 `sio1-lanes` (it asserts paced timing) and `ioc-timing` (it runs both modes itself).
 
 | Milestone | Cases |
@@ -510,6 +534,7 @@ segment 1's, both at 8000h) and `tests/sdk/savework` (reads `/fs/INPUT.BIN`, wri
 | B: the production image's shell on the V9958 with keyboard input; ZSDOS's prompt | `konaos-video-boot`, `keyboard`, `zsdos-boot` |
 | C: programs from both card backends, `hwtest` 4/4 PASS, ZSDOS B: and a C: volume | `card-image`, `card-directory`, `terminal-apps`, `hwtest`, `cpm-volumes`, `zsdos-drives` |
 | D: sntview and VGMPlayer play, sndtest passes | `audio-playback`, `graphics-apps`, `sound` |
+| Input: the mouse and two pads reach their clients | `mouse-controllers` |
 | E: `make run`, symbols in the debugger, scripted runs | `sdk-run`, `debug-symbols`, `save-restore`, this runner |
 | CPU | `zexall` (67 tests; ZEXDOC's tests without its undocumented-flag mask, so a ZEXALL pass implies a ZEXDOC pass); `zexdoc` optional |
 

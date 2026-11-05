@@ -18,8 +18,10 @@
 --                   palette, sprites, saved status registers and the rendered
 --                   screen bitmap; none of it reads a port.
 --
--- Input: harness.keyboard presses and releases the USB keyboard's fields
--- through MAME's input path and logs each change (inputs.tsv).
+-- Input: harness.keyboard presses and releases the USB keyboard's fields,
+-- harness.mouse moves and clicks the USB mouse and harness.pad drives the
+-- gamepads, all through MAME's input path; each change is logged
+-- (inputs.tsv).
 if _G.harness then return end -- autoboot runs again after a soft reset
 
 local lio = io
@@ -802,17 +804,22 @@ function K.usage(key)
     return usage
 end
 
+-- One line of the input manifest: when, which device's input, which field, the new state.
+function H.input_log(code, name, state)
+    if not K.log then
+        K.log = assert(lio.open(H.dir .. "/inputs.tsv", "w"))
+        K.log:write("emulated_s\tusage\tfield\tstate\n")
+    end
+    K.log:write(string.format("%.6f\t%s\t%s\t%s\n", H.now(), code, name, state))
+    K.log:flush()
+end
+
 function K.set(key, down)
     local usage = K.usage(key)
     local field = K.by_usage[usage]
     field:set_value(down and 1 or 0)
     K.down[usage] = down or nil
-    if not K.log then
-        K.log = assert(lio.open(H.dir .. "/inputs.tsv", "w"))
-        K.log:write("emulated_s\tusage\tfield\tstate\n")
-    end
-    K.log:write(string.format("%.6f\t%02X\t%s\t%s\n", H.now(), usage, field.name, down and "down" or "up"))
-    K.log:flush()
+    H.input_log(string.format("%02X", usage), field.name, down and "down" or "up")
 end
 
 -- Wait `n` emulated frames (inside a case body).
@@ -852,6 +859,88 @@ function K.release_all()
     local held = {}
     for usage in pairs(K.down) do held[#held + 1] = usage end
     for _, usage in ipairs(held) do K.set(usage, false) end
+end
+
+-- USB mouse and gamepads -------------------------------------------------------
+--
+-- The mouse's three analog fields are 16-bit positions that wrap; the device
+-- takes the difference between two scans, so the harness keeps the position
+-- it has set and moves it by the host's motion (+y down, wheel notches).  The
+-- value stays set (an override) for the whole run, so there is no jump when it
+-- is read again.  Buttons are digital fields; "USB mouse" and "USB gamepad 1/2"
+-- are configuration fields (1 connected, 0 not).
+local Mo = { x = 0, y = 0, wheel = 0, fields = {}, held = {} }
+H.mouse = Mo
+
+local function device_fields(prefix, into)
+    for tag, port in pairs(machine.ioport.ports) do
+        if tag:sub(1, #prefix) == prefix then
+            for name, field in pairs(port.fields) do into[name] = field end
+        end
+    end
+end
+device_fields(":ioc:mouse:", Mo.fields)
+
+local function mouse_field(name)
+    local field = Mo.fields[name]
+    H.check(field, "no mouse field %s", name)
+    return field
+end
+
+-- The host moves the mouse by dx, dy and turns the wheel by `wheel` notches;
+-- the next frame's scan takes it.
+function Mo.move(dx, dy, wheel)
+    dx, dy, wheel = dx or 0, dy or 0, wheel or 0
+    Mo.x = (Mo.x + dx) & 0xffff
+    Mo.y = (Mo.y + dy) & 0xffff
+    Mo.wheel = (Mo.wheel + wheel) & 0xffff
+    mouse_field("Mouse X"):set_value(Mo.x)
+    mouse_field("Mouse Y"):set_value(Mo.y)
+    mouse_field("Mouse Wheel"):set_value(Mo.wheel)
+    H.input_log("mouse", "move", string.format("%d,%d,%d", dx, dy, wheel))
+end
+
+-- "Left", "Right" or "Middle".
+function Mo.button(which, down)
+    mouse_field("Mouse " .. which .. " Button"):set_value(down and 1 or 0)
+    Mo.held[which] = down or nil
+    H.input_log("mouse", which, down and "down" or "up")
+end
+
+function Mo.connect(on)
+    mouse_field("USB mouse").user_value = on and 1 or 0
+    H.input_log("mouse", "connected", on and "yes" or "no")
+end
+
+function Mo.release_all()
+    for which in pairs(Mo.held) do Mo.button(which, false) end
+end
+
+-- A gamepad (1 or 2): fields by their F310 names ("A", "Start", "D-Pad Up",
+-- "Left Stick Left", ...).
+local Pads = {}
+function H.pad(n)
+    if Pads[n] then return Pads[n] end
+    local P = { fields = {}, held = {}, n = n }
+    device_fields(":ioc:pad" .. n .. ":", P.fields)
+    function P.set(name, down)
+        local field = P.fields[name]
+        H.check(field, "pad %d has no field %s", n, name)
+        field:set_value(down and 1 or 0)
+        P.held[name] = down or nil
+        H.input_log("pad" .. n, name, down and "down" or "up")
+    end
+    function P.connect(on)
+        P.fields["USB gamepad " .. n].user_value = on and 1 or 0
+        H.input_log("pad" .. n, "connected", on and "yes" or "no")
+    end
+    function P.release_all()
+        local names = {}
+        for name in pairs(P.held) do names[#names + 1] = name end
+        for _, name in ipairs(names) do P.set(name, false) end
+    end
+    Pads[n] = P
+    return P
 end
 
 -- Verdict ----------------------------------------------------------------------

@@ -83,7 +83,8 @@ images' reset copies and OS-mode entry, the clocks and interrupts, and the
 serial-console image to its shell prompt, the IOC link, the keyboard and both
 guests' V9958/HID consoles. SIO1 carries a behavioural IO controller
 ([SIO1 and the IO controller](zephyr80-sio1-ioc.md)) with its
-[protocol core](zephyr80-ioc-core.md), a [USB keyboard](zephyr80-keyboard.md) and the
+[protocol core](zephyr80-ioc-core.md), a [USB keyboard](zephyr80-keyboard.md), a
+[USB mouse and two gamepads](zephyr80-input.md) and the
 [sound card](zephyr80-sound.md) and the [V9958 video card](zephyr80-video.md).
 
 ## The keyboard
@@ -99,6 +100,17 @@ machine.
 ```sh
 ./mamepbitzd zephyr80 -flash "$KONAOS_ROOT/build/konaos.bin" -carddir card/
 ```
+
+## The mouse and the controllers
+
+The host mouse drives the USB mouse (connected by default; MAME enables its
+mouse input for the machine, and `-mouse` also hides the host pointer over the window) and the
+host's first and second joystick drive two F310 pads (not connected by
+default). "USB mouse", "USB gamepad 1" and "USB gamepad 2" are machine
+configuration settings (Tab, Machine Configuration); the Input (this Machine)
+menu rebinds every field. KonaOS's `mouse` and `joy` programs, KonaEdit,
+KonaCommander and the `gfx_mouse` example show them. The device, its fields and
+the read decode are in [mouse and controllers](zephyr80-input.md).
 
 ## Sound
 

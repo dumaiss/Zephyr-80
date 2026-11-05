@@ -485,7 +485,7 @@ void save_registration()
 	hid_t hid(link);
 	unsigned items = 0;
 	hid.save_state([&items] (auto &&...) { items++; });
-	check(items == 16, "queue, held report, locks, repeat key/modifiers/due and reset request registered (%u items)", items);
+	check(items == 45, "queue, held report, locks, repeat key/modifiers/due, reset request, device counters, pad slots, latch, second interface and mouse registered (%u items)", items);
 }
 
 } // anonymous namespace

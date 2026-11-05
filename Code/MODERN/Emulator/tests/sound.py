@@ -408,11 +408,11 @@ def analyse_guest(wav, events):
     c.add("OTIR into the DAC: no stretch", len(dac_w) == 8 and all(abs(d - iteration) < 0.3e-6 for d in inner),
           f"{len(dac_w)} writes, intervals {min(inner) * 1e6:.2f}-{max(inner) * 1e6:.2f} us against {iteration * 1e6:.2f} us")
 
-    # Reads: all FFh, no write events, the tone undisturbed.
+    # Reads: the idle controller latches (7Fh), no write events, the tone undisturbed.
     scan = next(o for o in other if o[0] == "S")
-    c.add("IN over E0h-FFh reads FFh", scan[2] == "FF" * 32, f"scan {scan[2]}")
+    c.add("IN over E0h-FFh reads 7Fh (idle latches)", scan[2] == "7F" * 32, f"scan {scan[2]}")
     scan_reads = [r for r in reads if r[0] <= float(scan[1])]
-    c.add("reads seen by the bus", len(scan_reads) >= 32 and all(r[2] == 0xff for r in scan_reads), f"{len(scan_reads)} reads, all FFh")
+    c.add("reads seen by the bus", len(scan_reads) >= 32 and all(r[2] == 0x7f for r in scan_reads), f"{len(scan_reads)} reads, all 7Fh")
     p = by("reads")[0]
     t_scan = float(scan[1])
     f_before = tone_frequency(audio.window(p["t0"] + 0.05, t_scan - 0.005), audio.rate)
@@ -839,7 +839,7 @@ def analyse_client(client, case_dir, wav):
     text = console_text(case_dir / "transcript.txt")
     info = {}
     t_done = last_time(marks, "done")
-    c.add("reads of E0h-FFh", all(r[2] == 0xff for r in reads), f"{len(reads)} reads, all FFh")
+    c.add("reads of E0h-FFh", all(r[2] == 0x7f for r in reads), f"{len(reads)} reads, all 7Fh (idle latches)")
     if client == "vgmplay":
         t0, t1 = last_time(marks, "launch"), last_time(marks, "prompt")
         report = re.search(r"Timer events ([0-9A-F]+)\s+ticks ([0-9A-F]+)\s+bytes ([0-9A-F]+)\s+writes ([0-9A-F]+)", text)

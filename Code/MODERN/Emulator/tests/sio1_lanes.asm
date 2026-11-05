@@ -47,6 +47,10 @@ BHEAD    = 0x3ffb          ; op 6: the five header bytes land here, the payload 
 BBUF     = 0x4000          ; op 6/7/9: payload buffer (512 bytes)
 BZPTR    = 0x7f50          ; op 9: payload destination pointer (the driver reads it from memory)
 DOORBELL = 0x7f52          ; op 10: RR0 of SIO1/B after Reset External/Status
+PAIRN    = 0x7f60          ; op 12: {port, value} pairs to write (count)
+PAIRS    = 0x7f61          ; ... the pairs (up to 15)
+SCAN     = 0x7f80          ; op 11: IN over E0h-FFh (32 bytes); op 12: IN FCh after each pair
+SCAN2    = 0x7fa0          ; op 12: IN FFh after each pair
 PKT      = 0x7e00
 PKT2     = 0x7e40
 RAW      = 0x7d00          ; up to 64 captured bytes, each with its empty polls
@@ -109,6 +113,10 @@ idle:
 	jp	z,op_zread
 	cp	#10
 	jp	z,op_doorbell
+	cp	#11
+	jp	z,op_ctrl_scan
+	cp	#12
+	jp	z,op_ctrl_pairs
 done:
 	xor	a
 	ld	(CMD),a
@@ -186,6 +194,47 @@ op_doorbell:
 	out	(SIO1BC),a
 	in	a,(SIO1BC)
 	ld	(DOORBELL),a
+	jp	done
+
+; ---------------------------------------------------------------- op 11
+; The controller latches as the guests read them: IN A,(C) over E0h-FFh
+; into SCAN (KonaOS drivers/joy reads FCh and FFh).
+op_ctrl_scan:
+	ld	c,#0xe0
+	ld	hl,#SCAN
+ctrl_next:
+	in	a,(c)
+	ld	(hl),a
+	inc	hl
+	inc	c
+	jr	nz,ctrl_next
+	jp	done
+
+; ---------------------------------------------------------------- op 12
+; PAIRN {port, value} pairs, each an OUT (C),A followed by IN A,(FCh) into
+; SCAN and IN A,(FFh) into SCAN2 (sound writes while the pads are read).
+op_ctrl_pairs:
+	ld	a,(PAIRN)
+	ld	b,a
+	ld	hl,#PAIRS
+	ld	de,#SCAN
+pair_next:
+	ld	c,(hl)
+	inc	hl
+	ld	a,(hl)
+	inc	hl
+	out	(c),a
+	in	a,(0xfc)
+	ld	(de),a
+	push	de
+	ld	a,e
+	add	a,#0x20
+	ld	e,a
+	in	a,(0xff)
+	ld	(de),a
+	pop	de
+	inc	de
+	djnz	pair_next
 	jp	done
 
 ; ---------------------------------------------------------------- op 4

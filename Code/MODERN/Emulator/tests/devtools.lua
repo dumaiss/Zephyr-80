@@ -263,6 +263,47 @@ local sio1 = H.machine.devices[":sio1"]
 local function item(device, name) return emu.item(device.items["0/" .. name]) end
 local IOC_ITEMS = { "m_phase", "m_count", "m_bulk_count", "m_bulk_total", "m_command_synced", "m_bulk_synced" }
 local SIO1_ITEMS = { "m_rts", "m_cts", "m_dcd", "m_sync", "m_hunt", "m_fifo_depth" }
+-- The input state: the HID module's mouse (running totals, buttons, motion and
+-- presses not yet read), pad slots and latch bytes, the keypad codes, and the
+-- mouse and pad devices' own state.
+local function items_of(device, names)
+	local out = {}
+	for _, n in ipairs(names) do
+		local it = item(device, n)
+		local v = {}
+		for i = 0, it.count - 1 do v[#v + 1] = tostring(it:read(i)) end
+		out[#out + 1] = n .. "=" .. table.concat(v, ",")
+	end
+	return table.concat(out, " ")
+end
+local HID_ITEMS = { "hid.m_mouse_x", "hid.m_mouse_y", "hid.m_mouse_wheel", "hid.m_mouse_buttons", "hid.m_mouse_decoded",
+	"hid.m_pend_x", "hid.m_pend_y", "hid.m_pend_wheel", "hid.m_mouse_pressed", "hid.m_other_addr", "hid.m_other_reports",
+	"hid.m_pad_addr", "hid.m_pad_reports", "hid.m_pad_next_poll", "latch.m_value", "latch.m_keypad", "m_pad_slot" }
+local MOUSE_ITEMS = { "m_last_x", "m_last_y", "m_last_wheel", "m_synced", "m_dx", "m_dy", "m_wheel", "m_ring_count", "m_scanned", "m_sent" }
+local function input_state()
+	return items_of(ioc, HID_ITEMS) .. " | " .. items_of(H.machine.devices[":ioc:mouse"], MOUSE_ITEMS)
+end
+
+-- The host input both runs hold: the mouse's position and right button, two
+-- pads connected with buttons down.  The positions are set before a restore so
+-- the first scan finds no motion; the saving run reaches them by moving.
+local MOVE = { 11, -7, 2 }
+local function hold_input(restoring)
+	local Mo, P1, P2 = H.mouse, H.pad(1), H.pad(2)
+	if restoring then
+		Mo.x, Mo.y, Mo.wheel = MOVE[1] & 0xffff, MOVE[2] & 0xffff, MOVE[3] & 0xffff
+		Mo.move(0, 0, 0)
+	else
+		Mo.move(MOVE[1], MOVE[2], MOVE[3])
+	end
+	Mo.button("Right", true)
+	P1.connect(true)
+	P2.connect(true)
+	P1.set("D-Pad Right", true)
+	P1.set("A", true)
+	P2.set("Y", true)
+end
+
 local function line_state()
 	local parts = { string.format("t=%.9f", H.now()) }
 	for _, n in ipairs(IOC_ITEMS) do parts[#parts + 1] = n .. "=" .. item(ioc, n):read(0) end
@@ -291,6 +332,7 @@ local function final(path, since)
 	for i = 0, 46 do r[#r + 1] = string.format("%02X", regs:read(i)) end
 	local f = assert(io.open(path, "w"))
 	f:write("regs ", table.concat(r), "\n")
+	f:write(string.format("ports FCh=%02X FFh=%02X\n", H.io:read_u8(0xfc), H.io:read_u8(0xff)))
 	for _, s in ipairs(sound) do
 		if tonumber(s:match("^(%S+)")) > since then f:write("sound ", s, "\n") end
 	end
@@ -326,6 +368,14 @@ local function copy_tree(from, to)
 	end
 end
 
+-- The input state at the instant of the save (the pre-save notifier) and at the
+-- instant after the restore (the post-load notifier), before either run
+-- emulates another instruction: the two must be equal.
+local input_at = {}
+if H.case == "save-load" then
+	H.keep(emu.add_machine_post_load_notifier(function() input_at[env("DEV_RESTORE")] = input_state() end))
+end
+
 local PHASES = { [0] = "IDLE", "WINDOW", "RELEASE", "GUARD", "REPLY", "BULK_HOST", "BULK_GUARD", "BULK_SEND",
 	"BULK_RECEIVE", "BULK_RELEASE", "RESETTING" }
 
@@ -351,6 +401,7 @@ H.case_body("save-run", function()
 		local dir = snaps .. "/" .. name
 		lfs.mkdir(dir)
 		if kind == "image" then copy_file(media, dir .. "/card.img") else copy_tree(media, dir .. "/card") end
+		input_at[name] = input_state()
 		saved[name] = { t = H.now(), phase = PHASES[phase] or tostring(phase), bulk = item(ioc, "m_bulk_count"):read(0) }
 		log:write(string.format("%s\t%.9f\t%s\t%d\n", name, H.now(), saved[name].phase, saved[name].bulk))
 		log:flush()
@@ -369,6 +420,14 @@ H.case_body("save-run", function()
 
 	C.load_font()
 	wait_prompt("/> ", 40)
+	frames(6)
+	-- Input pending at every save point: motion and a click not read, the right
+	-- button and the pads held.
+	hold_input(false)
+	frames(2)
+	H.mouse.button("Left", true)
+	frames(2)
+	H.mouse.button("Left", false)
 	frames(6)
 	save("idle")
 	settle("idle")
@@ -405,6 +464,7 @@ H.case_body("save-run", function()
 	local f = assert(io.open(H.dir .. "/after.tsv", "w"))
 	for _, name in ipairs({ "idle", "command", "bulk", "write", "active" }) do
 		f:write(name, "\t", after[name], "\n")
+		f:write("input:", name, "\t", input_at[name], "\n")
 	end
 	f:write("done\t", string.format("%.9f", done), "\n")
 	f:close()
@@ -418,6 +478,8 @@ H.case_body("save-run", function()
 end)
 
 if H.case == "save-load" then just_saved = { env("DEV_RESTORE") } end
+
+if H.case == "save-load" then hold_input(true) end
 
 H.case_body("save-load", function()
 	local point = env("DEV_RESTORE")
@@ -433,6 +495,7 @@ H.case_body("save-load", function()
 	local since = tonumber(first:match("^t=(%S+)"))
 	local f = assert(io.open(H.dir .. "/after.tsv", "w"))
 	f:write(point, "\t", first, "\n")
+	f:write("input:", point, "\t", input_at[point], "\n")
 	f:write("done\t", string.format("%.9f", done), "\n")
 	f:close()
 	final(H.dir .. "/final-" .. point .. ".txt", since)

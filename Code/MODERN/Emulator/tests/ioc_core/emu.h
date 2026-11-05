@@ -11,6 +11,7 @@ using osd::u8;
 using osd::u16;
 using osd::u32;
 using osd::u64;
+using osd::s8;
 using osd::s16;
 using osd::s32;
 

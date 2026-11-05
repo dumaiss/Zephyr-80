@@ -221,7 +221,7 @@ H.case_body("sound-guest", function()
         post(1, DAC, { 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0x80 })
     end)
 
-    -- Reads of the whole block while a tone sounds: all FFh, the tone untouched.
+    -- Reads of the whole block while a tone sounds: all 7Fh (idle latches), the tone untouched.
     phase("reads", "tone chip=1 divisor=254", 10, function()
         tone(1, 0, 254, 0)
     end)

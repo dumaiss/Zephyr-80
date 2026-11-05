@@ -51,7 +51,9 @@ the block:
 | 5–7 | nothing (U8 Y5–Y7 are unconnected) |
 
 Reads of E0h–FFh are the controller latches' (`/CTRL`) and not the card's: the
-machine answers FFh and no sound device sees a read. The card's select switch
+machine answers the latch the address selects ([mouse and
+controllers](zephyr80-input.md#reading-the-latches)) and no sound device sees a
+read. The card's select switch
 SW1 must be set to the code the decoder drives (1110) for any of this to
 work; the emulator assumes it is.
 
@@ -134,4 +136,3 @@ state of its own: the stretch is the CPU's suspend, which the scheduler saves.
 - The CE-to-READY delay (90–150 ns) and the decoder's propagation: the stretch
   starts at the write and ends at the chip's READY edge.
 - The card-select switch: SW1 is taken to be set to E0h–FFh.
-- The controller latches (reads of E0h–FFh answer FFh).

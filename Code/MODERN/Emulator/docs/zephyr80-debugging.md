@@ -124,8 +124,9 @@ resources are never saved and are rebuilt or refused on load.
 | CTC, SIO0, daisy chain, `/INT`, V9958 latch | stock CTC and SIO0, `m_vdp_int`, `m_vdp_config` | saved; the RS232 slot's host pty is not state |
 | SIO1 lanes | registers, FIFOs, pipes, hunt, CRC, RTS/CTS/DCD/sync | saved |
 | IO controller | transport phase, window, reply, bulk buffer, counters, the timer (scheduler), HID epoch, pending report | saved |
-| Protocol core | FS2 tokens, cookies, positions, resolver, generation, `/SHARED`, volumes, transfers, staged writes, chunk/block/record buffers, HID queue, held keys, repeat, mouse | saved |
+| Protocol core | FS2 tokens, cookies, positions, resolver, generation, `/SHARED`, volumes, transfers, staged writes, chunk/block/record buffers, HID queue, held keys, repeat, mouse totals, buttons and pending motion, pad slots, controller latches | saved |
 | USB keyboard | held keys, last report | saved; MAME's host key levels are input, not state |
+| USB mouse, gamepads | the mouse's last field positions, motion owed, button ring; each device's connection as of its last scan; each pad's slot | saved; MAME's host mouse and joystick levels are input, not state |
 | Card socket | session, mount, the 16 objects, FatFs's volume and FIL/DIR objects | saved without pointers ([card socket](zephyr80-card.md#save-states)); the media's identity is saved and compared on load |
 | V9958, VRAM | stock chip, 128 KiB | saved |
 | PSGs, DAC | stock | saved |

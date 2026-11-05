@@ -117,7 +117,8 @@ controller that probed nothing: status NOT_STARTED, revision 0, `/USB_INT`
 idle, the probe results zero. The live USB fields (`hid_host_usb_state`)
 describe the emulated keyboard: one device, the keyboard's address (1), the
 reports received since its mount, the last report (modifier, reserved, six
-usages) and full speed (00h). Pages 6 and 7 do not describe the keyboard.
+usages) and full speed (00h); the device count includes any mounted pad. Pages
+6 and 7 are [the mouse's and the pads'](zephyr80-input.md#hid_status).
 
 ## State
 
@@ -143,5 +144,6 @@ resets; a key held through a reset is reported at once), the LED output
 report's transfer (the state is kept), low-speed devices behind the hub, the
 MAX3421E and its interrupt, the USB poll interval (a report reaches the
 controller at the next idle pass), several keyboards, a keyboard unplugged.
-The controller-latch keypad mirror of the number keys (`coleco_keypad_for_report`),
-the mouse and the gamepads belong to the controller ports and the mouse.
+The keypad mirror of the number keys onto controller port 0
+(`coleco_keypad_for_report`), the mouse and the gamepads are in [the mouse and
+controllers](zephyr80-input.md).

@@ -50,12 +50,12 @@ with no `-card` or `-carddir` media: the firmware with no card in the socket
 | 09h SD_WRITE_REC | 89h | READY for 128 bytes from the Z80; the commit writes the record (DONE) | READY, DONE 15h | card media |
 | 0Ah SD_FLUSH | 8Ah | the backend's flush | 00h | card media |
 | 0Ch LINK_SYNC | 8Ch | both lanes drop their boundary before the reply | 00h | core |
-| 0Dh HID_STATUS | 8Dh | page 0 (26 bytes), 6 (26) and 7 (21); other pages answer page 0. No USB host controller is modelled: bring-up NOT_STARTED, revision 0, `/USB_INT` idle; page 0's live fields are the keyboard's (one device, address 1, reports, last report, full speed); gamepad sentinels FFh, latches 7Fh | 00h | HID module (keyboard); mouse and controller devices |
+| 0Dh HID_STATUS | 8Dh | page 0 (26 bytes), 6 (26) and 7 (21); other pages answer page 0. No USB host controller is modelled: bring-up NOT_STARTED, revision 0, `/USB_INT` idle; page 0's live fields are the keyboard's (the device count includes mounted pads; address 1, reports, last report, full speed); pages 6 and 7 are the module's pads and second interface ([mouse and controllers](zephyr80-input.md)) | 00h | HID module |
 | 0Eh HID_INPUT | 8Eh | up to min(DATA 0, 24) queued bytes, then queued and dropped counts | 00h | HID module |
 | 0Fh SD_READ_BLOCK | 8Fh | READY, 512 bytes, block echo | 15h | card media |
 | 10h VOL_MOUNT | 90h | the unit dropped, then `/CPM/<name>` of exactly 8 MiB mounted; unit ≥ 2 30h, missing 10h, wrong size 32h | 15h | card media |
 | 11h VOL_INFO | 91h | unit, mode, extents, base block, records, name, boot guard (clear) | 00h, unmounted | card media |
-| 12h HID_MOUSE | 92h | flags, buttons, presses, dx/dy/wheel since the last read, then cleared | 00h, zero | mouse device |
+| 12h HID_MOUSE | 92h | flags, buttons, presses, dx/dy/wheel since the last read (capped at ±32767), then the presses and motion cleared | 00h; flags 0 and zeros with no mouse | HID module (mouse) |
 | 20h–28h FS_* | A0h–A8h | the `/SHARED` folder: one directory session, one file handle, explicit offsets, ≤ 512-byte chunks, close truncates to the exact size, self-test sum | 13h (READDIR, READ, WRITE, CLOSE without a handle: 36h) | card media |
 | 30h FS2_CAPS | B0h | version 1, flags 1FFEh, generation, chunk 512, 2 files, 1 directory, 16 components, 2-byte tokens | 00h | core |
 | 31h FS2_GENERATION | B1h | the generation | 00h | core |
@@ -101,7 +101,7 @@ layers; results are the firmware's codes and the core converts them.
 | `/SHARED` handle number, directory session, cached position | core |
 | Volume unit table (mode, name, records, reported extents and base), mount and auto-mount flags | core |
 | Transfer ids, the armed transfer, the DONE record, staged write parameters, bulk buffers | core |
-| HID module (keyboard reports, translation, repeat, input queue and doorbell), mouse read state | core |
+| HID module (keyboard reports, translation, repeat, input queue and doorbell; the mouse's totals, buttons and pending motion; the pad slots; the controller latches) | core |
 | Media contents, the FAT mount, open file/directory/image objects, caching and write-back | backend |
 
 Paths are the firmware's FatFs paths, built by the core (`/SHARED/NAME.EXT`,
@@ -165,5 +165,5 @@ cache's timing and write-back (the backend decides when writes reach the media;
 a record write is a read-modify-write of its block), bulk CRC (the deployed
 bypass), the diagnostic profile, the PROFILE timers, the boot guard (never
 degraded, no resets counted), the power handshake beyond PING's idle byte, USB
-below the HID usages ([the USB keyboard](zephyr80-keyboard.md#not-modelled)),
-and the mouse and controller devices.
+below the HID usages ([the USB keyboard](zephyr80-keyboard.md#not-modelled),
+[the mouse and controllers](zephyr80-input.md#not-modelled)).
