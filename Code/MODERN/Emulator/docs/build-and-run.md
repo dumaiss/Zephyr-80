@@ -107,8 +107,12 @@ The host mouse drives the USB mouse (connected by default; MAME enables its
 mouse input for the machine, and `-mouse` also hides the host pointer over the window) and the
 host's first and second joystick drive two F310 pads (not connected by
 default). "USB mouse", "USB gamepad 1" and "USB gamepad 2" are machine
-configuration settings (Tab, Machine Configuration); the Input (this Machine)
-menu rebinds every field. KonaOS's `mouse` and `joy` programs, KonaEdit,
+configuration settings. To reach them in a running machine, press Scroll Lock
+(UI controls on), then Tab, then choose Machine Configuration. Press Scroll Lock
+again to give the keyboard back to the guest. The choice is kept in
+`cfg/zephyr80.cfg`. Input Settings, Input Assignments (this system) rebinds
+every field; for example, a pad whose D-pad is not a hat (an F310 in XInput
+mode) needs its four D-Pad fields rebound. KonaOS's `mouse` and `joy` programs, KonaEdit,
 KonaCommander and the `gfx_mouse` example show them. The device, its fields and
 the read decode are in [mouse and controllers](zephyr80-input.md).
 
