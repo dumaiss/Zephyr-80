@@ -10,6 +10,11 @@ the SD socket and whatever card is in it. Two image devices
 ./mamepbitzd zephyr80 -flash konaos.bin -carddir card/    # a host folder
 ```
 
+In MAME's File Manager the `card` device takes an image file. The `carddir`
+device takes a folder: browse into the folder, then choose `[use this folder]`
+at the top of the listing. Choosing a sub-folder's name only opens it in the
+browser.
+
 They are exclusive: loading one while the socket holds the other's media
 fails (`-card and -carddir are exclusive`). A missing path, a folder given to
 `-card` or a file given to `-carddir` fails the load with its reason; MAME
