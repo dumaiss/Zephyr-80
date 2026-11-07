@@ -228,9 +228,9 @@ def run_sdk(probe, mame, inputs, case_dir):
             notes = sdk / "examples/notes.txt"
             notes.write_text("notes for the files example\n")
             run_vars.append(f"KOS_MAME_ARGS={mame_options}")
-            # The example reads argv[1] and lists argv[2].
+            # The example reads argv[0] and lists argv[1].
             code, out = make(sdk / "examples", "run", *run_vars, "KOS_RUN=files",
-                             "KOS_RUN_ARGS=files /fs/NOTES.TXT /fs", "KOS_ASSETS=notes.txt hello.c=HELLOSRC.C")
+                             "KOS_RUN_ARGS=/fs/NOTES.TXT /fs", "KOS_ASSETS=notes.txt hello.c=HELLOSRC.C")
             log += f"== make run KOS_RUN=files\n{out}"
             result = sdk / "examples/build/run/result.txt"
             text = result.read_text() if result.is_file() else ""

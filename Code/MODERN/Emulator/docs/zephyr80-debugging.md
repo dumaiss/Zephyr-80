@@ -3,9 +3,12 @@
 The `konaos` Lua plugin (`mame/plugins/konaos`) gives the zephyr80 machine
 KonaOS symbols, breakpoints that stop only in a symbol's physical bank, views
 of all of SRAM and VRAM, the console as text, and the KonaOS SDK's `make run`.
-It ships with the emulator: `-plugin konaos` loads it from MAME's `plugins/`
-directory (`-pluginspath` names another), and nothing else in the machine
-depends on it.
+It ships with the emulator, in MAME's `plugins/` directory as any MAME plugin
+(`plugin.json`, `init.lua`; `-plugin konaos` loads it, `-pluginspath` names
+another directory), and in the [bundle](bundle.md)'s `plugins/`; nothing else in
+the machine depends on it. The SDK's `make run` finds the plugin beside the MAME
+binary, in the directory `KOS_MAME_PLUGINS` names, or in the bundle named by
+`KOS_MAME`.
 
 ```sh
 ./mamepbitzd zephyr80 -flash "$KONAOS_ROOT/build/konaos.bin" -carddir card/ \

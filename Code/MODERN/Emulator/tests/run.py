@@ -33,6 +33,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import acceptance  # noqa: E402
+import bundle  # noqa: E402
 import card_backends  # noqa: E402
 import clocks_irqs  # noqa: E402
 import devtools  # noqa: E402
@@ -149,6 +150,9 @@ CASES = {
     "save-restore": dict(kind="suite", module=devtools, inputs=("konaos", "sdk"), probes=devtools.PROBES["save-restore"],
                          call=lambda mame, inputs, out, sub: devtools.run("save-restore", mame, inputs, out, sub),
                          about="save states idle, mid-command, mid-bulk and active (timer, console, PSG) on a card image and a card folder, each restored in a fresh process onto its card snapshot and compared with the saving run, with mouse and pad input held (the HID and device state equal at the save and after the restore); changed card and flash refused (2 probes)"),
+    "bundle": dict(kind="suite", module=bundle, inputs=("konaos", "sdk"), probes=bundle.PROBES,
+                   call=lambda mame, inputs, out, sub: bundle.run(mame, inputs, out, sub),
+                   about="the emulator bundle packed from the release binary (--mame mame/mamepbitz), extracted to a path with spaces with no source tree in the environment: the manifest against the files, start.sh to the card's `/> ` prompt from another directory with every shipped library mapped from the bundle, and the standalone SDK's make run with KOS_MAME naming the bundle alone (2 probes)"),
     "hwtest": dict(kind="suite", module=acceptance, inputs=("konaos", "hwtest"), probes=acceptance.PROBES["hwtest"],
                    call=lambda mame, inputs, out, sub: acceptance.run("hwtest", mame, inputs, out, sub),
                    about="the production KonaOS image's `hwtest` typed at the shell with a writable card image and card folder: `hwtest: 4/4 PASS` on the console and the serial lane, the card unchanged afterwards (2 probes)"),

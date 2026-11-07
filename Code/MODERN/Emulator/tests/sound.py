@@ -827,7 +827,7 @@ def framing(writes, t0, t1):
 
 def note_divisor(note):
     """libsnd's divisor for a note number: round(3579545 / (32 * 440 * 2 ** ((note - 48) / 12))), 1-1023
-    (the SDK's A440 table is indexed so that note 48 sounds 440 Hz)."""
+    (the SDK's A440 table is indexed so that note 48 (SND_A4) sounds 440 Hz and note 39 is SND_C4)."""
     return max(1, min(1023, round(CLOCK / (32.0 * 440.0 * 2 ** ((note - 48) / 12)))))
 
 
@@ -886,8 +886,8 @@ def analyse_client(client, case_dir, wav):
         t0, t1 = starts["tones"], ends["tones"]
         markers = [t for t, p, b in writes if (p & 7) == 4 and b == 0xa5 and t0 <= t <= t1]
         chips, _ = final_state(writes, markers[-1])
-        # sndtest tones holds SND_C4, E4, G4, C5, E5, G5, C6, E6, G6, C7, E7, G7 = notes 48, 52, 55, 60, ...
-        notes = [48, 52, 55, 60, 64, 67, 72, 76, 79, 84, 88, 91]
+        # sndtest tones holds SND_C4, E4, G4, C5, E5, G5, C6, E6, G6, C7, E7, G7 = notes 39, 43, 46, 51, ...
+        notes = [39, 43, 46, 51, 55, 58, 63, 67, 70, 75, 79, 82]
         ok, rows = True, []
         for k, chip in enumerate(chips):
             for ch in range(3):

@@ -17,7 +17,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | Option | Meaning |
 |---|---|
 | `--mame PATH` | the MAME binary (`mame/mamepbitzd` debug or `mame/mamepbitz` release) |
-| `--case CASE` | repeatable; `acceptance` is the [acceptance group](#acceptance); a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard`, `terminal-apps`, `mouse-controllers`, `sound`, `audio-playback`, `v9958`, `graphics-apps`, `debug-symbols`, `sdk-run`, `save-restore`, `hwtest`, `zsdos-drives`, `zexdoc` or `zexall` |
+| `--case CASE` | repeatable; `acceptance` is the [acceptance group](#acceptance); a repeated case runs again into `CASE-2`, ...; `CASE:PROBE` runs one probe of `memory-flash`, `clocks-irqs`, `sio1-lanes`, `ioc-core`, `card-image`, `card-directory`, `cpm-volumes`, `keyboard`, `terminal-apps`, `mouse-controllers`, `sound`, `audio-playback`, `v9958`, `graphics-apps`, `debug-symbols`, `sdk-run`, `save-restore`, `bundle`, `hwtest`, `zsdos-drives`, `zexdoc` or `zexall` |
 | `--list` | the cases, what each proves and the inputs it needs |
 | `--konaos-root`, `--zephyr-root` | the ZephyrOS and Zephyr-80 checkouts the inputs come from |
 | `--output DIR` | result directory, default `tests/output/run` (ignored by Git) |
@@ -53,6 +53,7 @@ python3 tests/run.py --mame ./mame/mamepbitzd \
 | `debug-symbols` | `konaos`, `sdk` | the two [developer-tool probes](#developer-tool-probes) of the `konaos` plugin under `-debug`: symbols, ambiguity, bank-aware breakpoints, physical views; the debugger's cost |
 | `sdk-run` | `konaos`, `sdk` | the three [developer-tool probes](#developer-tool-probes) of the SDK's `make run` from paths with spaces |
 | `save-restore` | `konaos`, `sdk` | the two [developer-tool probes](#developer-tool-probes): five save points on a card image and a card folder, each restored in a fresh process and compared with the saving run (with a mouse click and motion unread, the right button and two pads held: the HID module's and devices' input state equal at the save and after the restore, the controller ports equal at the end); changed media refused |
+| `bundle` | `konaos`, `sdk` | the [bundle probes](#bundle-probes): the release binary (`--mame mame/mamepbitz`) packed with `tools/bundle.py`, extracted to a path with spaces, started with `start.sh` to the card's prompt, and driven by the standalone SDK's `make run KOS_MAME=<bundle>` |
 | `hwtest` | `konaos`, `hwtest` | probes `image` and `folder`: the production image's `hwtest` typed at the shell with a writable card, `hwtest: 4/4 PASS` ([below](#acceptance)) |
 | `zsdos-drives` | `zsdos` | probes `image` and `folder`: ZSDOS's B: and C: written and read through BDOS, checked after each run and across a reopen ([below](#acceptance)) |
 | `zexdoc` | `zsdos`, `zexdoc` | ZEXDOC.COM on ZSDOS: every test OK ([below](#acceptance)) |
@@ -518,6 +519,19 @@ segment 1's, both at 8000h) and `tests/sdk/savework` (reads `/fs/INPUT.BIN`, wri
 | `sdk-run:names` | `examples/`: `KOS_RUN=files` with arguments and two assets (one renamed): FILES.EXE, NOTES.TXT and HELLOSRC.C staged and listed by the program; no `KOS_RUN` among several programs and an invalid asset name refused |
 | `sdk-run:no-mame` | `make` in `template/` with no MAME on PATH and none configured builds HELLO's EXE; `make run` names the missing binary (a path, and on PATH), the missing image and the missing plugin |
 | `save-restore:image`, `save-restore:folder` | savework from a 16 MiB FAT16 image or a folder: one run saves `idle` (the prompt), `command` (a command window clocking), `bulk` (the program's load, BULK_SEND), `write` (an OUTPUT.BIN block arriving, BULK_RECEIVE, the file open for writing) and `active` (tick 5: timer, console, PSG), copying the card at each save instant; each state restored in a fresh process onto its copy must match the saving run: the IO controller and SIO1 line state at the first frame after the save, every PSG/DAC write with its time, the VDP registers, VRAM, the screen, the end time and the card's final contents. Both runs hold the same host input from before the first save (a mouse motion and a click not yet read, the right button, two pads): the HID module's and the mouse device's state (totals, pending motion and presses, pad slots and latches, last positions) read at the instant of each save equals what is read at the instant after the restore, and the controller ports read at the end agree. The `bulk` state onto a card with one byte of INPUT.BIN changed, and (image) with a flash image one byte different, must end MAME with the socket's or the flash's fatal error |
+
+## Bundle probes
+
+`tests/bundle.py` packs the [emulator bundle](../docs/bundle.md) once per run from `--mame`, which must
+be the release `mamepbitz` (the bundle's own script is refused), and extracts it under a directory whose
+name holds spaces. The environment names no checkout, no emulator and no library path (`KONAOS_ROOT`,
+`ZEPHYR_ROOT`, `KOS_*`, `LD_LIBRARY_PATH` are removed) and `PATH` is `/usr/bin:/bin`. The `acceptance`
+group does not include the case: it runs on the debug binary.
+
+| Probe | Proof |
+|---|---|
+| `bundle:launch` | `MANIFEST.json` lists exactly the extracted files with their sizes, hashes and modes; `start.sh -plugin konaos` run from another directory with spaces boots KonaOS with the starter card to `/> ` (`bundle.lua`), the process maps every library the bundle ships (glibc included) from the bundle, `ZEPHYR80_BUNDLE` names it, and the `konaos` plugin loads from its `plugins/` |
+| `bundle:sdk-run` | the SDK unpacked under a path with spaces, `make run KOS_MAME=<bundle> KOS_BREAK=main` in `template/` with no other emulator setting: the bundle's image, plugin and map are used, the breakpoint stops at `hello:_main`, the program's line is in `result.txt`, exit 0 |
 
 ## Acceptance
 

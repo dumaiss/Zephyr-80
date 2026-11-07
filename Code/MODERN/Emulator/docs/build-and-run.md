@@ -6,6 +6,12 @@ The `zephyr80` machine is in the `pbitz` subtarget, registered in
 machine. What each device models, and on what evidence, is in
 [the device model](zephyr80-device-model.md).
 
+The machine exists only in the `pbitz` subtarget: a full `mame` build does not
+contain it. The support files (the FatFs C source and its include path, the
+`PBITZ_RS232_MINIMAL` slot list whose pty message the test runner reads) are
+wired in `pbitz.lua`, not in the full target's generated project. To use the
+emulator without a MAME checkout or a build, see [the bundle](bundle.md).
+
 ## Build
 
 From `Code/MODERN/Emulator/mame`:
@@ -34,6 +40,25 @@ make SUBTARGET=pbitz DEBUG=1 REGENIE=1 -j2
 
 Generated build files can contain absolute paths. Regenerate them with the same
 command after moving the tree if they refer to an old location.
+
+## The bundle
+
+`tools/bundle.py` packs the release binary, its libraries, the `konaos` and
+`json` plugins, the KonaOS image and map, a starter card and the user
+documentation into one archive that runs anywhere on x86-64 Linux with no
+source tree and no build ([the bundle](bundle.md)):
+
+```sh
+make SUBTARGET=pbitz BUILDDIR=build-release -j8        # mame/mamepbitz
+python3 tools/bundle.py --mame mame/mamepbitz --konaos-root "$KONAOS_ROOT"
+python3 tests/run.py --mame mame/mamepbitz --case bundle \
+  --konaos-root "$KONAOS_ROOT" --zephyr-root "$ZEPHYR_ROOT"
+```
+
+The first command's output is `tests/output/bundle/zephyr80-mame-linux-x86_64.tar.xz`
+(a path, size and SHA-256 are printed; `MANIFEST.json` inside lists every
+file's source revision and hash). The `bundle` case extracts it to a path with
+spaces and starts it.
 
 ## Images and operation
 
@@ -295,7 +320,8 @@ make run KOS_MAME=/path/to/Code/MODERN/Emulator/mame/mamepbitz \
   KOS_FLASH="$KONAOS_ROOT/build/konaos.bin" KOS_MAME_ARGS=-debug KOS_BREAK=main
 ```
 
-`KOS_BREAK` breakpoints stop only in the bank the loader put the code in;
+With the [bundle](bundle.md), `KOS_MAME=/path/to/zephyr80-mame` alone supplies
+the binary, the plugin and the image. `KOS_BREAK` breakpoints stop only in the bank the loader put the code in;
 [debugging KonaOS programs](zephyr80-debugging.md) describes the plugin, the
 physical memory views and the console capture.
 
